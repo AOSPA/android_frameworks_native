@@ -72,6 +72,8 @@ using android::os::InputEventInjectionResult;
 using android::os::InputEventInjectionSync;
 namespace input_flags = com::android::input::flags;
 
+static const bool REMOVE_APP_SWITCH_DROPS = input_flags::remove_app_switch_drops();
+
 namespace android::inputdispatcher {
 
 namespace {
@@ -390,21 +392,17 @@ std::unique_ptr<DispatchEntry> createDispatchEntry(
     }
 
     std::unique_ptr<MotionEntry> combinedMotionEntry =
-            std::make_unique<MotionEntry>(motionEntry.id, motionEntry.eventTime,
-                                          motionEntry.deviceId, motionEntry.source,
-                                          motionEntry.displayId, motionEntry.policyFlags,
-                                          motionEntry.action, motionEntry.actionButton,
-                                          motionEntry.flags, motionEntry.metaState,
-                                          motionEntry.buttonState, motionEntry.classification,
-                                          motionEntry.edgeFlags, motionEntry.xPrecision,
-                                          motionEntry.yPrecision, motionEntry.xCursorPosition,
-                                          motionEntry.yCursorPosition, motionEntry.downTime,
-                                          motionEntry.pointerProperties, pointerCoords);
-
-    if (motionEntry.injectionState) {
-        combinedMotionEntry->injectionState = motionEntry.injectionState;
-        combinedMotionEntry->injectionState->refCount += 1;
-    }
+            std::make_unique<MotionEntry>(motionEntry.id, motionEntry.injectionState,
+                                          motionEntry.eventTime, motionEntry.deviceId,
+                                          motionEntry.source, motionEntry.displayId,
+                                          motionEntry.policyFlags, motionEntry.action,
+                                          motionEntry.actionButton, motionEntry.flags,
+                                          motionEntry.metaState, motionEntry.buttonState,
+                                          motionEntry.classification, motionEntry.edgeFlags,
+                                          motionEntry.xPrecision, motionEntry.yPrecision,
+                                          motionEntry.xCursorPosition, motionEntry.yCursorPosition,
+                                          motionEntry.downTime, motionEntry.pointerProperties,
+                                          pointerCoords);
 
     std::unique_ptr<DispatchEntry> dispatchEntry =
             std::make_unique<DispatchEntry>(std::move(combinedMotionEntry), inputTargetFlags,
@@ -952,7 +950,7 @@ void InputDispatcher::dispatchOnceInnerLocked(nsecs_t* nextWakeupTime) {
     // Essentially we start a short timeout when an app switch key (HOME / ENDCALL) has
     // been pressed.  When it expires, we preempt dispatch and drop all other pending events.
     bool isAppSwitchDue;
-    if (!input_flags::remove_app_switch_drops()) {
+    if (!REMOVE_APP_SWITCH_DROPS) {
         isAppSwitchDue = mAppSwitchDueTime <= currentTime;
         if (mAppSwitchDueTime < *nextWakeupTime) {
             *nextWakeupTime = mAppSwitchDueTime;
@@ -963,7 +961,7 @@ void InputDispatcher::dispatchOnceInnerLocked(nsecs_t* nextWakeupTime) {
     // If we don't already have a pending event, go grab one.
     if (!mPendingEvent) {
         if (mInboundQueue.empty()) {
-            if (!input_flags::remove_app_switch_drops()) {
+            if (!REMOVE_APP_SWITCH_DROPS) {
                 if (isAppSwitchDue) {
                     // The inbound queue is empty so the app switch key we were waiting
                     // for will never arrive.  Stop waiting for it.
@@ -1067,7 +1065,7 @@ void InputDispatcher::dispatchOnceInnerLocked(nsecs_t* nextWakeupTime) {
 
         case EventEntry::Type::KEY: {
             std::shared_ptr<KeyEntry> keyEntry = std::static_pointer_cast<KeyEntry>(mPendingEvent);
-            if (!input_flags::remove_app_switch_drops()) {
+            if (!REMOVE_APP_SWITCH_DROPS) {
                 if (isAppSwitchDue) {
                     if (isAppSwitchKeyEvent(*keyEntry)) {
                         resetPendingAppSwitchLocked(true);
@@ -1090,7 +1088,7 @@ void InputDispatcher::dispatchOnceInnerLocked(nsecs_t* nextWakeupTime) {
         case EventEntry::Type::MOTION: {
             std::shared_ptr<MotionEntry> motionEntry =
                     std::static_pointer_cast<MotionEntry>(mPendingEvent);
-            if (!input_flags::remove_app_switch_drops()) {
+            if (!REMOVE_APP_SWITCH_DROPS) {
                 if (dropReason == DropReason::NOT_DROPPED && isAppSwitchDue) {
                     dropReason = DropReason::APP_SWITCH;
                 }
@@ -1108,7 +1106,7 @@ void InputDispatcher::dispatchOnceInnerLocked(nsecs_t* nextWakeupTime) {
         case EventEntry::Type::SENSOR: {
             std::shared_ptr<SensorEntry> sensorEntry =
                     std::static_pointer_cast<SensorEntry>(mPendingEvent);
-            if (!input_flags::remove_app_switch_drops()) {
+            if (!REMOVE_APP_SWITCH_DROPS) {
                 if (dropReason == DropReason::NOT_DROPPED && isAppSwitchDue) {
                     dropReason = DropReason::APP_SWITCH;
                 }
@@ -1221,7 +1219,7 @@ bool InputDispatcher::enqueueInboundEventLocked(std::unique_ptr<EventEntry> newE
             // the app switch key.
             const KeyEntry& keyEntry = static_cast<const KeyEntry&>(entry);
 
-            if (!input_flags::remove_app_switch_drops()) {
+            if (!REMOVE_APP_SWITCH_DROPS) {
                 if (isAppSwitchKeyEvent(keyEntry)) {
                     if (keyEntry.action == AKEY_EVENT_ACTION_DOWN) {
                         mAppSwitchSawKeyDown = true;
@@ -1511,7 +1509,7 @@ void InputDispatcher::releasePendingEventLocked() {
 }
 
 void InputDispatcher::releaseInboundEventLocked(std::shared_ptr<EventEntry> entry) {
-    InjectionState* injectionState = entry->injectionState;
+    const std::shared_ptr<InjectionState>& injectionState = entry->injectionState;
     if (injectionState && injectionState->injectionResult == InputEventInjectionResult::PENDING) {
         if (DEBUG_DISPATCH_CYCLE) {
             ALOGD("Injected inbound event was dropped.");
@@ -1537,10 +1535,11 @@ std::shared_ptr<KeyEntry> InputDispatcher::synthesizeKeyRepeatLocked(nsecs_t cur
             (POLICY_FLAG_RAW_MASK | POLICY_FLAG_PASS_TO_USER | POLICY_FLAG_TRUSTED);
 
     std::shared_ptr<KeyEntry> newEntry =
-            std::make_unique<KeyEntry>(mIdGenerator.nextId(), currentTime, entry->deviceId,
-                                       entry->source, entry->displayId, policyFlags, entry->action,
-                                       entry->flags, entry->keyCode, entry->scanCode,
-                                       entry->metaState, entry->repeatCount + 1, entry->downTime);
+            std::make_unique<KeyEntry>(mIdGenerator.nextId(), /*injectionState=*/nullptr,
+                                       currentTime, entry->deviceId, entry->source,
+                                       entry->displayId, policyFlags, entry->action, entry->flags,
+                                       entry->keyCode, entry->scanCode, entry->metaState,
+                                       entry->repeatCount + 1, entry->downTime);
 
     newEntry->syntheticRepeat = true;
     mKeyRepeatState.lastKeyEntry = newEntry;
@@ -4318,7 +4317,8 @@ std::unique_ptr<MotionEntry> InputDispatcher::splitMotionEvent(
                                 ").",
                                 originalMotionEntry.id, newId));
     std::unique_ptr<MotionEntry> splitMotionEntry =
-            std::make_unique<MotionEntry>(newId, originalMotionEntry.eventTime,
+            std::make_unique<MotionEntry>(newId, originalMotionEntry.injectionState,
+                                          originalMotionEntry.eventTime,
                                           originalMotionEntry.deviceId, originalMotionEntry.source,
                                           originalMotionEntry.displayId,
                                           originalMotionEntry.policyFlags, action,
@@ -4332,11 +4332,6 @@ std::unique_ptr<MotionEntry> InputDispatcher::splitMotionEvent(
                                           originalMotionEntry.xCursorPosition,
                                           originalMotionEntry.yCursorPosition, splitDownTime,
                                           splitPointerProperties, splitPointerCoords);
-
-    if (originalMotionEntry.injectionState) {
-        splitMotionEntry->injectionState = originalMotionEntry.injectionState;
-        splitMotionEntry->injectionState->refCount += 1;
-    }
 
     return splitMotionEntry;
 }
@@ -4425,9 +4420,10 @@ void InputDispatcher::notifyKey(const NotifyKeyArgs& args) {
         }
 
         std::unique_ptr<KeyEntry> newEntry =
-                std::make_unique<KeyEntry>(args.id, args.eventTime, args.deviceId, args.source,
-                                           args.displayId, policyFlags, args.action, flags, keyCode,
-                                           args.scanCode, metaState, repeatCount, args.downTime);
+                std::make_unique<KeyEntry>(args.id, /*injectionState=*/nullptr, args.eventTime,
+                                           args.deviceId, args.source, args.displayId, policyFlags,
+                                           args.action, flags, keyCode, args.scanCode, metaState,
+                                           repeatCount, args.downTime);
 
         needWake = enqueueInboundEventLocked(std::move(newEntry));
         mLock.unlock();
@@ -4545,14 +4541,14 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
 
         // Just enqueue a new motion event.
         std::unique_ptr<MotionEntry> newEntry =
-                std::make_unique<MotionEntry>(args.id, args.eventTime, args.deviceId, args.source,
-                                              args.displayId, policyFlags, args.action,
-                                              args.actionButton, args.flags, args.metaState,
-                                              args.buttonState, args.classification, args.edgeFlags,
-                                              args.xPrecision, args.yPrecision,
-                                              args.xCursorPosition, args.yCursorPosition,
-                                              args.downTime, args.pointerProperties,
-                                              args.pointerCoords);
+                std::make_unique<MotionEntry>(args.id, /*injectionState=*/nullptr, args.eventTime,
+                                              args.deviceId, args.source, args.displayId,
+                                              policyFlags, args.action, args.actionButton,
+                                              args.flags, args.metaState, args.buttonState,
+                                              args.classification, args.edgeFlags, args.xPrecision,
+                                              args.yPrecision, args.xCursorPosition,
+                                              args.yCursorPosition, args.downTime,
+                                              args.pointerProperties, args.pointerCoords);
 
         if (args.id != android::os::IInputConstants::INVALID_INPUT_EVENT_ID &&
             IdGenerator::getSource(args.id) == IdGenerator::Source::INPUT_READER &&
@@ -4624,7 +4620,6 @@ void InputDispatcher::notifySwitch(const NotifySwitchArgs& args) {
 }
 
 void InputDispatcher::notifyDeviceReset(const NotifyDeviceResetArgs& args) {
-    // TODO(b/308677868) Remove device reset from the InputListener interface
     if (debugInboundEventDetails()) {
         ALOGD("notifyDeviceReset - eventTime=%" PRId64 ", deviceId=%d", args.eventTime,
               args.deviceId);
@@ -4699,6 +4694,9 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
         resolvedDeviceId = event->getDeviceId();
     }
 
+    const bool isAsync = syncMode == InputEventInjectionSync::NONE;
+    auto injectionState = std::make_shared<InjectionState>(targetUid, isAsync);
+
     std::queue<std::unique_ptr<EventEntry>> injectedEntries;
     switch (event->getType()) {
         case InputEventType::KEY: {
@@ -4731,10 +4729,11 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
 
             mLock.lock();
             std::unique_ptr<KeyEntry> injectedEntry =
-                    std::make_unique<KeyEntry>(incomingKey.getId(), incomingKey.getEventTime(),
-                                               resolvedDeviceId, incomingKey.getSource(),
-                                               incomingKey.getDisplayId(), policyFlags, action,
-                                               flags, keyCode, incomingKey.getScanCode(), metaState,
+                    std::make_unique<KeyEntry>(incomingKey.getId(), injectionState,
+                                               incomingKey.getEventTime(), resolvedDeviceId,
+                                               incomingKey.getSource(), incomingKey.getDisplayId(),
+                                               policyFlags, action, flags, keyCode,
+                                               incomingKey.getScanCode(), metaState,
                                                incomingKey.getRepeatCount(),
                                                incomingKey.getDownTime());
             injectedEntries.push(std::move(injectedEntry));
@@ -4766,30 +4765,6 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
             }
 
             mLock.lock();
-
-            if (policyFlags & POLICY_FLAG_FILTERED) {
-                // The events from InputFilter impersonate real hardware devices. Check these
-                // events for consistency and print an error. An inconsistent event sent from
-                // InputFilter could cause a crash in the later stages of dispatching pipeline.
-                auto [it, _] =
-                        mInputFilterVerifiersByDisplay
-                                .try_emplace(displayId,
-                                             StringPrintf("Injection on %" PRId32, displayId));
-                InputVerifier& verifier = it->second;
-
-                Result<void> result =
-                        verifier.processMovement(resolvedDeviceId, motionEvent.getSource(),
-                                                 motionEvent.getAction(),
-                                                 motionEvent.getPointerCount(),
-                                                 motionEvent.getPointerProperties(),
-                                                 motionEvent.getSamplePointerCoords(), flags);
-                if (!result.ok()) {
-                    logDispatchStateLocked();
-                    LOG(ERROR) << "Inconsistent event: " << motionEvent
-                               << ", reason: " << result.error();
-                }
-            }
-
             const nsecs_t* sampleEventTimes = motionEvent.getSampleEventTimes();
             const size_t pointerCount = motionEvent.getPointerCount();
             const std::vector<PointerProperties>
@@ -4798,9 +4773,10 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
 
             const PointerCoords* samplePointerCoords = motionEvent.getSamplePointerCoords();
             std::unique_ptr<MotionEntry> injectedEntry =
-                    std::make_unique<MotionEntry>(motionEvent.getId(), *sampleEventTimes,
-                                                  resolvedDeviceId, motionEvent.getSource(),
-                                                  displayId, policyFlags, motionEvent.getAction(),
+                    std::make_unique<MotionEntry>(motionEvent.getId(), injectionState,
+                                                  *sampleEventTimes, resolvedDeviceId,
+                                                  motionEvent.getSource(), displayId, policyFlags,
+                                                  motionEvent.getAction(),
                                                   motionEvent.getActionButton(), flags,
                                                   motionEvent.getMetaState(),
                                                   motionEvent.getButtonState(),
@@ -4820,9 +4796,10 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
                 sampleEventTimes += 1;
                 samplePointerCoords += motionEvent.getPointerCount();
                 std::unique_ptr<MotionEntry> nextInjectedEntry = std::make_unique<
-                        MotionEntry>(motionEvent.getId(), *sampleEventTimes, resolvedDeviceId,
-                                     motionEvent.getSource(), displayId, policyFlags,
-                                     motionEvent.getAction(), motionEvent.getActionButton(), flags,
+                        MotionEntry>(motionEvent.getId(), injectionState, *sampleEventTimes,
+                                     resolvedDeviceId, motionEvent.getSource(), displayId,
+                                     policyFlags, motionEvent.getAction(),
+                                     motionEvent.getActionButton(), flags,
                                      motionEvent.getMetaState(), motionEvent.getButtonState(),
                                      motionEvent.getClassification(), motionEvent.getEdgeFlags(),
                                      motionEvent.getXPrecision(), motionEvent.getYPrecision(),
@@ -4843,14 +4820,6 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
             LOG(WARNING) << "Cannot inject " << ftl::enum_string(event->getType()) << " events";
             return InputEventInjectionResult::FAILED;
     }
-
-    InjectionState* injectionState = new InjectionState(targetUid);
-    if (syncMode == InputEventInjectionSync::NONE) {
-        injectionState->injectionIsAsync = true;
-    }
-
-    injectionState->refCount += 1;
-    injectedEntries.back()->injectionState = injectionState;
 
     bool needWake = false;
     while (!injectedEntries.empty()) {
@@ -4914,8 +4883,6 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
                 }
             }
         }
-
-        injectionState->release();
     } // release lock
 
     if (DEBUG_INJECTION) {
@@ -4961,37 +4928,40 @@ std::unique_ptr<VerifiedInputEvent> InputDispatcher::verifyInputEvent(const Inpu
 
 void InputDispatcher::setInjectionResult(EventEntry& entry,
                                          InputEventInjectionResult injectionResult) {
-    InjectionState* injectionState = entry.injectionState;
-    if (injectionState) {
-        if (DEBUG_INJECTION) {
-            LOG(INFO) << "Setting input event injection result to "
-                      << ftl::enum_string(injectionResult);
-        }
-
-        if (injectionState->injectionIsAsync && !(entry.policyFlags & POLICY_FLAG_FILTERED)) {
-            // Log the outcome since the injector did not wait for the injection result.
-            switch (injectionResult) {
-                case InputEventInjectionResult::SUCCEEDED:
-                    ALOGV("Asynchronous input event injection succeeded.");
-                    break;
-                case InputEventInjectionResult::TARGET_MISMATCH:
-                    ALOGV("Asynchronous input event injection target mismatch.");
-                    break;
-                case InputEventInjectionResult::FAILED:
-                    ALOGW("Asynchronous input event injection failed.");
-                    break;
-                case InputEventInjectionResult::TIMED_OUT:
-                    ALOGW("Asynchronous input event injection timed out.");
-                    break;
-                case InputEventInjectionResult::PENDING:
-                    ALOGE("Setting result to 'PENDING' for asynchronous injection");
-                    break;
-            }
-        }
-
-        injectionState->injectionResult = injectionResult;
-        mInjectionResultAvailable.notify_all();
+    if (!entry.injectionState) {
+        // Not an injected event.
+        return;
     }
+
+    InjectionState& injectionState = *entry.injectionState;
+    if (DEBUG_INJECTION) {
+        LOG(INFO) << "Setting input event injection result to "
+                  << ftl::enum_string(injectionResult);
+    }
+
+    if (injectionState.injectionIsAsync && !(entry.policyFlags & POLICY_FLAG_FILTERED)) {
+        // Log the outcome since the injector did not wait for the injection result.
+        switch (injectionResult) {
+            case InputEventInjectionResult::SUCCEEDED:
+                ALOGV("Asynchronous input event injection succeeded.");
+                break;
+            case InputEventInjectionResult::TARGET_MISMATCH:
+                ALOGV("Asynchronous input event injection target mismatch.");
+                break;
+            case InputEventInjectionResult::FAILED:
+                ALOGW("Asynchronous input event injection failed.");
+                break;
+            case InputEventInjectionResult::TIMED_OUT:
+                ALOGW("Asynchronous input event injection timed out.");
+                break;
+            case InputEventInjectionResult::PENDING:
+                ALOGE("Setting result to 'PENDING' for asynchronous injection");
+                break;
+        }
+    }
+
+    injectionState.injectionResult = injectionResult;
+    mInjectionResultAvailable.notify_all();
 }
 
 void InputDispatcher::transformMotionEntryForInjectionLocked(
@@ -5027,18 +4997,16 @@ void InputDispatcher::transformMotionEntryForInjectionLocked(
 }
 
 void InputDispatcher::incrementPendingForegroundDispatches(EventEntry& entry) {
-    InjectionState* injectionState = entry.injectionState;
-    if (injectionState) {
-        injectionState->pendingForegroundDispatches += 1;
+    if (entry.injectionState) {
+        entry.injectionState->pendingForegroundDispatches += 1;
     }
 }
 
 void InputDispatcher::decrementPendingForegroundDispatches(EventEntry& entry) {
-    InjectionState* injectionState = entry.injectionState;
-    if (injectionState) {
-        injectionState->pendingForegroundDispatches -= 1;
+    if (entry.injectionState) {
+        entry.injectionState->pendingForegroundDispatches -= 1;
 
-        if (injectionState->pendingForegroundDispatches == 0) {
+        if (entry.injectionState->pendingForegroundDispatches == 0) {
             mInjectionSyncFinished.notify_all();
         }
     }
@@ -5925,7 +5893,7 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) const {
     }
 
     dump += "input_flags::remove_app_switch_drops() = ";
-    dump += toString(input_flags::remove_app_switch_drops());
+    dump += toString(REMOVE_APP_SWITCH_DROPS);
     dump += "\n";
     if (isAppSwitchPendingLocked()) {
         dump += StringPrintf(INDENT "AppSwitch: pending, due in %" PRId64 "ms\n",
@@ -6258,7 +6226,7 @@ void InputDispatcher::doDispatchCycleFinishedCommand(nsecs_t finishTime,
                                                      uint32_t seq, bool handled,
                                                      nsecs_t consumeTime) {
     // Handle post-event policy actions.
-    bool restartEvent;
+    std::unique_ptr<KeyEntry> fallbackKeyEntry;
 
     { // Start critical section
         auto dispatchEntryIt =
@@ -6282,15 +6250,9 @@ void InputDispatcher::doDispatchCycleFinishedCommand(nsecs_t finishTime,
         }
 
         if (dispatchEntry.eventEntry->type == EventEntry::Type::KEY) {
-            KeyEntry& keyEntry = static_cast<KeyEntry&>(*(dispatchEntry.eventEntry));
-            restartEvent =
+            const KeyEntry& keyEntry = static_cast<const KeyEntry&>(*(dispatchEntry.eventEntry));
+            fallbackKeyEntry =
                     afterKeyEventLockedInterruptable(connection, dispatchEntry, keyEntry, handled);
-        } else if (dispatchEntry.eventEntry->type == EventEntry::Type::MOTION) {
-            MotionEntry& motionEntry = static_cast<MotionEntry&>(*(dispatchEntry.eventEntry));
-            restartEvent = afterMotionEventLockedInterruptable(connection, dispatchEntry,
-                                                               motionEntry, handled);
-        } else {
-            restartEvent = false;
         }
     } // End critical section: The -LockedInterruptable methods may have released the lock.
 
@@ -6314,12 +6276,13 @@ void InputDispatcher::doDispatchCycleFinishedCommand(nsecs_t finishTime,
             }
         }
         traceWaitQueueLength(*connection);
-        if (restartEvent && connection->status == Connection::Status::NORMAL) {
-            connection->outboundQueue.emplace_front(std::move(dispatchEntry));
-            traceOutboundQueueLength(*connection);
-        } else {
-            releaseDispatchEntry(std::move(dispatchEntry));
+        if (fallbackKeyEntry && connection->status == Connection::Status::NORMAL) {
+            const InputTarget target{.inputChannel = connection->inputChannel,
+                                     .flags = dispatchEntry->targetFlags};
+            enqueueDispatchEntryLocked(connection, std::move(fallbackKeyEntry), target,
+                                       InputTarget::Flags::DISPATCH_AS_IS);
         }
+        releaseDispatchEntry(std::move(dispatchEntry));
     }
 
     // Start the next dispatch cycle for this connection.
@@ -6504,15 +6467,15 @@ void InputDispatcher::processConnectionResponsiveLocked(const Connection& connec
     sendWindowResponsiveCommandLocked(connectionToken, pid);
 }
 
-bool InputDispatcher::afterKeyEventLockedInterruptable(
+std::unique_ptr<KeyEntry> InputDispatcher::afterKeyEventLockedInterruptable(
         const std::shared_ptr<Connection>& connection, DispatchEntry& dispatchEntry,
-        KeyEntry& keyEntry, bool handled) {
+        const KeyEntry& keyEntry, bool handled) {
     if (keyEntry.flags & AKEY_EVENT_FLAG_FALLBACK) {
         if (!handled) {
             // Report the key as unhandled, since the fallback was not handled.
             mReporter->reportUnhandledKey(keyEntry.id);
         }
-        return false;
+        return {};
     }
 
     // Get the fallback key state.
@@ -6572,7 +6535,7 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(
                       "keyCode=%d, action=%d, repeatCount=%d, policyFlags=0x%08x",
                       originalKeyCode, keyEntry.action, keyEntry.repeatCount, keyEntry.policyFlags);
             }
-            return false;
+            return {};
         }
 
         // Dispatch the unhandled key to the policy.
@@ -6597,7 +6560,7 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(
 
         if (connection->status != Connection::Status::NORMAL) {
             connection->inputState.removeFallbackKey(originalKeyCode);
-            return false;
+            return {};
         }
 
         // Latch the fallback keycode for this key on an initial down.
@@ -6658,25 +6621,22 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(
         }
 
         if (fallback) {
-            // Restart the dispatch cycle using the fallback key.
-            keyEntry.eventTime = event.getEventTime();
-            keyEntry.deviceId = event.getDeviceId();
-            keyEntry.source = event.getSource();
-            keyEntry.displayId = event.getDisplayId();
-            keyEntry.flags = event.getFlags() | AKEY_EVENT_FLAG_FALLBACK;
-            keyEntry.keyCode = *fallbackKeyCode;
-            keyEntry.scanCode = event.getScanCode();
-            keyEntry.metaState = event.getMetaState();
-            keyEntry.repeatCount = event.getRepeatCount();
-            keyEntry.downTime = event.getDownTime();
-            keyEntry.syntheticRepeat = false;
-
+            // Return the fallback key that we want dispatched to the channel.
+            std::unique_ptr<KeyEntry> newEntry =
+                    std::make_unique<KeyEntry>(mIdGenerator.nextId(), keyEntry.injectionState,
+                                               event.getEventTime(), event.getDeviceId(),
+                                               event.getSource(), event.getDisplayId(),
+                                               keyEntry.policyFlags, keyEntry.action,
+                                               event.getFlags() | AKEY_EVENT_FLAG_FALLBACK,
+                                               *fallbackKeyCode, event.getScanCode(),
+                                               event.getMetaState(), event.getRepeatCount(),
+                                               event.getDownTime());
             if (DEBUG_OUTBOUND_EVENT_DETAILS) {
                 ALOGD("Unhandled key event: Dispatching fallback key.  "
                       "originalKeyCode=%d, fallbackKeyCode=%d, fallbackMetaState=%08x",
                       originalKeyCode, *fallbackKeyCode, keyEntry.metaState);
             }
-            return true; // restart the event
+            return newEntry;
         } else {
             if (DEBUG_OUTBOUND_EVENT_DETAILS) {
                 ALOGD("Unhandled key event: No fallback key.");
@@ -6686,13 +6646,7 @@ bool InputDispatcher::afterKeyEventLockedInterruptable(
             mReporter->reportUnhandledKey(keyEntry.id);
         }
     }
-    return false;
-}
-
-bool InputDispatcher::afterMotionEventLockedInterruptable(
-        const std::shared_ptr<Connection>& connection, DispatchEntry& dispatchEntry,
-        MotionEntry& motionEntry, bool handled) {
-    return false;
+    return {};
 }
 
 void InputDispatcher::traceInboundQueueLengthLocked() {
@@ -6863,7 +6817,6 @@ void InputDispatcher::displayRemoved(int32_t displayId) {
         // Remove the associated touch mode state.
         mTouchModePerDisplay.erase(displayId);
         mVerifiersByDisplay.erase(displayId);
-        mInputFilterVerifiersByDisplay.erase(displayId);
     } // release lock
 
     // Wake up poll loop since it may need to make new input dispatching choices.

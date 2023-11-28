@@ -51,6 +51,11 @@ bool isLayerActive(const LayerInfo& info, nsecs_t threshold) {
         return true;
     }
 
+    // Make all front buffered layers active
+    if (FlagManager::getInstance().vrr_config() && info.isFrontBuffered() && info.isVisible()) {
+        return true;
+    }
+
     return info.isVisible() && info.getLastUpdatedTime() >= threshold;
 }
 
@@ -160,6 +165,27 @@ void LayerHistory::setDefaultFrameRateCompatibility(int32_t id,
 
     const auto& info = layerPair->second;
     info->setDefaultLayerVote(getVoteType(frameRateCompatibility, contentDetectionEnabled));
+}
+
+void LayerHistory::setLayerProperties(int32_t id, const LayerProps& properties) {
+    std::lock_guard lock(mLock);
+
+    auto [found, layerPair] = findLayer(id);
+    if (found == LayerStatus::NotFound) {
+        // Offscreen layer
+        ALOGV("%s: %d not registered", __func__, id);
+        return;
+    }
+
+    const auto& info = layerPair->second;
+    info->setProperties(properties);
+
+    // Activate layer if inactive and visible.
+    if (found == LayerStatus::LayerInInactiveMap && info->isVisible()) {
+        mActiveLayerInfos.insert(
+                {id, std::make_pair(layerPair->first, std::move(layerPair->second))});
+        mInactiveLayerInfos.erase(id);
+    }
 }
 
 auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -> Summary {

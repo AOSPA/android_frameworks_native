@@ -25,7 +25,7 @@
 #include <thread>
 #include <vector>
 
-#include <android-base/scopeguard.h>
+#include <binder/Functional.h>
 #include <binder/Parcel.h>
 #include <binder/RpcServer.h>
 #include <binder/RpcTransportRaw.h>
@@ -44,7 +44,7 @@ namespace android {
 
 constexpr size_t kSessionIdBytes = 32;
 
-using base::ScopeGuard;
+using namespace android::binder::impl;
 using base::unique_fd;
 
 RpcServer::RpcServer(std::unique_ptr<RpcTransportCtx> ctx) : mCtx(std::move(ctx)) {}
@@ -230,10 +230,7 @@ status_t RpcServer::recvmsgSocketConnection(const RpcServer& server, RpcTranspor
     }
 
     unique_fd fd(std::move(std::get<unique_fd>(fds.back())));
-    if (auto res = binder::os::setNonBlocking(fd); !res.ok()) {
-        ALOGE("Failed setNonBlocking: %s", res.error().message().c_str());
-        return res.error().code() == 0 ? UNKNOWN_ERROR : -res.error().code();
-    }
+    if (status_t res = binder::os::setNonBlocking(fd); res != OK) return res;
 
     *out = RpcTransportFd(std::move(fd));
     return OK;
@@ -457,11 +454,12 @@ void RpcServer::establishConnection(
         LOG_ALWAYS_FATAL_IF(threadId == server->mConnectingThreads.end(),
                             "Must establish connection on owned thread");
         thisThread = std::move(threadId->second);
-        ScopeGuard detachGuard = [&]() {
+        auto detachGuardLambda = [&]() {
             thisThread.detach();
             _l.unlock();
             server->mShutdownCv.notify_all();
         };
+        auto detachGuard = make_scope_guard(std::ref(detachGuardLambda));
         server->mConnectingThreads.erase(threadId);
 
         if (status != OK || server->mShutdownTrigger->isTriggered()) {
@@ -547,7 +545,7 @@ void RpcServer::establishConnection(
             return;
         }
 
-        detachGuard.Disable();
+        detachGuard.release();
         session->preJoinThreadOwnership(std::move(thisThread));
     }
 

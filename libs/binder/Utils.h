@@ -22,6 +22,9 @@
 #include <log/log.h>
 #include <utils/Errors.h>
 
+#define PLOGE_VA_ARGS(...) , ##__VA_ARGS__
+#define PLOGE(fmt, ...) ALOGE(fmt ": %s" PLOGE_VA_ARGS(__VA_ARGS__), strerror(errno))
+
 /* TEMP_FAILURE_RETRY is not available on macOS and Trusty. */
 #ifndef TEMP_FAILURE_RETRY
 /* Used to retry syscalls that can return EINTR. */
@@ -44,6 +47,17 @@
     } while (0)
 
 namespace android {
+
+/**
+ * Get the size of a statically initialized array.
+ *
+ * \param N the array to get the size of.
+ * \return the size of the array.
+ */
+template <typename T, size_t N>
+constexpr size_t countof(T (&)[N]) {
+    return N;
+}
 
 // avoid optimizations
 void zeroMemory(uint8_t* data, size_t size);

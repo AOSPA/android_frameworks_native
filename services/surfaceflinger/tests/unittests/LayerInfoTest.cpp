@@ -21,12 +21,15 @@
 
 #include <scheduler/Fps.h>
 
+#include "FlagUtils.h"
 #include "FpsOps.h"
 #include "Scheduler/LayerHistory.h"
 #include "Scheduler/LayerInfo.h"
 #include "TestableScheduler.h"
 #include "TestableSurfaceFlinger.h"
 #include "mock/MockSchedulerCallback.h"
+
+#include <com_android_graphics_surfaceflinger_flags.h>
 
 namespace android::scheduler {
 
@@ -61,11 +64,15 @@ protected:
                                                                               HI_FPS)),
                                                   DisplayModeId(0));
     mock::SchedulerCallback mSchedulerCallback;
-    TestableScheduler* mScheduler = new TestableScheduler(mSelector, mSchedulerCallback);
+    mock::VsyncTrackerCallback mVsyncTrackerCallback;
+    TestableScheduler* mScheduler =
+            new TestableScheduler(mSelector, mSchedulerCallback, mVsyncTrackerCallback);
     TestableSurfaceFlinger mFlinger;
 };
 
 namespace {
+
+using namespace com::android::graphics::surfaceflinger;
 
 TEST_F(LayerInfoTest, prefersPresentTime) {
     std::deque<FrameTimeData> frameTimes;
@@ -259,6 +266,20 @@ TEST_F(LayerInfoTest, getRefreshRateVote_noData) {
     ASSERT_EQ(actualVotes.size(), 1u);
     ASSERT_EQ(actualVotes[0].type, LayerHistory::LayerVoteType::Max);
     ASSERT_EQ(actualVotes[0].fps, vote.fps);
+}
+
+TEST_F(LayerInfoTest, isFrontBuffered) {
+    // TODO(b/304338314): uncomment the below line once the bug is fixed
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
+    ASSERT_FALSE(layerInfo.isFrontBuffered());
+
+    LayerProps prop = {.isFrontBuffered = true};
+    layerInfo.setLastPresentTime(0, 0, LayerHistory::LayerUpdateType::Buffer, true, prop);
+    ASSERT_TRUE(layerInfo.isFrontBuffered());
+
+    prop.isFrontBuffered = false;
+    layerInfo.setLastPresentTime(0, 0, LayerHistory::LayerUpdateType::Buffer, true, prop);
+    ASSERT_FALSE(layerInfo.isFrontBuffered());
 }
 
 } // namespace

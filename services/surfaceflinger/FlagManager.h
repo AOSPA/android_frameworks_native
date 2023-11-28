@@ -46,6 +46,11 @@ public:
     bool use_adpf_cpu_hint() const;
     bool use_skia_tracing() const;
 
+    /// Trunk stable server flags ///
+    bool late_boot_misc2() const;
+    bool dont_skip_on_early() const;
+    bool refresh_rate_overlay_on_external_display() const;
+
     /// Trunk stable readonly flags ///
     bool connected_display() const;
     bool enable_small_area_detection() const;
@@ -53,10 +58,7 @@ public:
     bool vrr_config() const;
     bool hotplug2() const;
     bool hdcp_level_hal() const;
-
-    /// Trunk stable server flags ///
-    bool late_boot_misc2() const;
-    bool dont_skip_on_early() const;
+    bool multithreaded_present() const;
 
 protected:
     // overridden for unit tests
@@ -67,6 +69,9 @@ private:
     friend class TestableFlagManager;
 
     FlagManager(const FlagManager&) = delete;
+
+    void dumpFlag(std::string& result, bool readonly, const char* name,
+                  std::function<bool()> getter) const;
 
     std::atomic_bool mBootCompleted = false;
     std::atomic_bool mUnitTestMode = false;

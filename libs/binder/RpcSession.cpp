@@ -26,9 +26,8 @@
 
 #include <string_view>
 
-#include <android-base/macros.h>
-#include <android-base/scopeguard.h>
 #include <binder/BpBinder.h>
+#include <binder/Functional.h>
 #include <binder/Parcel.h>
 #include <binder/RpcServer.h>
 #include <binder/RpcTransportRaw.h>
@@ -51,6 +50,7 @@ extern "C" JavaVM* AndroidRuntimeGetJavaVM();
 
 namespace android {
 
+using namespace android::binder::impl;
 using base::unique_fd;
 
 RpcSession::RpcSession(std::unique_ptr<RpcTransportCtx> ctx) : mCtx(std::move(ctx)) {
@@ -193,10 +193,7 @@ status_t RpcSession::setupPreconnectedClient(base::unique_fd fd,
             fd = request();
             if (!fd.ok()) return BAD_VALUE;
         }
-        if (auto res = binder::os::setNonBlocking(fd); !res.ok()) {
-            ALOGE("setupPreconnectedClient: %s", res.error().message().c_str());
-            return res.error().code() == 0 ? UNKNOWN_ERROR : -res.error().code();
-        }
+        if (status_t res = binder::os::setNonBlocking(fd); res != OK) return res;
 
         RpcTransportFd transportFd(std::move(fd));
         status_t status = initAndAddConnection(std::move(transportFd), sessionId, incoming);
@@ -411,7 +408,9 @@ public:
     }
 
 private:
-    DISALLOW_COPY_AND_ASSIGN(JavaThreadAttacher);
+    JavaThreadAttacher(const JavaThreadAttacher&) = delete;
+    void operator=(const JavaThreadAttacher&) = delete;
+
     bool mAttached = false;
 
     static JavaVM* getJavaVM() {
@@ -496,7 +495,7 @@ status_t RpcSession::setupClient(const std::function<status_t(const std::vector<
     if (auto status = initShutdownTrigger(); status != OK) return status;
 
     auto oldProtocolVersion = mProtocolVersion;
-    auto cleanup = base::ScopeGuard([&] {
+    auto cleanup = make_scope_guard([&] {
         // if any threads are started, shut them down
         (void)shutdownAndWait(true);
 
@@ -576,7 +575,7 @@ status_t RpcSession::setupClient(const std::function<status_t(const std::vector<
         if (status_t status = connectAndInit(mId, true /*incoming*/); status != OK) return status;
     }
 
-    cleanup.Disable();
+    cleanup.release();
 
     return OK;
 }

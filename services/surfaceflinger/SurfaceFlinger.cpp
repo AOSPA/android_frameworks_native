@@ -2261,7 +2261,8 @@ void SurfaceFlinger::updateLayerHistory(nsecs_t now) {
                  snapshot->changes.any(Changes::Geometry));
 
         const bool hasChanges =
-                snapshot->changes.any(Changes::FrameRate | Changes::Buffer | Changes::Animation) ||
+                snapshot->changes.any(Changes::FrameRate | Changes::Buffer | Changes::Animation |
+                                      Changes::Geometry | Changes::Visibility) ||
                 (snapshot->clientChanges & layer_state_t::eDefaultFrameRateCompatibilityChanged) !=
                         0;
 
@@ -2289,7 +2290,12 @@ void SurfaceFlinger::updateLayerHistory(nsecs_t now) {
                 .setFrameRateVote = snapshot->frameRate,
                 .frameRateSelectionPriority = snapshot->frameRateSelectionPriority,
                 .isSmallDirty = snapshot->isSmallDirty,
+                .isFrontBuffered = snapshot->isFrontBuffered(),
         };
+
+        if (snapshot->changes.any(Changes::Geometry | Changes::Visibility)) {
+            mScheduler->setLayerProperties(snapshot->sequence, layerProps);
+        }
 
         if (snapshot->clientChanges & layer_state_t::eDefaultFrameRateCompatibilityChanged) {
             mScheduler->setDefaultFrameRateCompatibility(snapshot->sequence,
@@ -2735,6 +2741,10 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
                 refreshArgs.outputs.push_back(display->getCompositionDisplay());
             }
         }
+        if (display->getId() == pacesetterId) {
+            // TODO(b/255601557) Update frameInterval per display
+            refreshArgs.frameInterval = display->refreshRateSelector().getActiveMode().fps;
+        }
     }
     mPowerAdvisor->setDisplays(displayIds);
 
@@ -2866,11 +2876,11 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
         mPowerAdvisor->reportActualWorkDuration();
     }
 
-    if (mScheduler->onPostComposition(presentTime)) {
+    if (mScheduler->onCompositionPresented(presentTime)) {
         scheduleComposite(FrameHint::kNone);
     }
 
-    postComposition(pacesetterId, frameTargeters, presentTime);
+    onCompositionPresented(pacesetterId, frameTargeters, presentTime);
 
     const bool hadGpuComposited =
             multiDisplayUnion(mCompositionCoverage).test(CompositionCoverage::Gpu);
@@ -3027,9 +3037,9 @@ ui::Rotation SurfaceFlinger::getPhysicalDisplayOrientation(DisplayId displayId,
     return ui::ROTATION_0;
 }
 
-void SurfaceFlinger::postComposition(PhysicalDisplayId pacesetterId,
-                                     const scheduler::FrameTargeters& frameTargeters,
-                                     nsecs_t presentStartTime) {
+void SurfaceFlinger::onCompositionPresented(PhysicalDisplayId pacesetterId,
+                                            const scheduler::FrameTargeters& frameTargeters,
+                                            nsecs_t presentStartTime) {
     ATRACE_CALL();
     ALOGV(__func__);
 
@@ -3123,8 +3133,9 @@ void SurfaceFlinger::postComposition(PhysicalDisplayId pacesetterId,
     mLayersWithBuffersRemoved.clear();
 
     for (const auto& layer: mLayersWithQueuedFrames) {
-        layer->onPostComposition(pacesetterDisplay.get(), pacesetterGpuCompositionDoneFenceTime,
-                                 pacesetterPresentFenceTime, compositorTiming);
+        layer->onCompositionPresented(pacesetterDisplay.get(),
+                                      pacesetterGpuCompositionDoneFenceTime,
+                                      pacesetterPresentFenceTime, compositorTiming);
         layer->releasePendingBuffer(presentTime.ns());
     }
 
@@ -4244,6 +4255,21 @@ void SurfaceFlinger::onChoreographerAttached() {
     }
 }
 
+void SurfaceFlinger::onVsyncGenerated(PhysicalDisplayId displayId, TimePoint expectedPresentTime,
+                                      const scheduler::DisplayModeData& displayModeData,
+                                      Period vsyncPeriod) {
+    const auto status =
+            getHwComposer()
+                    .notifyExpectedPresentIfRequired(displayId, vsyncPeriod, expectedPresentTime,
+                                                     displayModeData.renderRate,
+                                                     displayModeData
+                                                             .notifyExpectedPresentTimeoutOpt);
+    if (status != NO_ERROR) {
+        ALOGE("%s failed to notifyExpectedPresentHint for display %" PRId64, __func__,
+              displayId.value);
+    }
+}
+
 void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
     using namespace scheduler;
 
@@ -4282,8 +4308,12 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
 
     mScheduler = std::make_unique<Scheduler>(static_cast<ICompositor&>(*this),
                                              static_cast<ISchedulerCallback&>(*this), features,
-                                             std::move(modulatorPtr));
+                                             std::move(modulatorPtr),
+                                             static_cast<IVsyncTrackerCallback&>(*this));
     mScheduler->registerDisplay(display->getPhysicalId(), display->holdRefreshRateSelector());
+    if (FlagManager::getInstance().vrr_config()) {
+        mScheduler->setRenderRate(display->getPhysicalId(), activeMode.fps);
+    }
     mScheduler->startTimers();
 
     const auto configs = mVsyncConfiguration->getCurrentConfigs();
@@ -5147,6 +5177,7 @@ bool SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
                         .transform = layer->getTransform(),
                         .setFrameRateVote = layer->getFrameRateForLayerTree(),
                         .frameRateSelectionPriority = layer->getFrameRateSelectionPriority(),
+                        .isFrontBuffered = layer->isFrontBuffered(),
                 };
                 layer->recordLayerHistoryAnimationTx(layerProps, now);
             }
@@ -6245,7 +6276,9 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
                                 });
 
                         out << "\nLayer Hierarchy\n"
-                            << mLayerHierarchyBuilder.getHierarchy() << "\n\n";
+                            << mLayerHierarchyBuilder.getHierarchy()
+                            << "\nOffscreen Hierarchy\n"
+                            << mLayerHierarchyBuilder.getOffscreenHierarchy() << "\n\n";
                         compositionLayers = out.str();
                         dumpHwcLayersMinidump(compositionLayers);
                     }
@@ -6528,7 +6561,9 @@ void SurfaceFlinger::dumpFrontEnd(std::string& result) {
                         });
 
                 out << "\nLayer Hierarchy\n"
-                    << mLayerHierarchyBuilder.getHierarchy().dump() << "\n\n";
+                    << mLayerHierarchyBuilder.getHierarchy().dump()
+                    << "\nOffscreen Hierarchy\n"
+                    << mLayerHierarchyBuilder.getOffscreenHierarchy().dump() << "\n\n";
                 result.append(out.str());
             })
             .get();
@@ -8768,7 +8803,8 @@ status_t SurfaceFlinger::setSmallAreaDetectionThreshold(int32_t appId, float thr
 void SurfaceFlinger::enableRefreshRateOverlay(bool enable) {
     bool setByHwc = getHwComposer().hasCapability(Capability::REFRESH_RATE_CHANGED_CALLBACK_DEBUG);
     for (const auto& [id, display] : mPhysicalDisplays) {
-        if (display.snapshot().connectionType() == ui::DisplayConnectionType::Internal) {
+        if (display.snapshot().connectionType() == ui::DisplayConnectionType::Internal ||
+            FlagManager::getInstance().refresh_rate_overlay_on_external_display()) {
             if (const auto device = getDisplayDeviceLocked(id)) {
                 const auto enableOverlay = [&](const bool setByHwc) FTL_FAKE_GUARD(
                                                    kMainThreadContext) {

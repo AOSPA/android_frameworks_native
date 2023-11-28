@@ -108,7 +108,8 @@ class Scheduler : public IEventThreadCallback, android::impl::MessageQueue {
     using Impl = android::impl::MessageQueue;
 
 public:
-    Scheduler(ICompositor&, ISchedulerCallback&, FeatureFlags, sp<VsyncModulator>);
+    Scheduler(ICompositor&, ISchedulerCallback&, FeatureFlags, sp<VsyncModulator>,
+              IVsyncTrackerCallback&);
     virtual ~Scheduler();
 
     void startTimers();
@@ -243,6 +244,7 @@ public:
                             nsecs_t now, LayerHistory::LayerUpdateType) EXCLUDES(mDisplayLock);
     void setModeChangePending(bool pending);
     void setDefaultFrameRateCompatibility(int32_t id, scheduler::FrameRateCompatibility);
+    void setLayerProperties(int32_t id, const LayerProps&);
     void deregisterLayer(Layer*);
     void onLayerDestroyed(Layer*) EXCLUDES(mChoreographerLock);
 
@@ -291,8 +293,8 @@ public:
     // Notifies the scheduler about a refresh rate timeline change.
     void onNewVsyncPeriodChangeTimeline(const hal::VsyncPeriodChangeTimeline& timeline);
 
-    // Notifies the scheduler post composition. Returns if recomposite is needed.
-    bool onPostComposition(nsecs_t presentTime);
+    // Notifies the scheduler once the composition is presented. Returns if recomposite is needed.
+    bool onCompositionPresented(nsecs_t presentTime);
 
     // Notifies the scheduler when the display size has changed. Called from SF's main thread
     void onActiveDisplayAreaChanged(uint32_t displayArea);
@@ -443,6 +445,9 @@ private:
     Period getVsyncPeriod(uid_t) override EXCLUDES(mDisplayLock);
     void resync() override EXCLUDES(mDisplayLock);
 
+    std::optional<Period> getNotifyExpectedPresentTimeout(const FrameRateMode&)
+            REQUIRES(mDisplayLock);
+
     // Stores EventThread associated with a given VSyncSource, and an initial EventThreadConnection.
     struct Connection {
         sp<EventThreadConnection> connection;
@@ -475,6 +480,8 @@ private:
     float mPacesetterFrameDurationFractionToSkip GUARDED_BY(kMainThreadContext) = 0.f;
 
     ISchedulerCallback& mSchedulerCallback;
+
+    IVsyncTrackerCallback& mVsyncTrackerCallback;
 
     // mDisplayLock may be locked while under mPolicyLock.
     mutable std::mutex mPolicyLock;

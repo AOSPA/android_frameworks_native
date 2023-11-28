@@ -33,7 +33,6 @@ cc_defaults {
         "-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION",
         "-DDISABLE_DEVICE_INTEGRATION",
     ],
-    static_libs: ["libsurfaceflingerflags",],
 }
 
 cc_defaults {
