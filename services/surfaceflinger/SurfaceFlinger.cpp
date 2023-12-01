@@ -119,6 +119,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <common/FlagManager.h>
 #include <gui/LayerStatePermissions.h>
 #include <gui/SchedulingPolicy.h>
 #include <ui/DisplayIdentification.h>
@@ -135,7 +136,6 @@
 #include "DisplayHardware/VirtualDisplaySurface.h"
 #include "DisplayRenderArea.h"
 #include "Effects/Daltonizer.h"
-#include "FlagManager.h"
 #include "FpsReporter.h"
 #include "FrameTimeline/FrameTimeline.h"
 #include "FrameTracer/FrameTracer.h"
@@ -893,7 +893,7 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
         mRenderEnginePrimeCacheFuture = getRenderEngine().primeCache(shouldPrimeUltraHDR);
 
         if (setSchedFifo(true) != NO_ERROR) {
-            ALOGW("Can't set SCHED_OTHER for primeCache");
+            ALOGW("Can't set SCHED_FIFO after primeCache");
         }
     }
 
@@ -3041,7 +3041,6 @@ void SurfaceFlinger::onCompositionPresented(PhysicalDisplayId pacesetterId,
                                             const scheduler::FrameTargeters& frameTargeters,
                                             nsecs_t presentStartTime) {
     ATRACE_CALL();
-    ALOGV(__func__);
 
     ui::PhysicalDisplayMap<PhysicalDisplayId, std::shared_ptr<FenceTime>> presentFences;
     ui::PhysicalDisplayMap<PhysicalDisplayId, const sp<Fence>> gpuCompositionDoneFences;
@@ -4011,7 +4010,6 @@ void SurfaceFlinger::commitTransactionsLocked(uint32_t transactionFlags) {
                 // first frame before the display is available, we rely
                 // on WMS and DMS to provide the right information
                 // so the client can calculate the hint.
-                ALOGV("Skipping reporting transform hint update for %s", layer->getDebugName());
                 layer->skipReportingTransformHint();
             } else {
                 layer->updateTransformHint(hintDisplay->getTransformHint());
@@ -7055,8 +7053,7 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
             case 1007: // Unused.
                 return NAME_NOT_FOUND;
             case 1008: // Toggle forced GPU composition.
-                mDebugDisableHWC = data.readInt32() != 0;
-                scheduleRepaint();
+                sfdo_forceClientComposition(data.readInt32() != 0);
                 return NO_ERROR;
             case 1009: // Toggle use of transform hint.
                 mDebugDisableTransformHint = data.readInt32() != 0;
@@ -7944,7 +7941,7 @@ void SurfaceFlinger::captureDisplay(const DisplayCaptureArgs& args,
                         args.allowProtected, args.grayscale, captureListener);
 }
 
-void SurfaceFlinger::captureDisplay(DisplayId displayId,
+void SurfaceFlinger::captureDisplay(DisplayId displayId, const CaptureArgs& args,
                                     const sp<IScreenCaptureListener>& captureListener) {
     ui::LayerStack layerStack;
     wp<const DisplayDevice> displayWeak;
@@ -7963,10 +7960,23 @@ void SurfaceFlinger::captureDisplay(DisplayId displayId,
         size = display->getLayerStackSpaceRect().getSize();
     }
 
+    size.width *= args.frameScaleX;
+    size.height *= args.frameScaleY;
+
+    // We could query a real value for this but it'll be a long, long time until we support
+    // displays that need upwards of 1GB per buffer so...
+    constexpr auto kMaxTextureSize = 16384;
+    if (size.width <= 0 || size.height <= 0 || size.width >= kMaxTextureSize ||
+        size.height >= kMaxTextureSize) {
+        ALOGE("capture display resolved to invalid size %d x %d", size.width, size.height);
+        invokeScreenCaptureError(BAD_VALUE, captureListener);
+        return;
+    }
+
     RenderAreaFuture renderAreaFuture = ftl::defer([=] {
-        return DisplayRenderArea::create(displayWeak, Rect(), size, ui::Dataspace::UNKNOWN,
+        return DisplayRenderArea::create(displayWeak, Rect(), size, args.dataspace,
                                          false /* useIdentityTransform */,
-                                         false /* hintForSeamlessTransition */,
+                                         args.hintForSeamlessTransition,
                                          false /* captureSecureLayers */);
     });
 
@@ -7990,8 +8000,8 @@ void SurfaceFlinger::captureDisplay(DisplayId displayId,
     constexpr bool kAllowProtected = false;
     constexpr bool kGrayscale = false;
 
-    captureScreenCommon(std::move(renderAreaFuture), getLayerSnapshots, size,
-                        ui::PixelFormat::RGBA_8888, kAllowProtected, kGrayscale, captureListener);
+    captureScreenCommon(std::move(renderAreaFuture), getLayerSnapshots, size, args.pixelFormat,
+                        kAllowProtected, kGrayscale, captureListener);
 }
 
 void SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
@@ -9442,6 +9452,11 @@ void SurfaceFlinger::sfdo_scheduleCommit() {
     setTransactionFlags(eTransactionNeeded | eDisplayTransactionNeeded | eTraversalNeeded);
 }
 
+void SurfaceFlinger::sfdo_forceClientComposition(bool enabled) {
+    mDebugDisableHWC = enabled;
+    scheduleRepaint();
+}
+
 // gui::ISurfaceComposer
 
 binder::Status SurfaceComposerAIDL::bootFinished() {
@@ -9806,13 +9821,14 @@ binder::Status SurfaceComposerAIDL::captureDisplay(
 }
 
 binder::Status SurfaceComposerAIDL::captureDisplayById(
-        int64_t displayId, const sp<IScreenCaptureListener>& captureListener) {
+        int64_t displayId, const CaptureArgs& args,
+        const sp<IScreenCaptureListener>& captureListener) {
     // status_t status;
     IPCThreadState* ipc = IPCThreadState::self();
     const int uid = ipc->getCallingUid();
     if (uid == AID_ROOT || uid == AID_GRAPHICS || uid == AID_SYSTEM || uid == AID_SHELL) {
         std::optional<DisplayId> id = DisplayId::fromValue(static_cast<uint64_t>(displayId));
-        mFlinger->captureDisplay(*id, captureListener);
+        mFlinger->captureDisplay(*id, args, captureListener);
     } else {
         invokeScreenCaptureError(PERMISSION_DENIED, captureListener);
     }
@@ -10159,6 +10175,11 @@ binder::Status SurfaceComposerAIDL::scheduleComposite() {
 
 binder::Status SurfaceComposerAIDL::scheduleCommit() {
     mFlinger->sfdo_scheduleCommit();
+    return binder::Status::ok();
+}
+
+binder::Status SurfaceComposerAIDL::forceClientComposition(bool enabled) {
+    mFlinger->sfdo_forceClientComposition(enabled);
     return binder::Status::ok();
 }
 

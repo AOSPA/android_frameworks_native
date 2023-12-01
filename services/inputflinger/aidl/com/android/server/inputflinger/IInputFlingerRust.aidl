@@ -16,6 +16,9 @@
 
 package com.android.server.inputflinger;
 
+import com.android.server.inputflinger.IInputFilter;
+import com.android.server.inputflinger.IInputFilter.IInputFilterCallbacks;
+
 /**
  * A local AIDL interface used as a foreign function interface (ffi) to
  * communicate with the Rust component of inputflinger.
@@ -31,4 +34,7 @@ interface IInputFlingerRust {
     interface IInputFlingerRustBootstrapCallback {
         void onProvideInputFlingerRust(in IInputFlingerRust inputFlingerRust);
     }
+
+    /** Create the rust implementation of InputFilter. */
+    IInputFilter createInputFilter(IInputFilterCallbacks callbacks);
 }

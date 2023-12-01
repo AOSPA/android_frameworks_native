@@ -49,6 +49,7 @@ cc_defaults {
         "libcgrouprc",
         "libjsoncpp",
         "libcgrouprc_format",
+        "libsurfaceflinger_common",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -67,6 +68,7 @@ cc_library {
         "libqtisurfaceflingerextension_defaults",
     ],
     static_libs: [
+        "libsurfaceflinger_common",
         "libsurfaceflingerflags",
         "libqticompositionengineextension",
     ],
@@ -115,6 +117,7 @@ cc_library {
         "libgmock",
         "libcompositionengine",
         "libqticompositionengineextension",
+        "libsurfaceflinger_common_test",
         "libsurfaceflingerflags_test",
     ],
     local_include_dirs: ["include"],
@@ -151,6 +154,7 @@ cc_test {
         "libgmock",
         "libgtest",
         "libqticompositionengineextension",
+        "libsurfaceflinger_common_test",
         "libsurfaceflingerflags_test",
     ],
     // For some reason, libvulkan isn't picked up from librenderengine

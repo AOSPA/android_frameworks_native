@@ -151,6 +151,7 @@ using frontend::RoundedCornerState;
 using gui::GameMode;
 using gui::LayerMetadata;
 using gui::WindowInfo;
+using ui::Size;
 
 using PresentState = frametimeline::SurfaceFrame::PresentState;
 
@@ -185,6 +186,7 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
     mDrawingState.sequence = 0;
     mDrawingState.transform.set(0, 0);
     mDrawingState.frameNumber = 0;
+    mDrawingState.previousFrameNumber = 0;
     mDrawingState.barrierFrameNumber = 0;
     mDrawingState.producerId = 0;
     mDrawingState.barrierProducerId = 0;
@@ -2629,6 +2631,9 @@ WindowInfo Layer::fillInputInfo(const InputDisplayArgs& displayArgs) {
         }
     }
 
+    Rect bufferSize = getBufferSize(getDrawingState());
+    info.contentSize = Size(bufferSize.width(), bufferSize.height());
+
     return info;
 }
 
@@ -2969,7 +2974,6 @@ void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult,
             break;
         }
     }
-
     if (ch != nullptr) {
         ch->previousReleaseCallbackId = mPreviousReleaseCallbackId;
         ch->previousReleaseFences.emplace_back(std::move(futureFenceResult));
@@ -2977,6 +2981,10 @@ void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult,
     }
     if (mBufferInfo.mBuffer) {
         mPreviouslyPresentedLayerStacks.push_back(layerStack);
+    }
+
+    if (mDrawingState.frameNumber > 0) {
+        mDrawingState.previousFrameNumber = mDrawingState.frameNumber;
     }
 }
 
@@ -3182,6 +3190,7 @@ void Layer::releasePreviousBuffer() {
 void Layer::resetDrawingStateBufferInfo() {
     mDrawingState.producerId = 0;
     mDrawingState.frameNumber = 0;
+    mDrawingState.previousFrameNumber = 0;
     mDrawingState.releaseBufferListener = nullptr;
     mDrawingState.buffer = nullptr;
     mDrawingState.acquireFence = sp<Fence>::make(-1);
@@ -3466,6 +3475,7 @@ bool Layer::setTransactionCompletedListeners(const std::vector<sp<CallbackHandle
             // If this transaction set an acquire fence on this layer, set its acquire time
             handle->acquireTimeOrFence = mCallbackHandleAcquireTimeOrFence;
             handle->frameNumber = mDrawingState.frameNumber;
+            handle->previousFrameNumber = mDrawingState.previousFrameNumber;
 
             // Store so latched time and release fence can be set
             mDrawingState.callbackHandles.push_back(handle);
@@ -3671,7 +3681,7 @@ void Layer::gatherBufferInfo() {
             // to upsert RenderEngine's caches. Put in a special workaround to be backwards
             // compatible with old vendors, with a ticking clock.
             static const int32_t kVendorVersion =
-                    base::GetIntProperty("ro.vndk.version", __ANDROID_API_FUTURE__);
+                    base::GetIntProperty("ro.board.api_level", __ANDROID_API_FUTURE__);
             if (const auto format =
                         static_cast<aidl::android::hardware::graphics::common::PixelFormat>(
                                 mBufferInfo.mBuffer->getPixelFormat());
