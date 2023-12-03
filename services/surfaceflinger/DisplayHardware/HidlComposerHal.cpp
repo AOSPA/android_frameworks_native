@@ -31,6 +31,7 @@
 #include "HidlComposerHal.h"
 
 #include <SurfaceFlingerProperties.h>
+#include <aidl/android/hardware/graphics/common/DisplayHotplugEvent.h>
 #include <android/binder_manager.h>
 #include <composer-command-buffer/2.2/ComposerCommandBuffer.h>
 #include <hidl/HidlTransportSupport.h>
@@ -44,7 +45,7 @@
 #include <algorithm>
 #include <cinttypes>
 
-
+using aidl::android::hardware::graphics::common::DisplayHotplugEvent;
 using aidl::android::hardware::graphics::common::HdrConversionCapability;
 using aidl::android::hardware::graphics::common::HdrConversionStrategy;
 using aidl::android::hardware::graphics::composer3::Capability;
@@ -71,8 +72,13 @@ public:
     ComposerCallbackBridge(ComposerCallback& callback, bool vsyncSwitchingSupported)
           : mCallback(callback), mVsyncSwitchingSupported(vsyncSwitchingSupported) {}
 
+    // For code sharing purposes, `ComposerCallback` (implemented by SurfaceFlinger)
+    // replaced `onComposerHalHotplug` with `onComposerHalHotplugEvent` by converting
+    // from HIDL's connection into an AIDL DisplayHotplugEvent.
     Return<void> onHotplug(Display display, Connection connection) override {
-        mCallback.onComposerHalHotplug(display, connection);
+        const auto event = connection == Connection::CONNECTED ? DisplayHotplugEvent::CONNECTED
+                                                               : DisplayHotplugEvent::DISCONNECTED;
+        mCallback.onComposerHalHotplugEvent(display, event);
         return Void();
     }
 

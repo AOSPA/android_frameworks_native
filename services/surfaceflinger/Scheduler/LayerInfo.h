@@ -81,10 +81,11 @@ public:
     using RefreshRateVotes = ftl::SmallVector<LayerInfo::LayerVote, 2>;
 
     enum class FrameRateSelectionStrategy {
-        Self,
+        Propagate,
         OverrideChildren,
+        Self,
 
-        ftl_last = OverrideChildren
+        ftl_last = Self
     };
 
     // Encapsulates the frame rate specifications of the layer. This information will be used
@@ -264,8 +265,8 @@ private:
         // Clears History
         void clear();
 
-        // Adds a new refresh rate and returns true if it is consistent
-        bool add(Fps refreshRate, nsecs_t now);
+        // Adds a new refresh rate and returns valid refresh rate if it is consistent enough
+        Fps add(Fps refreshRate, nsecs_t now, const RefreshRateSelector&);
 
     private:
         friend class LayerHistoryTest;
@@ -285,13 +286,14 @@ private:
             std::string average;
         };
 
-        bool isConsistent() const;
+        Fps selectRefreshRate(const RefreshRateSelector&) const;
         HeuristicTraceTagData makeHeuristicTraceTagData() const;
 
         const std::string mName;
         mutable std::optional<HeuristicTraceTagData> mHeuristicTraceTagData;
         std::deque<RefreshRateData> mRefreshRates;
         static constexpr float MARGIN_CONSISTENT_FPS = 1.0;
+        static constexpr float MARGIN_CONSISTENT_FPS_FOR_CLOSEST_REFRESH_RATE = 5.0;
     };
 
     // Represents whether we were able to determine either layer is frequent or infrequent

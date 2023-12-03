@@ -365,7 +365,7 @@ LayerSnapshot LayerSnapshotBuilder::getRootSnapshot() {
     return snapshot;
 }
 
-LayerSnapshotBuilder::LayerSnapshotBuilder() : mRootSnapshot(getRootSnapshot()) {}
+LayerSnapshotBuilder::LayerSnapshotBuilder() {}
 
 LayerSnapshotBuilder::LayerSnapshotBuilder(Args args) : LayerSnapshotBuilder() {
     args.forceUpdate = ForceUpdateFlags::ALL;
@@ -417,19 +417,20 @@ bool LayerSnapshotBuilder::tryFastUpdate(const Args& args) {
 
 void LayerSnapshotBuilder::updateSnapshots(const Args& args) {
     ATRACE_NAME("UpdateSnapshots");
+    LayerSnapshot rootSnapshot = args.rootSnapshot;
     if (args.parentCrop) {
-        mRootSnapshot.geomLayerBounds = *args.parentCrop;
+        rootSnapshot.geomLayerBounds = *args.parentCrop;
     } else if (args.forceUpdate == ForceUpdateFlags::ALL || args.displayChanges) {
-        mRootSnapshot.geomLayerBounds = getMaxDisplayBounds(args.displays);
+        rootSnapshot.geomLayerBounds = getMaxDisplayBounds(args.displays);
     }
     if (args.displayChanges) {
-        mRootSnapshot.changes = RequestedLayerState::Changes::AffectsChildren |
+        rootSnapshot.changes = RequestedLayerState::Changes::AffectsChildren |
                 RequestedLayerState::Changes::Geometry;
     }
     if (args.forceUpdate == ForceUpdateFlags::HIERARCHY) {
-        mRootSnapshot.changes |=
+        rootSnapshot.changes |=
                 RequestedLayerState::Changes::Hierarchy | RequestedLayerState::Changes::Visibility;
-        mRootSnapshot.clientChanges |= layer_state_t::eReparent;
+        rootSnapshot.clientChanges |= layer_state_t::eReparent;
     }
 
     for (auto& snapshot : mSnapshots) {
@@ -444,13 +445,13 @@ void LayerSnapshotBuilder::updateSnapshots(const Args& args) {
         // multiple children.
         LayerHierarchy::ScopedAddToTraversalPath addChildToPath(root, args.root.getLayer()->id,
                                                                 LayerHierarchy::Variant::Attached);
-        updateSnapshotsInHierarchy(args, args.root, root, mRootSnapshot, /*depth=*/0);
+        updateSnapshotsInHierarchy(args, args.root, root, rootSnapshot, /*depth=*/0);
     } else {
         for (auto& [childHierarchy, variant] : args.root.mChildren) {
             LayerHierarchy::ScopedAddToTraversalPath addChildToPath(root,
                                                                     childHierarchy->getLayer()->id,
                                                                     variant);
-            updateSnapshotsInHierarchy(args, *childHierarchy, root, mRootSnapshot, /*depth=*/0);
+            updateSnapshotsInHierarchy(args, *childHierarchy, root, rootSnapshot, /*depth=*/0);
         }
     }
 
@@ -459,7 +460,6 @@ void LayerSnapshotBuilder::updateSnapshots(const Args& args) {
     updateTouchableRegionCrop(args);
 
     const bool hasUnreachableSnapshots = sortSnapshotsByZ(args);
-    clearChanges(mRootSnapshot);
 
     // Destroy unreachable snapshots for clone layers. And destroy snapshots for non-clone
     // layers if the layer have been destroyed.
@@ -814,9 +814,12 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
                 RequestedLayerState::Changes::Hierarchy) ||
         snapshot.changes.any(RequestedLayerState::Changes::FrameRate |
                              RequestedLayerState::Changes::Hierarchy)) {
-        bool shouldOverrideChildren = parentSnapshot.frameRateSelectionStrategy ==
+        const bool shouldOverrideChildren = parentSnapshot.frameRateSelectionStrategy ==
                 scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren;
-        if (!requested.requestedFrameRate.isValid() || shouldOverrideChildren) {
+        const bool propagationAllowed = parentSnapshot.frameRateSelectionStrategy !=
+                scheduler::LayerInfo::FrameRateSelectionStrategy::Self;
+        if ((!requested.requestedFrameRate.isValid() && propagationAllowed) ||
+            shouldOverrideChildren) {
             snapshot.inheritedFrameRate = parentSnapshot.inheritedFrameRate;
         } else {
             snapshot.inheritedFrameRate = requested.requestedFrameRate;
@@ -828,12 +831,15 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
     }
 
     if (forceUpdate || snapshot.clientChanges & layer_state_t::eFrameRateSelectionStrategyChanged) {
-        const auto strategy = scheduler::LayerInfo::convertFrameRateSelectionStrategy(
-                requested.frameRateSelectionStrategy);
-        snapshot.frameRateSelectionStrategy =
-                strategy == scheduler::LayerInfo::FrameRateSelectionStrategy::Self
-                ? parentSnapshot.frameRateSelectionStrategy
-                : strategy;
+        if (parentSnapshot.frameRateSelectionStrategy ==
+            scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren) {
+            snapshot.frameRateSelectionStrategy =
+                    scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren;
+        } else {
+            const auto strategy = scheduler::LayerInfo::convertFrameRateSelectionStrategy(
+                    requested.frameRateSelectionStrategy);
+            snapshot.frameRateSelectionStrategy = strategy;
+        }
     }
 
     if (forceUpdate || snapshot.clientChanges & layer_state_t::eFrameRateSelectionPriority) {
