@@ -1614,7 +1614,10 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwc
 }
 
 uint32_t QtiSurfaceFlingerExtension::qtiGetLayerClass(std::string mName) {
-    if (mQtiLayerExt) {
+    bool mUseLayerExt =
+            mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kLayerExtension);
+
+    if (mUseLayerExt && mQtiLayerExt) {
         uint32_t layerClass = static_cast<uint32_t>(mQtiLayerExt->GetLayerClass(mName));
         return layerClass;
     }
