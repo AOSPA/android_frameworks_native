@@ -861,10 +861,6 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
 
     enableLatchUnsignaledConfig = getLatchUnsignaledConfig();
 
-    if (base::GetBoolProperty("debug.sf.enable_hwc_vds"s, false)) {
-        enableHalVirtualDisplays(true);
-    }
-
     // Process hotplug for displays connected at boot.
     LOG_ALWAYS_FATAL_IF(!configureLocked(),
                         "Initial display configuration failed: HWC did not hotplug");
@@ -938,6 +934,11 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
                                         mVsyncConfiguration.get(), getHwComposer().getComposer());
    surfaceflingerextension::QtiExtensionContext::instance().setCompositionEngine(
             &getCompositionEngine());
+
+    if (base::GetBoolProperty("debug.sf.enable_hwc_vds"s, false)) {
+        enableHalVirtualDisplays(true);
+    }
+
     mQtiSFExtnIntf->qtiStartUnifiedDraw();
     /* QTI_END */
     ALOGV("Done initializing");
