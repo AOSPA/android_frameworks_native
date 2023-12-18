@@ -584,7 +584,7 @@ void QtiSurfaceFlingerExtension::qtiNotifyDisplayUpdateImminent() {
 }
 
 void QtiSurfaceFlingerExtension::qtiSetContentFps(uint32_t contentFps) {
-    if (mQtiFlinger->mBootFinished && mQtiDisplayExtnIntf && !mQtiFlinger->mSetActiveModePending &&
+    if (mQtiFlinger->mBootFinished && mQtiDisplayExtnIntf &&
         contentFps != mQtiCurrentFps) {
         mQtiSentInitialFps = mQtiDisplayExtnIntf->SetContentFps(contentFps) == 0;
 
