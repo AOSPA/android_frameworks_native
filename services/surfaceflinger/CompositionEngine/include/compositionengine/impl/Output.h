@@ -150,7 +150,8 @@ protected:
     void applyCompositionStrategy(const std::optional<DeviceRequestedChanges>&) override{};
     bool getSkipColorTransform() const override;
     compositionengine::Output::FrameFences presentFrame() override;
-    virtual renderengine::DisplaySettings generateClientCompositionDisplaySettings() const;
+    virtual renderengine::DisplaySettings generateClientCompositionDisplaySettings(
+            const std::shared_ptr<renderengine::ExternalTexture>& buffer) const;
     std::vector<LayerFE::LayerSettings> generateClientCompositionRequests(
             bool supportsProtectedContent, ui::Dataspace outputDataspace,
             std::vector<LayerFE*>& outLayerFEs) override;
@@ -185,6 +186,7 @@ private:
     compositionengine::Output::ColorProfile pickColorProfile(
             const compositionengine::CompositionRefreshArgs&) const;
     void updateHwcAsyncWorker();
+    float getHdrSdrRatio(const std::shared_ptr<renderengine::ExternalTexture>& buffer) const;
 
     std::string mName;
     std::string mNamePlusId;

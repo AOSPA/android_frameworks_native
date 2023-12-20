@@ -202,35 +202,19 @@ public:
      * Display mode management.
      */
 
-    // TODO(b/241285876): Replace ActiveModeInfo and DisplayModeEvent with DisplayModeRequest.
-    struct ActiveModeInfo {
-        using Event = scheduler::DisplayModeEvent;
-
-        ActiveModeInfo() = default;
-        ActiveModeInfo(scheduler::FrameRateMode mode, Event event)
-              : modeOpt(std::move(mode)), event(event) {}
-
-        explicit ActiveModeInfo(display::DisplayModeRequest&& request)
-              : ActiveModeInfo(std::move(request.mode),
-                               request.emitEvent ? Event::Changed : Event::None) {}
-
-        ftl::Optional<scheduler::FrameRateMode> modeOpt;
-        Event event = Event::None;
-
-        bool operator!=(const ActiveModeInfo& other) const {
-            return modeOpt != other.modeOpt || event != other.event;
-        }
-    };
-
     enum class DesiredModeAction { None, InitiateDisplayModeSwitch, InitiateRenderRateSwitch };
 
-    DesiredModeAction setDesiredMode(const ActiveModeInfo&, bool force = false)
+    DesiredModeAction setDesiredMode(display::DisplayModeRequest&&, bool force = false)
             EXCLUDES(mDesiredModeLock);
 
-    ftl::Optional<ActiveModeInfo> getDesiredMode() const EXCLUDES(mDesiredModeLock);
+    using DisplayModeRequestOpt = ftl::Optional<display::DisplayModeRequest>;
+
+    DisplayModeRequestOpt getDesiredMode() const EXCLUDES(mDesiredModeLock);
     void clearDesiredMode() EXCLUDES(mDesiredModeLock);
 
-    ActiveModeInfo getPendingMode() const REQUIRES(kMainThreadContext) { return mPendingMode; }
+    DisplayModeRequestOpt getPendingMode() const REQUIRES(kMainThreadContext) {
+        return mPendingModeOpt;
+    }
     bool isModeSetPending() const REQUIRES(kMainThreadContext) { return mIsModeSetPending; }
 
     scheduler::FrameRateMode getActiveMode() const REQUIRES(kMainThreadContext) {
@@ -239,7 +223,7 @@ public:
 
     void setActiveMode(DisplayModeId, Fps vsyncRate, Fps renderFps);
 
-    bool initiateModeChange(const ActiveModeInfo&, const hal::VsyncPeriodChangeConstraints&,
+    bool initiateModeChange(display::DisplayModeRequest&&, const hal::VsyncPeriodChangeConstraints&,
                             hal::VsyncPeriodChangeTimeline& outTimeline)
             REQUIRES(kMainThreadContext);
 
@@ -338,8 +322,8 @@ private:
     float mHdrSdrRatio = 1.0f;
 
     mutable std::mutex mDesiredModeLock;
-    ActiveModeInfo mDesiredMode GUARDED_BY(mDesiredModeLock);
-    TracedOrdinal<bool> mDesiredModeChanged GUARDED_BY(mDesiredModeLock);
+    DisplayModeRequestOpt mDesiredModeOpt GUARDED_BY(mDesiredModeLock);
+    TracedOrdinal<bool> mHasDesiredModeTrace GUARDED_BY(mDesiredModeLock);
 
     /* QTI_BEGIN */
     mutable std::mutex mQtiModeLock;
@@ -347,7 +331,7 @@ private:
     mutable nsecs_t mQtiVsyncPeriod = 0;
     bool mQtiIsPowerModeOverride = false;
     /* QTI_END */
-    ActiveModeInfo mPendingMode GUARDED_BY(kMainThreadContext);
+    DisplayModeRequestOpt mPendingModeOpt GUARDED_BY(kMainThreadContext);
     bool mIsModeSetPending GUARDED_BY(kMainThreadContext) = false;
 };
 
@@ -376,6 +360,7 @@ struct DisplayDeviceState {
     uint32_t height = 0;
     std::string displayName;
     bool isSecure = false;
+    bool isProtected = false;
     // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
     Fps requestedRefreshRate;
 
@@ -397,6 +382,7 @@ struct DisplayDeviceCreationArgs {
 
     int32_t sequenceId{0};
     bool isSecure{false};
+    bool isProtected{false};
     sp<ANativeWindow> nativeWindow;
     sp<compositionengine::DisplaySurface> displaySurface;
     ui::Rotation physicalOrientation{ui::ROTATION_0};

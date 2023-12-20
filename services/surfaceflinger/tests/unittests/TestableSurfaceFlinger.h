@@ -493,12 +493,13 @@ public:
     auto renderScreenImpl(std::shared_ptr<const RenderArea> renderArea,
                           SurfaceFlinger::GetLayerSnapshotsFunction traverseLayers,
                           const std::shared_ptr<renderengine::ExternalTexture>& buffer,
-                          bool forSystem, bool regionSampling) {
+                          bool regionSampling) {
         ScreenCaptureResults captureResults;
         return FTL_FAKE_GUARD(kMainThreadContext,
                               mFlinger->renderScreenImpl(std::move(renderArea), traverseLayers,
-                                                         buffer, forSystem, regionSampling,
-                                                         false /* grayscale */, captureResults));
+                                                         buffer, regionSampling,
+                                                         false /* grayscale */,
+                                                         false /* isProtected */, captureResults));
     }
 
     auto traverseLayersInLayerStack(ui::LayerStack layerStack, int32_t uid,
