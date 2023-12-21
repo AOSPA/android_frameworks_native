@@ -37,6 +37,7 @@ cc_defaults {
         "libSurfaceFlingerProp",
         "libui",
         "libutils",
+        "server_configurable_flags",
     ],
     static_libs: [
         "liblayers_proto",
@@ -61,17 +62,8 @@ cc_defaults {
     ],
 }
 
-cc_library {
-    name: "libcompositionengine",
-    defaults: [
-        "libcompositionengine_defaults",
-        "libqtisurfaceflingerextension_defaults",
-    ],
-    static_libs: [
-        "libsurfaceflinger_common",
-        "libsurfaceflingerflags",
-        "libqticompositionengineextension",
-    ],
+filegroup {
+    name: "libcompositionengine_sources",
     srcs: [
         "src/planner/CachedSet.cpp",
         "src/planner/Flattener.cpp",
@@ -93,6 +85,22 @@ cc_library {
         "src/OutputLayer.cpp",
         "src/OutputLayerCompositionState.cpp",
         "src/RenderSurface.cpp",
+    ],
+}
+
+cc_library {
+    name: "libcompositionengine",
+    defaults: [
+        "libcompositionengine_defaults",
+        "libqtisurfaceflingerextension_defaults",
+    ],
+    static_libs: [
+        "libsurfaceflinger_common",
+        "libsurfaceflingerflags",
+        "libqticompositionengineextension",
+    ],
+    srcs: [
+        ":libcompositionengine_sources",
     ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],

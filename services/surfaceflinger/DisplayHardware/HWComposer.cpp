@@ -485,7 +485,7 @@ void HWComposer::setVsyncEnabled(PhysicalDisplayId displayId, hal::Vsync enabled
 
 status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
                                      const sp<Fence>& acquireFence, const sp<GraphicBuffer>& target,
-                                     ui::Dataspace dataspace) {
+                                     ui::Dataspace dataspace, float hdrSdrRatio) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
 
     /* QTI_BEGIN */
@@ -497,7 +497,7 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
 
     ALOGV("%s for display %s", __FUNCTION__, to_string(displayId).c_str());
     auto& hwcDisplay = mDisplayData[displayId].hwcDisplay;
-    auto error = hwcDisplay->setClientTarget(slot, target, acquireFence, dataspace);
+    auto error = hwcDisplay->setClientTarget(slot, target, acquireFence, dataspace, hdrSdrRatio);
     RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
     return NO_ERROR;
 }
