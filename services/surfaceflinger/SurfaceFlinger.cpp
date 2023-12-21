@@ -2387,15 +2387,15 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     /* QTI_END */
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiOnVsync(expectedVsyncTime.ns());
+    //mQtiSFExtnIntf->qtiOnVsync(expectedVsyncTime.ns());
     /* QTI_END */
 
     const VsyncId vsyncId = pacesetterFrameTarget.vsyncId();
     ATRACE_NAME(ftl::Concat(__func__, ' ', ftl::to_underlying(vsyncId)).c_str());
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiUpdateFrameScheduler();
-    mQtiSFExtnIntf->qtiSyncToDisplayHardware();
+    //mQtiSFExtnIntf->qtiUpdateFrameScheduler();
+    //mQtiSFExtnIntf->qtiSyncToDisplayHardware();
     // TODO(rmedel): Handle locking for early wake up
     mQtiSFExtnIntf->qtiResetEarlyWakeUp();
     /* QTI_END */

@@ -65,7 +65,7 @@ public:
     /*
      * Methods that call FrameScheduler APIs.
      */
-    void qtiUpdateFrameScheduler() override;
+    //void qtiUpdateFrameScheduler() override;
 
     /*
      * Methods that call the IDisplayConfig APIs.
@@ -101,7 +101,7 @@ public:
     void qtiDestroySmomoInstance(const sp<DisplayDevice>& display) override;
     void qtiSetRefreshRates(PhysicalDisplayId displayId) override;
     void qtiSetRefreshRateTo(int32_t refreshRate) override;
-    void qtiSyncToDisplayHardware() override;
+    //void qtiSyncToDisplayHardware() override;
     void qtiUpdateSmomoState() override;
     void qtiSetDisplayAnimating() override;
     void qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime, bool isAutoTimestamp,

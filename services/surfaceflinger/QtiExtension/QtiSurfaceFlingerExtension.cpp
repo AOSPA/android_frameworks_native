@@ -674,6 +674,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
 /*
  * Methods that call FrameScheduler APIs.
  */
+/*
 void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() {
     if (mQtiFrameSchedulerExtnIntf == nullptr) {
         return;
@@ -705,6 +706,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() {
         }
     }
 }
+*/
 
 /*
  * Methods that call the IDisplayConfig APIs.
@@ -1358,6 +1360,7 @@ void QtiSurfaceFlingerExtension::qtiSetRefreshRateTo(int32_t refreshRate) {
     return;
 }
 
+/*
 void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() {
     ATRACE_CALL();
 
@@ -1375,6 +1378,7 @@ void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() {
         ALOGV("needResync = %d, timestamp = %" PRId64, needResync, timestamp);
     }
 }
+*/
 
 void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     ATRACE_NAME("SmoMoUpdateState");
