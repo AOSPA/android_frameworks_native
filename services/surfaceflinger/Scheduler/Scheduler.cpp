@@ -636,6 +636,7 @@ bool Scheduler::addResyncSample(PhysicalDisplayId id, nsecs_t timestamp,
 }
 
 void Scheduler::addPresentFence(PhysicalDisplayId id, std::shared_ptr<FenceTime> fence) {
+    ATRACE_NAME(ftl::Concat(__func__, ' ', id.value).c_str());
     const auto scheduleOpt =
             (ftl::FakeGuard(mDisplayLock), mDisplays.get(id)).and_then([](const Display& display) {
                 return display.powerMode == hal::PowerMode::OFF
@@ -646,7 +647,8 @@ void Scheduler::addPresentFence(PhysicalDisplayId id, std::shared_ptr<FenceTime>
     if (!scheduleOpt) return;
     const auto& schedule = scheduleOpt->get();
 
-    if (const bool needMoreSignals = schedule->getController().addPresentFence(std::move(fence))) {
+    const bool needMoreSignals = schedule->getController().addPresentFence(std::move(fence));
+    if (needMoreSignals) {
         schedule->enableHardwareVsync();
     } else {
         constexpr bool kDisallow = false;
@@ -1240,12 +1242,27 @@ void Scheduler::onActiveDisplayAreaChanged(uint32_t displayArea) {
     mLayerHistory.setDisplayArea(displayArea);
 }
 
-void Scheduler::setGameModeRefreshRateForUid(FrameRateOverride frameRateOverride) {
+void Scheduler::setGameModeFrameRateForUid(FrameRateOverride frameRateOverride) {
     if (frameRateOverride.frameRateHz > 0.f && frameRateOverride.frameRateHz < 1.f) {
         return;
     }
 
-    mFrameRateOverrideMappings.setGameModeRefreshRateForUid(frameRateOverride);
+    if (FlagManager::getInstance().game_default_frame_rate()) {
+        // update the frame rate override mapping in LayerHistory
+        mLayerHistory.updateGameModeFrameRateOverride(frameRateOverride);
+    } else {
+        mFrameRateOverrideMappings.setGameModeRefreshRateForUid(frameRateOverride);
+    }
+}
+
+void Scheduler::setGameDefaultFrameRateForUid(FrameRateOverride frameRateOverride) {
+    if (!FlagManager::getInstance().game_default_frame_rate() ||
+        (frameRateOverride.frameRateHz > 0.f && frameRateOverride.frameRateHz < 1.f)) {
+        return;
+    }
+
+    // update the frame rate override mapping in LayerHistory
+    mLayerHistory.updateGameDefaultFrameRateOverride(frameRateOverride);
 }
 
 void Scheduler::setPreferredRefreshRateForUid(FrameRateOverride frameRateOverride) {

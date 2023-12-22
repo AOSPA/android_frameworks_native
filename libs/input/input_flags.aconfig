@@ -76,3 +76,17 @@ flag {
   description: "Enable input filter rust implementation"
   bug: "294546335"
 }
+
+flag {
+  name: "override_key_behavior_permission_apis"
+  namespace: "input"
+  description: "enable override key behavior permission APIs"
+  bug: "309018874"
+}
+
+flag {
+  name: "remove_pointer_event_tracking_in_wm"
+  namespace: "input"
+  description: "Remove pointer event tracking in WM after the Pointer Icon Refactor"
+  bug: "315321016"
+}

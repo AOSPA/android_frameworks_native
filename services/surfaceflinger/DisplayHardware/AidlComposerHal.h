@@ -79,7 +79,7 @@ public:
     ~AidlComposer() override;
 
     bool isSupported(OptionalFeature) const;
-    bool getDisplayConfigurationsSupported() const;
+    bool isVrrSupported() const;
 
     std::vector<aidl::android::hardware::graphics::composer3::Capability> getCapabilities()
             override;
@@ -279,7 +279,7 @@ private:
     void removeDisplay(Display) EXCLUDES(mMutex);
     void addReader(Display) REQUIRES(mMutex);
     void removeReader(Display) REQUIRES(mMutex);
-
+    bool getLayerLifecycleBatchCommand();
     bool hasMultiThreadedPresentSupport(Display);
 
     // 64KiB minus a small space for metadata such as read/write pointers
@@ -311,6 +311,8 @@ private:
     ftl::SharedMutex mMutex;
 
     int32_t mComposerInterfaceVersion = 1;
+    bool mEnableLayerCommandBatchingFlag = false;
+    std::atomic<int64_t> mLayerID = 1;
 
     // Buffer slots for layers are cleared by setting the slot buffer to this buffer.
     sp<GraphicBuffer> mClearSlotBuffer;
