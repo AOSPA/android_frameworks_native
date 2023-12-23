@@ -102,6 +102,10 @@ bool Display::isSecure() const {
     return getState().isSecure;
 }
 
+void Display::setSecure(bool secure) {
+    editState().isSecure = secure;
+}
+
 bool Display::isVirtual() const {
     return VirtualDisplayId::tryCast(mId).has_value();
 }
@@ -296,7 +300,6 @@ bool Display::chooseCompositionStrategy(
     // QTI_END
 
     // Get any composition changes requested by the HWC device, and apply them.
-    std::optional<android::HWComposer::DeviceRequestedChanges> changes;
     auto& hwc = getCompositionEngine().getHwComposer();
     const bool requiresClientComposition = anyLayersRequireClientComposition();
 
