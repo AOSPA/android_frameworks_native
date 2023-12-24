@@ -427,7 +427,6 @@ cc_defaults {
         "libhidlbase",
         "liblog",
         "libnativewindow",
-        "libselinux",
         "libsync",
         "libui",
         "libutils",
