@@ -3462,27 +3462,40 @@ void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connectio
 
                 dispatchEntry->resolvedFlags = resolvedFlags;
                 if (resolvedAction != motionEntry.action) {
+                    std::optional<std::vector<PointerProperties>> usingProperties;
+                    std::optional<std::vector<PointerCoords>> usingCoords;
+                    if (resolvedAction == AMOTION_EVENT_ACTION_HOVER_EXIT ||
+                        resolvedAction == AMOTION_EVENT_ACTION_CANCEL) {
+                        // This is a HOVER_EXIT or an ACTION_CANCEL event that was synthesized by
+                        // the dispatcher, and therefore the coordinates of this event are currently
+                        // incorrect. These events should use the coordinates of the last dispatched
+                        // ACTION_MOVE or HOVER_MOVE. We need to query InputState to get this data.
+                        const bool hovering = resolvedAction == AMOTION_EVENT_ACTION_HOVER_EXIT;
+                        std::optional<std::pair<std::vector<PointerProperties>,
+                                                std::vector<PointerCoords>>>
+                                pointerInfo =
+                                        connection->inputState.getPointersOfLastEvent(motionEntry,
+                                                                                      hovering);
+                        if (pointerInfo) {
+                            usingProperties = pointerInfo->first;
+                            usingCoords = pointerInfo->second;
+                        }
+                    }
                     // Generate a new MotionEntry with a new eventId using the resolved action and
                     // flags.
-                    resolvedMotion =
-                            std::make_shared<MotionEntry>(mIdGenerator.nextId(),
-                                                          motionEntry.injectionState,
-                                                          motionEntry.eventTime,
-                                                          motionEntry.deviceId, motionEntry.source,
-                                                          motionEntry.displayId,
-                                                          motionEntry.policyFlags, resolvedAction,
-                                                          motionEntry.actionButton, resolvedFlags,
-                                                          motionEntry.metaState,
-                                                          motionEntry.buttonState,
-                                                          motionEntry.classification,
-                                                          motionEntry.edgeFlags,
-                                                          motionEntry.xPrecision,
-                                                          motionEntry.yPrecision,
-                                                          motionEntry.xCursorPosition,
-                                                          motionEntry.yCursorPosition,
-                                                          motionEntry.downTime,
-                                                          motionEntry.pointerProperties,
-                                                          motionEntry.pointerCoords);
+                    resolvedMotion = std::make_shared<
+                            MotionEntry>(mIdGenerator.nextId(), motionEntry.injectionState,
+                                         motionEntry.eventTime, motionEntry.deviceId,
+                                         motionEntry.source, motionEntry.displayId,
+                                         motionEntry.policyFlags, resolvedAction,
+                                         motionEntry.actionButton, resolvedFlags,
+                                         motionEntry.metaState, motionEntry.buttonState,
+                                         motionEntry.classification, motionEntry.edgeFlags,
+                                         motionEntry.xPrecision, motionEntry.yPrecision,
+                                         motionEntry.xCursorPosition, motionEntry.yCursorPosition,
+                                         motionEntry.downTime,
+                                         usingProperties.value_or(motionEntry.pointerProperties),
+                                         usingCoords.value_or(motionEntry.pointerCoords));
                     if (ATRACE_ENABLED()) {
                         std::string message = StringPrintf("Transmute MotionEvent(id=0x%" PRIx32
                                                            ") to MotionEvent(id=0x%" PRIx32 ").",
@@ -4509,7 +4522,8 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
     policyFlags |= POLICY_FLAG_TRUSTED;
 
     android::base::Timer t;
-    mPolicy.interceptMotionBeforeQueueing(args.displayId, args.eventTime, policyFlags);
+    mPolicy.interceptMotionBeforeQueueing(args.displayId, args.source, args.action, args.eventTime,
+                                          policyFlags);
     if (t.duration() > SLOW_INTERCEPTION_THRESHOLD) {
         ALOGW("Excessive delay in interceptMotionBeforeQueueing; took %s ms",
               std::to_string(t.duration().count()).c_str());
@@ -4770,7 +4784,9 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
             if (!(policyFlags & POLICY_FLAG_FILTERED)) {
                 nsecs_t eventTime = motionEvent.getEventTime();
                 android::base::Timer t;
-                mPolicy.interceptMotionBeforeQueueing(displayId, eventTime, /*byref*/ policyFlags);
+                mPolicy.interceptMotionBeforeQueueing(displayId, motionEvent.getSource(),
+                                                      motionEvent.getAction(), eventTime,
+                                                      /*byref*/ policyFlags);
                 if (t.duration() > SLOW_INTERCEPTION_THRESHOLD) {
                     ALOGW("Excessive delay in interceptMotionBeforeQueueing; took %s ms",
                           std::to_string(t.duration().count()).c_str());
