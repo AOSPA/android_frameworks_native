@@ -4341,7 +4341,7 @@ void SurfaceFlinger::onVsyncGenerated(TimePoint expectedPresentTime,
         const auto notifyExpectedPresentConfig =
                 modePtr->getVrrConfig()->notifyExpectedPresentConfig;
         if (!notifyExpectedPresentConfig) return std::nullopt;
-        return Period::fromNs(notifyExpectedPresentConfig->notifyExpectedPresentTimeoutNs);
+        return Period::fromNs(notifyExpectedPresentConfig->timeoutNs);
     }();
 
     notifyExpectedPresentIfRequired(modePtr->getPhysicalDisplayId(), vsyncPeriod,

@@ -503,6 +503,7 @@ public:
 private:
     // For unit tests
     friend TestableSurfaceFlinger;
+    friend HWComposerTest;
 
     /* QTI_BEGIN */
     friend class android::surfaceflingerextension::QtiHWComposerExtension;
@@ -558,6 +559,7 @@ private:
 
     const size_t mMaxVirtualDisplayDimension;
     const bool mUpdateDeviceProductInfoOnHotplugReconnect;
+    bool mEnableVrrTimeout;
 };
 
 } // namespace impl
