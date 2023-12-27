@@ -25,7 +25,6 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <variant>
 
 #include <android-base/thread_annotations.h>
 #include <android/native_window.h>
@@ -212,11 +211,12 @@ public:
     using DisplayModeRequestOpt = ftl::Optional<display::DisplayModeRequest>;
 
     DisplayModeRequestOpt getDesiredMode() const EXCLUDES(mDesiredModeLock);
-    DisplayModeRequestOpt takeDesiredMode() EXCLUDES(mDesiredModeLock);
+    void clearDesiredMode() EXCLUDES(mDesiredModeLock);
 
-    bool isModeSetPending() const REQUIRES(kMainThreadContext) {
-        return mPendingModeOpt.has_value();
+    DisplayModeRequestOpt getPendingMode() const REQUIRES(kMainThreadContext) {
+        return mPendingModeOpt;
     }
+    bool isModeSetPending() const REQUIRES(kMainThreadContext) { return mIsModeSetPending; }
 
     scheduler::FrameRateMode getActiveMode() const REQUIRES(kMainThreadContext) {
         return mRefreshRateSelector->getActiveMode();
@@ -228,25 +228,8 @@ public:
                             hal::VsyncPeriodChangeTimeline& outTimeline)
             REQUIRES(kMainThreadContext);
 
-    struct NoModeChange {
-        const char* reason;
-    };
-
-    struct ResolutionChange {
-        display::DisplayModeRequest activeMode;
-    };
-
-    struct RefreshRateChange {
-        display::DisplayModeRequest activeMode;
-    };
-
-    using ModeChange = std::variant<NoModeChange, ResolutionChange, RefreshRateChange>;
-
-    // Clears the pending DisplayModeRequest, and returns the ModeChange that occurred. If it was a
-    // RefreshRateChange, the pending mode becomes the active mode. If it was a ResolutionChange,
-    // the caller is responsible for resizing the framebuffer to match the active resolution by
-    // recreating the DisplayDevice.
-    ModeChange finalizeModeChange() REQUIRES(kMainThreadContext);
+    void finalizeModeChange(DisplayModeId, Fps vsyncRate, Fps renderFps)
+            REQUIRES(kMainThreadContext);
 
     scheduler::RefreshRateSelector& refreshRateSelector() const { return *mRefreshRateSelector; }
 
@@ -289,8 +272,6 @@ public:
     /* QTI_END */
 
 private:
-    friend class TestableSurfaceFlinger;
-
     template <size_t N>
     inline std::string concatId(const char (&str)[N]) const {
         return std::string(ftl::Concat(str, ' ', getId().value).str());
@@ -341,10 +322,6 @@ private:
     // This parameter is only used for hdr/sdr ratio overlay
     float mHdrSdrRatio = 1.0f;
 
-    // A DisplayModeRequest flows through three states: desired, pending, and active. Requests
-    // within a frame are merged into a single desired request. Unless cleared, the request is
-    // relayed to HWC on the next frame, and becomes pending. The mode becomes active once HWC
-    // signals the present fence to confirm the mode set.
     mutable std::mutex mDesiredModeLock;
     DisplayModeRequestOpt mDesiredModeOpt GUARDED_BY(mDesiredModeLock);
     TracedOrdinal<bool> mHasDesiredModeTrace GUARDED_BY(mDesiredModeLock);
@@ -356,6 +333,7 @@ private:
     bool mQtiIsPowerModeOverride = false;
     /* QTI_END */
     DisplayModeRequestOpt mPendingModeOpt GUARDED_BY(kMainThreadContext);
+    bool mIsModeSetPending GUARDED_BY(kMainThreadContext) = false;
 };
 
 struct DisplayDeviceState {
