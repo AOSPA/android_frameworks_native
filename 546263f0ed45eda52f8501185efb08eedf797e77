@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "c3d486aa_2abafa64",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000012
+      },
+      "writtenOn": "2023-12-28T00:16:44Z",
+      "side": 1,
+      "message": "is ro.sf used by anything else? thinking maybe we should use debug.sf to be consistent and to make sure SELinux rules apply.",
+      "revId": "546263f0ed45eda52f8501185efb08eedf797e77",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
