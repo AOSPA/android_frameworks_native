@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "a0a4332d_8f53a5f1",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000012
+      },
+      "writtenOn": "2023-12-30T15:59:41Z",
+      "side": 1,
+      "message": "boots, seems to improve QS fling and scrolling",
+      "revId": "1f6bd698bab078a7524ae51b049ab3fa2a0595b0",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
