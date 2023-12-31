@@ -289,6 +289,10 @@ private:
     const wp<IBinder> mDisplayToken;
     const int32_t mSequenceId;
 
+    /* QTI_BEGIN */
+    bool mUseFbScaling = false;
+    /* QTI_END */
+
     const std::shared_ptr<compositionengine::Display> mCompositionDisplay;
 
     std::string mDisplayName;

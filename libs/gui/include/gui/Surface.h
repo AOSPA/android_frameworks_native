@@ -33,7 +33,17 @@
 #include <shared_mutex>
 #include <unordered_set>
 
+/* QTI_BEGIN */
+#include "../../QtiExtension/QtiSurfaceExtension.h"
+/* QTI_END */
+
 namespace android {
+
+/* QTI_BEGIN */
+namespace libguiextension {
+class QtiSurfaceExtension;
+};
+/* QTI_END */
 
 namespace gui {
 class ISurfaceComposer;
@@ -227,6 +237,11 @@ private:
     // can't be copied
     Surface& operator = (const Surface& rhs);
     Surface(const Surface& rhs);
+
+    /* QTI_BEGIN */
+    friend class libguiextension::QtiSurfaceExtension;
+    libguiextension::QtiSurfaceExtension* mQtiSurfaceExtn = nullptr;
+    /* QTI_END */
 
     // ANativeWindow hooks
     static int hook_cancelBuffer(ANativeWindow* window,

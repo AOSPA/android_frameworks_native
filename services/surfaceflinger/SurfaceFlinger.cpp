@@ -2176,6 +2176,9 @@ void SurfaceFlinger::onComposerHalSeamlessPossible(hal::HWDisplayId) {
 
 void SurfaceFlinger::onComposerHalRefresh(hal::HWDisplayId) {
     Mutex::Autolock lock(mStateLock);
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiOnComposerHalRefresh();
+    /* QTI_END */
     scheduleComposite(FrameHint::kNone);
 }
 
@@ -2387,6 +2390,10 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     /* QTI_END */
 
     /* QTI_BEGIN */
+    std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
+    if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive()) {
+      lck.lock();
+    }
     //mQtiSFExtnIntf->qtiOnVsync(expectedVsyncTime.ns());
     /* QTI_END */
 
@@ -4584,24 +4591,25 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
         }
         /* QTI_END */
 
+        /* QTI_BEGIN */
+        bool qtiLatchMediaContent = mQtiSFExtnIntf->qtiLatchMediaContent(layer);
+        /* QTI_END */
+
         // ignore the acquire fence if LatchUnsignaledConfig::Always is set.
-        const bool checkAcquireFence = enableLatchUnsignaledConfig != LatchUnsignaledConfig::Always;
+        const bool checkAcquireFence = enableLatchUnsignaledConfig != LatchUnsignaledConfig::Always
+            /* QTI_BEGIN */ || qtiLatchMediaContent /* QTI_END */;
         const bool acquireFenceAvailable = s.bufferData &&
                 s.bufferData->flags.test(BufferData::BufferDataChange::fenceChanged) &&
                 s.bufferData->acquireFence;
         const bool fenceSignaled = !checkAcquireFence || !acquireFenceAvailable ||
                 s.bufferData->acquireFence->getStatus() != Fence::Status::Unsignaled;
 
-        /* QTI_BEGIN */
-        bool qtiLatchMediaContent = mQtiSFExtnIntf->qtiLatchMediaContent(layer);
-        /* QTI_END */
-
         if (!fenceSignaled) {
             // check fence status
             const bool allowLatchUnsignaled =
                     shouldLatchUnsignaled(layer, s, transaction.states.size(),
                                           flushState.firstTransaction);
-            if (allowLatchUnsignaled /* QTI_BEGIN */ || qtiLatchMediaContent /* QTI_END */) {
+            if (allowLatchUnsignaled /* QTI_BEGIN */ || !qtiLatchMediaContent /* QTI_END */) {
                 ATRACE_FORMAT("fence unsignaled try allowLatchUnsignaled %s",
                               layer->getDebugName());
                 ready = TransactionReadiness::NotReadyUnsignaled;
@@ -4743,6 +4751,12 @@ status_t SurfaceFlinger::setTransactionState(
         const std::vector<ListenerCallbacks>& listenerCallbacks, uint64_t transactionId,
         const std::vector<uint64_t>& mergedTransactionIds) {
     ATRACE_CALL();
+    /* QTI_BEGIN */
+    std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
+    if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive()) {
+      lck.lock();
+    }
+    /* QTI_END */
 
     IPCThreadState* ipc = IPCThreadState::self();
     const int originPid = ipc->getCallingPid();
@@ -5947,6 +5961,9 @@ status_t SurfaceFlinger::doDump(int fd, const DumpArgs& args, bool asProto) {
                               strerror(-lock.status), lock.status);
                 ALOGW("Dumping without lock after timeout: %s (%d)",
                               strerror(-lock.status), lock.status);
+                /* QTI_BEGIN */
+                return NO_ERROR;
+                /* QTI_END */
             }
 
             if (const auto it = dumpers.find(flag); it != dumpers.end()) {

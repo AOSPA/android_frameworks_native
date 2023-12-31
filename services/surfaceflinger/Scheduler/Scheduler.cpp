@@ -1067,6 +1067,10 @@ void Scheduler::qtiUpdateThermalFps(float fps) {
     mQtiThermalFps = fps;
     mLayerHistory.qtiUpdateThermalFps(fps);
 }
+
+void Scheduler::qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes) {
+  mLayerHistory.qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
+}
 /* QTI_END */
 
 void Scheduler::updateSmallAreaDetection(
