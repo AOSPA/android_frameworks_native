@@ -94,23 +94,30 @@ struct hash<android::scheduler::ConnectionHandle> {
 namespace android {
 
 class FenceTime;
+class TimeStats;
 
 namespace frametimeline {
 class TokenManager;
 } // namespace frametimeline
 
+namespace surfaceflinger {
+class Factory;
+} // namespace surfaceflinger
+
 namespace scheduler {
 
 using GlobalSignals = RefreshRateSelector::GlobalSignals;
 
+class RefreshRateStats;
+class VsyncConfiguration;
 class VsyncSchedule;
 
 class Scheduler : public IEventThreadCallback, android::impl::MessageQueue {
     using Impl = android::impl::MessageQueue;
 
 public:
-    Scheduler(ICompositor&, ISchedulerCallback&, FeatureFlags, sp<VsyncModulator>,
-              IVsyncTrackerCallback&);
+    Scheduler(ICompositor&, ISchedulerCallback&, FeatureFlags, surfaceflinger::Factory&,
+              Fps activeRefreshRate, TimeStats&, IVsyncTrackerCallback&);
     virtual ~Scheduler();
 
     void startTimers();
@@ -211,7 +218,12 @@ public:
         }
     }
 
-    void setVsyncConfigSet(const VsyncConfigSet&, Period vsyncPeriod);
+    void updatePhaseConfiguration(Fps);
+    void resetPhaseConfiguration(Fps) REQUIRES(kMainThreadContext);
+
+    const VsyncConfiguration& getVsyncConfiguration() const { return *mVsyncConfiguration; }
+
+    VsyncConfiguration* getVsyncConfiguration_ptr() { return mVsyncConfiguration.get(); }
 
     // Sets the render rate for the scheduler to run at.
     void setRenderRate(PhysicalDisplayId, Fps);
@@ -259,8 +271,10 @@ public:
     // Indicates that touch interaction is taking place.
     void onTouchHint();
 
-    void setDisplayPowerMode(PhysicalDisplayId, hal::PowerMode powerMode)
-            REQUIRES(kMainThreadContext);
+    void setDisplayPowerMode(PhysicalDisplayId, hal::PowerMode) REQUIRES(kMainThreadContext);
+
+    // TODO(b/255635821): Track this per display.
+    void setActiveDisplayPowerModeForRefreshRateStats(hal::PowerMode) REQUIRES(kMainThreadContext);
 
     ConstVsyncSchedulePtr getVsyncSchedule(std::optional<PhysicalDisplayId> = std::nullopt) const
             EXCLUDES(mDisplayLock);
@@ -478,8 +492,13 @@ private:
 
     const FeatureFlags mFeatures;
 
+    // Stores phase offsets configured per refresh rate.
+    const std::unique_ptr<VsyncConfiguration> mVsyncConfiguration;
+
     // Shifts the VSYNC phase during certain transactions and refresh rate changes.
     const sp<VsyncModulator> mVsyncModulator;
+
+    const std::unique_ptr<RefreshRateStats> mRefreshRateStats;
 
     // Used to choose refresh rate if content detection is enabled.
     LayerHistory mLayerHistory;
@@ -511,9 +530,7 @@ private:
               : displayId(displayId),
                 selectorPtr(std::move(selectorPtr)),
                 schedulePtr(std::move(schedulePtr)),
-                targeterPtr(std::make_unique<
-                            FrameTargeter>(displayId,
-                                           features.test(Feature::kBackpressureGpuComposition))) {}
+                targeterPtr(std::make_unique<FrameTargeter>(displayId, features)) {}
 
         const PhysicalDisplayId displayId;
 

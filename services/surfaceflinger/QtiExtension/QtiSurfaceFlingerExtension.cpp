@@ -474,7 +474,7 @@ status_t QtiSurfaceFlingerExtension::qtiSetDisplayElapseTime(
         return OK;
     }
 
-    nsecs_t sfOffset = mQtiFlinger->mVsyncConfiguration->getCurrentConfigs().late.sfOffset;
+    nsecs_t sfOffset = mQtiFlinger->mScheduler->getVsyncConfiguration_ptr()->getCurrentConfigs().late.sfOffset;
     if (!mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kAdvanceSfOffset) ||
         (sfOffset >= 0)) {
         return OK;
@@ -616,7 +616,7 @@ void QtiSurfaceFlingerExtension::qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>
 void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
 #ifdef PHASE_OFFSET_EXTN
     if (!g_comp_ext_intf_.phaseOffsetExtnIntf || !mQtiFlinger || !mQtiFlinger->mScheduler ||
-        !mQtiFlinger->mVsyncConfiguration) {
+        !mQtiFlinger->mScheduler->getVsyncConfiguration_ptr()) {
         return;
     }
     bool useAdvancedSfOffsets =
@@ -626,7 +626,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
 
     if (useAdvancedSfOffsets && mQtiComposerExtnIntf) {
         if (!mQtiInitVsyncConfigurationExtn) {
-            qtiSetVsyncConfiguration(mQtiFlinger->mVsyncConfiguration.get());
+            qtiSetVsyncConfiguration(mQtiFlinger->mScheduler->getVsyncConfiguration_ptr());
         }
 
         // Populate the fps supported on device in mOffsetCache
@@ -640,7 +640,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
         const auto& supportedModes = snapshot.displayModes();
 
         for (const auto& [id, mode] : supportedModes) {
-            mQtiFlinger->mVsyncConfiguration->getConfigsForRefreshRate(mode->getVsyncRate());
+            mQtiFlinger->mScheduler->getVsyncConfiguration_ptr()->getConfigsForRefreshRate(mode->getVsyncRate());
         }
 
         if (useWorkDurations && mQtiWorkDurationsExtn) {
@@ -657,7 +657,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
         }
 
         const auto vsyncConfig = mQtiFlinger->mScheduler->vsyncModulator().setVsyncConfigSet(
-                mQtiFlinger->mVsyncConfiguration->getCurrentConfigs());
+                mQtiFlinger->mScheduler->getVsyncConfiguration_ptr()->getCurrentConfigs());
         ALOGV("VsyncConfig sfOffset %" PRId64 "\n", vsyncConfig.sfOffset);
         ALOGV("VsyncConfig appOffset %" PRId64 "\n", vsyncConfig.appOffset);
     }
@@ -1727,7 +1727,7 @@ void QtiSurfaceFlingerExtension::qtiSetDesiredModeByThermalLevel(float newLevelF
         return;
     }
 
-    auto future = mQtiFlinger->mScheduler->schedule([=]() FTL_FAKE_GUARD(
+    auto future = mQtiFlinger->mScheduler->schedule([=, this]() FTL_FAKE_GUARD(
                                                             kMainThreadContext) -> status_t {
         int ret = 0;
         if (!display) {
