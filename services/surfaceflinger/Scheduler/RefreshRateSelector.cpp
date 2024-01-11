@@ -420,11 +420,6 @@ float RefreshRateSelector::calculateLayerScoreLocked(const LayerRequirement& lay
     const float seamlessness = isSeamlessSwitch ? 1.0f : kSeamedSwitchPenalty;
 
     if (layer.vote == LayerVoteType::ExplicitCategory) {
-        // HighHint is considered later for touch boost.
-        if (layer.frameRateCategory == FrameRateCategory::HighHint) {
-            return 0.f;
-        }
-
         if (getFrameRateCategoryRange(layer.frameRateCategory).includes(refreshRate)) {
             return 1.f;
         }
@@ -512,7 +507,6 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     int explicitExact = 0;
     int explicitGteLayers = 0;
     int explicitCategoryVoteLayers = 0;
-    int interactiveLayers = 0;
     int seamedFocusedLayers = 0;
     int categorySmoothSwitchOnlyLayers = 0;
 
@@ -540,13 +534,7 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
                 explicitGteLayers++;
                 break;
             case LayerVoteType::ExplicitCategory:
-                if (layer.frameRateCategory == FrameRateCategory::HighHint) {
-                    // HighHint does not count as an explicit signal from an app. It may be
-                    // be a touch signal.
-                    interactiveLayers++;
-                } else {
-                    explicitCategoryVoteLayers++;
-                }
+                explicitCategoryVoteLayers++;
                 if (layer.frameRateCategory == FrameRateCategory::NoPreference) {
                     // Count this layer for Min vote as well. The explicit vote avoids
                     // touch boost and idle for choosing a category, while Min vote is for correct
@@ -843,14 +831,13 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     const auto touchRefreshRates = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
     using fps_approx_ops::operator<;
 
-    const bool hasInteraction = signals.touch || interactiveLayers > 0;
-    if (hasInteraction && explicitDefaultVoteLayers == 0 && explicitCategoryVoteLayers == 0 &&
+    if (signals.touch && explicitDefaultVoteLayers == 0 && explicitCategoryVoteLayers == 0 &&
         touchBoostForExplicitExact &&
         scores.front().frameRateMode.fps < touchRefreshRates.front().frameRateMode.fps) {
         ALOGV("Touch Boost");
         ATRACE_FORMAT_INSTANT("%s (Touch Boost [late])",
                               to_string(touchRefreshRates.front().frameRateMode.fps).c_str());
-        return {touchRefreshRates, GlobalSignals{.touch = signals.touch}};
+        return {touchRefreshRates, GlobalSignals{.touch = true}};
     }
 
     // If we never scored any layers, and we don't favor high refresh rates, prefer to stay with the
@@ -1525,7 +1512,6 @@ FpsRange RefreshRateSelector::getFrameRateCategoryRange(FrameRateCategory catego
             return FpsRange{60_Hz, 90_Hz};
         case FrameRateCategory::Low:
             return FpsRange{30_Hz, 30_Hz};
-        case FrameRateCategory::HighHint:
         case FrameRateCategory::NoPreference:
         case FrameRateCategory::Default:
             LOG_ALWAYS_FATAL("Should not get fps range for frame rate category: %s",

@@ -19,7 +19,6 @@
 #include <aidl/com/android/server/inputflinger/IInputFlingerRust.h>
 #include <utils/Mutex.h>
 #include "InputFilterCallbacks.h"
-#include "InputFilterPolicyInterface.h"
 #include "InputListener.h"
 #include "NotifyArgs.h"
 
@@ -48,8 +47,7 @@ public:
             aidl::com::android::server::inputflinger::InputFilterConfiguration;
     using AidlDeviceInfo = aidl::com::android::server::inputflinger::DeviceInfo;
 
-    explicit InputFilter(InputListenerInterface& listener, IInputFlingerRust& rust,
-                         InputFilterPolicyInterface& policy);
+    explicit InputFilter(InputListenerInterface& listener, IInputFlingerRust&);
     ~InputFilter() override = default;
     void notifyInputDevicesChanged(const NotifyInputDevicesChangedArgs& args) override;
     void notifyConfigurationChanged(const NotifyConfigurationChangedArgs& args) override;
@@ -67,7 +65,6 @@ public:
 private:
     InputListenerInterface& mNextListener;
     std::shared_ptr<InputFilterCallbacks> mCallbacks;
-    InputFilterPolicyInterface& mPolicy;
     std::shared_ptr<IInputFilter> mInputFilterRust;
     // Keep track of connected peripherals, so that if filters are enabled later, we can pass that
     // info to the filters

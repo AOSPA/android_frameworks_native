@@ -29,7 +29,6 @@
 
 #include <InputDispatcherInterface.h>
 #include <InputDispatcherPolicyInterface.h>
-#include <InputFilterPolicyInterface.h>
 #include <PointerChoreographerPolicyInterface.h>
 #include <input/Input.h>
 #include <input/InputTransport.h>
@@ -120,8 +119,7 @@ protected:
 public:
     InputManager(const sp<InputReaderPolicyInterface>& readerPolicy,
                  InputDispatcherPolicyInterface& dispatcherPolicy,
-                 PointerChoreographerPolicyInterface& choreographerPolicy,
-                 InputFilterPolicyInterface& inputFilterPolicy);
+                 PointerChoreographerPolicyInterface& choreographerPolicy);
 
     status_t start() override;
     status_t stop() override;

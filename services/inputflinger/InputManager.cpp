@@ -127,8 +127,7 @@ std::shared_ptr<IInputFlingerRust> createInputFlingerRust() {
  */
 InputManager::InputManager(const sp<InputReaderPolicyInterface>& readerPolicy,
                            InputDispatcherPolicyInterface& dispatcherPolicy,
-                           PointerChoreographerPolicyInterface& choreographerPolicy,
-                           InputFilterPolicyInterface& inputFilterPolicy) {
+                           PointerChoreographerPolicyInterface& choreographerPolicy) {
     mInputFlingerRust = createInputFlingerRust();
 
     mDispatcher = createInputDispatcher(dispatcherPolicy);
@@ -136,8 +135,7 @@ InputManager::InputManager(const sp<InputReaderPolicyInterface>& readerPolicy,
             std::make_unique<TracedInputListener>("InputDispatcher", *mDispatcher));
 
     if (ENABLE_INPUT_FILTER_RUST) {
-        mInputFilter = std::make_unique<InputFilter>(*mTracingStages.back(), *mInputFlingerRust,
-                                                     inputFilterPolicy);
+        mInputFilter = std::make_unique<InputFilter>(*mTracingStages.back(), *mInputFlingerRust);
         mTracingStages.emplace_back(
                 std::make_unique<TracedInputListener>("InputFilter", *mInputFilter));
     }
