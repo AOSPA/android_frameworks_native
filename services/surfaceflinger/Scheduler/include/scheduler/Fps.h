@@ -88,7 +88,6 @@ enum class FrameRateCategory : int32_t {
     NoPreference,
     Low,
     Normal,
-    HighHint,
     High,
 
     ftl_last = High

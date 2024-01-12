@@ -44,11 +44,9 @@ AidlKeyEvent notifyKeyArgsToKeyEvent(const NotifyKeyArgs& args) {
     return event;
 }
 
-InputFilter::InputFilter(InputListenerInterface& listener, IInputFlingerRust& rust,
-                         InputFilterPolicyInterface& policy)
+InputFilter::InputFilter(InputListenerInterface& listener, IInputFlingerRust& rust)
       : mNextListener(listener),
-        mCallbacks(ndk::SharedRefBase::make<InputFilterCallbacks>(listener, policy)),
-        mPolicy(policy) {
+        mCallbacks(ndk::SharedRefBase::make<InputFilterCallbacks>(listener)) {
     LOG_ALWAYS_FATAL_IF(!rust.createInputFilter(mCallbacks, &mInputFilterRust).isOk());
     LOG_ALWAYS_FATAL_IF(!mInputFilterRust);
 }
@@ -124,10 +122,6 @@ void InputFilter::setAccessibilityStickyKeysEnabled(bool enabled) {
     if (mConfig.stickyKeysEnabled != enabled) {
         mConfig.stickyKeysEnabled = enabled;
         notifyConfigurationChangedLocked();
-        if (!enabled) {
-            // When Sticky keys is disabled, send callback to clear any saved sticky state.
-            mPolicy.notifyStickyModifierStateChanged(0, 0);
-        }
     }
 }
 
