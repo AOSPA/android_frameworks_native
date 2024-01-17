@@ -16,9 +16,9 @@
 
 #pragma once
 
-#include <android-base/unique_fd.h>
 #include <binder/IBinder.h>
-#include <utils/Mutex.h>
+#include <binder/RpcThreads.h>
+#include <binder/unique_fd.h>
 
 #include <map>
 #include <optional>
@@ -94,7 +94,7 @@ public:
 
     // Start recording transactions to the unique_fd.
     // See RecordedTransaction.h for more details.
-    status_t startRecordingBinder(const android::base::unique_fd& fd);
+    status_t startRecordingBinder(const binder::unique_fd& fd);
     // Stop the current recording.
     status_t stopRecordingBinder();
 
@@ -193,7 +193,7 @@ private:
             void                reportOneDeath(const Obituary& obit);
             bool                isDescriptorCached() const;
 
-    mutable Mutex               mLock;
+    mutable RpcMutex            mLock;
             volatile int32_t    mAlive;
             volatile int32_t    mObitsSent;
             Vector<Obituary>*   mObituaries;
@@ -201,7 +201,7 @@ private:
     mutable String16            mDescriptorCache;
             int32_t             mTrackedUid;
 
-    static Mutex                                sTrackingLock;
+    static RpcMutex                             sTrackingLock;
     static std::unordered_map<int32_t,uint32_t> sTrackingMap;
     static int                                  sNumTrackedUids;
     static std::atomic_bool                     sCountByUidEnabled;

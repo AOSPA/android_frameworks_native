@@ -176,14 +176,12 @@ protected:
     void destroyLayerHandle(uint32_t id) { mLifecycleManager.onHandlesDestroyed({{id, "test"}}); }
 
     void updateAndVerify(LayerHierarchyBuilder& hierarchyBuilder) {
-        if (mLifecycleManager.getGlobalChanges().test(RequestedLayerState::Changes::Hierarchy)) {
-            hierarchyBuilder.update(mLifecycleManager.getLayers(),
-                                    mLifecycleManager.getDestroyedLayers());
-        }
+        hierarchyBuilder.update(mLifecycleManager);
         mLifecycleManager.commitChanges();
 
         // rebuild layer hierarchy from scratch and verify that it matches the updated state.
-        LayerHierarchyBuilder newBuilder(mLifecycleManager.getLayers());
+        LayerHierarchyBuilder newBuilder;
+        newBuilder.update(mLifecycleManager);
         EXPECT_EQ(getTraversalPath(hierarchyBuilder.getHierarchy()),
                   getTraversalPath(newBuilder.getHierarchy()));
         EXPECT_EQ(getTraversalPathInZOrder(hierarchyBuilder.getHierarchy()),
@@ -478,6 +476,17 @@ protected:
         mLifecycleManager.applyTransactions(transactions);
     }
 
+    void setDropInputMode(uint32_t id, gui::DropInputMode dropInputMode) {
+        std::vector<TransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+
+        transactions.back().states.front().state.what = layer_state_t::eDropInputModeChanged;
+        transactions.back().states.front().layerId = id;
+        transactions.back().states.front().state.dropInputMode = dropInputMode;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
     LayerLifecycleManager mLifecycleManager;
 };
 
@@ -501,10 +510,7 @@ protected:
     }
 
     void update(LayerSnapshotBuilder& snapshotBuilder) {
-        if (mLifecycleManager.getGlobalChanges().test(RequestedLayerState::Changes::Hierarchy)) {
-            mHierarchyBuilder.update(mLifecycleManager.getLayers(),
-                                     mLifecycleManager.getDestroyedLayers());
-        }
+        mHierarchyBuilder.update(mLifecycleManager);
         LayerSnapshotBuilder::Args args{.root = mHierarchyBuilder.getHierarchy(),
                                         .layerLifecycleManager = mLifecycleManager,
                                         .includeMetadata = false,
@@ -519,7 +525,7 @@ protected:
         mLifecycleManager.commitChanges();
     }
 
-    LayerHierarchyBuilder mHierarchyBuilder{{}};
+    LayerHierarchyBuilder mHierarchyBuilder;
 
     DisplayInfos mFrontEndDisplayInfos;
     bool mHasDisplayChanges = false;

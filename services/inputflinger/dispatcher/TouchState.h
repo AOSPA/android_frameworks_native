@@ -44,17 +44,17 @@ struct TouchState {
     void removeTouchingPointerFromWindow(DeviceId deviceId, int32_t pointerId,
                                          const sp<android::gui::WindowInfoHandle>& windowHandle);
     void addOrUpdateWindow(const sp<android::gui::WindowInfoHandle>& windowHandle,
+                           InputTarget::DispatchMode dispatchMode,
                            ftl::Flags<InputTarget::Flags> targetFlags, DeviceId deviceId,
-                           std::bitset<MAX_POINTER_ID + 1> touchingPointerIds,
+                           const std::vector<PointerProperties>& touchingPointers,
                            std::optional<nsecs_t> firstDownTimeInTarget = std::nullopt);
     void addHoveringPointerToWindow(const sp<android::gui::WindowInfoHandle>& windowHandle,
-                                    DeviceId deviceId, int32_t hoveringPointerId);
-    void removeHoveringPointer(DeviceId deviceId, int32_t hoveringPointerId);
+                                    DeviceId deviceId, const PointerProperties& pointer);
+    void removeHoveringPointer(DeviceId deviceId, int32_t pointerId);
     void clearHoveringPointers(DeviceId deviceId);
 
     void removeAllPointersForDevice(DeviceId deviceId);
     void removeWindowByToken(const sp<IBinder>& token);
-    void filterNonAsIsTouchWindows();
 
     // Cancel pointers for current set of windows except the window with particular binder token.
     void cancelPointersForWindowsExcept(DeviceId deviceId,
@@ -72,6 +72,8 @@ struct TouchState {
     // Whether any of the windows are currently being touched
     bool isDown(DeviceId deviceId) const;
     bool hasHoveringPointers(DeviceId deviceId) const;
+
+    bool hasActiveStylus() const;
 
     std::set<sp<android::gui::WindowInfoHandle>> getWindowsWithHoveringPointer(
             DeviceId deviceId, int32_t pointerId) const;

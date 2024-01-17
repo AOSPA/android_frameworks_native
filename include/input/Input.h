@@ -515,6 +515,8 @@ struct PointerProperties {
     PointerProperties& operator=(const PointerProperties&) = default;
 };
 
+std::ostream& operator<<(std::ostream& out, const PointerProperties& properties);
+
 // TODO(b/211379801) : Use a strong type from ftl/mixins.h instead
 using DeviceId = int32_t;
 
@@ -1136,6 +1138,24 @@ private:
     std::queue<std::unique_ptr<CaptureEvent>> mCaptureEventPool;
     std::queue<std::unique_ptr<DragEvent>> mDragEventPool;
     std::queue<std::unique_ptr<TouchModeEvent>> mTouchModeEventPool;
+};
+
+/**
+ * An input event factory implementation that simply creates the input events on the heap, when
+ * needed. The caller is responsible for destroying the returned references.
+ * It is recommended that the caller wrap these return values into std::unique_ptr.
+ */
+class DynamicInputEventFactory : public InputEventFactoryInterface {
+public:
+    explicit DynamicInputEventFactory(){};
+    ~DynamicInputEventFactory(){};
+
+    KeyEvent* createKeyEvent() override { return new KeyEvent(); };
+    MotionEvent* createMotionEvent() override { return new MotionEvent(); };
+    FocusEvent* createFocusEvent() override { return new FocusEvent(); };
+    CaptureEvent* createCaptureEvent() override { return new CaptureEvent(); };
+    DragEvent* createDragEvent() override { return new DragEvent(); };
+    TouchModeEvent* createTouchModeEvent() override { return new TouchModeEvent(); };
 };
 
 /*

@@ -48,9 +48,9 @@ struct EventEntry {
     Type type;
     nsecs_t eventTime;
     uint32_t policyFlags;
-    InjectionState* injectionState;
+    std::shared_ptr<InjectionState> injectionState;
 
-    bool dispatchInProgress; // initially false, set to true while dispatching
+    mutable bool dispatchInProgress; // initially false, set to true while dispatching
 
     /**
      * Injected keys are events from an external (probably untrusted) application
@@ -72,17 +72,14 @@ struct EventEntry {
     virtual std::string getDescription() const = 0;
 
     EventEntry(int32_t id, Type type, nsecs_t eventTime, uint32_t policyFlags);
-    virtual ~EventEntry();
-
-protected:
-    void releaseInjectionState();
+    EventEntry(const EventEntry&) = delete;
+    EventEntry& operator=(const EventEntry&) = delete;
+    virtual ~EventEntry() = default;
 };
 
 struct ConfigurationChangedEntry : EventEntry {
     explicit ConfigurationChangedEntry(int32_t id, nsecs_t eventTime);
     std::string getDescription() const override;
-
-    ~ConfigurationChangedEntry() override;
 };
 
 struct DeviceResetEntry : EventEntry {
@@ -90,8 +87,6 @@ struct DeviceResetEntry : EventEntry {
 
     DeviceResetEntry(int32_t id, nsecs_t eventTime, int32_t deviceId);
     std::string getDescription() const override;
-
-    ~DeviceResetEntry() override;
 };
 
 struct FocusEntry : EventEntry {
@@ -102,8 +97,6 @@ struct FocusEntry : EventEntry {
     FocusEntry(int32_t id, nsecs_t eventTime, sp<IBinder> connectionToken, bool hasFocus,
                const std::string& reason);
     std::string getDescription() const override;
-
-    ~FocusEntry() override;
 };
 
 struct PointerCaptureChangedEntry : EventEntry {
@@ -111,8 +104,6 @@ struct PointerCaptureChangedEntry : EventEntry {
 
     PointerCaptureChangedEntry(int32_t id, nsecs_t eventTime, const PointerCaptureRequest&);
     std::string getDescription() const override;
-
-    ~PointerCaptureChangedEntry() override;
 };
 
 struct DragEntry : EventEntry {
@@ -123,8 +114,6 @@ struct DragEntry : EventEntry {
     DragEntry(int32_t id, nsecs_t eventTime, sp<IBinder> connectionToken, bool isExiting, float x,
               float y);
     std::string getDescription() const override;
-
-    ~DragEntry() override;
 };
 
 struct KeyEntry : EventEntry {
@@ -132,11 +121,9 @@ struct KeyEntry : EventEntry {
     uint32_t source;
     int32_t displayId;
     int32_t action;
-    int32_t flags;
     int32_t keyCode;
     int32_t scanCode;
     int32_t metaState;
-    int32_t repeatCount;
     nsecs_t downTime;
 
     bool syntheticRepeat; // set to true for synthetic key repeats
@@ -147,16 +134,17 @@ struct KeyEntry : EventEntry {
         CONTINUE,
         TRY_AGAIN_LATER,
     };
-    InterceptKeyResult interceptKeyResult; // set based on the interception result
-    nsecs_t interceptKeyWakeupTime;        // used with INTERCEPT_KEY_RESULT_TRY_AGAIN_LATER
+    // These are special fields that may need to be modified while the event is being dispatched.
+    mutable InterceptKeyResult interceptKeyResult; // set based on the interception result
+    mutable nsecs_t interceptKeyWakeupTime;        // used with INTERCEPT_KEY_RESULT_TRY_AGAIN_LATER
+    mutable int32_t flags;
+    mutable int32_t repeatCount;
 
-    KeyEntry(int32_t id, nsecs_t eventTime, int32_t deviceId, uint32_t source, int32_t displayId,
-             uint32_t policyFlags, int32_t action, int32_t flags, int32_t keyCode, int32_t scanCode,
-             int32_t metaState, int32_t repeatCount, nsecs_t downTime);
+    KeyEntry(int32_t id, std::shared_ptr<InjectionState> injectionState, nsecs_t eventTime,
+             int32_t deviceId, uint32_t source, int32_t displayId, uint32_t policyFlags,
+             int32_t action, int32_t flags, int32_t keyCode, int32_t scanCode, int32_t metaState,
+             int32_t repeatCount, nsecs_t downTime);
     std::string getDescription() const override;
-    void recycle();
-
-    ~KeyEntry() override;
 };
 
 struct MotionEntry : EventEntry {
@@ -180,16 +168,14 @@ struct MotionEntry : EventEntry {
 
     size_t getPointerCount() const { return pointerProperties.size(); }
 
-    MotionEntry(int32_t id, nsecs_t eventTime, int32_t deviceId, uint32_t source, int32_t displayId,
-                uint32_t policyFlags, int32_t action, int32_t actionButton, int32_t flags,
-                int32_t metaState, int32_t buttonState, MotionClassification classification,
-                int32_t edgeFlags, float xPrecision, float yPrecision, float xCursorPosition,
-                float yCursorPosition, nsecs_t downTime,
-                const std::vector<PointerProperties>& pointerProperties,
+    MotionEntry(int32_t id, std::shared_ptr<InjectionState> injectionState, nsecs_t eventTime,
+                int32_t deviceId, uint32_t source, int32_t displayId, uint32_t policyFlags,
+                int32_t action, int32_t actionButton, int32_t flags, int32_t metaState,
+                int32_t buttonState, MotionClassification classification, int32_t edgeFlags,
+                float xPrecision, float yPrecision, float xCursorPosition, float yCursorPosition,
+                nsecs_t downTime, const std::vector<PointerProperties>& pointerProperties,
                 const std::vector<PointerCoords>& pointerCoords);
     std::string getDescription() const override;
-
-    ~MotionEntry() override;
 };
 
 std::ostream& operator<<(std::ostream& out, const MotionEntry& motionEntry);
@@ -209,8 +195,6 @@ struct SensorEntry : EventEntry {
                 InputDeviceSensorAccuracy accuracy, bool accuracyChanged,
                 std::vector<float> values);
     std::string getDescription() const override;
-
-    ~SensorEntry() override;
 };
 
 struct TouchModeEntry : EventEntry {
@@ -219,15 +203,13 @@ struct TouchModeEntry : EventEntry {
 
     TouchModeEntry(int32_t id, nsecs_t eventTime, bool inTouchMode, int32_t displayId);
     std::string getDescription() const override;
-
-    ~TouchModeEntry() override;
 };
 
 // Tracks the progress of dispatching a particular event to a particular connection.
 struct DispatchEntry {
     const uint32_t seq; // unique sequence number, never 0
 
-    std::shared_ptr<EventEntry> eventEntry; // the event to dispatch
+    std::shared_ptr<const EventEntry> eventEntry; // the event to dispatch
     const ftl::Flags<InputTarget::Flags> targetFlags;
     ui::Transform transform;
     ui::Transform rawTransform;
@@ -238,12 +220,9 @@ struct DispatchEntry {
     // An ANR will be triggered if a response for this entry is not received by timeoutTime
     nsecs_t timeoutTime;
 
-    // Set to the resolved ID, action and flags when the event is enqueued.
-    int32_t resolvedEventId;
-    int32_t resolvedAction;
     int32_t resolvedFlags;
 
-    DispatchEntry(std::shared_ptr<EventEntry> eventEntry,
+    DispatchEntry(std::shared_ptr<const EventEntry> eventEntry,
                   ftl::Flags<InputTarget::Flags> targetFlags, const ui::Transform& transform,
                   const ui::Transform& rawTransform, float globalScaleFactor);
     DispatchEntry(const DispatchEntry&) = delete;

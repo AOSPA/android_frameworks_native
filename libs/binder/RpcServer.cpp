@@ -30,7 +30,6 @@
 #include <binder/RpcServer.h>
 #include <binder/RpcTransportRaw.h>
 #include <log/log.h>
-#include <utils/Compat.h>
 
 #include "BuildFlags.h"
 #include "FdTrigger.h"
@@ -46,7 +45,8 @@ namespace android {
 constexpr size_t kSessionIdBytes = 32;
 
 using namespace android::binder::impl;
-using base::unique_fd;
+using android::binder::borrowed_fd;
+using android::binder::unique_fd;
 
 RpcServer::RpcServer(std::unique_ptr<RpcTransportCtx> ctx) : mCtx(std::move(ctx)) {}
 RpcServer::~RpcServer() {
@@ -167,9 +167,9 @@ void RpcServer::setConnectionFilter(std::function<bool(const void*, size_t)>&& f
     mConnectionFilter = std::move(filter);
 }
 
-void RpcServer::setServerSocketModifier(std::function<void(base::borrowed_fd)>&& modifier) {
+void RpcServer::setServerSocketModifier(std::function<void(borrowed_fd)>&& modifier) {
     RpcMutexLockGuard _l(mLock);
-    LOG_ALWAYS_FATAL_IF(mServer.fd != -1, "Already started");
+    LOG_ALWAYS_FATAL_IF(mServer.fd.ok(), "Already started");
     mServerSocketModifier = std::move(modifier);
 }
 
@@ -201,7 +201,7 @@ void RpcServer::start() {
 status_t RpcServer::acceptSocketConnection(const RpcServer& server, RpcTransportFd* out) {
     RpcTransportFd clientSocket(unique_fd(TEMP_FAILURE_RETRY(
             accept4(server.mServer.fd.get(), nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK))));
-    if (clientSocket.fd < 0) {
+    if (!clientSocket.fd.ok()) {
         int savedErrno = errno;
         ALOGE("Could not accept4 socket: %s", strerror(savedErrno));
         return -savedErrno;
@@ -214,7 +214,7 @@ status_t RpcServer::acceptSocketConnection(const RpcServer& server, RpcTransport
 status_t RpcServer::recvmsgSocketConnection(const RpcServer& server, RpcTransportFd* out) {
     int zero = 0;
     iovec iov{&zero, sizeof(zero)};
-    std::vector<std::variant<base::unique_fd, base::borrowed_fd>> fds;
+    std::vector<std::variant<unique_fd, borrowed_fd>> fds;
 
     ssize_t num_bytes = binder::os::receiveMessageFromSocket(server.mServer, &iov, 1, &fds);
     if (num_bytes < 0) {
@@ -231,10 +231,7 @@ status_t RpcServer::recvmsgSocketConnection(const RpcServer& server, RpcTranspor
     }
 
     unique_fd fd(std::move(std::get<unique_fd>(fds.back())));
-    if (auto res = binder::os::setNonBlocking(fd); !res.ok()) {
-        ALOGE("Failed setNonBlocking: %s", res.error().message().c_str());
-        return res.error().code() == 0 ? UNKNOWN_ERROR : -res.error().code();
-    }
+    if (status_t res = binder::os::setNonBlocking(fd); res != OK) return res;
 
     *out = RpcTransportFd(std::move(fd));
     return OK;
@@ -648,8 +645,7 @@ unique_fd RpcServer::releaseServer() {
 }
 
 status_t RpcServer::setupExternalServer(
-        base::unique_fd serverFd,
-        std::function<status_t(const RpcServer&, RpcTransportFd*)>&& acceptFn) {
+        unique_fd serverFd, std::function<status_t(const RpcServer&, RpcTransportFd*)>&& acceptFn) {
     RpcMutexLockGuard _l(mLock);
     if (mServer.fd.ok()) {
         ALOGE("Each RpcServer can only have one server.");
@@ -660,7 +656,7 @@ status_t RpcServer::setupExternalServer(
     return OK;
 }
 
-status_t RpcServer::setupExternalServer(base::unique_fd serverFd) {
+status_t RpcServer::setupExternalServer(unique_fd serverFd) {
     return setupExternalServer(std::move(serverFd), &RpcServer::acceptSocketConnection);
 }
 

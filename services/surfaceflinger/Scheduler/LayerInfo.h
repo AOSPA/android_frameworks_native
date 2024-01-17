@@ -81,10 +81,11 @@ public:
     using RefreshRateVotes = ftl::SmallVector<LayerInfo::LayerVote, 2>;
 
     enum class FrameRateSelectionStrategy {
-        Self,
+        Propagate,
         OverrideChildren,
+        Self,
 
-        ftl_last = OverrideChildren
+        ftl_last = Self
     };
 
     // Encapsulates the frame rate specifications of the layer. This information will be used
@@ -174,13 +175,16 @@ public:
                             bool pendingModeChange, const LayerProps& props);
 
     // Sets an explicit layer vote. This usually comes directly from the application via
-    // ANativeWindow_setFrameRate API
+    // ANativeWindow_setFrameRate API. This is also used by Game Default Frame Rate and
+    // Game Mode Intervention Frame Rate.
     void setLayerVote(LayerVote vote) { mLayerVote = vote; }
 
     // Sets the default layer vote. This will be the layer vote after calling to resetLayerVote().
     // This is used for layers that called to setLayerVote() and then removed the vote, so that the
     // layer can go back to whatever vote it had before the app voted for it.
     void setDefaultLayerVote(LayerHistory::LayerVoteType type) { mDefaultVote = type; }
+
+    void setProperties(const LayerProps&);
 
     // Resets the layer vote to its default.
     void resetLayerVote() {
@@ -200,6 +204,7 @@ public:
     FrameRate getSetFrameRateVote() const;
     bool isVisible() const;
     int32_t getFrameRateSelectionPriority() const;
+    bool isFrontBuffered() const;
     FloatRect getBounds() const;
     ui::Transform getTransform() const;
 
@@ -261,8 +266,8 @@ private:
         // Clears History
         void clear();
 
-        // Adds a new refresh rate and returns true if it is consistent
-        bool add(Fps refreshRate, nsecs_t now);
+        // Adds a new refresh rate and returns valid refresh rate if it is consistent enough
+        Fps add(Fps refreshRate, nsecs_t now, const RefreshRateSelector&);
 
     private:
         friend class LayerHistoryTest;
@@ -282,13 +287,14 @@ private:
             std::string average;
         };
 
-        bool isConsistent() const;
+        Fps selectRefreshRate(const RefreshRateSelector&) const;
         HeuristicTraceTagData makeHeuristicTraceTagData() const;
 
         const std::string mName;
         mutable std::optional<HeuristicTraceTagData> mHeuristicTraceTagData;
         std::deque<RefreshRateData> mRefreshRates;
         static constexpr float MARGIN_CONSISTENT_FPS = 1.0;
+        static constexpr float MARGIN_CONSISTENT_FPS_FOR_CLOSEST_REFRESH_RATE = 5.0;
     };
 
     // Represents whether we were able to determine either layer is frequent or infrequent
@@ -360,6 +366,7 @@ struct LayerProps {
     LayerInfo::FrameRate setFrameRateVote;
     int32_t frameRateSelectionPriority = -1;
     bool isSmallDirty = false;
+    bool isFrontBuffered = false;
 };
 
 } // namespace scheduler

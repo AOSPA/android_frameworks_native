@@ -275,6 +275,9 @@ public:
     void clearSpots() override {}
     int32_t getDisplayId() const override { return mFdp->ConsumeIntegral<int32_t>(); }
     void setDisplayViewport(const DisplayViewport& displayViewport) override {}
+    void updatePointerIcon(PointerIconStyle iconId) override {}
+    void setCustomPointerIcon(const SpriteIcon& icon) override {}
+    std::string dump() override { return ""; }
 };
 
 class FuzzInputReaderPolicy : public InputReaderPolicyInterface {
@@ -309,6 +312,10 @@ public:
     void setTouchAffineTransformation(const TouchAffineTransformation t) { mTransform = t; }
     void notifyStylusGestureStarted(int32_t, nsecs_t) {}
     bool isInputMethodConnectionActive() override { return mFdp->ConsumeBool(); }
+    std::optional<DisplayViewport> getPointerViewportForAssociatedDisplay(
+            int32_t associatedDisplayId) override {
+        return {};
+    }
 };
 
 class FuzzInputListener : public virtual InputListenerInterface {
@@ -360,6 +367,12 @@ public:
 
     void setPreventingTouchpadTaps(bool prevent) {}
     bool isPreventingTouchpadTaps() { return mFdp->ConsumeBool(); };
+
+    void setLastKeyDownTimestamp(nsecs_t when) { mLastKeyDownTimestamp = when; };
+    nsecs_t getLastKeyDownTimestamp() { return mLastKeyDownTimestamp; };
+
+private:
+    nsecs_t mLastKeyDownTimestamp;
 };
 
 template <class Fdp>

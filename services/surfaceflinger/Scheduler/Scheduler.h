@@ -39,6 +39,7 @@
 #pragma clang diagnostic pop // ignored "-Wconversion -Wextra"
 
 #include <ftl/fake_guard.h>
+#include <ftl/non_null.h>
 #include <ftl/optional.h>
 #include <scheduler/Features.h>
 #include <scheduler/FrameTargeter.h>
@@ -108,7 +109,8 @@ class Scheduler : public IEventThreadCallback, android::impl::MessageQueue {
     using Impl = android::impl::MessageQueue;
 
 public:
-    Scheduler(ICompositor&, ISchedulerCallback&, FeatureFlags, sp<VsyncModulator>);
+    Scheduler(ICompositor&, ISchedulerCallback&, FeatureFlags, sp<VsyncModulator>,
+              IVsyncTrackerCallback&);
     virtual ~Scheduler();
 
     void startTimers();
@@ -181,6 +183,8 @@ public:
     void onFrameRateOverridesChanged(ConnectionHandle, PhysicalDisplayId)
             EXCLUDES(mConnectionsLock);
 
+    void onHdcpLevelsChanged(ConnectionHandle, PhysicalDisplayId, int32_t, int32_t);
+
     // Modifies work duration in the event thread.
     void setDuration(ConnectionHandle, std::chrono::nanoseconds workDuration,
                      std::chrono::nanoseconds readyDuration);
@@ -219,13 +223,12 @@ public:
     // If allowToEnable is true, then hardware vsync will be turned on.
     // Otherwise, if hardware vsync is not already enabled then this method will
     // no-op.
-    // If refreshRate is nullopt, use the existing refresh rate of the display.
+    // If modePtr is nullopt, use the active display mode.
     void resyncToHardwareVsync(PhysicalDisplayId id, bool allowToEnable,
-                               std::optional<Fps> refreshRate = std::nullopt)
-            EXCLUDES(mDisplayLock) {
+                               DisplayModePtr modePtr = nullptr) EXCLUDES(mDisplayLock) {
         std::scoped_lock lock(mDisplayLock);
         ftl::FakeGuard guard(kMainThreadContext);
-        resyncToHardwareVsyncLocked(id, allowToEnable, refreshRate);
+        resyncToHardwareVsyncLocked(id, allowToEnable, modePtr);
     }
     void forceNextResync() { mLastResyncTime = 0; }
 
@@ -243,6 +246,7 @@ public:
                             nsecs_t now, LayerHistory::LayerUpdateType) EXCLUDES(mDisplayLock);
     void setModeChangePending(bool pending);
     void setDefaultFrameRateCompatibility(int32_t id, scheduler::FrameRateCompatibility);
+    void setLayerProperties(int32_t id, const LayerProps&);
     void deregisterLayer(Layer*);
     void onLayerDestroyed(Layer*) EXCLUDES(mChoreographerLock);
 
@@ -291,8 +295,8 @@ public:
     // Notifies the scheduler about a refresh rate timeline change.
     void onNewVsyncPeriodChangeTimeline(const hal::VsyncPeriodChangeTimeline& timeline);
 
-    // Notifies the scheduler post composition. Returns if recomposite is needed.
-    bool onPostComposition(nsecs_t presentTime);
+    // Notifies the scheduler once the composition is presented. Returns if recomposite is needed.
+    bool onCompositionPresented(nsecs_t presentTime);
 
     // Notifies the scheduler when the display size has changed. Called from SF's main thread
     void onActiveDisplayAreaChanged(uint32_t displayArea);
@@ -301,7 +305,17 @@ public:
     // FrameRateOverride.refreshRateHz == 0 means no preference.
     void setPreferredRefreshRateForUid(FrameRateOverride);
 
-    void setGameModeRefreshRateForUid(FrameRateOverride);
+    // Stores the frame rate override that a game should run at set by game interventions.
+    // FrameRateOverride.refreshRateHz == 0 means no preference.
+    void setGameModeFrameRateForUid(FrameRateOverride) EXCLUDES(mDisplayLock);
+
+    // Stores the frame rate override that a game should run rat set by default game frame rate.
+    // FrameRateOverride.refreshRateHz == 0 means no preference, game default game frame rate is not
+    // enabled.
+    //
+    // "ro.surface_flinger.game_default_frame_rate_override" sets the frame rate value,
+    // "persist.graphics.game_default_frame_rate.enabled" controls whether this feature is enabled.
+    void setGameDefaultFrameRateForUid(FrameRateOverride) EXCLUDES(mDisplayLock);
 
     void updateSmallAreaDetection(std::vector<std::pair<int32_t, float>>& uidThresholdMappings);
 
@@ -321,6 +335,9 @@ public:
         return pacesetterSelectorPtr()->getActiveMode().fps;
     }
 
+    Fps getNextFrameInterval(PhysicalDisplayId, TimePoint currentExpectedPresentTime) const
+            EXCLUDES(mDisplayLock);
+
     // Returns the framerate of the layer with the given sequence ID
     float getLayerFramerate(nsecs_t now, int32_t id) const {
         return mLayerHistory.getLayerFramerate(now, id);
@@ -332,9 +349,10 @@ public:
 
     bool updateFrameRateOverrides(GlobalSignals, Fps displayRefreshRate) EXCLUDES(mPolicyLock);
 
-    // Returns true if the small dirty detection is enabled.
-    bool supportSmallDirtyDetection() const {
-        return mFeatures.test(Feature::kSmallDirtyContentDetection);
+    // Returns true if the small dirty detection is enabled for the appId.
+    bool supportSmallDirtyDetection(int32_t appId) {
+        return mFeatures.test(Feature::kSmallDirtyContentDetection) &&
+                mSmallAreaDetectionAllowMappings.getThresholdForAppId(appId).has_value();
     }
 
     // Injects a delay that is a fraction of the predicted frame duration for the next frame.
@@ -366,7 +384,7 @@ private:
     void onHardwareVsyncRequest(PhysicalDisplayId, bool enable);
 
     void resyncToHardwareVsyncLocked(PhysicalDisplayId, bool allowToEnable,
-                                     std::optional<Fps> refreshRate = std::nullopt)
+                                     DisplayModePtr modePtr = nullptr)
             REQUIRES(kMainThreadContext, mDisplayLock);
     void resyncAllToHardwareVsync(bool allowToEnable) EXCLUDES(mDisplayLock);
     void setVsyncConfig(const VsyncConfig&, Period vsyncPeriod);
@@ -476,6 +494,8 @@ private:
 
     ISchedulerCallback& mSchedulerCallback;
 
+    IVsyncTrackerCallback& mVsyncTrackerCallback;
+
     // mDisplayLock may be locked while under mPolicyLock.
     mutable std::mutex mPolicyLock;
 
@@ -527,13 +547,17 @@ private:
                                                      });
     }
 
+    // The pacesetter must exist as a precondition.
+    ftl::NonNull<const Display*> pacesetterPtrLocked() const REQUIRES(mDisplayLock) {
+        return ftl::as_non_null(&pacesetterDisplayLocked()->get());
+    }
+
     RefreshRateSelectorPtr pacesetterSelectorPtr() const EXCLUDES(mDisplayLock) {
         std::scoped_lock lock(mDisplayLock);
         return pacesetterSelectorPtrLocked();
     }
 
     RefreshRateSelectorPtr pacesetterSelectorPtrLocked() const REQUIRES(mDisplayLock) {
-        ftl::FakeGuard guard(kMainThreadContext);
         return pacesetterDisplayLocked()
                 .transform([](const Display& display) { return display.selectorPtr; })
                 .or_else([] { return std::optional<RefreshRateSelectorPtr>(nullptr); })

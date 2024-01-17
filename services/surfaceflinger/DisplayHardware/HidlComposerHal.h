@@ -186,7 +186,7 @@ public:
     ~HidlComposer() override;
 
     bool isSupported(OptionalFeature) const;
-    bool getDisplayConfigurationsSupported() const;
+    bool isVrrSupported() const;
 
     std::vector<aidl::android::hardware::graphics::composer3::Capability> getCapabilities()
             override;
@@ -245,7 +245,8 @@ public:
      */
     Error setClientTarget(Display display, uint32_t slot, const sp<GraphicBuffer>& target,
                           int acquireFence, Dataspace dataspace,
-                          const std::vector<IComposerClient::Rect>& damage) override;
+                          const std::vector<IComposerClient::Rect>& damage,
+                          float hdrSdrRatio) override;
     Error setColorMode(Display display, ColorMode mode, RenderIntent renderIntent) override;
     Error setColorTransform(Display display, const float* matrix) override;
     Error setOutputBuffer(Display display, const native_handle_t* buffer,
@@ -255,12 +256,13 @@ public:
 
     Error setClientTargetSlotCount(Display display) override;
 
-    Error validateDisplay(Display display, nsecs_t expectedPresentTime, uint32_t* outNumTypes,
-                          uint32_t* outNumRequests) override;
+    Error validateDisplay(Display display, nsecs_t expectedPresentTime, int32_t frameIntervalNs,
+                          uint32_t* outNumTypes, uint32_t* outNumRequests) override;
 
     Error presentOrValidateDisplay(Display display, nsecs_t expectedPresentTime,
-                                   uint32_t* outNumTypes, uint32_t* outNumRequests,
-                                   int* outPresentFence, uint32_t* state) override;
+                                   int32_t frameIntervalNs, uint32_t* outNumTypes,
+                                   uint32_t* outNumRequests, int* outPresentFence,
+                                   uint32_t* state) override;
 
     Error setCursorPosition(Display display, Layer layer, int32_t x, int32_t y) override;
     /* see setClientTarget for the purpose of slot */

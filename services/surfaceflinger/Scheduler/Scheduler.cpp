@@ -51,9 +51,9 @@
 #include <memory>
 #include <numeric>
 
+#include <common/FlagManager.h>
 #include "../Layer.h"
 #include "EventThread.h"
-#include "FlagManager.h"
 #include "FrameRateOverrideMappings.h"
 #include "FrontEnd/LayerHandle.h"
 #include "OneShotTimer.h"
@@ -73,11 +73,12 @@
 namespace android::scheduler {
 
 Scheduler::Scheduler(ICompositor& compositor, ISchedulerCallback& callback, FeatureFlags features,
-                     sp<VsyncModulator> modulatorPtr)
+                     sp<VsyncModulator> modulatorPtr, IVsyncTrackerCallback& vsyncTrackerCallback)
       : impl::MessageQueue(compositor),
         mFeatures(features),
         mVsyncModulator(std::move(modulatorPtr)),
-        mSchedulerCallback(callback) {}
+        mSchedulerCallback(callback),
+        mVsyncTrackerCallback(vsyncTrackerCallback) {}
 
 Scheduler::~Scheduler() {
     // MessageQueue depends on VsyncSchedule, so first destroy it.
@@ -97,7 +98,12 @@ void Scheduler::startTimers() {
     using namespace sysprop;
     using namespace std::string_literals;
 
-    if (const int64_t millis = set_touch_timer_ms(0); millis > 0) {
+    const int32_t defaultTouchTimerValue =
+            FlagManager::getInstance().enable_fro_dependent_features() &&
+                    sysprop::enable_frame_rate_override(true)
+            ? 200
+            : 0;
+    if (const int32_t millis = set_touch_timer_ms(defaultTouchTimerValue); millis > 0) {
         // Touch events are coming to SF every 100ms, so the timer needs to be higher than that
         mTouchTimer.emplace(
                 "TouchTimer", std::chrono::milliseconds(millis),
@@ -122,10 +128,10 @@ void Scheduler::setPacesetterDisplay(std::optional<PhysicalDisplayId> pacesetter
 }
 
 void Scheduler::registerDisplay(PhysicalDisplayId displayId, RefreshRateSelectorPtr selectorPtr) {
-    auto schedulePtr = std::make_shared<VsyncSchedule>(displayId, mFeatures,
-                                                       [this](PhysicalDisplayId id, bool enable) {
-                                                           onHardwareVsyncRequest(id, enable);
-                                                       });
+    auto schedulePtr = std::make_shared<VsyncSchedule>(
+            selectorPtr->getActiveMode().modePtr, mFeatures,
+            [this](PhysicalDisplayId id, bool enable) { onHardwareVsyncRequest(id, enable); },
+            mVsyncTrackerCallback);
 
     registerDisplayInternal(displayId, std::move(selectorPtr), std::move(schedulePtr));
 }
@@ -186,32 +192,33 @@ void Scheduler::onFrameSignal(ICompositor& compositor, VsyncId vsyncId,
              .expectedVsyncTime = expectedVsyncTime,
              .sfWorkDuration = mVsyncModulator->getVsyncConfig().sfWorkDuration};
 
-    LOG_ALWAYS_FATAL_IF(!mPacesetterDisplayId);
-    const auto pacesetterId = *mPacesetterDisplayId;
-    const auto pacesetterOpt = mDisplays.get(pacesetterId);
+    ftl::NonNull<const Display*> pacesetterPtr = pacesetterPtrLocked();
+    pacesetterPtr->targeterPtr->beginFrame(beginFrameArgs, *pacesetterPtr->schedulePtr);
 
-    FrameTargeter& pacesetterTargeter = *pacesetterOpt->get().targeterPtr;
-    pacesetterTargeter.beginFrame(beginFrameArgs, *pacesetterOpt->get().schedulePtr);
+    {
+        FrameTargets targets;
+        targets.try_emplace(pacesetterPtr->displayId, &pacesetterPtr->targeterPtr->target());
 
-    FrameTargets targets;
-    targets.try_emplace(pacesetterId, &pacesetterTargeter.target());
+        for (const auto& [id, display] : mDisplays) {
+            if (id == pacesetterPtr->displayId) continue;
 
-    for (const auto& [id, display] : mDisplays) {
-        if (id == pacesetterId) continue;
+            FrameTargeter& targeter = *display.targeterPtr;
+            targeter.beginFrame(beginFrameArgs, *display.schedulePtr);
+            targets.try_emplace(id, &targeter.target());
+        }
 
-        FrameTargeter& targeter = *display.targeterPtr;
-        targeter.beginFrame(beginFrameArgs, *display.schedulePtr);
-        targets.try_emplace(id, &targeter.target());
+        if (!compositor.commit(pacesetterPtr->displayId, targets)) return;
     }
 
-    if (!compositor.commit(pacesetterId, targets)) return;
+    // The pacesetter may have changed or been registered anew during commit.
+    pacesetterPtr = pacesetterPtrLocked();
 
     // TODO(b/256196556): Choose the frontrunner display.
     FrameTargeters targeters;
-    targeters.try_emplace(pacesetterId, &pacesetterTargeter);
+    targeters.try_emplace(pacesetterPtr->displayId, pacesetterPtr->targeterPtr.get());
 
     for (auto& [id, display] : mDisplays) {
-        if (id == pacesetterId) continue;
+        if (id == pacesetterPtr->displayId) continue;
 
         FrameTargeter& targeter = *display.targeterPtr;
         targeters.try_emplace(id, &targeter);
@@ -219,7 +226,7 @@ void Scheduler::onFrameSignal(ICompositor& compositor, VsyncId vsyncId,
 
     if (FlagManager::getInstance().vrr_config() &&
         CC_UNLIKELY(mPacesetterFrameDurationFractionToSkip > 0.f)) {
-        const auto period = pacesetterTargeter.target().expectedFrameDuration();
+        const auto period = pacesetterPtr->targeterPtr->target().expectedFrameDuration();
         const auto skipDuration = Duration::fromNs(
                 static_cast<nsecs_t>(period.ns() * mPacesetterFrameDurationFractionToSkip));
         ATRACE_FORMAT("Injecting jank for %f%% of the frame (%" PRId64 " ns)",
@@ -228,7 +235,19 @@ void Scheduler::onFrameSignal(ICompositor& compositor, VsyncId vsyncId,
         mPacesetterFrameDurationFractionToSkip = 0.f;
     }
 
-    const auto resultsPerDisplay = compositor.composite(pacesetterId, targeters);
+    if (FlagManager::getInstance().vrr_config()) {
+        const auto minFramePeriod = pacesetterPtr->schedulePtr->minFramePeriod();
+        const auto presentFenceForPastVsync =
+                pacesetterPtr->targeterPtr->target().presentFenceForPastVsync(minFramePeriod);
+        const auto lastConfirmedPresentTime = presentFenceForPastVsync->getSignalTime();
+        if (lastConfirmedPresentTime != Fence::SIGNAL_TIME_PENDING &&
+            lastConfirmedPresentTime != Fence::SIGNAL_TIME_INVALID) {
+            pacesetterPtr->schedulePtr->getTracker()
+                    .onFrameBegin(expectedVsyncTime, TimePoint::fromNs(lastConfirmedPresentTime));
+        }
+    }
+
+    const auto resultsPerDisplay = compositor.composite(pacesetterPtr->displayId, targeters);
     compositor.sample();
 
     for (const auto& [id, targeter] : targeters) {
@@ -399,6 +418,17 @@ void Scheduler::onFrameRateOverridesChanged(ConnectionHandle handle, PhysicalDis
     thread->onFrameRateOverridesChanged(displayId, std::move(overrides));
 }
 
+void Scheduler::onHdcpLevelsChanged(ConnectionHandle handle, PhysicalDisplayId displayId,
+                                    int32_t connectedLevel, int32_t maxLevel) {
+    android::EventThread* thread;
+    {
+        std::lock_guard<std::mutex> lock(mConnectionsLock);
+        RETURN_IF_INVALID_HANDLE(handle);
+        thread = mConnections[handle].thread.get();
+    }
+    thread->onHdcpLevelsChanged(displayId, connectedLevel, maxLevel);
+}
+
 void Scheduler::onPrimaryDisplayModeChanged(ConnectionHandle handle, const FrameRateMode& mode) {
     {
         std::lock_guard<std::mutex> lock(mPolicyLock);
@@ -502,13 +532,16 @@ void Scheduler::resyncAllToHardwareVsync(bool allowToEnable) {
     std::scoped_lock lock(mDisplayLock);
     ftl::FakeGuard guard(kMainThreadContext);
 
-    for (const auto& [id, _] : mDisplays) {
-        resyncToHardwareVsyncLocked(id, allowToEnable);
+    for (const auto& [id, display] : mDisplays) {
+        if (display.powerMode != hal::PowerMode::OFF ||
+            !FlagManager::getInstance().multithreaded_present()) {
+            resyncToHardwareVsyncLocked(id, allowToEnable);
+        }
     }
 }
 
 void Scheduler::resyncToHardwareVsyncLocked(PhysicalDisplayId id, bool allowToEnable,
-                                            std::optional<Fps> refreshRate) {
+                                            DisplayModePtr modePtr) {
     const auto displayOpt = mDisplays.get(id);
     if (!displayOpt) {
         ALOGW("%s: Invalid display %s!", __func__, to_string(id).c_str());
@@ -517,12 +550,12 @@ void Scheduler::resyncToHardwareVsyncLocked(PhysicalDisplayId id, bool allowToEn
     const Display& display = *displayOpt;
 
     if (display.schedulePtr->isHardwareVsyncAllowed(allowToEnable)) {
-        if (!refreshRate) {
-            refreshRate = display.selectorPtr->getActiveMode().modePtr->getVsyncRate();
+        if (!modePtr) {
+            modePtr = display.selectorPtr->getActiveMode().modePtr.get();
         }
-        if (refreshRate->isValid()) {
+        if (modePtr->getVsyncRate().isValid()) {
             constexpr bool kForce = false;
-            display.schedulePtr->startPeriodTransition(refreshRate->getPeriod(), kForce);
+            display.schedulePtr->onDisplayModeChanged(ftl::as_non_null(modePtr), kForce);
         }
     }
 }
@@ -571,6 +604,24 @@ void Scheduler::setRenderRate(PhysicalDisplayId id, Fps renderFrameRate) {
     display.schedulePtr->getTracker().setRenderRate(renderFrameRate);
 }
 
+Fps Scheduler::getNextFrameInterval(PhysicalDisplayId id,
+                                    TimePoint currentExpectedPresentTime) const {
+    std::scoped_lock lock(mDisplayLock);
+    ftl::FakeGuard guard(kMainThreadContext);
+
+    const auto displayOpt = mDisplays.get(id);
+    if (!displayOpt) {
+        ALOGW("%s: Invalid display %s!", __func__, to_string(id).c_str());
+        return Fps{};
+    }
+    const Display& display = *displayOpt;
+    const nsecs_t threshold =
+            display.selectorPtr->getActiveMode().modePtr->getVsyncRate().getPeriodNsecs() / 2;
+    const nsecs_t nextVsyncTime = display.schedulePtr->getTracker().nextAnticipatedVSyncTimeFrom(
+            currentExpectedPresentTime.ns() + threshold);
+    return Fps::fromPeriodNsecs(nextVsyncTime - currentExpectedPresentTime.ns());
+}
+
 void Scheduler::resync() {
     static constexpr nsecs_t kIgnoreDelay = ms2ns(750);
 
@@ -596,6 +647,7 @@ bool Scheduler::addResyncSample(PhysicalDisplayId id, nsecs_t timestamp,
 }
 
 void Scheduler::addPresentFence(PhysicalDisplayId id, std::shared_ptr<FenceTime> fence) {
+    ATRACE_NAME(ftl::Concat(__func__, ' ', id.value).c_str());
     const auto scheduleOpt =
             (ftl::FakeGuard(mDisplayLock), mDisplays.get(id)).and_then([](const Display& display) {
                 return display.powerMode == hal::PowerMode::OFF
@@ -606,7 +658,8 @@ void Scheduler::addPresentFence(PhysicalDisplayId id, std::shared_ptr<FenceTime>
     if (!scheduleOpt) return;
     const auto& schedule = scheduleOpt->get();
 
-    if (const bool needMoreSignals = schedule->getController().addPresentFence(std::move(fence))) {
+    const bool needMoreSignals = schedule->getController().addPresentFence(std::move(fence));
+    if (needMoreSignals) {
         schedule->enableHardwareVsync();
     } else {
         constexpr bool kDisallow = false;
@@ -645,6 +698,10 @@ void Scheduler::setDefaultFrameRateCompatibility(
         int32_t id, scheduler::FrameRateCompatibility frameRateCompatibility) {
     mLayerHistory.setDefaultFrameRateCompatibility(id, frameRateCompatibility,
                                                    mFeatures.test(Feature::kContentDetection));
+}
+
+void Scheduler::setLayerProperties(int32_t id, const android::scheduler::LayerProps& properties) {
+    mLayerHistory.setLayerProperties(id, properties);
 }
 
 void Scheduler::chooseRefreshRateForContent(
@@ -902,9 +959,9 @@ std::shared_ptr<VsyncSchedule> Scheduler::promotePacesetterDisplayLocked(
 
         newVsyncSchedulePtr = pacesetter.schedulePtr;
 
-        const Fps refreshRate = pacesetter.selectorPtr->getActiveMode().modePtr->getVsyncRate();
         constexpr bool kForce = true;
-        newVsyncSchedulePtr->startPeriodTransition(refreshRate.getPeriod(), kForce);
+        newVsyncSchedulePtr->onDisplayModeChanged(pacesetter.selectorPtr->getActiveMode().modePtr,
+                                                  kForce);
     }
     return newVsyncSchedulePtr;
 }
@@ -1179,7 +1236,7 @@ void Scheduler::onNewVsyncPeriodChangeTimeline(const hal::VsyncPeriodChangeTimel
     }
 }
 
-bool Scheduler::onPostComposition(nsecs_t presentTime) {
+bool Scheduler::onCompositionPresented(nsecs_t presentTime) {
     std::lock_guard<std::mutex> lock(mVsyncTimelineLock);
     if (mLastVsyncPeriodChangeTimeline && mLastVsyncPeriodChangeTimeline->refreshRequired) {
         if (presentTime < mLastVsyncPeriodChangeTimeline->refreshTimeNanos) {
@@ -1196,12 +1253,27 @@ void Scheduler::onActiveDisplayAreaChanged(uint32_t displayArea) {
     mLayerHistory.setDisplayArea(displayArea);
 }
 
-void Scheduler::setGameModeRefreshRateForUid(FrameRateOverride frameRateOverride) {
+void Scheduler::setGameModeFrameRateForUid(FrameRateOverride frameRateOverride) {
     if (frameRateOverride.frameRateHz > 0.f && frameRateOverride.frameRateHz < 1.f) {
         return;
     }
 
-    mFrameRateOverrideMappings.setGameModeRefreshRateForUid(frameRateOverride);
+    if (FlagManager::getInstance().game_default_frame_rate()) {
+        // update the frame rate override mapping in LayerHistory
+        mLayerHistory.updateGameModeFrameRateOverride(frameRateOverride);
+    } else {
+        mFrameRateOverrideMappings.setGameModeRefreshRateForUid(frameRateOverride);
+    }
+}
+
+void Scheduler::setGameDefaultFrameRateForUid(FrameRateOverride frameRateOverride) {
+    if (!FlagManager::getInstance().game_default_frame_rate() ||
+        (frameRateOverride.frameRateHz > 0.f && frameRateOverride.frameRateHz < 1.f)) {
+        return;
+    }
+
+    // update the frame rate override mapping in LayerHistory
+    mLayerHistory.updateGameDefaultFrameRateOverride(frameRateOverride);
 }
 
 void Scheduler::setPreferredRefreshRateForUid(FrameRateOverride frameRateOverride) {
@@ -1218,7 +1290,7 @@ void Scheduler::updateSmallAreaDetection(
 }
 
 void Scheduler::setSmallAreaDetectionThreshold(int32_t appId, float threshold) {
-    mSmallAreaDetectionAllowMappings.setThesholdForAppId(appId, threshold);
+    mSmallAreaDetectionAllowMappings.setThresholdForAppId(appId, threshold);
 }
 
 bool Scheduler::isSmallDirtyArea(int32_t appId, uint32_t dirtyArea) {

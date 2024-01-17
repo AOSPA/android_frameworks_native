@@ -22,7 +22,6 @@
 #include <binder/BpBinder.h>
 #include <binder/TextOutput.h>
 
-#include <android-base/macros.h>
 #include <cutils/sched_policy.h>
 #include <utils/CallStack.h>
 #include <utils/Log.h>
@@ -68,28 +67,28 @@ namespace android {
 
 // Static const and functions will be optimized out if not used,
 // when LOG_NDEBUG and references in IF_LOG_COMMANDS() are optimized out.
-static const char *kReturnStrings[] = {
-    "BR_ERROR",
-    "BR_OK",
-    "BR_TRANSACTION",
-    "BR_REPLY",
-    "BR_ACQUIRE_RESULT",
-    "BR_DEAD_REPLY",
-    "BR_TRANSACTION_COMPLETE",
-    "BR_INCREFS",
-    "BR_ACQUIRE",
-    "BR_RELEASE",
-    "BR_DECREFS",
-    "BR_ATTEMPT_ACQUIRE",
-    "BR_NOOP",
-    "BR_SPAWN_LOOPER",
-    "BR_FINISHED",
-    "BR_DEAD_BINDER",
-    "BR_CLEAR_DEATH_NOTIFICATION_DONE",
-    "BR_FAILED_REPLY",
-    "BR_FROZEN_REPLY",
-    "BR_ONEWAY_SPAM_SUSPECT",
-    "BR_TRANSACTION_SEC_CTX",
+static const char* kReturnStrings[] = {
+        "BR_ERROR",
+        "BR_OK",
+        "BR_TRANSACTION/BR_TRANSACTION_SEC_CTX",
+        "BR_REPLY",
+        "BR_ACQUIRE_RESULT",
+        "BR_DEAD_REPLY",
+        "BR_TRANSACTION_COMPLETE",
+        "BR_INCREFS",
+        "BR_ACQUIRE",
+        "BR_RELEASE",
+        "BR_DECREFS",
+        "BR_ATTEMPT_ACQUIRE",
+        "BR_NOOP",
+        "BR_SPAWN_LOOPER",
+        "BR_FINISHED",
+        "BR_DEAD_BINDER",
+        "BR_CLEAR_DEATH_NOTIFICATION_DONE",
+        "BR_FAILED_REPLY",
+        "BR_FROZEN_REPLY",
+        "BR_ONEWAY_SPAM_SUSPECT",
+        "BR_TRANSACTION_PENDING_FROZEN",
 };
 
 static const char *kCommandStrings[] = {
@@ -395,7 +394,9 @@ void IPCThreadState::restoreGetCallingSpGuard(const SpGuard* guard) {
 }
 
 void IPCThreadState::checkContextIsBinderForUse(const char* use) const {
-    if (LIKELY(mServingStackPointerGuard == nullptr)) return;
+    if (mServingStackPointerGuard == nullptr) [[likely]] {
+        return;
+    }
 
     if (!mServingStackPointer || mServingStackPointerGuard->address < mServingStackPointer) {
         LOG_ALWAYS_FATAL("In context %s, %s does not make sense (binder sp: %p, guard: %p).",
@@ -832,7 +833,7 @@ status_t IPCThreadState::transact(int32_t handle,
     }
 
     if ((flags & TF_ONE_WAY) == 0) {
-        if (UNLIKELY(mCallRestriction != ProcessState::CallRestriction::NONE)) {
+        if (mCallRestriction != ProcessState::CallRestriction::NONE) [[unlikely]] {
             if (mCallRestriction == ProcessState::CallRestriction::ERROR_IF_NOT_ONEWAY) {
                 ALOGE("Process making non-oneway call (code: %u) but is restricted.", code);
                 CallStack::logStack("non-oneway call", CallStack::getCurrent(10).get(),
@@ -842,13 +843,13 @@ status_t IPCThreadState::transact(int32_t handle,
             }
         }
 
-        #if 0
+#if 0
         if (code == 4) { // relayout
             ALOGI(">>>>>> CALLING transaction 4");
         } else {
             ALOGI(">>>>>> CALLING transaction %d", code);
         }
-        #endif
+#endif
         if (reply) {
             err = waitForResponse(reply);
         } else {

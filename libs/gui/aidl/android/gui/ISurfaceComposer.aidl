@@ -16,6 +16,7 @@
 
 package android.gui;
 
+import android.gui.CaptureArgs;
 import android.gui.Color;
 import android.gui.CompositionPreference;
 import android.gui.ContentSamplingAttributes;
@@ -238,7 +239,8 @@ interface ISurfaceComposer {
      * Capture the specified screen. This requires the READ_FRAME_BUFFER
      * permission.
      */
-    oneway void captureDisplayById(long displayId, IScreenCaptureListener listener);
+    oneway void captureDisplayById(long displayId, in CaptureArgs args,
+            IScreenCaptureListener listener);
 
     /**
      * Capture a subtree of the layer hierarchy, potentially ignoring the root node.
@@ -475,10 +477,21 @@ interface ISurfaceComposer {
 
     /**
      * Set the override frame rate for a specified uid by GameManagerService.
+     * This override is controlled by game mode interventions.
+     * Passing the frame rate and uid to SurfaceFlinger to update the override mapping
+     * in the LayerHistory.
+     */
+    void setGameModeFrameRateOverride(int uid, float frameRate);
+
+    /**
+     * Set the override frame rate for a specified uid by GameManagerService.
+     * This override is controlled by game default frame rate sysprop:
+     * "ro.surface_flinger.game_default_frame_rate_override" holding the override value,
+     * "persisit.graphics.game_default_frame_rate.enabled" to determine if it's enabled.
      * Passing the frame rate and uid to SurfaceFlinger to update the override mapping
      * in the scheduler.
      */
-    void setOverrideFrameRate(int uid, float frameRate);
+    void setGameDefaultFrameRateOverride(int uid, float frameRate);
 
     oneway void updateSmallAreaDetection(in int[] appIds, in float[] thresholds);
 
@@ -512,6 +525,13 @@ interface ISurfaceComposer {
      * Requires root or android.permission.HARDWARE_TEST
      */
     void scheduleCommit();
+
+    /**
+     * Force all window composition to the GPU (i.e. disable Hardware Overlays).
+     * This can help check if there is a bug in HW Composer.
+     * Requires root or android.permission.HARDWARE_TEST
+     */
+    void forceClientComposition(boolean enabled);
 
     /**
      * Gets priority of the RenderEngine in SurfaceFlinger.

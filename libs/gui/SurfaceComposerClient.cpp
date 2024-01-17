@@ -2782,9 +2782,16 @@ status_t SurfaceComposerClient::getHdrOutputConversionSupport(bool* isSupported)
     return statusTFromBinderStatus(status);
 }
 
-status_t SurfaceComposerClient::setOverrideFrameRate(uid_t uid, float frameRate) {
+status_t SurfaceComposerClient::setGameModeFrameRateOverride(uid_t uid, float frameRate) {
     binder::Status status =
-            ComposerServiceAIDL::getComposerService()->setOverrideFrameRate(uid, frameRate);
+            ComposerServiceAIDL::getComposerService()->setGameModeFrameRateOverride(uid, frameRate);
+    return statusTFromBinderStatus(status);
+}
+
+status_t SurfaceComposerClient::setGameDefaultFrameRateOverride(uid_t uid, float frameRate) {
+    binder::Status status =
+            ComposerServiceAIDL::getComposerService()->setGameDefaultFrameRateOverride(uid,
+                                                                                       frameRate);
     return statusTFromBinderStatus(status);
 }
 
@@ -3110,7 +3117,6 @@ status_t SurfaceComposerClient::removeWindowInfosListener(
             ->removeWindowInfosListener(windowInfosListener,
                                         ComposerServiceAIDL::getComposerService());
 }
-
 // ----------------------------------------------------------------------------
 
 status_t ScreenshotClient::captureDisplay(const DisplayCaptureArgs& captureArgs,
@@ -3122,12 +3128,12 @@ status_t ScreenshotClient::captureDisplay(const DisplayCaptureArgs& captureArgs,
     return statusTFromBinderStatus(status);
 }
 
-status_t ScreenshotClient::captureDisplay(DisplayId displayId,
+status_t ScreenshotClient::captureDisplay(DisplayId displayId, const gui::CaptureArgs& captureArgs,
                                           const sp<IScreenCaptureListener>& captureListener) {
     sp<gui::ISurfaceComposer> s(ComposerServiceAIDL::getComposerService());
     if (s == nullptr) return NO_INIT;
 
-    binder::Status status = s->captureDisplayById(displayId.value, captureListener);
+    binder::Status status = s->captureDisplayById(displayId.value, captureArgs, captureListener);
     return statusTFromBinderStatus(status);
 }
 

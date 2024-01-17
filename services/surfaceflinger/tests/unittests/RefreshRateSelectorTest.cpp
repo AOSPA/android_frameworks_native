@@ -26,6 +26,7 @@
 #include <log/log.h>
 #include <ui/Size.h>
 
+#include <common/test/FlagUtils.h>
 #include <scheduler/Fps.h>
 #include <scheduler/FrameRateMode.h>
 #include "DisplayHardware/HWC2.h"
@@ -1149,6 +1150,75 @@ TEST_P(RefreshRateSelectorTest, scrollWhileWatching60fps_60_90) {
     EXPECT_EQ(kMode90, selector.getBestFrameRateMode(layers).modePtr);
 }
 
+TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_ExplicitGte) {
+    auto selector = createSelector(makeModes(kMode30, kMode60, kMode90, kMode120), kModeId120);
+
+    std::vector<LayerRequirement> layers = {{.weight = 1.f}, {.weight = 1.f}};
+    auto& lr1 = layers[0];
+    auto& lr2 = layers[1];
+
+    lr1.vote = LayerVoteType::ExplicitGte;
+    lr1.desiredRefreshRate = 60_Hz;
+    lr1.name = "60Hz ExplicitGte";
+    lr2.vote = LayerVoteType::NoVote;
+    lr2.name = "NoVote";
+    EXPECT_EQ(kMode60, selector.getBestFrameRateMode(layers).modePtr);
+
+    lr1.vote = LayerVoteType::ExplicitGte;
+    lr1.desiredRefreshRate = 25_Hz;
+    lr1.name = "25Hz ExplicitGte";
+    lr2.vote = LayerVoteType::NoVote;
+    lr2.name = "NoVote";
+    EXPECT_EQ(kMode30, selector.getBestFrameRateMode(layers).modePtr);
+
+    lr1.vote = LayerVoteType::ExplicitGte;
+    lr1.desiredRefreshRate = 91_Hz;
+    lr1.name = "91Hz ExplicitGte";
+    lr2.vote = LayerVoteType::NoVote;
+    lr2.name = "NoVote";
+    EXPECT_EQ(kMode120, selector.getBestFrameRateMode(layers).modePtr);
+
+    lr1.vote = LayerVoteType::ExplicitGte;
+    lr1.desiredRefreshRate = 60_Hz;
+    lr1.name = "60Hz ExplicitGte";
+    lr2.vote = LayerVoteType::ExplicitDefault;
+    lr2.desiredRefreshRate = 30_Hz;
+    lr2.name = "30Hz ExplicitDefault";
+    EXPECT_EQ(kMode60, selector.getBestFrameRateMode(layers).modePtr);
+
+    lr1.vote = LayerVoteType::ExplicitGte;
+    lr1.desiredRefreshRate = 60_Hz;
+    lr1.name = "60Hz ExplicitGte";
+    lr2.vote = LayerVoteType::ExplicitExactOrMultiple;
+    lr2.desiredRefreshRate = 30_Hz;
+    lr2.name = "30Hz ExplicitExactOrMultiple";
+    EXPECT_EQ(kMode60, selector.getBestFrameRateMode(layers).modePtr);
+
+    lr1.vote = LayerVoteType::ExplicitGte;
+    lr1.desiredRefreshRate = 60_Hz;
+    lr1.name = "60Hz ExplicitGte";
+    lr2.vote = LayerVoteType::ExplicitExactOrMultiple;
+    lr2.desiredRefreshRate = 60_Hz;
+    lr2.name = "60Hz ExplicitExactOrMultiple";
+    EXPECT_EQ(kMode60, selector.getBestFrameRateMode(layers).modePtr);
+
+    lr1.vote = LayerVoteType::ExplicitGte;
+    lr1.desiredRefreshRate = 60_Hz;
+    lr1.name = "60Hz ExplicitGte";
+    lr2.vote = LayerVoteType::ExplicitExactOrMultiple;
+    lr2.desiredRefreshRate = 90_Hz;
+    lr2.name = "90Hz ExplicitExactOrMultiple";
+    EXPECT_EQ(kMode90, selector.getBestFrameRateMode(layers).modePtr);
+
+    lr1.vote = LayerVoteType::ExplicitGte;
+    lr1.desiredRefreshRate = 60_Hz;
+    lr1.name = "60Hz ExplicitGte";
+    lr2.vote = LayerVoteType::ExplicitExactOrMultiple;
+    lr2.desiredRefreshRate = 120_Hz;
+    lr2.name = "120Hz ExplicitExactOrMultiple";
+    EXPECT_EQ(kMode120, selector.getBestFrameRateMode(layers).modePtr);
+}
+
 TEST_P(RefreshRateSelectorTest, getMaxRefreshRatesByPolicy) {
     // The kModes_30_60_90 contains two kMode72_G1, kMode120_G1 which are from the
     // different group.
@@ -1543,6 +1613,7 @@ TEST_P(RefreshRateSelectorTest,
         return;
     }
 
+    SET_FLAG_FOR_TEST(flags::vrr_config, false);
     // VRR compatibility is determined by the presence of a vrr config in the DisplayMode.
     auto selector = createSelector(makeModes(kMode60, kMode120), kModeId120);
 
@@ -1568,7 +1639,7 @@ TEST_P(RefreshRateSelectorTest,
             // These layers cannot change mode due to smoothSwitchOnly, and will definitely use
             // active mode (120Hz).
             {FrameRateCategory::NoPreference, true, 120_Hz, kModeId120},
-            {FrameRateCategory::Low, true, 40_Hz, kModeId120},
+            {FrameRateCategory::Low, true, 120_Hz, kModeId120},
             {FrameRateCategory::Normal, true, 40_Hz, kModeId120},
             {FrameRateCategory::High, true, 120_Hz, kModeId120},
     };
@@ -1610,6 +1681,7 @@ TEST_P(RefreshRateSelectorTest,
         return;
     }
 
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
     // VRR compatibility is determined by the presence of a vrr config in the DisplayMode.
     auto selector = createSelector(kVrrModes_60_120, kModeId120);
 
@@ -1624,15 +1696,15 @@ TEST_P(RefreshRateSelectorTest,
 
     // Note that `smoothSwitchOnly` should not have an effect.
     const std::initializer_list<Case> testCases = {
-            {FrameRateCategory::Default, false, 240_Hz},
+            {FrameRateCategory::Default, false, 120_Hz},
             // TODO(b/266481656): Once this bug is fixed, NoPreference should be a lower frame rate.
-            {FrameRateCategory::NoPreference, false, 240_Hz},
+            {FrameRateCategory::NoPreference, false, 120_Hz},
             {FrameRateCategory::Low, false, 30_Hz},
             {FrameRateCategory::Normal, false, 60_Hz},
             {FrameRateCategory::High, false, 120_Hz},
-            {FrameRateCategory::Default, true, 240_Hz},
+            {FrameRateCategory::Default, true, 120_Hz},
             // TODO(b/266481656): Once this bug is fixed, NoPreference should be a lower frame rate.
-            {FrameRateCategory::NoPreference, true, 240_Hz},
+            {FrameRateCategory::NoPreference, true, 120_Hz},
             {FrameRateCategory::Low, true, 30_Hz},
             {FrameRateCategory::Normal, true, 60_Hz},
             {FrameRateCategory::High, true, 120_Hz},
@@ -3486,10 +3558,11 @@ TEST_P(RefreshRateSelectorTest, frameRateOverrideInBlockingZone60_90_NonDivisor)
 
 // VRR tests
 TEST_P(RefreshRateSelectorTest, singleMinMaxRateForVrr) {
-    if (GetParam() != Config::FrameRateOverride::Enabled || !flags::vrr_config()) {
+    if (GetParam() != Config::FrameRateOverride::Enabled) {
         return;
     }
 
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
     auto selector = createSelector(kVrrMode_120, kModeId120);
     EXPECT_TRUE(selector.supportsFrameRateOverride());
 
@@ -3505,10 +3578,11 @@ TEST_P(RefreshRateSelectorTest, singleMinMaxRateForVrr) {
 }
 
 TEST_P(RefreshRateSelectorTest, renderRateChangesWithPolicyChangeForVrr) {
-    if (GetParam() != Config::FrameRateOverride::Enabled || !flags::vrr_config()) {
+    if (GetParam() != Config::FrameRateOverride::Enabled) {
         return;
     }
 
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
     auto selector = createSelector(kVrrModes_60_120, kModeId120);
 
     const FpsRange only120 = {120_Hz, 120_Hz};
@@ -3562,10 +3636,11 @@ TEST_P(RefreshRateSelectorTest, renderRateChangesWithPolicyChangeForVrr) {
 }
 
 TEST_P(RefreshRateSelectorTest, modeChangesWithPolicyChangeForVrr) {
-    if (GetParam() != Config::FrameRateOverride::Enabled || !flags::vrr_config()) {
+    if (GetParam() != Config::FrameRateOverride::Enabled) {
         return;
     }
 
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
     auto selector = createSelector(kVrrModes_60_120, kModeId120);
 
     const FpsRange range120 = {0_Hz, 120_Hz};
@@ -3585,10 +3660,11 @@ TEST_P(RefreshRateSelectorTest, modeChangesWithPolicyChangeForVrr) {
 }
 
 TEST_P(RefreshRateSelectorTest, getFrameRateOverridesForVrr) {
-    if (GetParam() != Config::FrameRateOverride::Enabled || !flags::vrr_config()) {
+    if (GetParam() != Config::FrameRateOverride::Enabled) {
         return;
     }
 
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
     auto selector = createSelector(kVrrMode_120, kModeId120);
     // TODO(b/297600226) Run at lower than 30 Fps for dVRR
     const std::vector<Fps> desiredRefreshRates = {30_Hz, 34.285_Hz, 40_Hz, 48_Hz,
@@ -3614,10 +3690,11 @@ TEST_P(RefreshRateSelectorTest, getFrameRateOverridesForVrr) {
 }
 
 TEST_P(RefreshRateSelectorTest, renderFrameRatesForVrr) {
-    if (GetParam() != Config::FrameRateOverride::Enabled || !flags::vrr_config()) {
+    if (GetParam() != Config::FrameRateOverride::Enabled) {
         return;
     }
 
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
     auto selector = createSelector(kVrrMode_120, kModeId120);
     const FpsRange only120 = {120_Hz, 120_Hz};
     const FpsRange range120 = {0_Hz, 120_Hz};

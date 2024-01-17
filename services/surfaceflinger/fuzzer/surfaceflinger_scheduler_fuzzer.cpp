@@ -28,6 +28,7 @@
 #include "Scheduler/VSyncPredictor.h"
 #include "Scheduler/VSyncReactor.h"
 
+#include "mock/DisplayHardware/MockDisplayMode.h"
 #include "mock/MockVSyncDispatch.h"
 #include "mock/MockVSyncTracker.h"
 
@@ -178,16 +179,24 @@ void SchedulerFuzzer::fuzzVSyncDispatchTimerQueue() {
     dump<scheduler::VSyncDispatchTimerQueueEntry>(&entry, &mFdp);
 }
 
+struct VsyncTrackerCallback : public scheduler::IVsyncTrackerCallback {
+    void onVsyncGenerated(TimePoint, ftl::NonNull<DisplayModePtr>, Fps) override {}
+};
+
 void SchedulerFuzzer::fuzzVSyncPredictor() {
     uint16_t now = mFdp.ConsumeIntegral<uint16_t>();
     uint16_t historySize = mFdp.ConsumeIntegralInRange<uint16_t>(1, UINT16_MAX);
     uint16_t minimumSamplesForPrediction = mFdp.ConsumeIntegralInRange<uint16_t>(1, UINT16_MAX);
     nsecs_t idealPeriod = mFdp.ConsumeIntegralInRange<nsecs_t>(1, UINT32_MAX);
-    scheduler::VSyncPredictor tracker{kDisplayId, idealPeriod, historySize,
-                                      minimumSamplesForPrediction,
-                                      mFdp.ConsumeIntegral<uint32_t>() /*outlierTolerancePercent*/};
+    VsyncTrackerCallback callback;
+    const auto mode = ftl::as_non_null(
+            mock::createDisplayMode(DisplayModeId(0), Fps::fromPeriodNsecs(idealPeriod)));
+    scheduler::VSyncPredictor tracker{mode, historySize, minimumSamplesForPrediction,
+                                      mFdp.ConsumeIntegral<uint32_t>() /*outlierTolerancePercent*/,
+                                      callback};
     uint16_t period = mFdp.ConsumeIntegral<uint16_t>();
-    tracker.setPeriod(period);
+    tracker.setDisplayModePtr(ftl::as_non_null(
+            mock::createDisplayMode(DisplayModeId(0), Fps::fromPeriodNsecs(period))));
     for (uint16_t i = 0; i < minimumSamplesForPrediction; ++i) {
         if (!tracker.needsMoreSamples()) {
             break;
@@ -262,7 +271,10 @@ void SchedulerFuzzer::fuzzVSyncReactor() {
                                     *vSyncTracker, mFdp.ConsumeIntegral<uint8_t>() /*pendingLimit*/,
                                     false);
 
-    reactor.startPeriodTransition(mFdp.ConsumeIntegral<nsecs_t>(), mFdp.ConsumeBool());
+    const auto mode = ftl::as_non_null(
+            mock::createDisplayMode(DisplayModeId(0),
+                                    Fps::fromPeriodNsecs(mFdp.ConsumeIntegral<nsecs_t>())));
+    reactor.onDisplayModeChanged(mode, mFdp.ConsumeBool());
     bool periodFlushed = false; // Value does not matter, since this is an out
                                 // param from addHwVsyncTimestamp.
     reactor.addHwVsyncTimestamp(0, std::nullopt, &periodFlushed);
@@ -421,6 +433,7 @@ void SchedulerFuzzer::fuzzFrameTargeter() {
 
         Period period() const { return getFuzzedDuration(fuzzer); }
         TimePoint vsyncDeadlineAfter(TimePoint) const { return getFuzzedTimePoint(fuzzer); }
+        Period minFramePeriod() const { return period(); }
     } vsyncSource{mFdp};
 
     int i = 10;

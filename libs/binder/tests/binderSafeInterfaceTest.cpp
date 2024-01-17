@@ -28,6 +28,7 @@
 #include <gtest/gtest.h>
 #pragma clang diagnostic pop
 
+#include <utils/Flattenable.h>
 #include <utils/LightRefBase.h>
 #include <utils/NativeHandle.h>
 
@@ -40,6 +41,7 @@
 #include <sys/prctl.h>
 
 using namespace std::chrono_literals; // NOLINT - google-build-using-namespace
+using android::binder::unique_fd;
 
 namespace android {
 namespace tests {
@@ -684,7 +686,7 @@ bool fdsAreEquivalent(int a, int b) {
 
 TEST_F(SafeInterfaceTest, TestIncrementNativeHandle) {
     // Create an fd we can use to send and receive from the remote process
-    base::unique_fd eventFd{eventfd(0 /*initval*/, 0 /*flags*/)};
+    unique_fd eventFd{eventfd(0 /*initval*/, 0 /*flags*/)};
     ASSERT_NE(-1, eventFd);
 
     // Determine the maximum number of fds this process can have open

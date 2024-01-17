@@ -58,8 +58,7 @@ protected:
 
     void update(LayerSnapshotBuilder& actualBuilder, LayerSnapshotBuilder::Args& args) {
         if (mLifecycleManager.getGlobalChanges().test(RequestedLayerState::Changes::Hierarchy)) {
-            mHierarchyBuilder.update(mLifecycleManager.getLayers(),
-                                     mLifecycleManager.getDestroyedLayers());
+            mHierarchyBuilder.update(mLifecycleManager);
         }
         args.root = mHierarchyBuilder.getHierarchy();
         actualBuilder.update(args);
@@ -789,6 +788,231 @@ TEST_F(LayerSnapshotTest, frameRateSelectionStrategy) {
     EXPECT_EQ(getSnapshot({.id = 1221})->frameRateSelectionStrategy,
               scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren);
     EXPECT_TRUE(getSnapshot({.id = 1221})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    // ROOT
+    // ├── 1
+    // │   ├── 11
+    // │   │   └── 111
+    // │   ├── 12 (frame rate set to default with strategy default)
+    // │   │   ├── 121
+    // │   │   └── 122 (frame rate set to 123.f)
+    // │   │       └── 1221
+    // │   └── 13
+    // └── 2
+    setFrameRate(12, -1.f, 0, 0);
+    setFrameRateSelectionStrategy(12, 0 /* Default */);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    // verify parent 1 gets no vote
+    EXPECT_FALSE(getSnapshot({.id = 1})->frameRate.vote.rate.isValid());
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRate.vote.type,
+              scheduler::FrameRateCompatibility::NoVote);
+    EXPECT_FALSE(getSnapshot({.id = 1})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    // verify layer 12 and all descendants (121, 122, 1221) get the requested vote
+    EXPECT_FALSE(getSnapshot({.id = 12})->frameRate.vote.rate.isValid());
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRate.vote.type,
+              scheduler::FrameRateCompatibility::NoVote);
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_TRUE(getSnapshot({.id = 12})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_FALSE(getSnapshot({.id = 121})->frameRate.vote.rate.isValid());
+    EXPECT_EQ(getSnapshot({.id = 121})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_EQ(getSnapshot({.id = 121})->frameRate.vote.type,
+              scheduler::FrameRateCompatibility::Default);
+    EXPECT_TRUE(getSnapshot({.id = 121})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRate.vote.rate.getValue(), 123.f);
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_TRUE(getSnapshot({.id = 122})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRate.vote.rate.getValue(), 123.f);
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_TRUE(getSnapshot({.id = 1221})->changes.test(RequestedLayerState::Changes::FrameRate));
+}
+
+TEST_F(LayerSnapshotTest, frameRateSelectionStrategyWithCategory) {
+    // ROOT
+    // ├── 1
+    // │   ├── 11
+    // │   │   └── 111
+    // │   ├── 12 (frame rate category set to high with strategy OverrideChildren)
+    // │   │   ├── 121
+    // │   │   └── 122 (frame rate set to 123.f but should be overridden by layer 12)
+    // │   │       └── 1221
+    // │   └── 13
+    // └── 2
+    setFrameRateCategory(12, 4 /* high */);
+    setFrameRate(122, 123.f, 0, 0);
+    setFrameRateSelectionStrategy(12, 1 /* OverrideChildren */);
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    // verify parent 1 gets no vote
+    EXPECT_FALSE(getSnapshot({.id = 1})->frameRate.vote.rate.isValid());
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRate.vote.type,
+              scheduler::FrameRateCompatibility::NoVote);
+    EXPECT_TRUE(getSnapshot({.id = 1})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    // verify layer 12 and all descendants (121, 122, 1221) get the requested vote
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRate.category, FrameRateCategory::High);
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren);
+    EXPECT_TRUE(getSnapshot({.id = 12})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 121})->frameRate.category, FrameRateCategory::High);
+    EXPECT_EQ(getSnapshot({.id = 121})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren);
+    EXPECT_TRUE(getSnapshot({.id = 121})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRate.category, FrameRateCategory::High);
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren);
+    EXPECT_TRUE(getSnapshot({.id = 122})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRate.category, FrameRateCategory::High);
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren);
+    EXPECT_TRUE(getSnapshot({.id = 1221})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    // ROOT
+    // ├── 1
+    // │   ├── 11
+    // │   │   └── 111
+    // │   ├── 12 (frame rate category to default with strategy default)
+    // │   │   ├── 121
+    // │   │   └── 122 (frame rate set to 123.f)
+    // │   │       └── 1221
+    // │   └── 13
+    // └── 2
+    setFrameRateCategory(12, 0 /* default */);
+    setFrameRateSelectionStrategy(12, 0 /* Default */);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    // verify parent 1 gets no vote
+    EXPECT_FALSE(getSnapshot({.id = 1})->frameRate.vote.rate.isValid());
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRate.vote.type,
+              scheduler::FrameRateCompatibility::NoVote);
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRate.category, FrameRateCategory::Default);
+    EXPECT_FALSE(getSnapshot({.id = 1})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    // verify layer 12 and all descendants (121, 122, 1221) get the requested vote
+    EXPECT_FALSE(getSnapshot({.id = 12})->frameRate.vote.rate.isValid());
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRate.vote.type,
+              scheduler::FrameRateCompatibility::NoVote);
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRate.category, FrameRateCategory::Default);
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_TRUE(getSnapshot({.id = 12})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_FALSE(getSnapshot({.id = 12})->frameRate.vote.rate.isValid());
+    EXPECT_EQ(getSnapshot({.id = 121})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_EQ(getSnapshot({.id = 121})->frameRate.category, FrameRateCategory::Default);
+    EXPECT_EQ(getSnapshot({.id = 121})->frameRate.vote.type,
+              scheduler::FrameRateCompatibility::Default);
+    EXPECT_TRUE(getSnapshot({.id = 121})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRate.vote.rate.getValue(), 123.f);
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRate.category, FrameRateCategory::Default);
+    EXPECT_TRUE(getSnapshot({.id = 122})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRate.vote.rate.getValue(), 123.f);
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRate.category, FrameRateCategory::Default);
+    EXPECT_TRUE(getSnapshot({.id = 1221})->changes.test(RequestedLayerState::Changes::FrameRate));
+}
+
+TEST_F(LayerSnapshotTest, frameRateSelectionStrategyWithOverrideChildrenAndSelf) {
+    // ROOT
+    // ├── 1
+    // │   ├── 11 (frame rate set to 11.f with strategy Self)
+    // │   │   └── 111 (frame rate is not inherited)
+    // │   ├── 12 (frame rate set to 244.f)
+    // │   │   ├── 121
+    // │   │   └── 122 (strategy OverrideChildren and inherits frame rate 244.f)
+    // │   │       └── 1221 (frame rate set to 123.f but should be overridden by layer 122)
+    // │   └── 13
+    // └── 2
+    setFrameRate(11, 11.f, 0, 0);
+    setFrameRateSelectionStrategy(11, 2 /* Self */);
+    setFrameRate(12, 244.f, 0, 0);
+    setFrameRateSelectionStrategy(122, 1 /* OverrideChildren */);
+    setFrameRate(1221, 123.f, 0, 0);
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    // verify parent 1 gets no vote
+    EXPECT_FALSE(getSnapshot({.id = 1})->frameRate.vote.rate.isValid());
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRate.vote.type,
+              scheduler::FrameRateCompatibility::NoVote);
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_TRUE(getSnapshot({.id = 1})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 11})->frameRate.vote.rate.getValue(), 11.f);
+    EXPECT_EQ(getSnapshot({.id = 11})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Self);
+    EXPECT_TRUE(getSnapshot({.id = 11})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    // verify layer 11 does does not propagate its framerate to 111.
+    EXPECT_FALSE(getSnapshot({.id = 111})->frameRate.vote.rate.isValid());
+    EXPECT_EQ(getSnapshot({.id = 111})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_TRUE(getSnapshot({.id = 111})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    // verify layer 12 and all descendants (121, 122, 1221) get the requested vote
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRate.vote.rate.getValue(), 244.f);
+    EXPECT_EQ(getSnapshot({.id = 12})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_TRUE(getSnapshot({.id = 12})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 121})->frameRate.vote.rate.getValue(), 244.f);
+    EXPECT_EQ(getSnapshot({.id = 121})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::Propagate);
+    EXPECT_TRUE(getSnapshot({.id = 121})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRate.vote.rate.getValue(), 244.f);
+    EXPECT_EQ(getSnapshot({.id = 122})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren);
+    EXPECT_TRUE(getSnapshot({.id = 122})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRate.vote.rate.getValue(), 244.f);
+    EXPECT_EQ(getSnapshot({.id = 1221})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren);
+    EXPECT_TRUE(getSnapshot({.id = 1221})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    // ROOT
+    // ├── 1 (frame rate set to 1.f with strategy OverrideChildren)
+    // │   ├── 11 (frame rate set to 11.f with strategy Self, but overridden by 1)
+    // │   │   └── 111 (frame rate inherited from 11 due to override from 1)
+    // ⋮   ⋮
+    setFrameRate(1, 1.f, 0, 0);
+    setFrameRateSelectionStrategy(1, 1 /* OverrideChildren */);
+    setFrameRate(11, 11.f, 0, 0);
+    setFrameRateSelectionStrategy(11, 2 /* Self */);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRate.vote.rate.getValue(), 1.f);
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRate.vote.type,
+              scheduler::FrameRateCompatibility::Default);
+    EXPECT_EQ(getSnapshot({.id = 1})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren);
+    EXPECT_TRUE(getSnapshot({.id = 1})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    EXPECT_EQ(getSnapshot({.id = 11})->frameRate.vote.rate.getValue(), 1.f);
+    EXPECT_EQ(getSnapshot({.id = 11})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren);
+    EXPECT_TRUE(getSnapshot({.id = 11})->changes.test(RequestedLayerState::Changes::FrameRate));
+
+    // verify layer 11 does does not propagate its framerate to 111.
+    EXPECT_EQ(getSnapshot({.id = 111})->frameRate.vote.rate.getValue(), 1.f);
+    EXPECT_EQ(getSnapshot({.id = 111})->frameRateSelectionStrategy,
+              scheduler::LayerInfo::FrameRateSelectionStrategy::OverrideChildren);
+    EXPECT_TRUE(getSnapshot({.id = 111})->changes.test(RequestedLayerState::Changes::FrameRate));
 }
 
 TEST_F(LayerSnapshotTest, skipRoundCornersWhenProtected) {
@@ -896,6 +1120,66 @@ TEST_F(LayerSnapshotTest, setTrustedOverlayForNonVisibleInput) {
     UPDATE_AND_VERIFY(mSnapshotBuilder, {2});
     EXPECT_TRUE(getSnapshot(1)->inputInfo.inputConfig.test(
             gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+}
+
+TEST_F(LayerSnapshotTest, isFrontBuffered) {
+    setBuffer(1,
+              std::make_shared<renderengine::mock::FakeExternalTexture>(
+                      1U /*width*/, 1U /*height*/, 1ULL /* bufferId */, HAL_PIXEL_FORMAT_RGBA_8888,
+                      GRALLOC_USAGE_HW_TEXTURE | AHARDWAREBUFFER_USAGE_FRONT_BUFFER /*usage*/));
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_TRUE(getSnapshot(1)->isFrontBuffered());
+
+    setBuffer(1,
+              std::make_shared<
+                      renderengine::mock::FakeExternalTexture>(1U /*width*/, 1U /*height*/,
+                                                               1ULL /* bufferId */,
+                                                               HAL_PIXEL_FORMAT_RGBA_8888,
+                                                               GRALLOC_USAGE_HW_TEXTURE /*usage*/));
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_FALSE(getSnapshot(1)->isFrontBuffered());
+}
+
+TEST_F(LayerSnapshotTest, setSecureRootSnapshot) {
+    setFlags(1, layer_state_t::eLayerSecure, layer_state_t::eLayerSecure);
+    LayerSnapshotBuilder::Args args{.root = mHierarchyBuilder.getHierarchy(),
+                                    .layerLifecycleManager = mLifecycleManager,
+                                    .includeMetadata = false,
+                                    .displays = mFrontEndDisplayInfos,
+                                    .displayChanges = false,
+                                    .globalShadowSettings = globalShadowSettings,
+                                    .supportsBlur = true,
+                                    .supportedLayerGenericMetadata = {},
+                                    .genericLayerMetadataKeyMap = {}};
+    args.rootSnapshot.isSecure = true;
+    update(mSnapshotBuilder, args);
+
+    EXPECT_TRUE(getSnapshot(1)->isSecure);
+    // Ensure child is also marked as secure
+    EXPECT_TRUE(getSnapshot(11)->isSecure);
+}
+
+// b/314350323
+TEST_F(LayerSnapshotTest, propagateDropInputMode) {
+    setDropInputMode(1, gui::DropInputMode::ALL);
+    LayerSnapshotBuilder::Args args{.root = mHierarchyBuilder.getHierarchy(),
+                                    .layerLifecycleManager = mLifecycleManager,
+                                    .includeMetadata = false,
+                                    .displays = mFrontEndDisplayInfos,
+                                    .displayChanges = false,
+                                    .globalShadowSettings = globalShadowSettings,
+                                    .supportsBlur = true,
+                                    .supportedLayerGenericMetadata = {},
+                                    .genericLayerMetadataKeyMap = {}};
+    args.rootSnapshot.isSecure = true;
+    update(mSnapshotBuilder, args);
+
+    EXPECT_EQ(getSnapshot(1)->dropInputMode, gui::DropInputMode::ALL);
+    // Ensure child also has the correct drop input mode regardless of whether either layer has
+    // an input channel
+    EXPECT_EQ(getSnapshot(11)->dropInputMode, gui::DropInputMode::ALL);
 }
 
 } // namespace android::surfaceflinger::frontend

@@ -464,9 +464,144 @@ inline WithPointersMatcher WithPointers(
     return WithPointersMatcher(pointers);
 }
 
-MATCHER_P(WithKeyCode, keyCode, "KeyEvent with specified key code") {
-    *result_listener << "expected key code " << keyCode << ", but got " << arg.keyCode;
-    return arg.keyCode == keyCode;
+/// Pointer ids matcher
+class WithPointerIdsMatcher {
+public:
+    using is_gtest_matcher = void;
+    explicit WithPointerIdsMatcher(std::set<int32_t> pointerIds) : mPointerIds(pointerIds) {}
+
+    bool MatchAndExplain(const MotionEvent& event, std::ostream* os) const {
+        std::set<int32_t> actualPointerIds;
+        for (size_t pointerIndex = 0; pointerIndex < event.getPointerCount(); pointerIndex++) {
+            const PointerProperties* properties = event.getPointerProperties(pointerIndex);
+            actualPointerIds.insert(properties->id);
+        }
+
+        if (mPointerIds != actualPointerIds) {
+            *os << "expected pointer ids " << dumpSet(mPointerIds) << ", but got "
+                << dumpSet(actualPointerIds);
+            return false;
+        }
+        return true;
+    }
+
+    bool MatchAndExplain(const NotifyMotionArgs& event, std::ostream* os) const {
+        std::set<int32_t> actualPointerIds;
+        for (const PointerProperties& properties : event.pointerProperties) {
+            actualPointerIds.insert(properties.id);
+        }
+
+        if (mPointerIds != actualPointerIds) {
+            *os << "expected pointer ids " << dumpSet(mPointerIds) << ", but got "
+                << dumpSet(actualPointerIds);
+            return false;
+        }
+        return true;
+    }
+
+    void DescribeTo(std::ostream* os) const { *os << "with pointer ids " << dumpSet(mPointerIds); }
+
+    void DescribeNegationTo(std::ostream* os) const { *os << "wrong pointer ids"; }
+
+private:
+    const std::set<int32_t> mPointerIds;
+};
+
+inline WithPointerIdsMatcher WithPointerIds(const std::set<int32_t /*id*/>& pointerIds) {
+    return WithPointerIdsMatcher(pointerIds);
+}
+
+/// Key code
+class WithKeyCodeMatcher {
+public:
+    using is_gtest_matcher = void;
+    explicit WithKeyCodeMatcher(int32_t keyCode) : mKeyCode(keyCode) {}
+
+    bool MatchAndExplain(const NotifyKeyArgs& args, std::ostream*) const {
+        return mKeyCode == args.keyCode;
+    }
+
+    bool MatchAndExplain(const KeyEvent& event, std::ostream*) const {
+        return mKeyCode == event.getKeyCode();
+    }
+
+    void DescribeTo(std::ostream* os) const {
+        *os << "with key code " << KeyEvent::getLabel(mKeyCode);
+    }
+
+    void DescribeNegationTo(std::ostream* os) const { *os << "wrong key code"; }
+
+private:
+    const int32_t mKeyCode;
+};
+
+inline WithKeyCodeMatcher WithKeyCode(int32_t keyCode) {
+    return WithKeyCodeMatcher(keyCode);
+}
+
+/// EventId
+class WithEventIdMatcher {
+public:
+    using is_gtest_matcher = void;
+    explicit WithEventIdMatcher(int32_t eventId) : mEventId(eventId) {}
+
+    bool MatchAndExplain(const NotifyMotionArgs& args, std::ostream*) const {
+        return mEventId == args.id;
+    }
+
+    bool MatchAndExplain(const NotifyKeyArgs& args, std::ostream*) const {
+        return mEventId == args.id;
+    }
+
+    bool MatchAndExplain(const InputEvent& event, std::ostream*) const {
+        return mEventId == event.getId();
+    }
+
+    void DescribeTo(std::ostream* os) const { *os << "with eventId 0x" << std::hex << mEventId; }
+
+    void DescribeNegationTo(std::ostream* os) const {
+        *os << "with eventId not equal to 0x" << std::hex << mEventId;
+    }
+
+private:
+    const int32_t mEventId;
+};
+
+inline WithEventIdMatcher WithEventId(int32_t eventId) {
+    return WithEventIdMatcher(eventId);
+}
+
+/// EventIdSource
+class WithEventIdSourceMatcher {
+public:
+    using is_gtest_matcher = void;
+    explicit WithEventIdSourceMatcher(IdGenerator::Source eventIdSource)
+          : mEventIdSource(eventIdSource) {}
+
+    bool MatchAndExplain(const NotifyMotionArgs& args, std::ostream*) const {
+        return mEventIdSource == IdGenerator::getSource(args.id);
+    }
+
+    bool MatchAndExplain(const NotifyKeyArgs& args, std::ostream*) const {
+        return mEventIdSource == IdGenerator::getSource(args.id);
+    }
+
+    bool MatchAndExplain(const InputEvent& event, std::ostream*) const {
+        return mEventIdSource == IdGenerator::getSource(event.getId());
+    }
+
+    void DescribeTo(std::ostream* os) const {
+        *os << "with eventId from source 0x" << std::hex << ftl::to_underlying(mEventIdSource);
+    }
+
+    void DescribeNegationTo(std::ostream* os) const { *os << "wrong event from source"; }
+
+private:
+    const IdGenerator::Source mEventIdSource;
+};
+
+inline WithEventIdSourceMatcher WithEventIdSource(IdGenerator::Source eventIdSource) {
+    return WithEventIdSourceMatcher(eventIdSource);
 }
 
 MATCHER_P(WithRepeatCount, repeatCount, "KeyEvent with specified repeat count") {

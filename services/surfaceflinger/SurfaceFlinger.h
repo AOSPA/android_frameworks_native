@@ -27,6 +27,8 @@
  * NOTE: Make sure this file doesn't include  anything from <gl/ > or <gl2/ >
  */
 
+#include <android-base/stringprintf.h>
+#include <android-base/strings.h>
 #include <android-base/thread_annotations.h>
 #include <android/gui/BnSurfaceComposer.h>
 #include <android/gui/DisplayStatInfo.h>
@@ -69,13 +71,13 @@
 #include <scheduler/interface/ICompositor.h>
 #include <ui/FenceResult.h>
 
+#include <common/FlagManager.h>
 #include "Display/PhysicalDisplay.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWC2.h"
 #include "DisplayHardware/PowerAdvisor.h"
 #include "DisplayIdGenerator.h"
 #include "Effects/Daltonizer.h"
-#include "FlagManager.h"
 #include "FrontEnd/DisplayInfo.h"
 #include "FrontEnd/LayerCreationArgs.h"
 #include "FrontEnd/LayerLifecycleManager.h"
@@ -83,6 +85,7 @@
 #include "FrontEnd/LayerSnapshotBuilder.h"
 #include "FrontEnd/TransactionHandler.h"
 #include "LayerVector.h"
+#include "MutexUtils.h"
 #include "Scheduler/ISchedulerCallback.h"
 #include "Scheduler/RefreshRateSelector.h"
 #include "Scheduler/RefreshRateStats.h"
@@ -112,6 +115,7 @@
 #include <vector>
 
 #include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
+#include <aidl/android/hardware/graphics/common/DisplayHotplugEvent.h>
 #include <aidl/android/hardware/graphics/composer3/RefreshRateChangedDebugData.h>
 #include "Client.h"
 
@@ -136,6 +140,7 @@ class FrameTracer;
 class ScreenCapturer;
 class WindowInfosListenerInvoker;
 
+using ::aidl::android::hardware::graphics::common::DisplayHotplugEvent;
 using ::aidl::android::hardware::graphics::composer3::RefreshRateChangedDebugData;
 using frontend::TransactionHandler;
 using gui::CaptureArgs;
@@ -209,7 +214,8 @@ class SurfaceFlinger : public BnSurfaceComposer,
                        private HWC2::ComposerCallback,
                        private ICompositor,
                        private scheduler::ISchedulerCallback,
-                       private compositionengine::ICEPowerCallback {
+                       private compositionengine::ICEPowerCallback,
+                       private scheduler::IVsyncTrackerCallback {
 public:
     struct SkipInitializationTag {};
 
@@ -494,22 +500,46 @@ private:
         return std::bind(std::forward<F>(dump), _3);
     }
 
+    Dumper lockedDumper(Dumper dump) {
+        return [this, dump](const DumpArgs& args, bool asProto, std::string& result) -> void {
+            TimedLock lock(mStateLock, s2ns(1), __func__);
+            if (!lock.locked()) {
+                base::StringAppendF(&result, "Dumping without lock after timeout: %s (%d)\n",
+                                    strerror(-lock.status), lock.status);
+            }
+            dump(args, asProto, result);
+        };
+    }
+
     template <typename F, std::enable_if_t<std::is_member_function_pointer_v<F>>* = nullptr>
     Dumper dumper(F dump) {
         using namespace std::placeholders;
-        return std::bind(dump, this, _3);
+        return lockedDumper(std::bind(dump, this, _3));
     }
 
     template <typename F>
     Dumper argsDumper(F dump) {
         using namespace std::placeholders;
-        return std::bind(dump, this, _1, _3);
+        return lockedDumper(std::bind(dump, this, _1, _3));
     }
 
     template <typename F>
     Dumper protoDumper(F dump) {
         using namespace std::placeholders;
-        return std::bind(dump, this, _1, _2, _3);
+        return lockedDumper(std::bind(dump, this, _1, _2, _3));
+    }
+
+    template <typename F, std::enable_if_t<std::is_member_function_pointer_v<F>>* = nullptr>
+    Dumper mainThreadDumper(F dump) {
+        using namespace std::placeholders;
+        Dumper dumper = std::bind(dump, this, _3);
+        return [this, dumper](const DumpArgs& args, bool asProto, std::string& result) -> void {
+            mScheduler
+                    ->schedule(
+                            [&args, asProto, &result, dumper]() FTL_FAKE_GUARD(kMainThreadContext)
+                                    FTL_FAKE_GUARD(mStateLock) { dumper(args, asProto, result); })
+                    .get();
+        };
     }
 
     // Maximum allowed number of display frames that can be set through backdoor
@@ -549,7 +579,7 @@ private:
             const sp<IBinder>& layerHandle = nullptr);
 
     void captureDisplay(const DisplayCaptureArgs&, const sp<IScreenCaptureListener>&);
-    void captureDisplay(DisplayId, const sp<IScreenCaptureListener>&);
+    void captureDisplay(DisplayId, const CaptureArgs&, const sp<IScreenCaptureListener>&);
     void captureLayers(const LayerCaptureArgs&, const sp<IScreenCaptureListener>&);
 
     status_t getDisplayStats(const sp<IBinder>& displayToken, DisplayStatInfo* stats);
@@ -623,7 +653,9 @@ private:
     status_t setFrameTimelineInfo(const sp<IGraphicBufferProducer>& surface,
                                   const gui::FrameTimelineInfo& frameTimelineInfo);
 
-    status_t setOverrideFrameRate(uid_t uid, float frameRate);
+    status_t setGameModeFrameRateOverride(uid_t uid, float frameRate);
+
+    status_t setGameDefaultFrameRateOverride(uid_t uid, float frameRate);
 
     status_t updateSmallAreaDetection(std::vector<std::pair<int32_t, float>>& uidThresholdMappings);
 
@@ -641,13 +673,15 @@ private:
     status_t getStalledTransactionInfo(
             int pid, std::optional<TransactionHandler::StalledTransactionInfo>& result);
 
+    void updateHdcpLevels(hal::HWDisplayId hwcDisplayId, int32_t connectedLevel, int32_t maxLevel);
+
     // Implements IBinder::DeathRecipient.
     void binderDied(const wp<IBinder>& who) override;
 
     // HWC2::ComposerCallback overrides:
     void onComposerHalVsync(hal::HWDisplayId, nsecs_t timestamp,
                             std::optional<hal::VsyncPeriodNanos>) override;
-    void onComposerHalHotplug(hal::HWDisplayId, hal::Connection) override;
+    void onComposerHalHotplugEvent(hal::HWDisplayId, DisplayHotplugEvent) override;
     void onComposerHalRefresh(hal::HWDisplayId) override;
     void onComposerHalVsyncPeriodTimingChanged(hal::HWDisplayId,
                                                const hal::VsyncPeriodChangeTimeline&) override;
@@ -675,6 +709,10 @@ private:
     // ICEPowerCallback overrides:
     void notifyCpuLoadUp() override;
 
+    // IVsyncTrackerCallback overrides
+    void onVsyncGenerated(TimePoint expectedPresentTime, ftl::NonNull<DisplayModePtr>,
+                          Fps renderRate) override;
+
     // Toggles the kernel idle timer on or off depending the policy decisions around refresh rates.
     void toggleKernelIdleTimer() REQUIRES(mStateLock);
 
@@ -700,8 +738,7 @@ private:
     // Show hdr sdr ratio overlay
     bool mHdrSdrRatioOverlay = false;
 
-    void setDesiredActiveMode(display::DisplayModeRequest&&, bool force = false)
-            REQUIRES(mStateLock);
+    void setDesiredMode(display::DisplayModeRequest&&, bool force = false) REQUIRES(mStateLock);
 
     status_t setActiveModeFromBackdoor(const sp<display::DisplayToken>&, DisplayModeId, Fps minFps,
                                        Fps maxFps);
@@ -709,9 +746,10 @@ private:
     void initiateDisplayModeChanges() REQUIRES(mStateLock, kMainThreadContext);
     void finalizeDisplayModeChange(DisplayDevice&) REQUIRES(mStateLock, kMainThreadContext);
 
-    void clearDesiredActiveModeState(const sp<DisplayDevice>&) REQUIRES(mStateLock);
-    // Called when active mode is no longer is progress
-    void desiredActiveModeChangeDone(const sp<DisplayDevice>&) REQUIRES(mStateLock);
+    // TODO(b/241285191): Move to Scheduler.
+    void dropModeRequest(display::DisplayModeRequest&&) REQUIRES(mStateLock);
+    void applyActiveMode(display::DisplayModeRequest&&) REQUIRES(mStateLock);
+
     // Called on the main thread in response to setPowerMode()
     void setPowerModeInternal(const sp<DisplayDevice>& display, hal::PowerMode mode)
             REQUIRES(mStateLock, kMainThreadContext);
@@ -867,11 +905,11 @@ private:
     ftl::SharedFuture<FenceResult> captureScreenCommon(
             RenderAreaFuture, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
-            bool grayscale, const sp<IScreenCaptureListener>&);
+            bool grayscale, bool isProtected, const sp<IScreenCaptureListener>&);
     ftl::SharedFuture<FenceResult> renderScreenImpl(
             std::shared_ptr<const RenderArea>, GetLayerSnapshotsFunction,
-            const std::shared_ptr<renderengine::ExternalTexture>&, bool canCaptureBlackoutContent,
-            bool regionSampling, bool grayscale, ScreenCaptureResults&) EXCLUDES(mStateLock)
+            const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
+            bool grayscale, bool isProtected, ScreenCaptureResults&) EXCLUDES(mStateLock)
             REQUIRES(kMainThreadContext);
 
     // If the uid provided is not UNSET_UID, the traverse will skip any layers that don't have a
@@ -1001,8 +1039,8 @@ private:
     /*
      * Compositing
      */
-    void postComposition(PhysicalDisplayId pacesetterId, const scheduler::FrameTargeters&,
-                         nsecs_t presentStartTime) REQUIRES(kMainThreadContext);
+    void onCompositionPresented(PhysicalDisplayId pacesetterId, const scheduler::FrameTargeters&,
+                                nsecs_t presentStartTime) REQUIRES(kMainThreadContext);
 
     /*
      * Display management
@@ -1094,8 +1132,8 @@ private:
     /*
      * Debugging & dumpsys
      */
-    void dumpAllLocked(const DumpArgs& args, const std::string& compositionLayers,
-                       std::string& result) const REQUIRES(mStateLock);
+    void dumpAll(const DumpArgs& args, const std::string& compositionLayers,
+                 std::string& result) const EXCLUDES(mStateLock);
     void dumpHwcLayersMinidump(std::string& result) const REQUIRES(mStateLock, kMainThreadContext);
     void dumpHwcLayersMinidumpLockedLegacy(std::string& result) const REQUIRES(mStateLock);
 
@@ -1117,7 +1155,8 @@ private:
     void dumpRawDisplayIdentificationData(const DumpArgs&, std::string& result) const;
     void dumpWideColorInfo(std::string& result) const REQUIRES(mStateLock);
     void dumpHdrInfo(std::string& result) const REQUIRES(mStateLock);
-    void dumpFrontEnd(std::string& result);
+    void dumpFrontEnd(std::string& result) REQUIRES(kMainThreadContext);
+    void dumpVisibleFrontEnd(std::string& result) REQUIRES(mStateLock, kMainThreadContext);
 
     perfetto::protos::LayersProto dumpDrawingStateProto(uint32_t traceFlags) const;
     void dumpOffscreenLayersProto(perfetto::protos::LayersProto& layersProto,
@@ -1260,6 +1299,7 @@ private:
         hal::Connection connection = hal::Connection::INVALID;
     };
 
+    bool mIsHdcpViaNegVsync = false;
     bool mIsHotplugErrViaNegVsync = false;
 
     std::mutex mHotplugMutex;
@@ -1453,7 +1493,7 @@ private:
     bool mLegacyFrontEndEnabled = true;
 
     frontend::LayerLifecycleManager mLayerLifecycleManager;
-    frontend::LayerHierarchyBuilder mLayerHierarchyBuilder{{}};
+    frontend::LayerHierarchyBuilder mLayerHierarchyBuilder;
     frontend::LayerSnapshotBuilder mLayerSnapshotBuilder;
 
     std::vector<std::pair<uint32_t, std::string>> mDestroyedHandles;
@@ -1478,10 +1518,24 @@ private:
     // Map of displayid to mirrorRoot
     ftl::SmallMap<int64_t, sp<SurfaceControl>, 3> mMirrorMapForDebug;
 
+    // NotifyExpectedPresentHint
+    struct NotifyExpectedPresentData {
+        // lastExpectedPresentTimestamp is read and write from multiple threads such as
+        // main thread, EventThread, MessageQueue. And is atomic for that reason.
+        std::atomic<TimePoint> lastExpectedPresentTimestamp{};
+        Fps lastFrameInterval{};
+    };
+    std::unordered_map<PhysicalDisplayId, NotifyExpectedPresentData> mNotifyExpectedPresentMap;
+
+    void notifyExpectedPresentIfRequired(PhysicalDisplayId, Period vsyncPeriod,
+                                         TimePoint expectedPresentTime, Fps frameInterval,
+                                         std::optional<Period> timeoutOpt);
+
     void sfdo_enableRefreshRateOverlay(bool active);
     void sfdo_setDebugFlash(int delay);
     void sfdo_scheduleComposite();
     void sfdo_scheduleCommit();
+    void sfdo_forceClientComposition(bool enabled);
 };
 
 class SurfaceComposerAIDL : public gui::BnSurfaceComposer {
@@ -1527,7 +1581,8 @@ public:
     binder::Status setGameContentType(const sp<IBinder>& display, bool on) override;
     binder::Status captureDisplay(const DisplayCaptureArgs&,
                                   const sp<IScreenCaptureListener>&) override;
-    binder::Status captureDisplayById(int64_t, const sp<IScreenCaptureListener>&) override;
+    binder::Status captureDisplayById(int64_t, const CaptureArgs&,
+                                      const sp<IScreenCaptureListener>&) override;
     binder::Status captureLayers(const LayerCaptureArgs&,
                                  const sp<IScreenCaptureListener>&) override;
 
@@ -1587,11 +1642,13 @@ public:
     binder::Status getDisplayDecorationSupport(
             const sp<IBinder>& displayToken,
             std::optional<gui::DisplayDecorationSupport>* outSupport) override;
-    binder::Status setOverrideFrameRate(int32_t uid, float frameRate) override;
+    binder::Status setGameModeFrameRateOverride(int32_t uid, float frameRate) override;
+    binder::Status setGameDefaultFrameRateOverride(int32_t uid, float frameRate) override;
     binder::Status enableRefreshRateOverlay(bool active) override;
     binder::Status setDebugFlash(int delay) override;
     binder::Status scheduleComposite() override;
     binder::Status scheduleCommit() override;
+    binder::Status forceClientComposition(bool enabled) override;
     binder::Status updateSmallAreaDetection(const std::vector<int32_t>& appIds,
                                             const std::vector<float>& thresholds) override;
     binder::Status setSmallAreaDetectionThreshold(int32_t appId, float threshold) override;

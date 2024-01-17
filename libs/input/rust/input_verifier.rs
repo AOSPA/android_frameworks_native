@@ -118,18 +118,14 @@ impl InputVerifier {
 
         match action.into() {
             MotionAction::Down => {
-                let it = self
-                    .touching_pointer_ids_by_device
-                    .entry(device_id)
-                    .or_insert_with(HashSet::new);
-                let pointer_id = pointer_properties[0].id;
-                if it.contains(&pointer_id) {
+                if self.touching_pointer_ids_by_device.contains_key(&device_id) {
                     return Err(format!(
                         "{}: Invalid DOWN event - pointers already down for device {:?}: {:?}",
-                        self.name, device_id, it
+                        self.name, device_id, self.touching_pointer_ids_by_device
                     ));
                 }
-                it.insert(pointer_id);
+                let it = self.touching_pointer_ids_by_device.entry(device_id).or_default();
+                it.insert(pointer_properties[0].id);
             }
             MotionAction::PointerDown { action_index } => {
                 if !self.touching_pointer_ids_by_device.contains_key(&device_id) {
@@ -225,19 +221,13 @@ impl InputVerifier {
                         self.name, device_id, self.hovering_pointer_ids_by_device
                     ));
                 }
-                let it = self
-                    .hovering_pointer_ids_by_device
-                    .entry(device_id)
-                    .or_insert_with(HashSet::new);
+                let it = self.hovering_pointer_ids_by_device.entry(device_id).or_default();
                 it.insert(pointer_properties[0].id);
             }
             MotionAction::HoverMove => {
                 // For compatibility reasons, we allow HOVER_MOVE without a prior HOVER_ENTER.
                 // If there was no prior HOVER_ENTER, just start a new hovering pointer.
-                let it = self
-                    .hovering_pointer_ids_by_device
-                    .entry(device_id)
-                    .or_insert_with(HashSet::new);
+                let it = self.hovering_pointer_ids_by_device.entry(device_id).or_default();
                 it.insert(pointer_properties[0].id);
             }
             MotionAction::HoverExit => {
@@ -281,6 +271,10 @@ impl InputVerifier {
         let Some(pointers) = self.touching_pointer_ids_by_device.get(&device_id) else {
             return false;
         };
+
+        if pointers.len() != pointer_properties.len() {
+            return false;
+        }
 
         for pointer_property in pointer_properties.iter() {
             let pointer_id = pointer_property.id;
@@ -347,6 +341,56 @@ mod tests {
                 Source::Touchscreen,
                 input_bindgen::AMOTION_EVENT_ACTION_UP,
                 &pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn two_pointer_stream() {
+        let mut verifier = InputVerifier::new("Test", /*should_log*/ false);
+        let pointer_properties = Vec::from([RustPointerProperties { id: 0 }]);
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                Source::Touchscreen,
+                input_bindgen::AMOTION_EVENT_ACTION_DOWN,
+                &pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+        // POINTER 1 DOWN
+        let two_pointer_properties =
+            Vec::from([RustPointerProperties { id: 0 }, RustPointerProperties { id: 1 }]);
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                Source::Touchscreen,
+                input_bindgen::AMOTION_EVENT_ACTION_POINTER_DOWN
+                    | (1 << input_bindgen::AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
+                &two_pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+        // POINTER 0 UP
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                Source::Touchscreen,
+                input_bindgen::AMOTION_EVENT_ACTION_POINTER_UP
+                    | (0 << input_bindgen::AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
+                &two_pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+        // ACTION_UP for pointer id=1
+        let pointer_1_properties = Vec::from([RustPointerProperties { id: 1 }]);
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                Source::Touchscreen,
+                input_bindgen::AMOTION_EVENT_ACTION_UP,
+                &pointer_1_properties,
                 MotionFlags::empty(),
             )
             .is_ok());
@@ -551,5 +595,44 @@ mod tests {
                 MotionFlags::empty(),
             )
             .is_ok());
+    }
+
+    // Send a MOVE event with incorrect number of pointers (one of the pointers is missing).
+    #[test]
+    fn move_with_wrong_number_of_pointers() {
+        let mut verifier = InputVerifier::new("Test", /*should_log*/ false);
+        let pointer_properties = Vec::from([RustPointerProperties { id: 0 }]);
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                Source::Touchscreen,
+                input_bindgen::AMOTION_EVENT_ACTION_DOWN,
+                &pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+        // POINTER 1 DOWN
+        let two_pointer_properties =
+            Vec::from([RustPointerProperties { id: 0 }, RustPointerProperties { id: 1 }]);
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                Source::Touchscreen,
+                input_bindgen::AMOTION_EVENT_ACTION_POINTER_DOWN
+                    | (1 << input_bindgen::AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
+                &two_pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_ok());
+        // MOVE event with 1 pointer missing (the pointer with id = 1). It should be rejected
+        assert!(verifier
+            .process_movement(
+                DeviceId(1),
+                Source::Touchscreen,
+                input_bindgen::AMOTION_EVENT_ACTION_MOVE,
+                &pointer_properties,
+                MotionFlags::empty(),
+            )
+            .is_err());
     }
 }

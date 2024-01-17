@@ -16,7 +16,25 @@
 
 #pragma once
 
-// TODO(281695725): replace this with build time flags, whenever they are available
-#ifndef FLAG_BQ_SET_FRAME_RATE
-#define FLAG_BQ_SET_FRAME_RATE false
-#endif
+#include <common/FlagManager.h>
+
+#define SET_FLAG_FOR_TEST(name, value) TestFlagSetter _testflag_((name), (name), (value))
+
+namespace android {
+class TestFlagSetter {
+public:
+    TestFlagSetter(bool (*getter)(), void((*setter)(bool)), bool flagValue) {
+        FlagManager::getMutableInstance().setUnitTestMode();
+
+        const bool initialValue = getter();
+        setter(flagValue);
+        mResetFlagValue = [=] { setter(initialValue); };
+    }
+
+    ~TestFlagSetter() { mResetFlagValue(); }
+
+private:
+    std::function<void()> mResetFlagValue;
+};
+
+} // namespace android

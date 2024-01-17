@@ -26,6 +26,41 @@
 
 namespace android::gui {
 
+namespace {
+
+std::ostream& operator<<(std::ostream& out, const sp<IBinder>& binder) {
+    if (binder == nullptr) {
+        out << "<null>";
+    } else {
+        out << binder.get();
+    }
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, const Region& region) {
+    if (region.isEmpty()) {
+        out << "<empty>";
+        return out;
+    }
+
+    bool first = true;
+    Region::const_iterator cur = region.begin();
+    Region::const_iterator const tail = region.end();
+    while (cur != tail) {
+        if (first) {
+            first = false;
+        } else {
+            out << "|";
+        }
+        out << "[" << cur->left << "," << cur->top << "][" << cur->right << "," << cur->bottom
+            << "]";
+        cur++;
+    }
+    return out;
+}
+
+} // namespace
+
 void WindowInfo::setInputConfig(ftl::Flags<InputConfig> config, bool value) {
     if (value) {
         inputConfig |= config;
@@ -66,8 +101,9 @@ bool WindowInfo::overlaps(const WindowInfo* other) const {
 bool WindowInfo::operator==(const WindowInfo& info) const {
     return info.token == token && info.id == id && info.name == name &&
             info.dispatchingTimeout == dispatchingTimeout && info.frame == frame &&
-            info.surfaceInset == surfaceInset && info.globalScaleFactor == globalScaleFactor &&
-            info.transform == transform && info.touchableRegion.hasSameRects(touchableRegion) &&
+            info.contentSize == contentSize && info.surfaceInset == surfaceInset &&
+            info.globalScaleFactor == globalScaleFactor && info.transform == transform &&
+            info.touchableRegion.hasSameRects(touchableRegion) &&
             info.touchOcclusionMode == touchOcclusionMode && info.ownerPid == ownerPid &&
             info.ownerUid == ownerUid && info.packageName == packageName &&
             info.inputConfig == inputConfig && info.displayId == displayId &&
@@ -101,6 +137,8 @@ status_t WindowInfo::writeToParcel(android::Parcel* parcel) const {
         parcel->writeInt32(
                 static_cast<std::underlying_type_t<WindowInfo::Type>>(layoutParamsType)) ?:
         parcel->write(frame) ?:
+        parcel->writeInt32(contentSize.width) ?:
+        parcel->writeInt32(contentSize.height) ?:
         parcel->writeInt32(surfaceInset) ?:
         parcel->writeFloat(globalScaleFactor) ?:
         parcel->writeFloat(alpha) ?:
@@ -150,6 +188,8 @@ status_t WindowInfo::readFromParcel(const android::Parcel* parcel) {
     status = parcel->readInt32(&lpFlags) ?:
         parcel->readInt32(&lpType) ?:
         parcel->read(frame) ?:
+        parcel->readInt32(&contentSize.width) ?:
+        parcel->readInt32(&contentSize.height) ?:
         parcel->readInt32(&surfaceInset) ?:
         parcel->readFloat(&globalScaleFactor) ?:
         parcel->readFloat(&alpha) ?:
@@ -217,4 +257,24 @@ sp<IBinder> WindowInfoHandle::getToken() const {
 void WindowInfoHandle::updateFrom(sp<WindowInfoHandle> handle) {
     mInfo = handle->mInfo;
 }
+
+std::ostream& operator<<(std::ostream& out, const WindowInfoHandle& window) {
+    const WindowInfo& info = *window.getInfo();
+    std::string transform;
+    info.transform.dump(transform, "transform", "    ");
+    out << "name=" << info.name << ", id=" << info.id << ", displayId=" << info.displayId
+        << ", inputConfig=" << info.inputConfig.string() << ", alpha=" << info.alpha << ", frame=["
+        << info.frame.left << "," << info.frame.top << "][" << info.frame.right << ","
+        << info.frame.bottom << "], globalScale=" << info.globalScaleFactor
+        << ", applicationInfo.name=" << info.applicationInfo.name
+        << ", applicationInfo.token=" << info.applicationInfo.token
+        << ", touchableRegion=" << info.touchableRegion << ", ownerPid=" << info.ownerPid.toString()
+        << ", ownerUid=" << info.ownerUid.toString() << ", dispatchingTimeout="
+        << std::chrono::duration_cast<std::chrono::milliseconds>(info.dispatchingTimeout).count()
+        << "ms, token=" << info.token.get()
+        << ", touchOcclusionMode=" << ftl::enum_string(info.touchOcclusionMode) << "\n"
+        << transform;
+    return out;
+}
+
 } // namespace android::gui

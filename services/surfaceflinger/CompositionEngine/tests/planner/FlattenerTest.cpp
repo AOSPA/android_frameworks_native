@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+#include <common/include/common/test/FlagUtils.h>
+#include "com_android_graphics_surfaceflinger_flags.h"
+
 #include <compositionengine/impl/OutputCompositionState.h>
 #include <compositionengine/impl/planner/CachedSet.h>
 #include <compositionengine/impl/planner/Flattener.h>
@@ -223,8 +226,26 @@ TEST_F(FlattenerTest, flattenLayers_ActiveLayersAreNotFlattened) {
 }
 
 TEST_F(FlattenerTest, flattenLayers_ActiveLayersWithLowFpsAreFlattened) {
+    auto& layerState1 = mTestLayers[0]->layerState;
+    auto& layerState2 = mTestLayers[1]->layerState;
+
+    const std::vector<const LayerState*> layers = {
+            layerState1.get(),
+            layerState2.get(),
+    };
+
+    initializeFlattener(layers);
+
     mTestLayers[0]->layerFECompositionState.fps = Flattener::kFpsActiveThreshold / 2;
     mTestLayers[1]->layerFECompositionState.fps = Flattener::kFpsActiveThreshold;
+
+    expectAllLayersFlattened(layers);
+}
+
+TEST_F(FlattenerTest, unflattenLayers_onlySourceCropMoved) {
+    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::
+                              cache_if_source_crop_layer_only_moved,
+                      true);
 
     auto& layerState1 = mTestLayers[0]->layerState;
     auto& layerState2 = mTestLayers[1]->layerState;
@@ -235,7 +256,14 @@ TEST_F(FlattenerTest, flattenLayers_ActiveLayersWithLowFpsAreFlattened) {
     };
 
     initializeFlattener(layers);
-    expectAllLayersFlattened(layers);
+
+    mTestLayers[0]->outputLayerCompositionState.sourceCrop = FloatRect{0.f, 0.f, 100.f, 100.f};
+    mTestLayers[1]->outputLayerCompositionState.sourceCrop = FloatRect{8.f, 16.f, 108.f, 116.f};
+
+    // only source crop is moved, so no flatten
+    EXPECT_EQ(getNonBufferHash(layers),
+              mFlattener->flattenLayers(layers, getNonBufferHash(layers), mTime));
+    mFlattener->renderCachedSets(mOutputState, std::nullopt, true);
 }
 
 TEST_F(FlattenerTest, flattenLayers_basicFlatten) {

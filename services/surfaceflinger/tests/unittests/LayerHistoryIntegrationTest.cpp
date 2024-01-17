@@ -25,7 +25,7 @@
 
 #include <renderengine/mock/FakeExternalTexture.h>
 
-#include "FlagUtils.h"
+#include <common/test/FlagUtils.h>
 #include "FpsOps.h"
 #include "LayerHierarchyTest.h"
 #include "Scheduler/LayerHistory.h"
@@ -56,7 +56,7 @@ protected:
     LayerHistoryIntegrationTest() : LayerSnapshotTestBase() {
         mFlinger.resetScheduler(mScheduler);
         mLifecycleManager = {};
-        mHierarchyBuilder = {{}};
+        mHierarchyBuilder = {};
     }
 
     void updateLayerSnapshotsAndLayerHistory(nsecs_t now) {
@@ -165,8 +165,10 @@ protected:
                                                   DisplayModeId(0));
 
     mock::SchedulerCallback mSchedulerCallback;
+    mock::VsyncTrackerCallback mVsyncTrackerCallback;
 
-    TestableScheduler* mScheduler = new TestableScheduler(mSelector, mSchedulerCallback);
+    TestableScheduler* mScheduler =
+            new TestableScheduler(mSelector, mSchedulerCallback, mVsyncTrackerCallback);
 
     TestableSurfaceFlinger mFlinger;
 };
@@ -497,7 +499,7 @@ TEST_F(LayerHistoryIntegrationTest, inactiveLayers) {
 
 TEST_F(LayerHistoryIntegrationTest, invisibleExplicitLayerIsActive) {
     // TODO(b/304338314): uncomment the below line once the bug is fixed
-    //SET_FLAG_FOR_TEST(flags::misc1, false);
+    SET_FLAG_FOR_TEST(flags::misc1, false);
 
     auto explicitVisiblelayer = createLegacyAndFrontedEndLayer(1);
     auto explicitInvisiblelayer = createLegacyAndFrontedEndLayer(2);
@@ -523,7 +525,7 @@ TEST_F(LayerHistoryIntegrationTest, invisibleExplicitLayerIsActive) {
 
 TEST_F(LayerHistoryIntegrationTest, invisibleExplicitLayerIsNotActive) {
     // TODO(b/304338314): uncomment the below line once the bug is fixed
-    //SET_FLAG_FOR_TEST(flags::misc1, true);
+    SET_FLAG_FOR_TEST(flags::misc1, true);
 
     auto explicitVisiblelayer = createLegacyAndFrontedEndLayer(1);
     auto explicitInvisiblelayer = createLegacyAndFrontedEndLayer(2);
@@ -768,6 +770,7 @@ TEST_F(LayerHistoryIntegrationTest, heuristicLayer60_30Hz) {
 }
 
 TEST_F(LayerHistoryIntegrationTest, heuristicLayerNotOscillating) {
+    SET_FLAG_FOR_TEST(flags::use_known_refresh_rate_for_fps_consistency, false);
     auto layer = createLegacyAndFrontedEndLayer(1);
 
     nsecs_t time = systemTime();
@@ -776,6 +779,20 @@ TEST_F(LayerHistoryIntegrationTest, heuristicLayerNotOscillating) {
     recordFramesAndExpect(layer, time, 26.9_Hz, 30_Hz, PRESENT_TIME_HISTORY_SIZE);
     recordFramesAndExpect(layer, time, 26_Hz, 24_Hz, PRESENT_TIME_HISTORY_SIZE);
     recordFramesAndExpect(layer, time, 26.9_Hz, 24_Hz, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, 27.1_Hz, 30_Hz, PRESENT_TIME_HISTORY_SIZE);
+}
+
+TEST_F(LayerHistoryIntegrationTest, heuristicLayerNotOscillating_useKnownRefreshRate) {
+    SET_FLAG_FOR_TEST(flags::use_known_refresh_rate_for_fps_consistency, true);
+    auto layer = createLegacyAndFrontedEndLayer(1);
+
+    nsecs_t time = systemTime();
+
+    recordFramesAndExpect(layer, time, 27.1_Hz, 30_Hz, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, 26.9_Hz, 30_Hz, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, 26_Hz, 24_Hz, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, 26.9_Hz, 24_Hz, PRESENT_TIME_HISTORY_SIZE);
+    recordFramesAndExpect(layer, time, 27.1_Hz, 24_Hz, PRESENT_TIME_HISTORY_SIZE);
     recordFramesAndExpect(layer, time, 27.1_Hz, 30_Hz, PRESENT_TIME_HISTORY_SIZE);
 }
 
@@ -837,6 +854,81 @@ TEST_F(LayerHistoryIntegrationTest, DISABLED_smallDirtyInMultiLayer) {
     ASSERT_EQ(1u, summary.size());
     ASSERT_EQ(LayerHistory::LayerVoteType::ExplicitDefault, summary[0].vote);
     ASSERT_EQ(30_Hz, summary[0].desiredRefreshRate);
+}
+
+TEST_F(LayerHistoryIntegrationTest, hidingLayerUpdatesLayerHistory) {
+    createLegacyAndFrontedEndLayer(1);
+    nsecs_t time = systemTime();
+    updateLayerSnapshotsAndLayerHistory(time);
+    EXPECT_EQ(1u, layerCount());
+    EXPECT_EQ(0u, activeLayerCount());
+
+    setBuffer(1);
+    updateLayerSnapshotsAndLayerHistory(time);
+    auto summary = summarizeLayerHistory(time);
+    ASSERT_EQ(1u, summary.size());
+    EXPECT_EQ(LayerHistory::LayerVoteType::Max, summary[0].vote);
+    EXPECT_EQ(1u, activeLayerCount());
+
+    hideLayer(1);
+    updateLayerSnapshotsAndLayerHistory(time);
+
+    summary = summarizeLayerHistory(time);
+    EXPECT_TRUE(summary.empty());
+    EXPECT_EQ(0u, activeLayerCount());
+}
+
+TEST_F(LayerHistoryIntegrationTest, showingLayerUpdatesLayerHistory) {
+    createLegacyAndFrontedEndLayer(1);
+    nsecs_t time = systemTime();
+    updateLayerSnapshotsAndLayerHistory(time);
+    EXPECT_EQ(1u, layerCount());
+    EXPECT_EQ(0u, activeLayerCount());
+    hideLayer(1);
+    setBuffer(1);
+    updateLayerSnapshotsAndLayerHistory(time);
+    auto summary = summarizeLayerHistory(time);
+    EXPECT_TRUE(summary.empty());
+    EXPECT_EQ(0u, activeLayerCount());
+
+    showLayer(1);
+    updateLayerSnapshotsAndLayerHistory(time);
+
+    summary = summarizeLayerHistory(time);
+    ASSERT_EQ(1u, summary.size());
+    EXPECT_EQ(LayerHistory::LayerVoteType::Max, summary[0].vote);
+    EXPECT_EQ(1u, activeLayerCount());
+}
+
+TEST_F(LayerHistoryIntegrationTest, updatingGeometryUpdatesWeight) {
+    createLegacyAndFrontedEndLayer(1);
+    nsecs_t time = systemTime();
+    updateLayerSnapshotsAndLayerHistory(time);
+    EXPECT_EQ(1u, layerCount());
+    EXPECT_EQ(0u, activeLayerCount());
+
+    setBuffer(1,
+              std::make_shared<
+                      renderengine::mock::FakeExternalTexture>(100U /*width*/, 100U /*height*/, 1,
+                                                               HAL_PIXEL_FORMAT_RGBA_8888,
+                                                               GRALLOC_USAGE_PROTECTED /*usage*/));
+    mFlinger.setLayerHistoryDisplayArea(100 * 100);
+    updateLayerSnapshotsAndLayerHistory(time);
+    auto summary = summarizeLayerHistory(time);
+    ASSERT_EQ(1u, summary.size());
+    EXPECT_EQ(LayerHistory::LayerVoteType::Max, summary[0].vote);
+    EXPECT_EQ(1u, activeLayerCount());
+
+    auto startingWeight = summary[0].weight;
+
+    setMatrix(1, 0.1f, 0.f, 0.f, 0.1f);
+    updateLayerSnapshotsAndLayerHistory(time);
+
+    summary = summarizeLayerHistory(time);
+    ASSERT_EQ(1u, summary.size());
+    EXPECT_EQ(LayerHistory::LayerVoteType::Max, summary[0].vote);
+    EXPECT_EQ(1u, activeLayerCount());
+    EXPECT_GT(startingWeight, summary[0].weight);
 }
 
 class LayerHistoryIntegrationTestParameterized

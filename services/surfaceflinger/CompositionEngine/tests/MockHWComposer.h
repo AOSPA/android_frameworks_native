@@ -54,12 +54,13 @@ public:
     MOCK_METHOD2(allocatePhysicalDisplay, void(hal::HWDisplayId, PhysicalDisplayId));
 
     MOCK_METHOD1(createLayer, std::shared_ptr<HWC2::Layer>(HalDisplayId));
-    MOCK_METHOD5(getDeviceCompositionChanges,
-                 status_t(HalDisplayId, bool, std::optional<std::chrono::steady_clock::time_point>,
-                          nsecs_t, std::optional<android::HWComposer::DeviceRequestedChanges>*));
-    MOCK_METHOD5(setClientTarget,
-                 status_t(HalDisplayId, uint32_t, const sp<Fence>&, const sp<GraphicBuffer>&,
-                          ui::Dataspace));
+    MOCK_METHOD(status_t, getDeviceCompositionChanges,
+                (HalDisplayId, bool, std::optional<std::chrono::steady_clock::time_point>, nsecs_t,
+                 Fps, std::optional<android::HWComposer::DeviceRequestedChanges>*));
+    MOCK_METHOD(status_t, setClientTarget,
+                (HalDisplayId, uint32_t, const sp<Fence>&, const sp<GraphicBuffer>&, ui::Dataspace,
+                 float),
+                (override));
     MOCK_METHOD2(presentAndGetReleaseFences,
                  status_t(HalDisplayId, std::optional<std::chrono::steady_clock::time_point>));
     MOCK_METHOD2(setPowerMode, status_t(PhysicalDisplayId, hal::PowerMode));
@@ -147,8 +148,7 @@ public:
     MOCK_METHOD(const aidl::android::hardware::graphics::composer3::OverlayProperties&,
                 getOverlaySupport, (), (const, override));
     MOCK_METHOD(status_t, setRefreshRateChangedCallbackDebugEnabled, (PhysicalDisplayId, bool));
-    MOCK_METHOD(status_t, notifyExpectedPresentIfRequired,
-                (PhysicalDisplayId, nsecs_t, int32_t, int32_t));
+    MOCK_METHOD(status_t, notifyExpectedPresent, (PhysicalDisplayId, TimePoint, Fps));
 };
 
 } // namespace mock

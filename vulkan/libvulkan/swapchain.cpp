@@ -1485,10 +1485,33 @@ static VkResult getProducerUsage(const VkDevice& device,
         return VK_SUCCESS;
     }
 
+    // Look through the create_info pNext chain passed to createSwapchainKHR
+    // for an image compression control struct.
+    // if one is found AND the appropriate extensions are enabled, create a
+    // VkImageCompressionControlEXT structure to pass on to GetPhysicalDeviceImageFormatProperties2
+    void* compression_control_pNext = nullptr;
+    VkImageCompressionControlEXT image_compression = {};
+    const VkSwapchainCreateInfoKHR* create_infos = create_info;
+    while (create_infos->pNext) {
+        create_infos = reinterpret_cast<const VkSwapchainCreateInfoKHR*>(create_infos->pNext);
+        switch (create_infos->sType) {
+            case VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_CONTROL_EXT: {
+                const VkImageCompressionControlEXT* compression_infos =
+                    reinterpret_cast<const VkImageCompressionControlEXT*>(create_infos);
+                image_compression = *compression_infos;
+                image_compression.pNext = nullptr;
+                compression_control_pNext = &image_compression;
+            } break;
+            default:
+                // Ignore all other info structs
+                break;
+        }
+    }
+
     // call GetPhysicalDeviceImageFormatProperties2KHR
     VkPhysicalDeviceExternalImageFormatInfo external_image_format_info = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
-        .pNext = nullptr,
+        .pNext = compression_control_pNext,
         .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID,
     };
 
@@ -1947,6 +1970,8 @@ VkResult CreateSwapchainKHR(VkDevice device,
                 &image_native_buffer.usage2.producer,
                 &image_native_buffer.usage2.consumer);
             image_native_buffer.usage3 = img.buffer->usage;
+            image_native_buffer.ahb =
+                ANativeWindowBuffer_getHardwareBuffer(img.buffer.get());
             image_create.pNext = &image_native_buffer;
 
             ATRACE_BEGIN("CreateImage");
@@ -2123,7 +2148,12 @@ VkResult AcquireNextImageKHR(VkDevice device,
                     .stride = buffer->stride,
                     .format = buffer->format,
                     .usage = int(buffer->usage),
+                    .usage3 = buffer->usage,
+                    .ahb = ANativeWindowBuffer_getHardwareBuffer(buffer),
                 };
+                android_convertGralloc0To1Usage(int(buffer->usage),
+                                                &nb.usage2.producer,
+                                                &nb.usage2.consumer);
                 VkBindImageMemoryInfo bimi = {
                     .sType = VK_STRUCTURE_TYPE_BIND_IMAGE_MEMORY_INFO,
                     .pNext = &nb,
@@ -2669,7 +2699,12 @@ static void InterceptBindImageMemory2(
             .stride = buffer->stride,
             .format = buffer->format,
             .usage = int(buffer->usage),
+            .usage3 = buffer->usage,
+            .ahb = ANativeWindowBuffer_getHardwareBuffer(buffer),
         };
+        android_convertGralloc0To1Usage(int(buffer->usage),
+                                        &native_buffer.usage2.producer,
+                                        &native_buffer.usage2.consumer);
         // Reserve enough space to avoid letting re-allocation invalidate the
         // addresses of the elements inside.
         out_native_buffers->reserve(bind_info_count);

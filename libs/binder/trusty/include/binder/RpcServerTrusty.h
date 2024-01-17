@@ -16,13 +16,11 @@
 
 #pragma once
 
-#include <android-base/expected.h>
-#include <android-base/macros.h>
-#include <android-base/unique_fd.h>
 #include <binder/IBinder.h>
 #include <binder/RpcServer.h>
 #include <binder/RpcSession.h>
 #include <binder/RpcTransport.h>
+#include <binder/unique_fd.h>
 #include <utils/Errors.h>
 #include <utils/RefBase.h>
 
@@ -54,7 +52,7 @@ public:
      * The caller is responsible for calling tipc_run_event_loop() to start
      * the TIPC event loop after creating one or more services here.
      */
-    static android::base::expected<sp<RpcServerTrusty>, int> make(
+    static sp<RpcServerTrusty> make(
             tipc_hset* handleSet, std::string&& portName, std::shared_ptr<const PortAcl>&& portAcl,
             size_t msgMaxSize,
             std::unique_ptr<RpcTransportCtxFactory> rpcTransportCtxFactory = nullptr);
@@ -83,7 +81,8 @@ private:
     // Both this class and RpcServer have multiple non-copyable fields,
     // including mPortAcl below which can't be copied because mUuidPtrs
     // holds pointers into it
-    DISALLOW_COPY_AND_ASSIGN(RpcServerTrusty);
+    RpcServerTrusty(const RpcServerTrusty&) = delete;
+    void operator=(const RpcServerTrusty&) = delete;
 
     friend sp<RpcServerTrusty>;
     explicit RpcServerTrusty(std::unique_ptr<RpcTransportCtx> ctx, std::string&& portName,

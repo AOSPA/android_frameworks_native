@@ -25,7 +25,7 @@
 
 #include <gui/BufferItem.h>
 #include <gui/BufferItemConsumer.h>
-#include <gui/Flags.h>
+
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/SurfaceComposerClient.h>
 
@@ -36,6 +36,8 @@
 #include <system/window.h>
 #include <thread>
 #include <queue>
+
+#include <com_android_graphics_libgui_flags.h>
 
 /* QTI_BEGIN */
 #include "../../QtiExtension/QtiBLASTBufferQueueExtension.h"
@@ -64,8 +66,8 @@ public:
     void onDisconnect() override EXCLUDES(mMutex);
     void addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
                                   FrameEventHistoryDelta* outDelta) override EXCLUDES(mMutex);
-    void updateFrameTimestamps(uint64_t frameNumber, nsecs_t refreshStartTime,
-                               const sp<Fence>& gpuCompositionDoneFence,
+    void updateFrameTimestamps(uint64_t frameNumber, uint64_t previousFrameNumber,
+                               nsecs_t refreshStartTime, const sp<Fence>& gpuCompositionDoneFence,
                                const sp<Fence>& presentFence, const sp<Fence>& prevReleaseFence,
                                CompositorTiming compositorTiming, nsecs_t latchTime,
                                nsecs_t dequeueReadyTime) EXCLUDES(mMutex);
@@ -75,7 +77,7 @@ public:
 
 protected:
     void onSidebandStreamChanged() override EXCLUDES(mMutex);
-#if FLAG_BQ_SET_FRAME_RATE
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_SETFRAMERATE)
     void onSetFrameRate(float frameRate, int8_t compatibility,
                         int8_t changeFrameRateStrategy) override;
 #endif

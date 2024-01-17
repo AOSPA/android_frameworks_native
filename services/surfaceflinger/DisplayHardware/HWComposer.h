@@ -159,10 +159,12 @@ public:
     virtual status_t getDeviceCompositionChanges(
             HalDisplayId, bool frameUsesClientComposition,
             std::optional<std::chrono::steady_clock::time_point> earliestPresentTime,
-            nsecs_t expectedPresentTime, std::optional<DeviceRequestedChanges>* outChanges) = 0;
+            nsecs_t expectedPresentTime, Fps frameInterval,
+            std::optional<DeviceRequestedChanges>* outChanges) = 0;
 
     virtual status_t setClientTarget(HalDisplayId, uint32_t slot, const sp<Fence>& acquireFence,
-                                     const sp<GraphicBuffer>& target, ui::Dataspace) = 0;
+                                     const sp<GraphicBuffer>& target, ui::Dataspace,
+                                     float hdrSdrRatio) = 0;
 
     // Present layers to the display and read releaseFences.
     virtual status_t presentAndGetReleaseFences(
@@ -313,9 +315,8 @@ public:
             aidl::android::hardware::graphics::common::HdrConversionStrategy,
             aidl::android::hardware::graphics::common::Hdr*) = 0;
     virtual status_t setRefreshRateChangedCallbackDebugEnabled(PhysicalDisplayId, bool enabled) = 0;
-    virtual status_t notifyExpectedPresentIfRequired(PhysicalDisplayId, nsecs_t expectedPresentTime,
-                                                     int32_t frameIntervalNs,
-                                                     int32_t timeoutNs) = 0;
+    virtual status_t notifyExpectedPresent(PhysicalDisplayId, TimePoint expectedPresentTime,
+                                           Fps frameInterval) = 0;
 };
 
 static inline bool operator==(const android::HWComposer::DeviceRequestedChanges& lhs,
@@ -358,11 +359,12 @@ public:
     status_t getDeviceCompositionChanges(
             HalDisplayId, bool frameUsesClientComposition,
             std::optional<std::chrono::steady_clock::time_point> earliestPresentTime,
-            nsecs_t expectedPresentTime,
+            nsecs_t expectedPresentTime, Fps frameInterval,
             std::optional<DeviceRequestedChanges>* outChanges) override;
 
     status_t setClientTarget(HalDisplayId, uint32_t slot, const sp<Fence>& acquireFence,
-                             const sp<GraphicBuffer>& target, ui::Dataspace) override;
+                             const sp<GraphicBuffer>& target, ui::Dataspace,
+                             float hdrSdrRatio) override;
 
     // Present layers to the display and read releaseFences.
     status_t presentAndGetReleaseFences(
@@ -474,8 +476,8 @@ public:
             aidl::android::hardware::graphics::common::HdrConversionStrategy,
             aidl::android::hardware::graphics::common::Hdr*) override;
     status_t setRefreshRateChangedCallbackDebugEnabled(PhysicalDisplayId, bool enabled) override;
-    status_t notifyExpectedPresentIfRequired(PhysicalDisplayId, nsecs_t expectedPresentTime,
-                                             int32_t frameIntervalNs, int32_t timeoutNs) override;
+    status_t notifyExpectedPresent(PhysicalDisplayId, TimePoint expectedPresentTime,
+                                   Fps frameInterval) override;
 
     // for debugging ----------------------------------------------------------
     void dump(std::string& out) const override;
@@ -501,7 +503,6 @@ public:
 private:
     // For unit tests
     friend TestableSurfaceFlinger;
-    friend HWComposerTest;
 
     /* QTI_BEGIN */
     friend class android::surfaceflingerextension::QtiHWComposerExtension;
@@ -512,8 +513,6 @@ private:
 
         sp<Fence> lastPresentFence = Fence::NO_FENCE; // signals when the last set op retires
         nsecs_t lastPresentTimestamp = 0;
-
-        nsecs_t lastExpectedPresentTimestamp = 0;
 
         std::unordered_map<HWC2::Layer*, sp<Fence>> releaseFences;
 

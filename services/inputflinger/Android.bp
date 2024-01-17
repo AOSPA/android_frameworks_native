@@ -76,6 +76,8 @@ filegroup {
     srcs: [
         "InputCommonConverter.cpp",
         "InputDeviceMetricsCollector.cpp",
+        "InputFilter.cpp",
+        "InputFilterCallbacks.cpp",
         "InputProcessor.cpp",
         "PointerChoreographer.cpp",
         "PreferStylusOverTouchBlocker.cpp",
@@ -243,6 +245,9 @@ phony {
         "Bug-115739809",
         "StructLayout_test",
 
+        // jni
+        "libservices.core",
+
         // rust targets
         "libinput_rust_test",
 
@@ -256,6 +261,7 @@ phony {
         "inputflinger_input_reader_fuzzer",
         "inputflinger_blocking_queue_fuzzer",
         "inputflinger_input_classifier_fuzzer",
+        "inputflinger_input_dispatcher_fuzzer",
 
         // Java/Kotlin targets
         "CtsWindowManagerDeviceWindow",

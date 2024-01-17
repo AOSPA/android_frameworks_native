@@ -37,6 +37,7 @@ cc_defaults {
         "libSurfaceFlingerProp",
         "libui",
         "libutils",
+        "server_configurable_flags",
     ],
     static_libs: [
         "liblayers_proto",
@@ -49,6 +50,7 @@ cc_defaults {
         "libcgrouprc",
         "libjsoncpp",
         "libcgrouprc_format",
+        "libsurfaceflinger_common",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -60,16 +62,8 @@ cc_defaults {
     ],
 }
 
-cc_library {
-    name: "libcompositionengine",
-    defaults: [
-        "libcompositionengine_defaults",
-        "libqtisurfaceflingerextension_defaults",
-    ],
-    static_libs: [
-        "libsurfaceflingerflags",
-        "libqticompositionengineextension",
-    ],
+filegroup {
+    name: "libcompositionengine_sources",
     srcs: [
         "src/planner/CachedSet.cpp",
         "src/planner/Flattener.cpp",
@@ -92,8 +86,27 @@ cc_library {
         "src/OutputLayerCompositionState.cpp",
         "src/RenderSurface.cpp",
     ],
+}
+
+cc_library {
+    name: "libcompositionengine",
+    defaults: [
+        "libcompositionengine_defaults",
+        "libqtisurfaceflingerextension_defaults",
+    ],
+    static_libs: [
+        "libsurfaceflinger_common",
+        "libsurfaceflingerflags",
+        "libqticompositionengineextension",
+    ],
+    srcs: [
+        ":libcompositionengine_sources",
+    ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],
+    shared_libs: [
+        "server_configurable_flags",
+    ],
 }
 
 cc_library {
@@ -115,7 +128,11 @@ cc_library {
         "libgmock",
         "libcompositionengine",
         "libqticompositionengineextension",
+        "libsurfaceflinger_common_test",
         "libsurfaceflingerflags_test",
+    ],
+    shared_libs: [
+        "server_configurable_flags",
     ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],
@@ -124,6 +141,10 @@ cc_library {
 cc_test {
     name: "libcompositionengine_test",
     test_suites: ["device-tests"],
+    include_dirs: [
+        "frameworks/native/services/surfaceflinger/common/include",
+        "frameworks/native/services/surfaceflinger/tests/unittests",
+    ],
     defaults: ["libcompositionengine_defaults"],
     srcs: [
         "tests/planner/CachedSetTest.cpp",
@@ -151,12 +172,14 @@ cc_test {
         "libgmock",
         "libgtest",
         "libqticompositionengineextension",
+        "libsurfaceflinger_common_test",
         "libsurfaceflingerflags_test",
     ],
-    // For some reason, libvulkan isn't picked up from librenderengine
-    // Probably ASAN related?
     shared_libs: [
+        // For some reason, libvulkan isn't picked up from librenderengine
+        // Probably ASAN related?
         "libvulkan",
+        "server_configurable_flags",
     ],
     sanitize: {
         hwaddress: true,

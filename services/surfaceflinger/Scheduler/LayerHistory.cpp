@@ -31,9 +31,9 @@
 #include <string>
 #include <utility>
 
+#include <common/FlagManager.h>
 #include "../Layer.h"
 #include "EventThread.h"
-#include "FlagManager.h"
 #include "LayerInfo.h"
 
 namespace android::scheduler {
@@ -48,6 +48,11 @@ bool isLayerActive(const LayerInfo& info, nsecs_t threshold) {
     // Layers with an explicit frame rate or frame rate category are kept active,
     // but ignore NoVote.
     if (info.getSetFrameRateVote().isValid() && !info.getSetFrameRateVote().isNoVote()) {
+        return true;
+    }
+
+    // Make all front buffered layers active
+    if (FlagManager::getInstance().vrr_config() && info.isFrontBuffered() && info.isVisible()) {
         return true;
     }
 
@@ -162,6 +167,27 @@ void LayerHistory::setDefaultFrameRateCompatibility(int32_t id,
     info->setDefaultLayerVote(getVoteType(frameRateCompatibility, contentDetectionEnabled));
 }
 
+void LayerHistory::setLayerProperties(int32_t id, const LayerProps& properties) {
+    std::lock_guard lock(mLock);
+
+    auto [found, layerPair] = findLayer(id);
+    if (found == LayerStatus::NotFound) {
+        // Offscreen layer
+        ALOGV("%s: %d not registered", __func__, id);
+        return;
+    }
+
+    const auto& info = layerPair->second;
+    info->setProperties(properties);
+
+    // Activate layer if inactive and visible.
+    if (found == LayerStatus::LayerInInactiveMap && info->isVisible()) {
+        mActiveLayerInfos.insert(
+                {id, std::make_pair(layerPair->first, std::move(layerPair->second))});
+        mInactiveLayerInfos.erase(id);
+    }
+}
+
 auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -> Summary {
     ATRACE_CALL();
     Summary summary;
@@ -246,6 +272,7 @@ void LayerHistory::partitionLayers(nsecs_t now) {
         if (isLayerActive(*info, threshold)) {
             // Set layer vote if set
             const auto frameRate = info->getSetFrameRateVote();
+
             const auto voteType = [&]() {
                 switch (frameRate.vote.type) {
                     case Layer::FrameRateCompatibility::Default:
@@ -258,15 +285,45 @@ void LayerHistory::partitionLayers(nsecs_t now) {
                         return LayerVoteType::NoVote;
                     case Layer::FrameRateCompatibility::Exact:
                         return LayerVoteType::ExplicitExact;
+                    case Layer::FrameRateCompatibility::Gte:
+                        return LayerVoteType::ExplicitGte;
                 }
             }();
 
-            if (frameRate.isValid()) {
-                const auto type = info->isVisible() ? voteType : LayerVoteType::NoVote;
-                info->setLayerVote({type, frameRate.vote.rate, frameRate.vote.seamlessness,
-                                    frameRate.category});
+            if (FlagManager::getInstance().game_default_frame_rate()) {
+                // Determine the layer frame rate considering the following priorities:
+                // 1. Game mode intervention frame rate override
+                // 2. setFrameRate vote
+                // 3. Game default frame rate override
+
+                const auto& [gameModeFrameRateOverride, gameDefaultFrameRateOverride] =
+                        getGameFrameRateOverrideLocked(info->getOwnerUid());
+
+                const auto gameFrameRateOverrideVoteType =
+                        info->isVisible() ? LayerVoteType::ExplicitDefault : LayerVoteType::NoVote;
+
+                const auto setFrameRateVoteType =
+                        info->isVisible() ? voteType : LayerVoteType::NoVote;
+
+                if (gameModeFrameRateOverride.isValid()) {
+                    info->setLayerVote({gameFrameRateOverrideVoteType, gameModeFrameRateOverride});
+                } else if (frameRate.isValid()) {
+                    info->setLayerVote({setFrameRateVoteType, frameRate.vote.rate,
+                                        frameRate.vote.seamlessness, frameRate.category});
+                } else if (gameDefaultFrameRateOverride.isValid()) {
+                    info->setLayerVote(
+                            {gameFrameRateOverrideVoteType, gameDefaultFrameRateOverride});
+                } else {
+                    info->resetLayerVote();
+                }
             } else {
-                info->resetLayerVote();
+                if (frameRate.isValid()) {
+                    const auto type = info->isVisible() ? voteType : LayerVoteType::NoVote;
+                    info->setLayerVote({type, frameRate.vote.rate, frameRate.vote.seamlessness,
+                                        frameRate.category});
+                } else {
+                    info->resetLayerVote();
+                }
             }
 
             it++;
@@ -323,6 +380,58 @@ bool LayerHistory::isSmallDirtyArea(uint32_t dirtyArea, float threshold) const {
     const bool isSmallDirty = ratio <= threshold;
     ATRACE_FORMAT_INSTANT("small dirty=%s, ratio=%.3f", isSmallDirty ? "true" : "false", ratio);
     return isSmallDirty;
+}
+
+void LayerHistory::updateGameModeFrameRateOverride(FrameRateOverride frameRateOverride) {
+    const uid_t uid = frameRateOverride.uid;
+    std::lock_guard lock(mLock);
+    if (frameRateOverride.frameRateHz != 0.f) {
+        mGameFrameRateOverride[uid].first = Fps::fromValue(frameRateOverride.frameRateHz);
+    } else {
+        if (mGameFrameRateOverride[uid].second.getValue() == 0.f) {
+            mGameFrameRateOverride.erase(uid);
+        } else {
+            mGameFrameRateOverride[uid].first = Fps();
+        }
+    }
+}
+
+void LayerHistory::updateGameDefaultFrameRateOverride(FrameRateOverride frameRateOverride) {
+    const uid_t uid = frameRateOverride.uid;
+    std::lock_guard lock(mLock);
+    if (frameRateOverride.frameRateHz != 0.f) {
+        mGameFrameRateOverride[uid].second = Fps::fromValue(frameRateOverride.frameRateHz);
+    } else {
+        if (mGameFrameRateOverride[uid].first.getValue() == 0.f) {
+            mGameFrameRateOverride.erase(uid);
+        } else {
+            mGameFrameRateOverride[uid].second = Fps();
+        }
+    }
+}
+
+std::pair<Fps, Fps> LayerHistory::getGameFrameRateOverride(uid_t uid) const {
+    if (!FlagManager::getInstance().game_default_frame_rate()) {
+        return std::pair<Fps, Fps>();
+    }
+
+    std::lock_guard lock(mLock);
+
+    return getGameFrameRateOverrideLocked(uid);
+}
+
+std::pair<Fps, Fps> LayerHistory::getGameFrameRateOverrideLocked(uid_t uid) const {
+    if (!FlagManager::getInstance().game_default_frame_rate()) {
+        return std::pair<Fps, Fps>();
+    }
+
+    const auto it = mGameFrameRateOverride.find(uid);
+
+    if (it == mGameFrameRateOverride.end()) {
+        return std::pair<Fps, Fps>(Fps(), Fps());
+    }
+
+    return it->second;
 }
 
 } // namespace android::scheduler

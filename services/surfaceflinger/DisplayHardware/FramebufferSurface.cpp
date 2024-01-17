@@ -103,7 +103,7 @@ status_t FramebufferSurface::prepareFrame(CompositionType /*compositionType*/) {
     return NO_ERROR;
 }
 
-status_t FramebufferSurface::advanceFrame() {
+status_t FramebufferSurface::advanceFrame(float hdrSdrRatio) {
     Mutex::Autolock lock(mMutex);
 
     BufferItem item;
@@ -147,7 +147,7 @@ status_t FramebufferSurface::advanceFrame() {
         hwcBuffer = mCurrentBuffer; // HWC hasn't previously seen this buffer in this slot
     }
     status_t result = mHwc.setClientTarget(mDisplayId, mCurrentBufferSlot, mCurrentFence, hwcBuffer,
-                                           mDataspace);
+                                           mDataspace, hdrSdrRatio);
     if (result != NO_ERROR) {
         ALOGE("error posting framebuffer: %s (%d)", strerror(-result), result);
         return result;

@@ -43,6 +43,7 @@ struct LayerProps;
 
 class LayerHistory {
 public:
+    using FrameRateOverride = DisplayEventReceiver::Event::FrameRateOverride;
     using LayerVoteType = RefreshRateSelector::LayerVoteType;
     static constexpr std::chrono::nanoseconds kMaxPeriodForHistory = 1s;
 
@@ -73,7 +74,7 @@ public:
     // does not set a preference for refresh rate.
     void setDefaultFrameRateCompatibility(int32_t id, FrameRateCompatibility frameRateCompatibility,
                                           bool contentDetectionEnabled);
-
+    void setLayerProperties(int32_t id, const LayerProps&);
     using Summary = std::vector<RefreshRateSelector::LayerRequirement>;
 
     // Rebuilds sets of active/inactive layers, and accumulates stats for active layers.
@@ -92,6 +93,15 @@ public:
     /* QTI_BEGIN */
     void qtiUpdateThermalFps(float fps) { mQtiThermalFps = fps; }
     /* QTI_END */
+
+    // Updates the frame rate override set by game mode intervention
+    void updateGameModeFrameRateOverride(FrameRateOverride frameRateOverride) EXCLUDES(mLock);
+
+    // Updates the frame rate override set by game default frame rate
+    void updateGameDefaultFrameRateOverride(FrameRateOverride frameRateOverride) EXCLUDES(mLock);
+
+    std::pair<Fps, Fps> getGameFrameRateOverride(uid_t uid) const EXCLUDES(mLock);
+    std::pair<Fps, Fps> getGameFrameRateOverrideLocked(uid_t uid) const REQUIRES(mLock);
 
 private:
     friend class LayerHistoryTest;
@@ -146,6 +156,13 @@ private:
     // If Thermal mitigation enabled, limit to thermal Fps
     float mQtiThermalFps = 0.0f;
     /* QTI_END */
+
+    // A list to look up the game frame rate overrides
+    // Each entry includes:
+    // 1. the uid of the app
+    // 2. a pair of game mode intervention frame frame and game default frame rate override
+    // set to 0.0 if there is no such override
+    std::map<uid_t, std::pair<Fps, Fps>> mGameFrameRateOverride GUARDED_BY(mLock);
 };
 
 } // namespace scheduler

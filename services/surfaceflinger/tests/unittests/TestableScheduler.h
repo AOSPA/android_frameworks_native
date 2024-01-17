@@ -36,18 +36,21 @@ namespace android::scheduler {
 
 class TestableScheduler : public Scheduler, private ICompositor {
 public:
-    TestableScheduler(RefreshRateSelectorPtr selectorPtr, ISchedulerCallback& callback)
+    TestableScheduler(RefreshRateSelectorPtr selectorPtr, ISchedulerCallback& callback,
+                      IVsyncTrackerCallback& vsyncTrackerCallback)
           : TestableScheduler(std::make_unique<mock::VsyncController>(),
                               std::make_shared<mock::VSyncTracker>(), std::move(selectorPtr),
-                              sp<VsyncModulator>::make(VsyncConfigSet{}), callback) {}
+                              sp<VsyncModulator>::make(VsyncConfigSet{}), callback,
+                              vsyncTrackerCallback) {}
 
     TestableScheduler(std::unique_ptr<VsyncController> controller,
                       std::shared_ptr<VSyncTracker> tracker, RefreshRateSelectorPtr selectorPtr,
-                      sp<VsyncModulator> modulatorPtr, ISchedulerCallback& callback)
-          : Scheduler(*this, callback,
+                      sp<VsyncModulator> modulatorPtr, ISchedulerCallback& schedulerCallback,
+                      IVsyncTrackerCallback& vsyncTrackerCallback)
+          : Scheduler(*this, schedulerCallback,
                       (FeatureFlags)Feature::kContentDetection |
                               Feature::kSmallDirtyContentDetection,
-                      std::move(modulatorPtr)) {
+                      std::move(modulatorPtr), vsyncTrackerCallback) {
         const auto displayId = selectorPtr->getActiveMode().modePtr->getPhysicalDisplayId();
         registerDisplay(displayId, std::move(selectorPtr), std::move(controller),
                         std::move(tracker));
@@ -75,10 +78,11 @@ public:
 
     auto refreshRateSelector() { return pacesetterSelectorPtr(); }
 
-    void registerDisplay(PhysicalDisplayId displayId, RefreshRateSelectorPtr selectorPtr) {
+    void registerDisplay(
+            PhysicalDisplayId displayId, RefreshRateSelectorPtr selectorPtr,
+            std::shared_ptr<VSyncTracker> vsyncTracker = std::make_shared<mock::VSyncTracker>()) {
         registerDisplay(displayId, std::move(selectorPtr),
-                        std::make_unique<mock::VsyncController>(),
-                        std::make_shared<mock::VSyncTracker>());
+                        std::make_unique<mock::VsyncController>(), vsyncTracker);
     }
 
     void registerDisplay(PhysicalDisplayId displayId, RefreshRateSelectorPtr selectorPtr,
@@ -110,6 +114,15 @@ public:
         ftl::FakeGuard guard(kMainThreadContext);
         Scheduler::setPacesetterDisplay(displayId);
     }
+
+    std::optional<hal::PowerMode> getDisplayPowerMode(PhysicalDisplayId id) {
+        ftl::FakeGuard guard1(kMainThreadContext);
+        ftl::FakeGuard guard2(mDisplayLock);
+        return mDisplays.get(id).transform(
+                [](const Display& display) { return display.powerMode; });
+    }
+
+    using Scheduler::resyncAllToHardwareVsync;
 
     auto& mutableAppConnectionHandle() { return mAppConnectionHandle; }
     auto& mutableLayerHistory() { return mLayerHistory; }

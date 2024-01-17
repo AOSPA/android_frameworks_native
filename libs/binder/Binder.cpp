@@ -19,8 +19,6 @@
 #include <atomic>
 #include <set>
 
-#include <android-base/logging.h>
-#include <android-base/unique_fd.h>
 #include <binder/BpBinder.h>
 #include <binder/IInterface.h>
 #include <binder/IPCThreadState.h>
@@ -29,8 +27,8 @@
 #include <binder/Parcel.h>
 #include <binder/RecordedTransaction.h>
 #include <binder/RpcServer.h>
+#include <binder/unique_fd.h>
 #include <pthread.h>
-#include <utils/misc.h>
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -44,6 +42,8 @@
 #include "RpcState.h"
 
 namespace android {
+
+using android::binder::unique_fd;
 
 constexpr uid_t kUidRoot = 0;
 
@@ -169,8 +169,7 @@ status_t IBinder::getDebugPid(pid_t* out) {
     return OK;
 }
 
-status_t IBinder::setRpcClientDebug(android::base::unique_fd socketFd,
-                                    const sp<IBinder>& keepAliveBinder) {
+status_t IBinder::setRpcClientDebug(unique_fd socketFd, const sp<IBinder>& keepAliveBinder) {
     if (!kEnableRpcDevServers) {
         ALOGW("setRpcClientDebug disallowed because RPC is not enabled");
         return INVALID_OPERATION;
@@ -271,11 +270,11 @@ public:
     bool mInheritRt = false;
 
     // for below objects
-    Mutex mLock;
+    RpcMutex mLock;
     std::set<sp<RpcServerLink>> mRpcServerLinks;
     BpBinder::ObjectManager mObjects;
 
-    android::base::unique_fd mRecordingFd;
+    unique_fd mRecordingFd;
 };
 
 // ---------------------------------------------------------------------------
@@ -307,9 +306,9 @@ status_t BBinder::startRecordingTransactions(const Parcel& data) {
         return PERMISSION_DENIED;
     }
     Extras* e = getOrCreateExtras();
-    AutoMutex lock(e->mLock);
+    RpcMutexUniqueLock lock(e->mLock);
     if (mRecordingOn) {
-        LOG(INFO) << "Could not start Binder recording. Another is already in progress.";
+        ALOGI("Could not start Binder recording. Another is already in progress.");
         return INVALID_OPERATION;
     } else {
         status_t readStatus = data.readUniqueFileDescriptor(&(e->mRecordingFd));
@@ -317,7 +316,7 @@ status_t BBinder::startRecordingTransactions(const Parcel& data) {
             return readStatus;
         }
         mRecordingOn = true;
-        LOG(INFO) << "Started Binder recording.";
+        ALOGI("Started Binder recording.");
         return NO_ERROR;
     }
 }
@@ -337,14 +336,14 @@ status_t BBinder::stopRecordingTransactions() {
         return PERMISSION_DENIED;
     }
     Extras* e = getOrCreateExtras();
-    AutoMutex lock(e->mLock);
+    RpcMutexUniqueLock lock(e->mLock);
     if (mRecordingOn) {
         e->mRecordingFd.reset();
         mRecordingOn = false;
-        LOG(INFO) << "Stopped Binder recording.";
+        ALOGI("Stopped Binder recording.");
         return NO_ERROR;
     } else {
-        LOG(INFO) << "Could not stop Binder recording. One is not in progress.";
+        ALOGI("Could not stop Binder recording. One is not in progress.");
         return INVALID_OPERATION;
     }
 }
@@ -378,11 +377,11 @@ status_t BBinder::transact(
             err = stopRecordingTransactions();
             break;
         case EXTENSION_TRANSACTION:
-            CHECK(reply != nullptr);
+            LOG_ALWAYS_FATAL_IF(reply == nullptr, "reply == nullptr");
             err = reply->writeStrongBinder(getExtension());
             break;
         case DEBUG_PID_TRANSACTION:
-            CHECK(reply != nullptr);
+            LOG_ALWAYS_FATAL_IF(reply == nullptr, "reply == nullptr");
             err = reply->writeInt32(getDebugPid());
             break;
         case SET_RPC_CLIENT_TRANSACTION: {
@@ -405,7 +404,7 @@ status_t BBinder::transact(
 
     if (kEnableKernelIpc && mRecordingOn && code != START_RECORDING_TRANSACTION) [[unlikely]] {
         Extras* e = mExtras.load(std::memory_order_acquire);
-        AutoMutex lock(e->mLock);
+        RpcMutexUniqueLock lock(e->mLock);
         if (mRecordingOn) {
             Parcel emptyReply;
             timespec ts;
@@ -415,10 +414,10 @@ status_t BBinder::transact(
                                 reply ? *reply : emptyReply, err);
             if (transaction) {
                 if (status_t err = transaction->dumpToFile(e->mRecordingFd); err != NO_ERROR) {
-                    LOG(INFO) << "Failed to dump RecordedTransaction to file with error " << err;
+                    ALOGI("Failed to dump RecordedTransaction to file with error %d", err);
                 }
             } else {
-                LOG(INFO) << "Failed to create RecordedTransaction object.";
+                ALOGI("Failed to create RecordedTransaction object.");
             }
         }
     }
@@ -452,7 +451,7 @@ void* BBinder::attachObject(const void* objectID, void* object, void* cleanupCoo
     Extras* e = getOrCreateExtras();
     LOG_ALWAYS_FATAL_IF(!e, "no memory");
 
-    AutoMutex _l(e->mLock);
+    RpcMutexUniqueLock _l(e->mLock);
     return e->mObjects.attach(objectID, object, cleanupCookie, func);
 }
 
@@ -461,7 +460,7 @@ void* BBinder::findObject(const void* objectID) const
     Extras* e = mExtras.load(std::memory_order_acquire);
     if (!e) return nullptr;
 
-    AutoMutex _l(e->mLock);
+    RpcMutexUniqueLock _l(e->mLock);
     return e->mObjects.find(objectID);
 }
 
@@ -469,7 +468,7 @@ void* BBinder::detachObject(const void* objectID) {
     Extras* e = mExtras.load(std::memory_order_acquire);
     if (!e) return nullptr;
 
-    AutoMutex _l(e->mLock);
+    RpcMutexUniqueLock _l(e->mLock);
     return e->mObjects.detach(objectID);
 }
 
@@ -477,7 +476,7 @@ void BBinder::withLock(const std::function<void()>& doWithLock) {
     Extras* e = getOrCreateExtras();
     LOG_ALWAYS_FATAL_IF(!e, "no memory");
 
-    AutoMutex _l(e->mLock);
+    RpcMutexUniqueLock _l(e->mLock);
     doWithLock();
 }
 
@@ -485,7 +484,7 @@ sp<IBinder> BBinder::lookupOrCreateWeak(const void* objectID, object_make_func m
                                         const void* makeArgs) {
     Extras* e = getOrCreateExtras();
     LOG_ALWAYS_FATAL_IF(!e, "no memory");
-    AutoMutex _l(e->mLock);
+    RpcMutexUniqueLock _l(e->mLock);
     return e->mObjects.lookupOrCreateWeak(objectID, make, makeArgs);
 }
 
@@ -642,7 +641,7 @@ status_t BBinder::setRpcClientDebug(const Parcel& data) {
     }
     status_t status;
     bool hasSocketFd;
-    android::base::unique_fd clientFd;
+    unique_fd clientFd;
 
     if (status = data.readBool(&hasSocketFd); status != OK) return status;
     if (hasSocketFd) {
@@ -654,8 +653,7 @@ status_t BBinder::setRpcClientDebug(const Parcel& data) {
     return setRpcClientDebug(std::move(clientFd), keepAliveBinder);
 }
 
-status_t BBinder::setRpcClientDebug(android::base::unique_fd socketFd,
-                                    const sp<IBinder>& keepAliveBinder) {
+status_t BBinder::setRpcClientDebug(unique_fd socketFd, const sp<IBinder>& keepAliveBinder) {
     if (!kEnableRpcDevServers) {
         ALOGW("%s: disallowed because RPC is not enabled", __PRETTY_FUNCTION__);
         return INVALID_OPERATION;
@@ -692,7 +690,7 @@ status_t BBinder::setRpcClientDebug(android::base::unique_fd socketFd,
     auto weakThis = wp<BBinder>::fromExisting(this);
 
     Extras* e = getOrCreateExtras();
-    AutoMutex _l(e->mLock);
+    RpcMutexUniqueLock _l(e->mLock);
     auto rpcServer = RpcServer::make();
     LOG_ALWAYS_FATAL_IF(rpcServer == nullptr, "RpcServer::make returns null");
     auto link = sp<RpcServerLink>::make(rpcServer, keepAliveBinder, weakThis);
@@ -706,7 +704,7 @@ status_t BBinder::setRpcClientDebug(android::base::unique_fd socketFd,
         return status;
     }
     rpcServer->setMaxThreads(binderThreadPoolMaxCount);
-    LOG(INFO) << "RpcBinder: Started Binder debug on " << getInterfaceDescriptor();
+    ALOGI("RpcBinder: Started Binder debug on %s", String8(getInterfaceDescriptor()).c_str());
     rpcServer->start();
     e->mRpcServerLinks.emplace(link);
     LOG_RPC_DETAIL("%s(fd=%d) successful", __PRETTY_FUNCTION__, socketFdForPrint);
@@ -716,7 +714,7 @@ status_t BBinder::setRpcClientDebug(android::base::unique_fd socketFd,
 void BBinder::removeRpcServerLink(const sp<RpcServerLink>& link) {
     Extras* e = mExtras.load(std::memory_order_acquire);
     if (!e) return;
-    AutoMutex _l(e->mLock);
+    RpcMutexUniqueLock _l(e->mLock);
     (void)e->mRpcServerLinks.erase(link);
 }
 
@@ -724,20 +722,20 @@ BBinder::~BBinder()
 {
     if (!wasParceled()) {
         if (getExtension()) {
-             ALOGW("Binder %p destroyed with extension attached before being parceled.", this);
+            ALOGW("Binder %p destroyed with extension attached before being parceled.", this);
         }
         if (isRequestingSid()) {
-             ALOGW("Binder %p destroyed when requesting SID before being parceled.", this);
+            ALOGW("Binder %p destroyed when requesting SID before being parceled.", this);
         }
         if (isInheritRt()) {
-             ALOGW("Binder %p destroyed after setInheritRt before being parceled.", this);
+            ALOGW("Binder %p destroyed after setInheritRt before being parceled.", this);
         }
 #ifdef __linux__
         if (getMinSchedulerPolicy() != SCHED_NORMAL) {
-             ALOGW("Binder %p destroyed after setMinSchedulerPolicy before being parceled.", this);
+            ALOGW("Binder %p destroyed after setMinSchedulerPolicy before being parceled.", this);
         }
         if (getMinSchedulerPriority() != 0) {
-             ALOGW("Binder %p destroyed after setMinSchedulerPolicy before being parceled.", this);
+            ALOGW("Binder %p destroyed after setMinSchedulerPolicy before being parceled.", this);
         }
 #endif // __linux__
     }
@@ -753,7 +751,7 @@ status_t BBinder::onTransact(
 {
     switch (code) {
         case INTERFACE_TRANSACTION:
-            CHECK(reply != nullptr);
+            LOG_ALWAYS_FATAL_IF(reply == nullptr, "reply == nullptr");
             reply->writeString16(getInterfaceDescriptor());
             return NO_ERROR;
 

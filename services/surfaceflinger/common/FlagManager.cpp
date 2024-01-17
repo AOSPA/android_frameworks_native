@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "FlagManager.h"
+#include <common/FlagManager.h>
 
 #include <SurfaceFlingerProperties.sysprop.h>
 #include <android-base/parsebool.h>
@@ -60,10 +60,6 @@ bool getFlagValue(std::function<bool()> getter, std::optional<bool> overrideValu
     return getter();
 }
 
-void dumpFlag(std::string& result, const char* name, std::function<bool()> getter) {
-    base::StringAppendF(&result, "%s: %s\n", name, getter() ? "true" : "false");
-}
-
 } // namespace
 
 const FlagManager& FlagManager::getInstance() {
@@ -90,20 +86,51 @@ void FlagManager::setUnitTestMode() {
     mBootCompleted = true;
 }
 
+void FlagManager::dumpFlag(std::string& result, bool readonly, const char* name,
+                           std::function<bool()> getter) const {
+    if (readonly || mBootCompleted) {
+        base::StringAppendF(&result, "%s: %s\n", name, getter() ? "true" : "false");
+    } else {
+        base::StringAppendF(&result, "%s: in progress (still booting)\n", name);
+    }
+}
+
 void FlagManager::dump(std::string& result) const {
-#define DUMP_FLAG(name) dumpFlag(result, #name, std::bind(&FlagManager::name, this))
+#define DUMP_FLAG_INTERVAL(name, readonly) \
+    dumpFlag(result, (readonly), #name, std::bind(&FlagManager::name, this))
+#define DUMP_SERVER_FLAG(name) DUMP_FLAG_INTERVAL(name, false)
+#define DUMP_READ_ONLY_FLAG(name) DUMP_FLAG_INTERVAL(name, true)
 
     base::StringAppendF(&result, "FlagManager values: \n");
-    DUMP_FLAG(use_adpf_cpu_hint);
-    DUMP_FLAG(use_skia_tracing);
-    DUMP_FLAG(connected_display);
-    DUMP_FLAG(dont_skip_on_early);
-    DUMP_FLAG(enable_small_area_detection);
-    DUMP_FLAG(misc1);
-    DUMP_FLAG(late_boot_misc2);
-    DUMP_FLAG(vrr_config);
 
-#undef DUMP_FLAG
+    /// Legacy server flags ///
+    DUMP_SERVER_FLAG(use_adpf_cpu_hint);
+    DUMP_SERVER_FLAG(use_skia_tracing);
+
+    /// Trunk stable server flags ///
+    DUMP_SERVER_FLAG(late_boot_misc2);
+    DUMP_SERVER_FLAG(dont_skip_on_early);
+    DUMP_SERVER_FLAG(refresh_rate_overlay_on_external_display);
+
+    /// Trunk stable readonly flags ///
+    DUMP_READ_ONLY_FLAG(connected_display);
+    DUMP_READ_ONLY_FLAG(enable_small_area_detection);
+    DUMP_READ_ONLY_FLAG(misc1);
+    DUMP_READ_ONLY_FLAG(vrr_config);
+    DUMP_READ_ONLY_FLAG(hotplug2);
+    DUMP_READ_ONLY_FLAG(hdcp_level_hal);
+    DUMP_READ_ONLY_FLAG(multithreaded_present);
+    DUMP_READ_ONLY_FLAG(add_sf_skipped_frames_to_trace);
+    DUMP_READ_ONLY_FLAG(use_known_refresh_rate_for_fps_consistency);
+    DUMP_READ_ONLY_FLAG(cache_if_source_crop_layer_only_moved);
+    DUMP_READ_ONLY_FLAG(enable_fro_dependent_features);
+    DUMP_READ_ONLY_FLAG(display_protected);
+    DUMP_READ_ONLY_FLAG(fp16_client_target);
+    DUMP_READ_ONLY_FLAG(game_default_frame_rate);
+    DUMP_READ_ONLY_FLAG(enable_layer_command_batching);
+#undef DUMP_READ_ONLY_FLAG
+#undef DUMP_SERVER_FLAG
+#undef DUMP_FLAG_INTERVAL
 }
 
 std::optional<bool> FlagManager::getBoolProperty(const char* property) const {
@@ -134,15 +161,13 @@ bool FlagManager::getServerConfigurableFlag(const char* experimentFlagName) cons
                                 "Can't read %s before boot completed as it is server writable", \
                                 __func__);                                                      \
         }                                                                                       \
-        static std::optional<bool> debugOverride = getBoolProperty(syspropOverride);            \
-        static bool value = getFlagValue([] { return flags::name(); }, debugOverride);          \
+        static const std::optional<bool> debugOverride = getBoolProperty(syspropOverride);      \
+        static const bool value = getFlagValue([] { return flags::name(); }, debugOverride);    \
         if (mUnitTestMode) {                                                                    \
             /*                                                                                  \
-             * When testing, we don't want to rely on the cached values stored in the static    \
-             * variables.                                                                       \
+             * When testing, we don't want to rely on the cached `value` or the debugOverride.  \
              */                                                                                 \
-            debugOverride = getBoolProperty(syspropOverride);                                   \
-            value = getFlagValue([] { return flags::name(); }, debugOverride);                  \
+            return flags::name();                                                               \
         }                                                                                       \
         return value;                                                                           \
     }
@@ -165,9 +190,22 @@ FLAG_MANAGER_READ_ONLY_FLAG(connected_display, "")
 FLAG_MANAGER_READ_ONLY_FLAG(enable_small_area_detection, "")
 FLAG_MANAGER_READ_ONLY_FLAG(misc1, "")
 FLAG_MANAGER_READ_ONLY_FLAG(vrr_config, "debug.sf.enable_vrr_config")
+FLAG_MANAGER_READ_ONLY_FLAG(hotplug2, "")
+FLAG_MANAGER_READ_ONLY_FLAG(hdcp_level_hal, "")
+FLAG_MANAGER_READ_ONLY_FLAG(multithreaded_present, "debug.sf.multithreaded_present")
+FLAG_MANAGER_READ_ONLY_FLAG(add_sf_skipped_frames_to_trace, "")
+FLAG_MANAGER_READ_ONLY_FLAG(use_known_refresh_rate_for_fps_consistency, "")
+FLAG_MANAGER_READ_ONLY_FLAG(cache_if_source_crop_layer_only_moved,
+                            "debug.sf.cache_source_crop_only_moved")
+FLAG_MANAGER_READ_ONLY_FLAG(enable_fro_dependent_features, "")
+FLAG_MANAGER_READ_ONLY_FLAG(display_protected, "")
+FLAG_MANAGER_READ_ONLY_FLAG(fp16_client_target, "debug.sf.fp16_client_target")
+FLAG_MANAGER_READ_ONLY_FLAG(game_default_frame_rate, "")
+FLAG_MANAGER_READ_ONLY_FLAG(enable_layer_command_batching, "")
 
 /// Trunk stable server flags ///
 FLAG_MANAGER_SERVER_FLAG(late_boot_misc2, "")
+FLAG_MANAGER_SERVER_FLAG(refresh_rate_overlay_on_external_display, "")
 
 /// Exceptions ///
 bool FlagManager::dont_skip_on_early() const {

@@ -221,7 +221,14 @@ public:
     /*
      * Updates key repeat configuration timeout and delay.
      */
-    virtual void setKeyRepeatConfiguration(nsecs_t timeout, nsecs_t delay) = 0;
+    virtual void setKeyRepeatConfiguration(std::chrono::nanoseconds timeout,
+                                           std::chrono::nanoseconds delay) = 0;
+
+    /*
+     * Determine if a pointer from a device is being dispatched to the given window.
+     */
+    virtual bool isPointerInWindow(const sp<IBinder>& token, int32_t displayId, DeviceId deviceId,
+                                   int32_t pointerId) = 0;
 };
 
 } // namespace android

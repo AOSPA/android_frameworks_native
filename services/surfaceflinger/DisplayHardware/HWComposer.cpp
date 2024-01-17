@@ -15,6 +15,7 @@
  */
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
+#include <chrono>
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
 
@@ -268,7 +269,7 @@ std::vector<HWComposer::HWCDisplayMode> HWComposer::getModes(PhysicalDisplayId d
 
     const auto hwcDisplayId = mDisplayData.at(displayId).hwcDisplay->getId();
 
-    if (mComposer->getDisplayConfigurationsSupported()) {
+    if (mComposer->isVrrSupported()) {
         return getModesFromDisplayConfigurations(hwcDisplayId, maxFrameIntervalNs);
     }
 
@@ -432,7 +433,7 @@ void HWComposer::setVsyncEnabled(PhysicalDisplayId displayId, hal::Vsync enabled
 
 status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
                                      const sp<Fence>& acquireFence, const sp<GraphicBuffer>& target,
-                                     ui::Dataspace dataspace) {
+                                     ui::Dataspace dataspace, float hdrSdrRatio) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
 
     /* QTI_BEGIN */
@@ -444,7 +445,7 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
 
     ALOGV("%s for display %s", __FUNCTION__, to_string(displayId).c_str());
     auto& hwcDisplay = mDisplayData[displayId].hwcDisplay;
-    auto error = hwcDisplay->setClientTarget(slot, target, acquireFence, dataspace);
+    auto error = hwcDisplay->setClientTarget(slot, target, acquireFence, dataspace, hdrSdrRatio);
     RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
     return NO_ERROR;
 }
@@ -452,7 +453,7 @@ status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
 status_t HWComposer::getDeviceCompositionChanges(
         HalDisplayId displayId, bool frameUsesClientComposition,
         std::optional<std::chrono::steady_clock::time_point> earliestPresentTime,
-        nsecs_t expectedPresentTime,
+        nsecs_t expectedPresentTime, Fps frameInterval,
         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
     ATRACE_CALL();
 
@@ -497,13 +498,14 @@ status_t HWComposer::getDeviceCompositionChanges(
     }();
 
     displayData.validateWasSkipped = false;
-    displayData.lastExpectedPresentTimestamp = expectedPresentTime;
     bool acceptChanges = true;
+
+    ATRACE_FORMAT("NextFrameInterval %d_Hz", frameInterval.getIntValue());
     if (canSkipValidate) {
-        sp<Fence> outPresentFence;
+        sp<Fence> outPresentFence = Fence::NO_FENCE;
         uint32_t state = UINT32_MAX;
-        error = hwcDisplay->presentOrValidate(expectedPresentTime, &numTypes, &numRequests,
-                                              &outPresentFence, &state);
+        error = hwcDisplay->presentOrValidate(expectedPresentTime, frameInterval.getPeriodNsecs(),
+                                              &numTypes, &numRequests, &outPresentFence, &state);
         if (!hasChangesError(error)) {
             RETURN_IF_HWC_ERROR_FOR("presentOrValidate", error, displayId, UNKNOWN_ERROR);
         }
@@ -529,7 +531,8 @@ status_t HWComposer::getDeviceCompositionChanges(
         acceptChanges = (state != 2);
         // Present failed but Validate ran.
     } else {
-        error = hwcDisplay->validate(expectedPresentTime, &numTypes, &numRequests);
+        error = hwcDisplay->validate(expectedPresentTime, frameInterval.getPeriodNsecs(), &numTypes,
+                                     &numRequests);
     }
     ALOGV("SkipValidate failed, Falling back to SLOW validate/present");
     if (!hasChangesError(error)) {
@@ -904,23 +907,15 @@ status_t HWComposer::setRefreshRateChangedCallbackDebugEnabled(PhysicalDisplayId
     return NO_ERROR;
 }
 
-status_t HWComposer::notifyExpectedPresentIfRequired(PhysicalDisplayId displayId,
-                                                     nsecs_t expectedPresentTime,
-                                                     int32_t frameIntervalNs, int32_t timeoutNs) {
+status_t HWComposer::notifyExpectedPresent(PhysicalDisplayId displayId,
+                                           TimePoint expectedPresentTime, Fps frameInterval) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
-
-    auto& displayData = mDisplayData[displayId];
-    if (expectedPresentTime >= displayData.lastExpectedPresentTimestamp &&
-        expectedPresentTime < displayData.lastExpectedPresentTimestamp + timeoutNs) {
-        return NO_ERROR;
-    }
-
-    displayData.lastExpectedPresentTimestamp = expectedPresentTime;
-    ATRACE_FORMAT("%s ExpectedPresentTime %" PRId64 " frameIntervalNs %d", __func__,
-                  expectedPresentTime, frameIntervalNs);
-    const auto error = mComposer->notifyExpectedPresent(displayData.hwcDisplay->getId(),
-                                                        expectedPresentTime, frameIntervalNs);
-
+    ATRACE_FORMAT("%s ExpectedPresentTime in %.2fms frameInterval %.2fms", __func__,
+                  ticks<std::milli, float>(expectedPresentTime - TimePoint::now()),
+                  ticks<std::milli, float>(Duration::fromNs(frameInterval.getPeriodNsecs())));
+    const auto error = mComposer->notifyExpectedPresent(mDisplayData[displayId].hwcDisplay->getId(),
+                                                        expectedPresentTime.ns(),
+                                                        frameInterval.getPeriodNsecs());
     if (error != hal::Error::NONE) {
         ALOGE("Error in notifyExpectedPresent call %s", to_string(error).c_str());
         return INVALID_OPERATION;
