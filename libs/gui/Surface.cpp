@@ -50,6 +50,10 @@
 #include <private/gui/ComposerService.h>
 #include <private/gui/ComposerServiceAIDL.h>
 
+/* QTI_BEGIN */
+#include <cutils/properties.h>
+/* QTI_END */
+
 namespace android {
 
 using gui::aidl_utils::statusTFromBinderStatus;
@@ -126,13 +130,25 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
     mSurfaceControlHandle = surfaceControlHandle;
 
     /* QTI_BEGIN */
-    if (!mQtiSurfaceExtn) {
+    char value[PROPERTY_VALUE_MAX];
+    int int_value = 0;
+    property_get("vendor.display.enable_optimal_refresh_rate", value, "0");
+    int_value = atoi(value);
+    bool mEnableOptimalRefreshRate  = (int_value == 1) ? true : false;
+
+    if (!mQtiSurfaceExtn && mEnableOptimalRefreshRate) {
         mQtiSurfaceExtn = new libguiextension::QtiSurfaceExtension(this);
     }
     /* QTI_END */
 }
 
 Surface::~Surface() {
+    /* QTI_BEGIN */
+    if (mQtiSurfaceExtn) {
+        delete mQtiSurfaceExtn;
+    }
+    /* QTI_END */
+
     if (mConnectedToCpu) {
         Surface::disconnect(NATIVE_WINDOW_API_CPU);
     }
