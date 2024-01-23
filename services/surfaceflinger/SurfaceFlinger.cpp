@@ -6887,6 +6887,9 @@ void SurfaceFlinger::dumpVisibleFrontEnd(std::string& result) {
 }
 
 perfetto::protos::LayersProto SurfaceFlinger::dumpDrawingStateProto(uint32_t traceFlags) const {
+    /* QTI_BEGIN */
+    Mutex::Autolock _l(mStateLock);
+    /* QTI_END */
     std::unordered_set<uint64_t> stackIdsToSkip;
 
     // Determine if virtual layers display should be skipped
