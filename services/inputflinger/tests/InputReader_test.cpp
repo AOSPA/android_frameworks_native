@@ -1350,6 +1350,9 @@ protected:
 
     std::shared_ptr<FakePointerController> mFakePointerController;
 
+    constexpr static auto EVENT_HAPPENED_TIMEOUT = 2000ms;
+    constexpr static auto EVENT_DID_NOT_HAPPEN_TIMEOUT = 30ms;
+
     void SetUp() override {
 #if !defined(__ANDROID__)
         GTEST_SKIP();
@@ -1381,8 +1384,8 @@ protected:
     }
 
     void setupInputReader() {
-        mTestListener = std::make_unique<TestInputListener>(/*eventHappenedTimeout=*/2000ms,
-                                                            /*eventDidNotHappenTimeout=*/30ms);
+        mTestListener = std::make_unique<TestInputListener>(EVENT_HAPPENED_TIMEOUT,
+                                                            EVENT_DID_NOT_HAPPEN_TIMEOUT);
 
         mReader = std::make_unique<InputReader>(std::make_shared<EventHub>(), mFakePolicy,
                                                 *mTestListener);
@@ -2413,17 +2416,29 @@ TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureNotReported) {
     mDevice->sendTrackingId(FIRST_TRACKING_ID);
     mDevice->sendToolType(MT_TOOL_FINGER);
     mDevice->sendDown(centerPoint);
-    auto waitUntil = std::chrono::system_clock::now() +
-            std::chrono::milliseconds(ns2ms(EXTERNAL_STYLUS_DATA_TIMEOUT));
+    const auto syncTime = std::chrono::system_clock::now();
+    // After 72 ms, the event *will* be generated. If we wait the full 72 ms to check that NO event
+    // is generated in that period, there will be a race condition between the event being generated
+    // and the test's wait timeout expiring. Thus, we wait for a shorter duration in the test, which
+    // will reduce the liklihood of the race condition occurring.
+    const auto waitUntilTimeForNoEvent =
+            syncTime + std::chrono::milliseconds(ns2ms(EXTERNAL_STYLUS_DATA_TIMEOUT / 2));
     mDevice->sendSync();
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled(waitUntil));
+    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled(waitUntilTimeForNoEvent));
 
     // Since the external stylus did not report a pressure value within the timeout,
     // it shows up as a finger pointer.
-    ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
-                  WithSource(AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS),
-                  WithToolType(ToolType::FINGER), WithDeviceId(touchscreenId), WithPressure(1.f))));
+    const auto waitUntilTimeForEvent = syncTime +
+            std::chrono::milliseconds(ns2ms(EXTERNAL_STYLUS_DATA_TIMEOUT)) + EVENT_HAPPENED_TIMEOUT;
+    ASSERT_NO_FATAL_FAILURE(
+            mTestListener->assertNotifyMotionWasCalled(AllOf(WithMotionAction(
+                                                                     AMOTION_EVENT_ACTION_DOWN),
+                                                             WithSource(AINPUT_SOURCE_TOUCHSCREEN |
+                                                                        AINPUT_SOURCE_STYLUS),
+                                                             WithToolType(ToolType::FINGER),
+                                                             WithDeviceId(touchscreenId),
+                                                             WithPressure(1.f)),
+                                                       waitUntilTimeForEvent));
 
     // Change the pressure on the external stylus. Since the pressure was not present at the start
     // of the gesture, it is ignored for now.
@@ -2904,13 +2919,11 @@ TEST_F(InputDeviceTest, KernelBufferOverflowResetsMappers) {
     mapper.assertProcessWasCalled();
 
     // Simulate a kernel buffer overflow, which generates a SYN_DROPPED event.
-    // This should reset the mapper.
     event.type = EV_SYN;
     event.code = SYN_DROPPED;
     event.value = 0;
     unused = mDevice->process(&event, /*count=*/1);
     mapper.assertProcessWasNotCalled();
-    mapper.assertResetWasCalled();
 
     // All events until the next SYN_REPORT should be dropped.
     event.type = EV_KEY;
@@ -2920,11 +2933,13 @@ TEST_F(InputDeviceTest, KernelBufferOverflowResetsMappers) {
     mapper.assertProcessWasNotCalled();
 
     // We get the SYN_REPORT event now, which is not forwarded to mappers.
+    // This should reset the mapper.
     event.type = EV_SYN;
     event.code = SYN_REPORT;
     event.value = 0;
     unused = mDevice->process(&event, /*count=*/1);
     mapper.assertProcessWasNotCalled();
+    mapper.assertResetWasCalled();
 
     // The mapper receives events normally now.
     event.type = EV_KEY;
@@ -4085,7 +4100,7 @@ protected:
     void SetUp() override { InputMapperTest::SetUp(DEVICE_CLASSES | InputDeviceClass::EXTERNAL); }
 };
 
-TEST_F(KeyboardInputMapperTest_ExternalDevice, WakeBehavior) {
+TEST_F(KeyboardInputMapperTest_ExternalDevice, WakeBehavior_AlphabeticKeyboard) {
     // For external devices, keys will trigger wake on key down. Media keys should also trigger
     // wake if triggered from external devices.
 
@@ -4110,6 +4125,36 @@ TEST_F(KeyboardInputMapperTest_ExternalDevice, WakeBehavior) {
     process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_PLAY, 1);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
     ASSERT_EQ(POLICY_FLAG_WAKE, args.policyFlags);
+
+    process(mapper, ARBITRARY_TIME + 1, READ_TIME, EV_KEY, KEY_PLAY, 0);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(uint32_t(0), args.policyFlags);
+
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_PLAYPAUSE, 1);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(POLICY_FLAG_WAKE, args.policyFlags);
+
+    process(mapper, ARBITRARY_TIME + 1, READ_TIME, EV_KEY, KEY_PLAYPAUSE, 0);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(POLICY_FLAG_WAKE, args.policyFlags);
+}
+
+TEST_F(KeyboardInputMapperTest_ExternalDevice, WakeBehavior_NoneAlphabeticKeyboard) {
+    // For external devices, keys will trigger wake on key down. Media keys should not trigger
+    // wake if triggered from external non-alphaebtic keyboard (e.g. headsets).
+
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_PLAY, 0, AKEYCODE_MEDIA_PLAY, 0);
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_PLAYPAUSE, 0, AKEYCODE_MEDIA_PLAY_PAUSE,
+                          POLICY_FLAG_WAKE);
+
+    KeyboardInputMapper& mapper =
+            constructAndAddMapper<KeyboardInputMapper>(AINPUT_SOURCE_KEYBOARD,
+                                                       AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC);
+
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_PLAY, 1);
+    NotifyKeyArgs args;
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(uint32_t(0), args.policyFlags);
 
     process(mapper, ARBITRARY_TIME + 1, READ_TIME, EV_KEY, KEY_PLAY, 0);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
@@ -4160,319 +4205,6 @@ TEST_F(KeyboardInputMapperTest_ExternalDevice, DoNotWakeByDefaultBehavior) {
     process(mapper, ARBITRARY_TIME + 1, READ_TIME, EV_KEY, KEY_PLAY, 0);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
     ASSERT_EQ(POLICY_FLAG_WAKE, args.policyFlags);
-}
-
-// --- CursorInputMapperTestBase ---
-
-class CursorInputMapperTestBase : public InputMapperTest {
-protected:
-    static const int32_t TRACKBALL_MOVEMENT_THRESHOLD;
-
-    std::shared_ptr<FakePointerController> mFakePointerController;
-
-    void SetUp() override {
-        InputMapperTest::SetUp();
-
-        mFakePointerController = std::make_shared<FakePointerController>();
-        mFakePolicy->setPointerController(mFakePointerController);
-    }
-
-    void testMotionRotation(CursorInputMapper& mapper, int32_t originalX, int32_t originalY,
-                            int32_t rotatedX, int32_t rotatedY);
-
-    void prepareDisplay(ui::Rotation orientation) {
-        setDisplayInfoAndReconfigure(DISPLAY_ID, DISPLAY_WIDTH, DISPLAY_HEIGHT, orientation,
-                                     DISPLAY_UNIQUE_ID, NO_PORT, ViewportType::INTERNAL);
-    }
-
-    void prepareSecondaryDisplay() {
-        setDisplayInfoAndReconfigure(SECONDARY_DISPLAY_ID, DISPLAY_WIDTH, DISPLAY_HEIGHT,
-                                     ui::ROTATION_0, SECONDARY_DISPLAY_UNIQUE_ID, NO_PORT,
-                                     ViewportType::EXTERNAL);
-    }
-
-    static void assertCursorPointerCoords(const PointerCoords& coords, float x, float y,
-                                          float pressure) {
-        ASSERT_NO_FATAL_FAILURE(assertPointerCoords(coords, x, y, pressure, 0.0f, 0.0f, 0.0f, 0.0f,
-                                                    0.0f, 0.0f, 0.0f, EPSILON));
-    }
-};
-
-const int32_t CursorInputMapperTestBase::TRACKBALL_MOVEMENT_THRESHOLD = 6;
-
-void CursorInputMapperTestBase::testMotionRotation(CursorInputMapper& mapper, int32_t originalX,
-                                                   int32_t originalY, int32_t rotatedX,
-                                                   int32_t rotatedY) {
-    NotifyMotionArgs args;
-
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, originalX);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, originalY);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, args.action);
-    ASSERT_NO_FATAL_FAILURE(
-            assertCursorPointerCoords(args.pointerCoords[0],
-                                      float(rotatedX) / TRACKBALL_MOVEMENT_THRESHOLD,
-                                      float(rotatedY) / TRACKBALL_MOVEMENT_THRESHOLD, 0.0f));
-}
-
-// --- CursorInputMapperTest ---
-
-class CursorInputMapperTest : public CursorInputMapperTestBase {
-protected:
-    void SetUp() override {
-        input_flags::enable_pointer_choreographer(false);
-        CursorInputMapperTestBase::SetUp();
-    }
-};
-
-TEST_F(CursorInputMapperTest, Process_WhenOrientationAware_ShouldNotRotateMotions) {
-    mFakePolicy->addInputUniqueIdAssociation(DEVICE_LOCATION, DISPLAY_UNIQUE_ID);
-    addConfigurationProperty("cursor.mode", "navigation");
-    // InputReader works in the un-rotated coordinate space, so orientation-aware devices do not
-    // need to be rotated.
-    addConfigurationProperty("cursor.orientationAware", "1");
-    CursorInputMapper& mapper = constructAndAddMapper<CursorInputMapper>();
-
-    prepareDisplay(ui::ROTATION_90);
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  0,  1,  0,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1,  1,  1,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1,  0,  1,  0));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1, -1,  1, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  0, -1,  0, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1, -1, -1, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1,  0, -1,  0));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1,  1, -1,  1));
-}
-
-TEST_F(CursorInputMapperTest, Process_WhenNotOrientationAware_ShouldRotateMotions) {
-    mFakePolicy->addInputUniqueIdAssociation(DEVICE_LOCATION, DISPLAY_UNIQUE_ID);
-    addConfigurationProperty("cursor.mode", "navigation");
-    // Since InputReader works in the un-rotated coordinate space, only devices that are not
-    // orientation-aware are affected by display rotation.
-    CursorInputMapper& mapper = constructAndAddMapper<CursorInputMapper>();
-
-    clearViewports();
-    prepareDisplay(ui::ROTATION_0);
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  0,  1,  0,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1,  1,  1,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1,  0,  1,  0));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1, -1,  1, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  0, -1,  0, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1, -1, -1, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1,  0, -1,  0));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1,  1, -1,  1));
-
-    clearViewports();
-    prepareDisplay(ui::ROTATION_90);
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  0,  1, -1,  0));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1,  1, -1,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1,  0,  0,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1, -1,  1,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  0, -1,  1,  0));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1, -1,  1, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1,  0,  0, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1,  1, -1, -1));
-
-    clearViewports();
-    prepareDisplay(ui::ROTATION_180);
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  0,  1,  0, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1,  1, -1, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1,  0, -1,  0));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1, -1, -1,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  0, -1,  0,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1, -1,  1,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1,  0,  1,  0));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1,  1,  1, -1));
-
-    clearViewports();
-    prepareDisplay(ui::ROTATION_270);
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  0,  1,  1,  0));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1,  1,  1, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1,  0,  0, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  1, -1, -1, -1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper,  0, -1, -1,  0));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1, -1, -1,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1,  0,  0,  1));
-    ASSERT_NO_FATAL_FAILURE(testMotionRotation(mapper, -1,  1,  1,  1));
-}
-
-TEST_F(CursorInputMapperTest, PointerCaptureDisablesOrientationChanges) {
-    addConfigurationProperty("cursor.mode", "pointer");
-    CursorInputMapper& mapper = constructAndAddMapper<CursorInputMapper>();
-
-    NotifyDeviceResetArgs resetArgs;
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyDeviceResetWasCalled(&resetArgs));
-    ASSERT_EQ(ARBITRARY_TIME, resetArgs.eventTime);
-    ASSERT_EQ(DEVICE_ID, resetArgs.deviceId);
-
-    // Ensure the display is rotated.
-    prepareDisplay(ui::ROTATION_90);
-
-    NotifyMotionArgs args;
-
-    // Verify that the coordinates are rotated.
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE, args.source);
-    ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_MOVE, args.action);
-    ASSERT_EQ(-20, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X));
-    ASSERT_EQ(10, args.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y));
-
-    // Enable Pointer Capture.
-    mFakePolicy->setPointerCapture(true);
-    configureDevice(InputReaderConfiguration::Change::POINTER_CAPTURE);
-    NotifyPointerCaptureChangedArgs captureArgs;
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyCaptureWasCalled(&captureArgs));
-    ASSERT_TRUE(captureArgs.request.enable);
-
-    // Move and verify rotation is not applied.
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(AINPUT_SOURCE_MOUSE_RELATIVE, args.source);
-    ASSERT_EQ(AMOTION_EVENT_ACTION_MOVE, args.action);
-    ASSERT_EQ(10, args.pointerCoords[0].getX());
-    ASSERT_EQ(20, args.pointerCoords[0].getY());
-}
-
-TEST_F(CursorInputMapperTest, ConfigureDisplayId_NoAssociatedViewport) {
-    CursorInputMapper& mapper = constructAndAddMapper<CursorInputMapper>();
-
-    // Set up the default display.
-    prepareDisplay(ui::ROTATION_90);
-
-    // Set up the secondary display as the display on which the pointer should be shown.
-    // The InputDevice is not associated with any display.
-    prepareSecondaryDisplay();
-    mFakePolicy->setDefaultPointerDisplayId(SECONDARY_DISPLAY_ID);
-    configureDevice(InputReaderConfiguration::Change::DISPLAY_INFO);
-
-    mFakePointerController->setBounds(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
-    mFakePointerController->setPosition(100, 200);
-
-    // Ensure input events are generated for the secondary display.
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
-                  WithSource(AINPUT_SOURCE_MOUSE), WithDisplayId(SECONDARY_DISPLAY_ID),
-                  WithCoords(110.0f, 220.0f))));
-    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(110.0f, 220.0f));
-}
-
-TEST_F(CursorInputMapperTest, ConfigureDisplayId_WithAssociatedViewport) {
-    CursorInputMapper& mapper = constructAndAddMapper<CursorInputMapper>();
-
-    // Set up the default display.
-    prepareDisplay(ui::ROTATION_90);
-
-    // Set up the secondary display as the display on which the pointer should be shown,
-    // and associate the InputDevice with the secondary display.
-    prepareSecondaryDisplay();
-    mFakePolicy->setDefaultPointerDisplayId(SECONDARY_DISPLAY_ID);
-    mFakePolicy->addInputUniqueIdAssociation(DEVICE_LOCATION, SECONDARY_DISPLAY_UNIQUE_ID);
-    configureDevice(InputReaderConfiguration::Change::DISPLAY_INFO);
-
-    mFakePointerController->setBounds(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
-    mFakePointerController->setPosition(100, 200);
-
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
-                  WithSource(AINPUT_SOURCE_MOUSE), WithDisplayId(SECONDARY_DISPLAY_ID),
-                  WithCoords(110.0f, 220.0f))));
-    ASSERT_NO_FATAL_FAILURE(mFakePointerController->assertPosition(110.0f, 220.0f));
-}
-
-TEST_F(CursorInputMapperTest, ConfigureDisplayId_IgnoresEventsForMismatchedPointerDisplay) {
-    CursorInputMapper& mapper = constructAndAddMapper<CursorInputMapper>();
-
-    // Set up the default display as the display on which the pointer should be shown.
-    prepareDisplay(ui::ROTATION_90);
-    mFakePolicy->setDefaultPointerDisplayId(DISPLAY_ID);
-
-    // Associate the InputDevice with the secondary display.
-    prepareSecondaryDisplay();
-    mFakePolicy->addInputUniqueIdAssociation(DEVICE_LOCATION, SECONDARY_DISPLAY_UNIQUE_ID);
-    configureDevice(InputReaderConfiguration::Change::DISPLAY_INFO);
-
-    // The mapper should not generate any events because it is associated with a display that is
-    // different from the pointer display.
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
-}
-
-// --- CursorInputMapperTestWithChoreographer ---
-
-// TODO(b/311416205): De-duplicate the test cases after the refactoring is complete and the flagging
-//   logic can be removed.
-class CursorInputMapperTestWithChoreographer : public CursorInputMapperTestBase {
-protected:
-    void SetUp() override {
-        input_flags::enable_pointer_choreographer(true);
-        CursorInputMapperTestBase::SetUp();
-    }
-};
-
-TEST_F(CursorInputMapperTestWithChoreographer, ConfigureDisplayIdWithAssociatedViewport) {
-    CursorInputMapper& mapper = constructAndAddMapper<CursorInputMapper>();
-
-    // Set up the default display.
-    prepareDisplay(ui::ROTATION_90);
-
-    // Set up the secondary display as the display on which the pointer should be shown,
-    // and associate the InputDevice with the secondary display.
-    prepareSecondaryDisplay();
-    mFakePolicy->setDefaultPointerDisplayId(SECONDARY_DISPLAY_ID);
-    mFakePolicy->addInputUniqueIdAssociation(DEVICE_LOCATION, SECONDARY_DISPLAY_UNIQUE_ID);
-    configureDevice(InputReaderConfiguration::Change::DISPLAY_INFO);
-
-    mFakePointerController->setBounds(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
-    mFakePointerController->setPosition(100, 200);
-
-    // Ensure input events are generated with associated display ID but not with coords,
-    // because the coords will be decided later by PointerChoreographer.
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
-                  WithSource(AINPUT_SOURCE_MOUSE), WithDisplayId(SECONDARY_DISPLAY_ID),
-                  WithCoords(0.0f, 0.0f))));
-}
-
-TEST_F(CursorInputMapperTestWithChoreographer,
-       ConfigureDisplayIdShouldGenerateEventWithMismatchedPointerDisplay) {
-    CursorInputMapper& mapper = constructAndAddMapper<CursorInputMapper>();
-
-    // Set up the default display as the display on which the pointer should be shown.
-    prepareDisplay(ui::ROTATION_90);
-    mFakePolicy->setDefaultPointerDisplayId(DISPLAY_ID);
-
-    // Associate the InputDevice with the secondary display.
-    prepareSecondaryDisplay();
-    mFakePolicy->addInputUniqueIdAssociation(DEVICE_LOCATION, SECONDARY_DISPLAY_UNIQUE_ID);
-    configureDevice(InputReaderConfiguration::Change::DISPLAY_INFO);
-
-    // With PointerChoreographer enabled, there could be a PointerController for the associated
-    // display even if it is different from the pointer display. So the mapper should generate an
-    // event.
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_X, 10);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_REL, REL_Y, 20);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
-            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
-                  WithSource(AINPUT_SOURCE_MOUSE), WithDisplayId(SECONDARY_DISPLAY_ID),
-                  WithCoords(0.0f, 0.0f))));
 }
 
 // --- TouchInputMapperTest ---
@@ -9796,15 +9528,16 @@ TEST_F(MultiTouchInputMapperTest, Process_MultiTouch_WithInvalidTrackingId) {
     ASSERT_EQ(uint32_t(1), motionArgs.getPointerCount());
 }
 
-TEST_F(MultiTouchInputMapperTest, Reset_PreservesLastTouchState) {
+TEST_F(MultiTouchInputMapperTest, Reset_RepopulatesMultiTouchState) {
     addConfigurationProperty("touch.deviceType", "touchScreen");
     prepareDisplay(ui::ROTATION_0);
     prepareAxes(POSITION | ID | SLOT | PRESSURE);
     MultiTouchInputMapper& mapper = constructAndAddMapper<MultiTouchInputMapper>();
 
     // First finger down.
+    constexpr int32_t x1 = 100, y1 = 200, x2 = 300, y2 = 400;
     processId(mapper, FIRST_TRACKING_ID);
-    processPosition(mapper, 100, 200);
+    processPosition(mapper, x1, y1);
     processPressure(mapper, RAW_PRESSURE_MAX);
     processSync(mapper);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
@@ -9813,14 +9546,32 @@ TEST_F(MultiTouchInputMapperTest, Reset_PreservesLastTouchState) {
     // Second finger down.
     processSlot(mapper, SECOND_SLOT);
     processId(mapper, SECOND_TRACKING_ID);
-    processPosition(mapper, 300, 400);
+    processPosition(mapper, x2, y2);
     processPressure(mapper, RAW_PRESSURE_MAX);
     processSync(mapper);
     ASSERT_NO_FATAL_FAILURE(
             mFakeListener->assertNotifyMotionWasCalled(WithMotionAction(ACTION_POINTER_1_DOWN)));
 
+    // Set MT Slot state to be repopulated for the required slots
+    std::vector<int32_t> mtSlotValues(RAW_SLOT_MAX + 1, -1);
+    mtSlotValues[0] = FIRST_TRACKING_ID;
+    mtSlotValues[1] = SECOND_TRACKING_ID;
+    mFakeEventHub->setMtSlotValues(EVENTHUB_ID, ABS_MT_TRACKING_ID, mtSlotValues);
+
+    mtSlotValues[0] = x1;
+    mtSlotValues[1] = x2;
+    mFakeEventHub->setMtSlotValues(EVENTHUB_ID, ABS_MT_POSITION_X, mtSlotValues);
+
+    mtSlotValues[0] = y1;
+    mtSlotValues[1] = y2;
+    mFakeEventHub->setMtSlotValues(EVENTHUB_ID, ABS_MT_POSITION_Y, mtSlotValues);
+
+    mtSlotValues[0] = RAW_PRESSURE_MAX;
+    mtSlotValues[1] = RAW_PRESSURE_MAX;
+    mFakeEventHub->setMtSlotValues(EVENTHUB_ID, ABS_MT_PRESSURE, mtSlotValues);
+
     // Reset the mapper. When the mapper is reset, we expect the current multi-touch state to be
-    // preserved. Resetting should cancel the ongoing gesture.
+    // repopulated. Resetting should cancel the ongoing gesture.
     resetMapper(mapper, ARBITRARY_TIME);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
             WithMotionAction(AMOTION_EVENT_ACTION_CANCEL)));
