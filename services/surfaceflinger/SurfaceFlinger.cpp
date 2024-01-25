@@ -2567,7 +2567,7 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     ATRACE_NAME(ftl::Concat(__func__, ' ', ftl::to_underlying(vsyncId)).c_str());
 
     /* QTI_BEGIN */
-    //mQtiSFExtnIntf->qtiOnVsync(expectedVsyncTime.ns());
+    mQtiSFExtnIntf->qtiOnVsync(0);
     /* QTI_END */
 
     // mScheduledPresentTime = expectedVsyncTime;
@@ -3905,6 +3905,9 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
             if (display->isVirtual()) {
                 releaseVirtualDisplay(display->getVirtualId());
             }
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
+            /* QTI_END */
         }
 
         mDisplays.erase(displayToken);
@@ -4857,7 +4860,7 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
         if (mQtiSFExtnIntf->qtiIsFrameEarly(layer->qtiGetSmomoLayerStackId(), layer->getSequence(),
                                             desiredPresentTime.ns())) {
             ready = TransactionReadiness::NotReady;
-            return false;
+            return TraverseBuffersReturnValues::STOP_TRAVERSAL;
         }
         /* QTI_END */
 
@@ -4970,6 +4973,16 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
             ready = TransactionReadiness::NotReady;
             return TraverseBuffersReturnValues::STOP_TRAVERSAL;
         }
+
+        /* QTI_BEGIN */
+        sp<Layer> layerHandle = LayerHandle::getLayer(s.surface);
+        TimePoint desiredPresentTime = TimePoint::fromNs(transaction.desiredPresentTime);
+        if (mQtiSFExtnIntf->qtiIsFrameEarly(layerHandle->qtiGetSmomoLayerStackId(),
+                                            layerHandle->getSequence(), desiredPresentTime.ns())) {
+            ready = TransactionReadiness::NotReady;
+            return TraverseBuffersReturnValues::STOP_TRAVERSAL;
+        }
+        /* QTI_END */
 
         const bool acquireFenceAvailable = s.bufferData &&
                 s.bufferData->flags.test(BufferData::BufferDataChange::fenceChanged) &&
