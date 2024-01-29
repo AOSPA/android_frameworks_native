@@ -1748,6 +1748,9 @@ void Layer::miniDump(std::string& result, const frontend::LayerSnapshot& snapsho
     StringAppendF(&result, "  %10zu | ", snapshot.globalZ);
     StringAppendF(&result, "  %10d | ",
                   snapshot.layerMetadata.getInt32(gui::METADATA_WINDOW_TYPE, 0));
+    /* QTI_BEGIN */
+    StringAppendF(&result, "  %10d | ", mQtiLayerClass);
+    /* QTI_END */
     StringAppendF(&result, "%10s | ", toString(getCompositionType(outputLayer)).c_str());
     const auto& outputLayerState = outputLayer->getState();
     StringAppendF(&result, "%10s | ", toString(outputLayerState.bufferTransform).c_str());
