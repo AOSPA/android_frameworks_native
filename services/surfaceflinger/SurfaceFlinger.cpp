@@ -9449,6 +9449,9 @@ std::vector<std::pair<Layer*, LayerFE*>> SurfaceFlinger::moveSnapshotsToComposit
                     auto& legacyLayer = it->second;
                     sp<LayerFE> layerFE = legacyLayer->getCompositionEngineLayerFE(snapshot->path);
                     snapshot->fps = getLayerFramerate(currentTime, snapshot->sequence);
+                    /* QTI_BEGIN */
+                    snapshot->qtiLayerClass = legacyLayer->qtiGetLayerClass();
+                    /* QTI_END */
                     layerFE->mSnapshot = std::move(snapshot);
                     refreshArgs.layers.push_back(layerFE);
                     layers.emplace_back(legacyLayer.get(), layerFE.get());

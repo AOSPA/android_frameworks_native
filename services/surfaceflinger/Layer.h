@@ -948,6 +948,7 @@ public:
     /* QTI_BEGIN */
     void qtiSetSmomoLayerStackId();
     uint32_t qtiGetSmomoLayerStackId();
+    uint32_t qtiGetLayerClass() { return mQtiLayerClass; };
     /* QTI_END */
 
 protected:
