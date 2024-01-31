@@ -815,6 +815,16 @@ Error AidlComposer::presentOrValidateDisplay(Display display, nsecs_t expectedPr
 
     *state = translate<uint32_t>(*result);
 
+    /* QTI_BEGIN */
+    if (*state == 2) {
+        auto fence = reader->get().takePresentFence(displayId);
+        // take ownership
+        *outPresentFence = fence.get();
+        *fence.getR() = -1;
+        reader->get().hasChanges(displayId, outNumTypes, outNumRequests);
+    }
+    /* QTI_END */
+
     if (*result == PresentOrValidate::Result::Presented) {
         auto fence = reader->get().takePresentFence(displayId);
         // take ownership
