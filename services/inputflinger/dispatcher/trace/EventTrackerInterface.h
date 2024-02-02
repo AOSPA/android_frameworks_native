@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 The Android Open Source Project
+ * Copyright 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,9 +14,19 @@
  * limitations under the License.
  */
 
-#include <android/data_space.h>
-#include <android/hardware_buffer.h>
-#include <android/hardware_buffer_aidl.h>
-#include <android/hdr_metadata.h>
-#include <android/native_window.h>
-#include <android/native_window_aidl.h>
+#pragma once
+
+namespace android::inputdispatcher::trace {
+
+/**
+ * A tracker used to track the lifecycle of a traced input event.
+ * The tracker should be stored inside the traced event. When the event goes out of scope after
+ * the dispatcher has finished processing it, the tracker will call back into the tracer to
+ * initiate cleanup.
+ */
+class EventTrackerInterface {
+public:
+    virtual ~EventTrackerInterface() = default;
+};
+
+} // namespace android::inputdispatcher::trace

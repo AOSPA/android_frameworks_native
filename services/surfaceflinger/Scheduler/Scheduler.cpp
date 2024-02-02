@@ -83,8 +83,7 @@ Scheduler::Scheduler(ICompositor& compositor, ISchedulerCallback& callback, Feat
         mFeatures(features),
         mVsyncConfiguration(factory.createVsyncConfiguration(activeRefreshRate)),
         mVsyncModulator(sp<VsyncModulator>::make(mVsyncConfiguration->getCurrentConfigs())),
-        mRefreshRateStats(std::make_unique<RefreshRateStats>(timeStats, activeRefreshRate,
-                                                             hal::PowerMode::OFF)),
+        mRefreshRateStats(std::make_unique<RefreshRateStats>(timeStats, activeRefreshRate)),
         mSchedulerCallback(callback),
         mVsyncTrackerCallback(vsyncTrackerCallback) {}
 
@@ -100,6 +99,11 @@ Scheduler::~Scheduler() {
 
     // Stop idle timer and clear callbacks, as the RefreshRateSelector may outlive the Scheduler.
     demotePacesetterDisplay();
+}
+
+void Scheduler::initVsync(frametimeline::TokenManager& tokenManager,
+                          std::chrono::nanoseconds workDuration) {
+    Impl::initVsyncInternal(getVsyncSchedule()->getDispatch(), tokenManager, workDuration);
 }
 
 void Scheduler::startTimers() {
@@ -648,13 +652,13 @@ Fps Scheduler::getNextFrameInterval(PhysicalDisplayId id,
         return Fps{};
     }
     const Display& display = *displayOpt;
-    const nsecs_t threshold =
-            display.selectorPtr->getActiveMode().modePtr->getVsyncRate().getPeriodNsecs() / 2;
-    const nsecs_t nextVsyncTime =
-            display.schedulePtr->getTracker()
-                    .nextAnticipatedVSyncTimeFrom(currentExpectedPresentTime.ns() + threshold,
-                                                  currentExpectedPresentTime.ns());
-    return Fps::fromPeriodNsecs(nextVsyncTime - currentExpectedPresentTime.ns());
+    const Duration threshold =
+            display.selectorPtr->getActiveMode().modePtr->getVsyncRate().getPeriod() / 2;
+    const TimePoint nextVsyncTime =
+            display.schedulePtr->vsyncDeadlineAfter(currentExpectedPresentTime + threshold,
+                                                    currentExpectedPresentTime);
+    const Duration frameInterval = nextVsyncTime - currentExpectedPresentTime;
+    return Fps::fromPeriodNsecs(frameInterval.ns());
 }
 
 void Scheduler::resync() {

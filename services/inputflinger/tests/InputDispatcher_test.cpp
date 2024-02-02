@@ -156,6 +156,20 @@ class FakeInputDispatcherPolicy : public InputDispatcherPolicyInterface {
         sp<IBinder> token{};
         gui::Pid pid{gui::Pid::INVALID};
     };
+    /* Stores data about a user-activity-poke event from the dispatcher. */
+    struct UserActivityPokeEvent {
+        nsecs_t eventTime;
+        int32_t eventType;
+        int32_t displayId;
+
+        bool operator==(const UserActivityPokeEvent& rhs) const = default;
+
+        friend std::ostream& operator<<(std::ostream& os, const UserActivityPokeEvent& ev) {
+            os << "UserActivityPokeEvent[time=" << ev.eventTime << ", eventType=" << ev.eventType
+               << ", displayId=" << ev.displayId << "]";
+            return os;
+        }
+    };
 
 public:
     FakeInputDispatcherPolicy() = default;
@@ -351,14 +365,36 @@ public:
 
     void setStaleEventTimeout(std::chrono::nanoseconds timeout) { mStaleEventTimeout = timeout; }
 
-    void assertUserActivityPoked() {
-        std::scoped_lock lock(mLock);
-        ASSERT_TRUE(mPokedUserActivity) << "Expected user activity to have been poked";
+    void assertUserActivityNotPoked() {
+        std::unique_lock lock(mLock);
+        base::ScopedLockAssertion assumeLocked(mLock);
+
+        std::optional<UserActivityPokeEvent> pokeEvent =
+                getItemFromStorageLockedInterruptible(500ms, mUserActivityPokeEvents, lock,
+                                                      mNotifyUserActivity);
+
+        ASSERT_FALSE(pokeEvent) << "Expected user activity not to have been poked";
     }
 
-    void assertUserActivityNotPoked() {
-        std::scoped_lock lock(mLock);
-        ASSERT_FALSE(mPokedUserActivity) << "Expected user activity not to have been poked";
+    /**
+     * Asserts that a user activity poke has happened. The earliest recorded poke event will be
+     * cleared after this call.
+     *
+     * If an expected UserActivityPokeEvent is provided, asserts that the given event is the
+     * earliest recorded poke event.
+     */
+    void assertUserActivityPoked(std::optional<UserActivityPokeEvent> expectedPokeEvent = {}) {
+        std::unique_lock lock(mLock);
+        base::ScopedLockAssertion assumeLocked(mLock);
+
+        std::optional<UserActivityPokeEvent> pokeEvent =
+                getItemFromStorageLockedInterruptible(500ms, mUserActivityPokeEvents, lock,
+                                                      mNotifyUserActivity);
+        ASSERT_TRUE(pokeEvent) << "Expected a user poke event";
+
+        if (expectedPokeEvent) {
+            ASSERT_EQ(expectedPokeEvent, *pokeEvent);
+        }
     }
 
     void assertNotifyDeviceInteractionWasCalled(int32_t deviceId, std::set<gui::Uid> uids) {
@@ -414,7 +450,9 @@ private:
 
     sp<IBinder> mDropTargetWindowToken GUARDED_BY(mLock);
     bool mNotifyDropWindowWasCalled GUARDED_BY(mLock) = false;
-    bool mPokedUserActivity GUARDED_BY(mLock) = false;
+
+    std::condition_variable mNotifyUserActivity;
+    std::queue<UserActivityPokeEvent> mUserActivityPokeEvents;
 
     std::chrono::milliseconds mInterceptKeyTimeout = 0ms;
 
@@ -576,9 +614,10 @@ private:
                 NotifySwitchArgs(InputEvent::nextId(), when, policyFlags, switchValues, switchMask);
     }
 
-    void pokeUserActivity(nsecs_t, int32_t, int32_t) override {
+    void pokeUserActivity(nsecs_t eventTime, int32_t eventType, int32_t displayId) override {
         std::scoped_lock lock(mLock);
-        mPokedUserActivity = true;
+        mNotifyUserActivity.notify_all();
+        mUserActivityPokeEvents.push({eventTime, eventType, displayId});
     }
 
     bool isStaleEvent(nsecs_t currentTime, nsecs_t eventTime) override {
@@ -861,30 +900,31 @@ public:
     explicit FakeInputReceiver(std::unique_ptr<InputChannel> clientChannel, const std::string name)
           : mConsumer(std::move(clientChannel)), mName(name) {}
 
-    InputEvent* consume(std::chrono::milliseconds timeout, bool handled = false) {
-        InputEvent* event;
-        std::optional<uint32_t> consumeSeq = receiveEvent(timeout, &event);
+    std::unique_ptr<InputEvent> consume(std::chrono::milliseconds timeout, bool handled = false) {
+        auto [consumeSeq, event] = receiveEvent(timeout);
         if (!consumeSeq) {
             return nullptr;
         }
         finishEvent(*consumeSeq, handled);
-        return event;
+        return std::move(event);
     }
 
     /**
      * Receive an event without acknowledging it.
      * Return the sequence number that could later be used to send finished signal.
      */
-    std::optional<uint32_t> receiveEvent(std::chrono::milliseconds timeout,
-                                         InputEvent** outEvent = nullptr) {
+    std::pair<std::optional<uint32_t>, std::unique_ptr<InputEvent>> receiveEvent(
+            std::chrono::milliseconds timeout) {
         uint32_t consumeSeq;
-        InputEvent* event;
+        std::unique_ptr<InputEvent> event;
 
         std::chrono::time_point start = std::chrono::steady_clock::now();
         status_t status = WOULD_BLOCK;
         while (status == WOULD_BLOCK) {
+            InputEvent* rawEventPtr = nullptr;
             status = mConsumer.consume(&mEventFactory, /*consumeBatches=*/true, -1, &consumeSeq,
-                                       &event);
+                                       &rawEventPtr);
+            event = std::unique_ptr<InputEvent>(rawEventPtr);
             std::chrono::duration elapsed = std::chrono::steady_clock::now() - start;
             if (elapsed > timeout) {
                 break;
@@ -893,21 +933,17 @@ public:
 
         if (status == WOULD_BLOCK) {
             // Just means there's no event available.
-            return std::nullopt;
+            return std::make_pair(std::nullopt, nullptr);
         }
 
         if (status != OK) {
             ADD_FAILURE() << mName.c_str() << ": consumer consume should return OK.";
-            return std::nullopt;
+            return std::make_pair(std::nullopt, nullptr);
         }
         if (event == nullptr) {
             ADD_FAILURE() << "Consumed correctly, but received NULL event from consumer";
-            return std::nullopt;
         }
-        if (outEvent != nullptr) {
-            *outEvent = event;
-        }
-        return consumeSeq;
+        return std::make_pair(consumeSeq, std::move(event));
     }
 
     /**
@@ -926,7 +962,7 @@ public:
     void consumeEvent(InputEventType expectedEventType, int32_t expectedAction,
                       std::optional<int32_t> expectedDisplayId,
                       std::optional<int32_t> expectedFlags) {
-        InputEvent* event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
+        std::unique_ptr<InputEvent> event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
 
         ASSERT_NE(nullptr, event) << mName.c_str()
                                   << ": consumer should have returned non-NULL event.";
@@ -970,8 +1006,8 @@ public:
         }
     }
 
-    MotionEvent* consumeMotion() {
-        InputEvent* event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
+    std::unique_ptr<MotionEvent> consumeMotion() {
+        std::unique_ptr<InputEvent> event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
 
         if (event == nullptr) {
             ADD_FAILURE() << mName << ": expected a MotionEvent, but didn't get one.";
@@ -982,17 +1018,17 @@ public:
             ADD_FAILURE() << mName << " expected a MotionEvent, got " << *event;
             return nullptr;
         }
-        return static_cast<MotionEvent*>(event);
+        return std::unique_ptr<MotionEvent>(static_cast<MotionEvent*>(event.release()));
     }
 
     void consumeMotionEvent(const ::testing::Matcher<MotionEvent>& matcher) {
-        MotionEvent* motionEvent = consumeMotion();
+        std::unique_ptr<MotionEvent> motionEvent = consumeMotion();
         ASSERT_NE(nullptr, motionEvent) << "Did not get a motion event, but expected " << matcher;
         ASSERT_THAT(*motionEvent, matcher);
     }
 
     void consumeFocusEvent(bool hasFocus, bool inTouchMode) {
-        InputEvent* event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
+        std::unique_ptr<InputEvent> event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
         ASSERT_NE(nullptr, event) << mName.c_str()
                                   << ": consumer should have returned non-NULL event.";
         ASSERT_EQ(InputEventType::FOCUS, event->getType())
@@ -1001,12 +1037,12 @@ public:
         ASSERT_EQ(ADISPLAY_ID_NONE, event->getDisplayId())
                 << mName.c_str() << ": event displayId should always be NONE.";
 
-        FocusEvent* focusEvent = static_cast<FocusEvent*>(event);
-        EXPECT_EQ(hasFocus, focusEvent->getHasFocus());
+        FocusEvent& focusEvent = static_cast<FocusEvent&>(*event);
+        EXPECT_EQ(hasFocus, focusEvent.getHasFocus());
     }
 
     void consumeCaptureEvent(bool hasCapture) {
-        const InputEvent* event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
+        std::unique_ptr<InputEvent> event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
         ASSERT_NE(nullptr, event) << mName.c_str()
                                   << ": consumer should have returned non-NULL event.";
         ASSERT_EQ(InputEventType::CAPTURE, event->getType())
@@ -1020,7 +1056,7 @@ public:
     }
 
     void consumeDragEvent(bool isExiting, float x, float y) {
-        const InputEvent* event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
+        std::unique_ptr<InputEvent> event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
         ASSERT_NE(nullptr, event) << mName.c_str()
                                   << ": consumer should have returned non-NULL event.";
         ASSERT_EQ(InputEventType::DRAG, event->getType()) << "Instead of DragEvent, got " << *event;
@@ -1035,7 +1071,7 @@ public:
     }
 
     void consumeTouchModeEvent(bool inTouchMode) {
-        const InputEvent* event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
+        std::unique_ptr<InputEvent> event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
         ASSERT_NE(nullptr, event) << mName.c_str()
                                   << ": consumer should have returned non-NULL event.";
         ASSERT_EQ(InputEventType::TOUCH_MODE, event->getType())
@@ -1048,7 +1084,7 @@ public:
     }
 
     void assertNoEvents() {
-        InputEvent* event = consume(CONSUME_TIMEOUT_NO_EVENT_EXPECTED);
+        std::unique_ptr<InputEvent> event = consume(CONSUME_TIMEOUT_NO_EVENT_EXPECTED);
         if (event == nullptr) {
             return;
         }
@@ -1081,7 +1117,7 @@ public:
 
 private:
     InputConsumer mConsumer;
-    PreallocatedInputEventFactory mEventFactory;
+    DynamicInputEventFactory mEventFactory;
 
     std::string mName;
 };
@@ -1229,17 +1265,23 @@ public:
 
     void setWindowOffset(float offsetX, float offsetY) { mInfo.transform.set(offsetX, offsetY); }
 
-    const KeyEvent& consumeKey(bool handled = true) {
-        const InputEvent& event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED, handled);
-        if (event.getType() != InputEventType::KEY) {
-            LOG(FATAL) << "Instead of key event, got " << event;
+    std::unique_ptr<KeyEvent> consumeKey(bool handled = true) {
+        std::unique_ptr<InputEvent> event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED, handled);
+        if (event == nullptr) {
+            ADD_FAILURE() << "No event";
+            return nullptr;
         }
-        return static_cast<const KeyEvent&>(event);
+        if (event->getType() != InputEventType::KEY) {
+            ADD_FAILURE() << "Instead of key event, got " << event;
+            return nullptr;
+        }
+        return std::unique_ptr<KeyEvent>(static_cast<KeyEvent*>(event.release()));
     }
 
     void consumeKeyEvent(const ::testing::Matcher<KeyEvent>& matcher) {
-        const KeyEvent& keyEvent = consumeKey();
-        ASSERT_THAT(keyEvent, matcher);
+        std::unique_ptr<KeyEvent> keyEvent = consumeKey();
+        ASSERT_NE(nullptr, keyEvent);
+        ASSERT_THAT(*keyEvent, matcher);
     }
 
     void consumeKeyDown(int32_t expectedDisplayId, int32_t expectedFlags = 0) {
@@ -1325,14 +1367,20 @@ public:
         mInputReceiver->consumeCaptureEvent(hasCapture);
     }
 
-    const MotionEvent& consumeMotionEvent(
+    std::unique_ptr<MotionEvent> consumeMotionEvent(
             const ::testing::Matcher<MotionEvent>& matcher = testing::_) {
-        const InputEvent& event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
-        if (event.getType() != InputEventType::MOTION) {
-            LOG(FATAL) << "Instead of motion event, got " << event;
+        std::unique_ptr<InputEvent> event = consume(CONSUME_TIMEOUT_EVENT_EXPECTED);
+        if (event == nullptr) {
+            ADD_FAILURE() << "No event";
+            return nullptr;
         }
-        const auto& motionEvent = static_cast<const MotionEvent&>(event);
-        EXPECT_THAT(motionEvent, matcher);
+        if (event->getType() != InputEventType::MOTION) {
+            ADD_FAILURE() << "Instead of motion event, got " << *event;
+            return nullptr;
+        }
+        std::unique_ptr<MotionEvent> motionEvent =
+                std::unique_ptr<MotionEvent>(static_cast<MotionEvent*>(event.release()));
+        EXPECT_THAT(*motionEvent, matcher);
         return motionEvent;
     }
 
@@ -1346,12 +1394,12 @@ public:
         mInputReceiver->consumeTouchModeEvent(inTouchMode);
     }
 
-    std::optional<uint32_t> receiveEvent(InputEvent** outEvent = nullptr) {
+    std::pair<std::optional<uint32_t>, std::unique_ptr<InputEvent>> receiveEvent() {
         if (mInputReceiver == nullptr) {
             ADD_FAILURE() << "Invalid receive event on window with no receiver";
-            return std::nullopt;
+            return std::make_pair(std::nullopt, nullptr);
         }
-        return mInputReceiver->receiveEvent(CONSUME_TIMEOUT_EVENT_EXPECTED, outEvent);
+        return mInputReceiver->receiveEvent(CONSUME_TIMEOUT_EVENT_EXPECTED);
     }
 
     void finishEvent(uint32_t sequenceNum) {
@@ -1396,15 +1444,15 @@ private:
     static std::atomic<int32_t> sId; // each window gets a unique id, like in surfaceflinger
     friend class sp<FakeWindowHandle>;
 
-    const InputEvent& consume(std::chrono::milliseconds timeout, bool handled = true) {
+    std::unique_ptr<InputEvent> consume(std::chrono::milliseconds timeout, bool handled = true) {
         if (mInputReceiver == nullptr) {
             LOG(FATAL) << "Cannot consume event from a window with no input event receiver";
         }
-        InputEvent* event = mInputReceiver->consume(timeout, handled);
+        std::unique_ptr<InputEvent> event = mInputReceiver->consume(timeout, handled);
         if (event == nullptr) {
-            LOG(FATAL) << "Consume failed: no event";
+            ADD_FAILURE() << "Consume failed: no event";
         }
-        return *event;
+        return event;
     }
 };
 
@@ -1423,7 +1471,8 @@ public:
     }
 
     std::optional<int32_t> receiveEvent() {
-        return mInputReceiver.receiveEvent(CONSUME_TIMEOUT_EVENT_EXPECTED);
+        const auto [sequenceNum, _] = mInputReceiver.receiveEvent(CONSUME_TIMEOUT_EVENT_EXPECTED);
+        return sequenceNum;
     }
 
     void finishEvent(uint32_t consumeSeq) { return mInputReceiver.finishEvent(consumeSeq); }
@@ -1461,7 +1510,7 @@ public:
         mInputReceiver.consumeMotionEvent(matcher);
     }
 
-    MotionEvent* consumeMotion() { return mInputReceiver.consumeMotion(); }
+    std::unique_ptr<MotionEvent> consumeMotion() { return mInputReceiver.consumeMotion(); }
 
     void assertNoEvents() { mInputReceiver.assertNoEvents(); }
 
@@ -3779,18 +3828,20 @@ TEST_F(InputDispatcherTest, SplitTouchesSendCorrectActionDownTime) {
 
     mDispatcher->waitForIdle();
 
-    const MotionEvent& motionEvent1 = window1->consumeMotionEvent();
+    std::unique_ptr<MotionEvent> motionEvent1 = window1->consumeMotionEvent();
+    ASSERT_NE(nullptr, motionEvent1);
     window2->assertNoEvents();
-    nsecs_t downTimeForWindow1 = motionEvent1.getDownTime();
-    ASSERT_EQ(motionEvent1.getDownTime(), motionEvent1.getEventTime());
+    nsecs_t downTimeForWindow1 = motionEvent1->getDownTime();
+    ASSERT_EQ(motionEvent1->getDownTime(), motionEvent1->getEventTime());
 
     // Now touch down on the window with another pointer
     mDispatcher->notifyMotion(generateTouchArgs(POINTER_1_DOWN, {{50, 50}, {150, 50}}));
     mDispatcher->waitForIdle();
-    const MotionEvent& motionEvent2 = window2->consumeMotionEvent();
-    nsecs_t downTimeForWindow2 = motionEvent2.getDownTime();
+    std::unique_ptr<MotionEvent> motionEvent2 = window2->consumeMotionEvent();
+    ASSERT_NE(nullptr, motionEvent2);
+    nsecs_t downTimeForWindow2 = motionEvent2->getDownTime();
     ASSERT_NE(downTimeForWindow1, downTimeForWindow2);
-    ASSERT_EQ(motionEvent2.getDownTime(), motionEvent2.getEventTime());
+    ASSERT_EQ(motionEvent2->getDownTime(), motionEvent2->getEventTime());
 
     // Now move the pointer on the second window
     mDispatcher->notifyMotion(generateTouchArgs(AMOTION_EVENT_ACTION_MOVE, {{50, 50}, {151, 51}}));
@@ -4624,12 +4675,13 @@ TEST_F(InputDispatcherTest, NonSplitTouchableWindowReceivesMultiTouch) {
                                 InputEventInjectionSync::WAIT_FOR_RESULT))
             << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
 
-    const MotionEvent& event = window->consumeMotionEvent();
-    EXPECT_EQ(POINTER_1_DOWN, event.getAction());
-    EXPECT_EQ(70, event.getX(0));  // 50 + 20
-    EXPECT_EQ(90, event.getY(0));  // 50 + 40
-    EXPECT_EQ(-10, event.getX(1)); // -30 + 20
-    EXPECT_EQ(-10, event.getY(1)); // -50 + 40
+    std::unique_ptr<MotionEvent> event = window->consumeMotionEvent();
+    ASSERT_NE(nullptr, event);
+    EXPECT_EQ(POINTER_1_DOWN, event->getAction());
+    EXPECT_EQ(70, event->getX(0));  // 50 + 20
+    EXPECT_EQ(90, event->getY(0));  // 50 + 40
+    EXPECT_EQ(-10, event->getX(1)); // -30 + 20
+    EXPECT_EQ(-10, event->getY(1)); // -50 + 40
 }
 
 /**
@@ -4895,15 +4947,16 @@ TEST_F(InputDispatcherTest, WhenMultiDisplayWindowSameToken_DispatchCancelToTarg
     EXPECT_EQ(OK, mDispatcher->pilferPointers(spyWindowDefaultDisplay->getToken()));
 
     // windowDefaultDisplay gets cancel
-    const MotionEvent& event = windowDefaultDisplay->consumeMotionEvent();
-    EXPECT_EQ(AMOTION_EVENT_ACTION_CANCEL, event.getAction());
+    std::unique_ptr<MotionEvent> event = windowDefaultDisplay->consumeMotionEvent();
+    ASSERT_NE(nullptr, event);
+    EXPECT_EQ(AMOTION_EVENT_ACTION_CANCEL, event->getAction());
 
     // The cancel event is sent to windowDefaultDisplay of the ADISPLAY_ID_DEFAULT display, so the
     // coordinates of the cancel are converted by windowDefaultDisplay's transform, the x and y
     // coordinates are both 100, otherwise if the cancel event is sent to windowSecondDisplay of
     // SECOND_DISPLAY_ID, the x and y coordinates are 200
-    EXPECT_EQ(100, event.getX(0));
-    EXPECT_EQ(100, event.getY(0));
+    EXPECT_EQ(100, event->getX(0));
+    EXPECT_EQ(100, event->getY(0));
 }
 
 /**
@@ -5033,18 +5086,19 @@ TEST_F(InputDispatcherDisplayProjectionTest, WindowGetsEventsInCorrectCoordinate
                                                  {PointF{150, 220}}));
 
     firstWindow->assertNoEvents();
-    const MotionEvent& event = secondWindow->consumeMotionEvent();
-    EXPECT_EQ(AMOTION_EVENT_ACTION_DOWN, event.getAction());
+    std::unique_ptr<MotionEvent> event = secondWindow->consumeMotionEvent();
+    ASSERT_NE(nullptr, event);
+    EXPECT_EQ(AMOTION_EVENT_ACTION_DOWN, event->getAction());
 
     // Ensure that the events from the "getRaw" API are in logical display coordinates.
-    EXPECT_EQ(300, event.getRawX(0));
-    EXPECT_EQ(880, event.getRawY(0));
+    EXPECT_EQ(300, event->getRawX(0));
+    EXPECT_EQ(880, event->getRawY(0));
 
     // Ensure that the x and y values are in the window's coordinate space.
     // The left-top of the second window is at (100, 200) in display space, which is (200, 800) in
     // the logical display space. This will be the origin of the window space.
-    EXPECT_EQ(100, event.getX(0));
-    EXPECT_EQ(80, event.getY(0));
+    EXPECT_EQ(100, event->getX(0));
+    EXPECT_EQ(80, event->getY(0));
 }
 
 TEST_F(InputDispatcherDisplayProjectionTest, CancelMotionWithCorrectCoordinates) {
@@ -6081,7 +6135,8 @@ TEST_F(InputDispatcherMonitorTest, NoWindowTransform) {
               injectMotionDown(*mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT))
             << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
     window->consumeMotionDown(ADISPLAY_ID_DEFAULT);
-    MotionEvent* event = monitor.consumeMotion();
+    std::unique_ptr<MotionEvent> event = monitor.consumeMotion();
+    ASSERT_NE(nullptr, event);
     // Even though window has transform, gesture monitor must not.
     ASSERT_EQ(ui::Transform(), event->getTransform());
 }
@@ -6188,9 +6243,9 @@ TEST_F(InputDispatcherTest, VerifyInputEvent_KeyEvent) {
     const NotifyKeyArgs keyArgs = generateKeyArgs(AKEY_EVENT_ACTION_DOWN);
     mDispatcher->notifyKey(keyArgs);
 
-    const KeyEvent& event = window->consumeKey();
-
-    std::unique_ptr<VerifiedInputEvent> verified = mDispatcher->verifyInputEvent(event);
+    std::unique_ptr<KeyEvent> event = window->consumeKey();
+    ASSERT_NE(event, nullptr);
+    std::unique_ptr<VerifiedInputEvent> verified = mDispatcher->verifyInputEvent(*event);
     ASSERT_NE(verified, nullptr);
     ASSERT_EQ(verified->type, VerifiedInputEvent::Type::KEY);
 
@@ -6231,9 +6286,9 @@ TEST_F(InputDispatcherTest, VerifyInputEvent_MotionEvent) {
                                ADISPLAY_ID_DEFAULT);
     mDispatcher->notifyMotion(motionArgs);
 
-    const MotionEvent& event = window->consumeMotionEvent();
-
-    std::unique_ptr<VerifiedInputEvent> verified = mDispatcher->verifyInputEvent(event);
+    std::unique_ptr<MotionEvent> event = window->consumeMotionEvent();
+    ASSERT_NE(nullptr, event);
+    std::unique_ptr<VerifiedInputEvent> verified = mDispatcher->verifyInputEvent(*event);
     ASSERT_NE(verified, nullptr);
     ASSERT_EQ(verified->type, VerifiedInputEvent::Type::MOTION);
 
@@ -6760,13 +6815,13 @@ TEST_F(InputDispatcherTest, HoverEnterExitSynthesisUsesNewEventId) {
                                                      ADISPLAY_ID_DEFAULT, {PointF{50, 50}});
     mDispatcher->notifyMotion(notifyArgs);
 
-    const MotionEvent& leftEnter = left->consumeMotionEvent(
+    std::unique_ptr<MotionEvent> leftEnter = left->consumeMotionEvent(
             AllOf(WithMotionAction(ACTION_HOVER_ENTER), Not(WithEventId(notifyArgs.id)),
                   WithEventIdSource(IdGenerator::Source::INPUT_DISPATCHER)));
-
+    ASSERT_NE(nullptr, leftEnter);
     spy->consumeMotionEvent(AllOf(WithMotionAction(ACTION_HOVER_ENTER),
                                   Not(WithEventId(notifyArgs.id)),
-                                  Not(WithEventId(leftEnter.getId())),
+                                  Not(WithEventId(leftEnter->getId())),
                                   WithEventIdSource(IdGenerator::Source::INPUT_DISPATCHER)));
 
     // Send move to the right window, and ensure hover exit and enter are synthesized with new ids.
@@ -6774,13 +6829,13 @@ TEST_F(InputDispatcherTest, HoverEnterExitSynthesisUsesNewEventId) {
                                     {PointF{150, 50}});
     mDispatcher->notifyMotion(notifyArgs);
 
-    const MotionEvent& leftExit = left->consumeMotionEvent(
+    std::unique_ptr<MotionEvent> leftExit = left->consumeMotionEvent(
             AllOf(WithMotionAction(ACTION_HOVER_EXIT), Not(WithEventId(notifyArgs.id)),
                   WithEventIdSource(IdGenerator::Source::INPUT_DISPATCHER)));
-
+    ASSERT_NE(nullptr, leftExit);
     right->consumeMotionEvent(AllOf(WithMotionAction(ACTION_HOVER_ENTER),
                                     Not(WithEventId(notifyArgs.id)),
-                                    Not(WithEventId(leftExit.getId())),
+                                    Not(WithEventId(leftExit->getId())),
                                     WithEventIdSource(IdGenerator::Source::INPUT_DISPATCHER)));
 
     spy->consumeMotionEvent(AllOf(WithMotionAction(ACTION_HOVER_MOVE), WithEventId(notifyArgs.id)));
@@ -6811,8 +6866,9 @@ protected:
     }
 
     void consumeKey(bool handled, const ::testing::Matcher<KeyEvent>& matcher) {
-        const KeyEvent& event = mWindow->consumeKey(handled);
-        ASSERT_THAT(event, matcher);
+        std::unique_ptr<KeyEvent> event = mWindow->consumeKey(handled);
+        ASSERT_NE(nullptr, event);
+        ASSERT_THAT(*event, matcher);
     }
 };
 
@@ -7146,9 +7202,10 @@ TEST_F(InputDispatcherKeyRepeatTest, FocusedWindow_RepeatKeyEventsUseEventIdFrom
     GTEST_SKIP() << "Flaky test (b/270393106)";
     sendAndConsumeKeyDown(/*deviceId=*/1);
     for (int32_t repeatCount = 1; repeatCount <= 10; ++repeatCount) {
-        const KeyEvent& repeatEvent = mWindow->consumeKey();
+        std::unique_ptr<KeyEvent> repeatEvent = mWindow->consumeKey();
+        ASSERT_NE(nullptr, repeatEvent);
         EXPECT_EQ(IdGenerator::Source::INPUT_DISPATCHER,
-                  IdGenerator::getSource(repeatEvent.getId()));
+                  IdGenerator::getSource(repeatEvent->getId()));
     }
 }
 
@@ -7158,8 +7215,9 @@ TEST_F(InputDispatcherKeyRepeatTest, FocusedWindow_RepeatKeyEventsUseUniqueEvent
 
     std::unordered_set<int32_t> idSet;
     for (int32_t repeatCount = 1; repeatCount <= 10; ++repeatCount) {
-        const KeyEvent& repeatEvent = mWindow->consumeKey();
-        int32_t id = repeatEvent.getId();
+        std::unique_ptr<KeyEvent> repeatEvent = mWindow->consumeKey();
+        ASSERT_NE(nullptr, repeatEvent);
+        int32_t id = repeatEvent->getId();
         EXPECT_EQ(idSet.end(), idSet.find(id));
         idSet.insert(id);
     }
@@ -7671,6 +7729,130 @@ TEST_F(InputFilterInjectionPolicyTest, RegularInjectedEvents_ReceiveVirtualDevic
                     /*resolvedDeviceId=*/VIRTUAL_KEYBOARD_ID, /*flags=*/0);
 }
 
+class InputDispatcherUserActivityPokeTests : public InputDispatcherTest {
+protected:
+    virtual void SetUp() override {
+        InputDispatcherTest::SetUp();
+
+        std::shared_ptr<FakeApplicationHandle> application =
+                std::make_shared<FakeApplicationHandle>();
+        application->setDispatchingTimeout(100ms);
+        mWindow = sp<FakeWindowHandle>::make(application, mDispatcher, "TestWindow",
+                                             ADISPLAY_ID_DEFAULT);
+        mWindow->setFrame(Rect(0, 0, 100, 100));
+        mWindow->setDispatchingTimeout(100ms);
+        mWindow->setFocusable(true);
+
+        // Set focused application.
+        mDispatcher->setFocusedApplication(ADISPLAY_ID_DEFAULT, application);
+
+        mDispatcher->onWindowInfosChanged({{*mWindow->getInfo()}, {}, 0, 0});
+        setFocusedWindow(mWindow);
+        mWindow->consumeFocusEvent(true);
+    }
+
+    void notifyAndConsumeMotion(int32_t action, uint32_t source, int32_t displayId,
+                                nsecs_t eventTime) {
+        mDispatcher->notifyMotion(MotionArgsBuilder(action, source)
+                                          .displayId(displayId)
+                                          .eventTime(eventTime)
+                                          .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                          .build());
+        mWindow->consumeMotionEvent(WithMotionAction(action));
+    }
+
+private:
+    sp<FakeWindowHandle> mWindow;
+};
+
+TEST_F_WITH_FLAGS(
+        InputDispatcherUserActivityPokeTests, MinPokeTimeObserved,
+        REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(com::android::input::flags,
+                                            rate_limit_user_activity_poke_in_dispatcher))) {
+    mDispatcher->setMinTimeBetweenUserActivityPokes(50ms);
+
+    // First event of type TOUCH. Should poke.
+    notifyAndConsumeMotion(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(50));
+    mFakePolicy->assertUserActivityPoked(
+            {{milliseconds_to_nanoseconds(50), USER_ACTIVITY_EVENT_TOUCH, ADISPLAY_ID_DEFAULT}});
+
+    // 80ns > 50ns has passed since previous TOUCH event. Should poke.
+    notifyAndConsumeMotion(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(130));
+    mFakePolicy->assertUserActivityPoked(
+            {{milliseconds_to_nanoseconds(130), USER_ACTIVITY_EVENT_TOUCH, ADISPLAY_ID_DEFAULT}});
+
+    // First event of type OTHER. Should poke (despite being within 50ns of previous TOUCH event).
+    notifyAndConsumeMotion(ACTION_SCROLL, AINPUT_SOURCE_ROTARY_ENCODER, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(135));
+    mFakePolicy->assertUserActivityPoked(
+            {{milliseconds_to_nanoseconds(135), USER_ACTIVITY_EVENT_OTHER, ADISPLAY_ID_DEFAULT}});
+
+    // Within 50ns of previous TOUCH event. Should NOT poke.
+    notifyAndConsumeMotion(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(140));
+    mFakePolicy->assertUserActivityNotPoked();
+
+    // Within 50ns of previous OTHER event. Should NOT poke.
+    notifyAndConsumeMotion(ACTION_SCROLL, AINPUT_SOURCE_ROTARY_ENCODER, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(150));
+    mFakePolicy->assertUserActivityNotPoked();
+
+    // Within 50ns of previous TOUCH event (which was at time 130). Should NOT poke.
+    // Note that STYLUS is mapped to TOUCH user activity, since it's a pointer-type source.
+    notifyAndConsumeMotion(ACTION_DOWN, AINPUT_SOURCE_STYLUS, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(160));
+    mFakePolicy->assertUserActivityNotPoked();
+
+    // 65ns > 50ns has passed since previous OTHER event. Should poke.
+    notifyAndConsumeMotion(ACTION_SCROLL, AINPUT_SOURCE_ROTARY_ENCODER, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(200));
+    mFakePolicy->assertUserActivityPoked(
+            {{milliseconds_to_nanoseconds(200), USER_ACTIVITY_EVENT_OTHER, ADISPLAY_ID_DEFAULT}});
+
+    // 170ns > 50ns has passed since previous TOUCH event. Should poke.
+    notifyAndConsumeMotion(ACTION_UP, AINPUT_SOURCE_STYLUS, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(300));
+    mFakePolicy->assertUserActivityPoked(
+            {{milliseconds_to_nanoseconds(300), USER_ACTIVITY_EVENT_TOUCH, ADISPLAY_ID_DEFAULT}});
+
+    // Assert that there's no more user activity poke event.
+    mFakePolicy->assertUserActivityNotPoked();
+}
+
+TEST_F_WITH_FLAGS(
+        InputDispatcherUserActivityPokeTests, DefaultMinPokeTimeOf100MsUsed,
+        REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(com::android::input::flags,
+                                            rate_limit_user_activity_poke_in_dispatcher))) {
+    notifyAndConsumeMotion(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(200));
+    mFakePolicy->assertUserActivityPoked(
+            {{milliseconds_to_nanoseconds(200), USER_ACTIVITY_EVENT_TOUCH, ADISPLAY_ID_DEFAULT}});
+
+    notifyAndConsumeMotion(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(280));
+    mFakePolicy->assertUserActivityNotPoked();
+
+    notifyAndConsumeMotion(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                           milliseconds_to_nanoseconds(340));
+    mFakePolicy->assertUserActivityPoked(
+            {{milliseconds_to_nanoseconds(340), USER_ACTIVITY_EVENT_TOUCH, ADISPLAY_ID_DEFAULT}});
+}
+
+TEST_F_WITH_FLAGS(
+        InputDispatcherUserActivityPokeTests, ZeroMinPokeTimeDisablesRateLimiting,
+        REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(com::android::input::flags,
+                                            rate_limit_user_activity_poke_in_dispatcher))) {
+    mDispatcher->setMinTimeBetweenUserActivityPokes(0ms);
+
+    notifyAndConsumeMotion(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT, 20);
+    mFakePolicy->assertUserActivityPoked();
+
+    notifyAndConsumeMotion(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT, 30);
+    mFakePolicy->assertUserActivityPoked();
+}
+
 class InputDispatcherOnPointerDownOutsideFocus : public InputDispatcherTest {
     virtual void SetUp() override {
         InputDispatcherTest::SetUp();
@@ -7813,21 +7995,21 @@ protected:
     void consumeMotionEvent(const sp<FakeWindowHandle>& window, int32_t expectedAction,
                             const std::vector<PointF>& points) {
         const std::string name = window->getName();
-        const MotionEvent& motionEvent =
+        std::unique_ptr<MotionEvent> motionEvent =
                 window->consumeMotionEvent(WithMotionAction(expectedAction));
-
-        ASSERT_EQ(points.size(), motionEvent.getPointerCount());
+        ASSERT_NE(nullptr, motionEvent);
+        ASSERT_EQ(points.size(), motionEvent->getPointerCount());
 
         for (size_t i = 0; i < points.size(); i++) {
             float expectedX = points[i].x;
             float expectedY = points[i].y;
 
-            EXPECT_EQ(expectedX, motionEvent.getX(i))
+            EXPECT_EQ(expectedX, motionEvent->getX(i))
                     << "expected " << expectedX << " for x[" << i << "] coord of " << name.c_str()
-                    << ", got " << motionEvent.getX(i);
-            EXPECT_EQ(expectedY, motionEvent.getY(i))
+                    << ", got " << motionEvent->getX(i);
+            EXPECT_EQ(expectedY, motionEvent->getY(i))
                     << "expected " << expectedY << " for y[" << i << "] coord of " << name.c_str()
-                    << ", got " << motionEvent.getY(i);
+                    << ", got " << motionEvent->getY(i);
         }
     }
 
@@ -8115,7 +8297,7 @@ TEST_F(InputDispatcherSingleWindowAnr, OnPointerDown_BasicAnr) {
               injectMotionDown(*mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
                                WINDOW_LOCATION));
 
-    std::optional<uint32_t> sequenceNum = mWindow->receiveEvent(); // ACTION_DOWN
+    const auto [sequenceNum, _] = mWindow->receiveEvent(); // ACTION_DOWN
     ASSERT_TRUE(sequenceNum);
     const std::chrono::duration timeout = mWindow->getDispatchingTimeout(DISPATCHING_TIMEOUT);
     mFakePolicy->assertNotifyWindowUnresponsiveWasCalled(timeout, mWindow);
@@ -8131,7 +8313,7 @@ TEST_F(InputDispatcherSingleWindowAnr, OnPointerDown_BasicAnr) {
 TEST_F(InputDispatcherSingleWindowAnr, OnKeyDown_BasicAnr) {
     // Inject a key, and don't respond - expect that ANR is called.
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED, injectKeyDownNoRepeat(*mDispatcher));
-    std::optional<uint32_t> sequenceNum = mWindow->receiveEvent();
+    const auto [sequenceNum, _] = mWindow->receiveEvent();
     ASSERT_TRUE(sequenceNum);
     const std::chrono::duration timeout = mWindow->getDispatchingTimeout(DISPATCHING_TIMEOUT);
     mFakePolicy->assertNotifyWindowUnresponsiveWasCalled(timeout, mWindow);
@@ -8291,7 +8473,7 @@ TEST_F(InputDispatcherSingleWindowAnr, SpyWindowAnr) {
                                WINDOW_LOCATION));
     mWindow->consumeMotionDown();
 
-    std::optional<uint32_t> sequenceNum = spy->receiveEvent(); // ACTION_DOWN
+    const auto [sequenceNum, _] = spy->receiveEvent(); // ACTION_DOWN
     ASSERT_TRUE(sequenceNum);
     const std::chrono::duration timeout = spy->getDispatchingTimeout(DISPATCHING_TIMEOUT);
     mFakePolicy->assertNotifyWindowUnresponsiveWasCalled(timeout, spy);
@@ -8446,9 +8628,9 @@ TEST_F(InputDispatcherSingleWindowAnr, Key_StaysPendingWhileMotionIsProcessed) {
     mDispatcher->onWindowInfosChanged({{*mWindow->getInfo()}, {}, 0, 0});
 
     tapOnWindow();
-    std::optional<uint32_t> downSequenceNum = mWindow->receiveEvent();
+    const auto& [downSequenceNum, downEvent] = mWindow->receiveEvent();
     ASSERT_TRUE(downSequenceNum);
-    std::optional<uint32_t> upSequenceNum = mWindow->receiveEvent();
+    const auto& [upSequenceNum, upEvent] = mWindow->receiveEvent();
     ASSERT_TRUE(upSequenceNum);
     // Don't finish the events yet, and send a key
     // Injection will "succeed" because we will eventually give up and send the key to the focused
@@ -8486,9 +8668,9 @@ TEST_F(InputDispatcherSingleWindowAnr,
     mDispatcher->onWindowInfosChanged({{*mWindow->getInfo()}, {}, 0, 0});
 
     tapOnWindow();
-    std::optional<uint32_t> downSequenceNum = mWindow->receiveEvent();
+    const auto& [downSequenceNum, _] = mWindow->receiveEvent();
     ASSERT_TRUE(downSequenceNum);
-    std::optional<uint32_t> upSequenceNum = mWindow->receiveEvent();
+    const auto& [upSequenceNum, upEvent] = mWindow->receiveEvent();
     ASSERT_TRUE(upSequenceNum);
     // Don't finish the events yet, and send a key
     mDispatcher->notifyKey(
@@ -8524,7 +8706,7 @@ TEST_F(InputDispatcherSingleWindowAnr, TwoGesturesWithAnr) {
                                       .pointer(PointerBuilder(0, ToolType::FINGER).x(10).y(10))
                                       .build());
 
-    std::optional<uint32_t> sequenceNum = mWindow->receiveEvent(); // ACTION_DOWN
+    const auto [sequenceNum, _] = mWindow->receiveEvent(); // ACTION_DOWN
     ASSERT_TRUE(sequenceNum);
     const std::chrono::duration timeout = mWindow->getDispatchingTimeout(DISPATCHING_TIMEOUT);
     mFakePolicy->assertNotifyWindowUnresponsiveWasCalled(timeout, mWindow);
@@ -8653,7 +8835,7 @@ TEST_F(InputDispatcherMultiWindowAnr, TwoWindows_BothUnresponsive) {
                                                          .x(FOCUSED_WINDOW_LOCATION.x)
                                                          .y(FOCUSED_WINDOW_LOCATION.y))
                                         .build()));
-    std::optional<uint32_t> unfocusedSequenceNum = mUnfocusedWindow->receiveEvent();
+    const auto [unfocusedSequenceNum, _] = mUnfocusedWindow->receiveEvent();
     ASSERT_TRUE(unfocusedSequenceNum);
 
     const std::chrono::duration timeout =
@@ -8718,9 +8900,9 @@ TEST_F(InputDispatcherMultiWindowAnr, DuringAnr_SecondTapIsIgnored) {
     tapOnFocusedWindow();
     mUnfocusedWindow->consumeMotionOutside(ADISPLAY_ID_DEFAULT, /*flags=*/0);
     // Receive the events, but don't respond
-    std::optional<uint32_t> downEventSequenceNum = mFocusedWindow->receiveEvent(); // ACTION_DOWN
+    const auto [downEventSequenceNum, downEvent] = mFocusedWindow->receiveEvent(); // ACTION_DOWN
     ASSERT_TRUE(downEventSequenceNum);
-    std::optional<uint32_t> upEventSequenceNum = mFocusedWindow->receiveEvent(); // ACTION_UP
+    const auto [upEventSequenceNum, upEvent] = mFocusedWindow->receiveEvent(); // ACTION_UP
     ASSERT_TRUE(upEventSequenceNum);
     const std::chrono::duration timeout =
             mFocusedWindow->getDispatchingTimeout(DISPATCHING_TIMEOUT);
@@ -8798,9 +8980,9 @@ TEST_F(InputDispatcherMultiWindowAnr, PendingKey_GoesToNewlyFocusedWindow) {
             {{*mFocusedWindow->getInfo(), *mUnfocusedWindow->getInfo()}, {}, 0, 0});
 
     tapOnUnfocusedWindow();
-    std::optional<uint32_t> downSequenceNum = mUnfocusedWindow->receiveEvent();
+    const auto [downSequenceNum, downEvent] = mUnfocusedWindow->receiveEvent();
     ASSERT_TRUE(downSequenceNum);
-    std::optional<uint32_t> upSequenceNum = mUnfocusedWindow->receiveEvent();
+    const auto [upSequenceNum, upEvent] = mUnfocusedWindow->receiveEvent();
     ASSERT_TRUE(upSequenceNum);
     // Don't finish the events yet, and send a key
     // Injection will succeed because we will eventually give up and send the key to the focused
@@ -8863,8 +9045,7 @@ TEST_F(InputDispatcherMultiWindowAnr, SplitTouch_SingleWindowAnr) {
     mFocusedWindow->consumeMotionDown();
     // Focused window may or may not receive ACTION_MOVE
     // But it should definitely receive ACTION_CANCEL due to the ANR
-    InputEvent* event;
-    std::optional<int32_t> moveOrCancelSequenceNum = mFocusedWindow->receiveEvent(&event);
+    const auto [moveOrCancelSequenceNum, event] = mFocusedWindow->receiveEvent();
     ASSERT_TRUE(moveOrCancelSequenceNum);
     mFocusedWindow->finishEvent(*moveOrCancelSequenceNum);
     ASSERT_NE(nullptr, event);
