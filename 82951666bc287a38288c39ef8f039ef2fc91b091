@@ -34,6 +34,23 @@
       "parentUuid": "e1fc993c_af9c3c74",
       "revId": "82951666bc287a38288c39ef8f039ef2fc91b091",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "af3dce3f_c6d09312",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000974
+      },
+      "writtenOn": "2024-02-02T16:51:34Z",
+      "side": 1,
+      "message": "Why would you need Xiaomi\u0027s leaked source code (the entire topic) for MiuiCamera to work? None of them are required. The only thing you would need to replace would be Ibbc1002128e227c6ce4493ac33a93db3bc637347 where you would just need to use a simple shim like https://github.com/aosp-playground/android_vendor_xiaomi_sweet-miuicamera/commit/38373051dd1daaddc23fd7ec293845ba72638482.",
+      "revId": "82951666bc287a38288c39ef8f039ef2fc91b091",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
