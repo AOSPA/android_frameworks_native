@@ -16,6 +16,24 @@
       "message": "Jake, can we know the reason why the fuck codes from leaked MIUI source are being used here?\nthe whole topic is filled with it, I don\u0027t think this is necessary at all.\n\nPlease stop this, I have already saw these memes since a long time\n1. https://gerrit.aospa.co/c/AOSPA/android_device_qcom_common/+/37420 Not all devices have 4.19 to support vABC\n2. https://gerrit.aospa.co/c/AOSPA/android_device_qcom_common/+/36310 why? also why does it is force pushed to nuke previous votes again and again?\n3. https://gerrit.aospa.co/c/AOSPA/android_frameworks_base/+/37264 Again here, doesn\u0027t this literally violates people\u0027s privacy as FLAG_SECURE is removed here?\n4. https://gerrit.aospa.co/c/AOSPA/android_packages_apps_Settings/+/37265 same reason as previous one\n5. https://gerrit.aospa.co/c/AOSPA/android_device_qcom_common/+/37041 ok\n6. https://gerrit.aospa.co/c/AOSPA/android_device_xiaomi_surya/+/36933 This flag is depreciated fyi, everyone else is nuking it and this guy adding it. Ref - https://github.com/LineageOS/android_device_amlogic_gx-common/commit/6775295b3f278821eb45c842214748957e860140\n7. https://gerrit.aospa.co/c/AOSPA/android_device_qcom_common/+/36344 (read the threat in gerrit itself)\n8. There\u0027s alot more if you dig\n\nAlso I\u0027m letting AOSPA directors know that alot of times negative votes are removed via fpushes, I\u0027ve been a AOSPA user since years and I do want that AOSPA keeps code quality up to the mark",
       "revId": "82951666bc287a38288c39ef8f039ef2fc91b091",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "98ea29a7_ecf6f637",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000737
+      },
+      "writtenOn": "2024-02-02T16:49:34Z",
+      "side": 1,
+      "message": "LOL, bro I literally marked in another commit that this was just for repopick. Also any other commit that was in a topic and hasn\u0027t been merged yet is certainly just for repopick, or until some future adjustment, everything given to Merge has certainly been reviewed LMAO",
+      "parentUuid": "e1fc993c_af9c3c74",
+      "revId": "82951666bc287a38288c39ef8f039ef2fc91b091",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
