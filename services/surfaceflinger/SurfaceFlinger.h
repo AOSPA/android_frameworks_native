@@ -579,6 +579,7 @@ private:
 
     void captureDisplay(const DisplayCaptureArgs&, const sp<IScreenCaptureListener>&);
     void captureDisplay(DisplayId, const CaptureArgs&, const sp<IScreenCaptureListener>&);
+    ScreenCaptureResults captureLayersSync(const LayerCaptureArgs&);
     void captureLayers(const LayerCaptureArgs&, const sp<IScreenCaptureListener>&);
 
     status_t getDisplayStats(const sp<IBinder>& displayToken, DisplayStatInfo* stats);
@@ -737,7 +738,7 @@ private:
     // Show hdr sdr ratio overlay
     bool mHdrSdrRatioOverlay = false;
 
-    void setDesiredMode(display::DisplayModeRequest&&) REQUIRES(mStateLock);
+    void setDesiredMode(display::DisplayModeRequest&&, bool force = false) REQUIRES(mStateLock);
 
     status_t setActiveModeFromBackdoor(const sp<display::DisplayToken>&, DisplayModeId, Fps minFps,
                                        Fps maxFps);
@@ -924,7 +925,8 @@ private:
      * Display and layer stack management
      */
 
-    // Called during boot, and restart after system_server death.
+    // Called during boot and restart after system_server death, setting the stage for bootanimation
+    // before DisplayManager takes over.
     void initializeDisplays() REQUIRES(kMainThreadContext);
 
     sp<const DisplayDevice> getDisplayDeviceLocked(const wp<IBinder>& displayToken) const
@@ -1234,12 +1236,6 @@ private:
     Daltonizer mDaltonizer;
     float mGlobalSaturationFactor = 1.0f;
     mat4 mClientColorMatrix;
-
-    size_t mMaxGraphicBufferProducerListSize = MAX_LAYERS;
-    // If there are more GraphicBufferProducers tracked by SurfaceFlinger than
-    // this threshold, then begin logging.
-    size_t mGraphicBufferProducerListSizeLogThreshold =
-            static_cast<size_t>(0.95 * static_cast<double>(MAX_LAYERS));
 
     // protected by mStateLock (but we could use another lock)
     bool mLayersRemoved = false;
@@ -1579,6 +1575,7 @@ public:
                                       const sp<IScreenCaptureListener>&) override;
     binder::Status captureLayers(const LayerCaptureArgs&,
                                  const sp<IScreenCaptureListener>&) override;
+    binder::Status captureLayersSync(const LayerCaptureArgs&, ScreenCaptureResults* results);
 
     // TODO(b/239076119): Remove deprecated AIDL.
     [[deprecated]] binder::Status clearAnimationFrameStats() override {

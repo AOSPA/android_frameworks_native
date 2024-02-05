@@ -362,6 +362,7 @@ std::vector<Capability> HidlComposer::getCapabilities() {
 
 std::string HidlComposer::dumpDebugInfo() {
     std::string info;
+    info += std::string(mComposer->descriptor) + "\n";
     mComposer->dumpDebugInfo([&](const auto& tmpInfo) { info = tmpInfo.c_str(); });
 
     return info;

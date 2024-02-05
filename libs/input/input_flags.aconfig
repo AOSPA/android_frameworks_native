@@ -64,13 +64,6 @@ flag {
 }
 
 flag {
-  name: "remove_app_switch_drops"
-  namespace: "input"
-  description: "Remove the logic of dropping events due to pending app switch"
-  bug: "284808102"
-}
-
-flag {
   name: "disable_reject_touch_on_stylus_hover"
   namespace: "input"
   description: "Disable touch rejection when the stylus hovers the screen"
@@ -103,4 +96,11 @@ flag {
   namespace: "input"
   description: "Change the acceleration curves for mouse pointer movements to match the touchpad ones"
   bug: "315313622"
+}
+
+flag {
+  name: "rate_limit_user_activity_poke_in_dispatcher"
+  namespace: "input"
+  description: "Move user-activity poke rate-limiting from PowerManagerService to InputDispatcher."
+  bug: "320499729"
 }
