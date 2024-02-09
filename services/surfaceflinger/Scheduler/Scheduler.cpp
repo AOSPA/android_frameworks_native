@@ -77,15 +77,13 @@
 namespace android::scheduler {
 
 Scheduler::Scheduler(ICompositor& compositor, ISchedulerCallback& callback, FeatureFlags features,
-                     surfaceflinger::Factory& factory, Fps activeRefreshRate, TimeStats& timeStats,
-                     IVsyncTrackerCallback& vsyncTrackerCallback)
+                     surfaceflinger::Factory& factory, Fps activeRefreshRate, TimeStats& timeStats)
       : android::impl::MessageQueue(compositor),
         mFeatures(features),
         mVsyncConfiguration(factory.createVsyncConfiguration(activeRefreshRate)),
         mVsyncModulator(sp<VsyncModulator>::make(mVsyncConfiguration->getCurrentConfigs())),
         mRefreshRateStats(std::make_unique<RefreshRateStats>(timeStats, activeRefreshRate)),
-        mSchedulerCallback(callback),
-        mVsyncTrackerCallback(vsyncTrackerCallback) {}
+        mSchedulerCallback(callback) {}
 
 Scheduler::~Scheduler() {
     // MessageQueue depends on VsyncSchedule, so first destroy it.
@@ -140,10 +138,11 @@ void Scheduler::setPacesetterDisplay(std::optional<PhysicalDisplayId> pacesetter
 }
 
 void Scheduler::registerDisplay(PhysicalDisplayId displayId, RefreshRateSelectorPtr selectorPtr) {
-    auto schedulePtr = std::make_shared<VsyncSchedule>(
-            selectorPtr->getActiveMode().modePtr, mFeatures,
-            [this](PhysicalDisplayId id, bool enable) { onHardwareVsyncRequest(id, enable); },
-            mVsyncTrackerCallback);
+    auto schedulePtr =
+            std::make_shared<VsyncSchedule>(selectorPtr->getActiveMode().modePtr, mFeatures,
+                                            [this](PhysicalDisplayId id, bool enable) {
+                                                onHardwareVsyncRequest(id, enable);
+                                            });
 
     registerDisplayInternal(displayId, std::move(selectorPtr), std::move(schedulePtr));
 }
@@ -228,7 +227,12 @@ void Scheduler::onFrameSignal(ICompositor& compositor, VsyncId vsyncId,
             targets.try_emplace(id, &targeter.target());
         }
 
-        if (!compositor.commit(pacesetterPtr->displayId, targets)) return;
+        if (!compositor.commit(pacesetterPtr->displayId, targets)) {
+            if (FlagManager::getInstance().vrr_config()) {
+                compositor.sendNotifyExpectedPresentHint(pacesetterPtr->displayId);
+            }
+            return;
+        }
     }
 
     // The pacesetter may have changed or been registered anew during commit.
@@ -269,6 +273,9 @@ void Scheduler::onFrameSignal(ICompositor& compositor, VsyncId vsyncId,
     }
 
     const auto resultsPerDisplay = compositor.composite(pacesetterPtr->displayId, targeters);
+    if (FlagManager::getInstance().vrr_config()) {
+        compositor.sendNotifyExpectedPresentHint(pacesetterPtr->displayId);
+    }
     compositor.sample();
 
     for (const auto& [id, targeter] : targeters) {
@@ -328,6 +335,19 @@ Period Scheduler::getVsyncPeriod(uid_t uid) {
     // TODO(b/299378819): the casting is not needed, but we need a flag as it might change
     // behaviour.
     return Period::fromNs(currentPeriod.ns() * divisor);
+}
+void Scheduler::onExpectedPresentTimePosted(TimePoint expectedPresentTime) {
+    const auto frameRateMode = [this] {
+        std::scoped_lock lock(mDisplayLock);
+        const auto pacesetterOpt = pacesetterDisplayLocked();
+        const Display& pacesetter = *pacesetterOpt;
+        return pacesetter.selectorPtr->getActiveMode();
+    }();
+
+    if (frameRateMode.modePtr->getVrrConfig()) {
+        mSchedulerCallback.onExpectedPresentTimePosted(expectedPresentTime, frameRateMode.modePtr,
+                                                       frameRateMode.fps);
+    }
 }
 
 ConnectionHandle Scheduler::createEventThread(Cycle cycle,

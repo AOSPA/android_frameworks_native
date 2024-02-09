@@ -387,11 +387,11 @@ void QtiSurfaceFlingerExtension::qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDi
     }
 
     if (qtiIsInternalDisplay) {
-        if (!qtiActiveConfigId) {
+        if (!qtiActiveConfigId.value_opt()) {
             ALOGW("HWC returned no active config");
             return;
         }
-        qtiUpdateDisplayExtension(hwcDisplayId, *qtiActiveConfigId, qtiIsConnected);
+        qtiUpdateDisplayExtension(hwcDisplayId, *qtiActiveConfigId.value_opt(), qtiIsConnected);
     }
 
     if (!qtiIsConnected && !qtiIsInternalDisplay) {
@@ -1664,11 +1664,11 @@ void QtiSurfaceFlingerExtension::qtiSetupDisplayExtnFeatures() {
                     if (displayId) {
                         auto configId =
                                 mQtiFlinger->getHwComposer().getActiveMode(displayId.value());
-                        if (!configId) {
+                        if (!configId.value_opt()) {
                             ALOGW("HWC returned no active config");
                             return;
                         }
-                        qtiUpdateDisplayExtension(hwcDisplayId, *configId, true);
+                        qtiUpdateDisplayExtension(hwcDisplayId, *configId.value_opt(), true);
                         if (enableDynamicSfIdle && display->isPrimary()) {
                             // TODO(rmedel): setupIdleTimeoutHandling(hwcDisplayId);
                         }

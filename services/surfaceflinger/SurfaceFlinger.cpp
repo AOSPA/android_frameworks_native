@@ -2868,23 +2868,11 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
         refreshArgs.devOptFlashDirtyRegionsDelay = std::chrono::milliseconds(mDebugFlashDelay);
     }
 
-    const TimePoint expectedPresentTime = pacesetterTarget.expectedPresentTime();
     // TODO(b/255601557) Update frameInterval per display
-    refreshArgs.frameInterval = mScheduler->getNextFrameInterval(pacesetterId, expectedPresentTime);
+    refreshArgs.frameInterval =
+            mScheduler->getNextFrameInterval(pacesetterId, pacesetterTarget.expectedPresentTime());
     refreshArgs.scheduledFrameTime = mScheduler->getScheduledFrameTime();
     refreshArgs.hasTrustedPresentationListener = mNumTrustedPresentationListeners > 0;
-    {
-        auto& notifyExpectedPresentData = mNotifyExpectedPresentMap[pacesetterId];
-        auto lastExpectedPresentTimestamp = TimePoint::fromNs(
-                notifyExpectedPresentData.lastExpectedPresentTimestamp.load().ns());
-        if (expectedPresentTime > lastExpectedPresentTimestamp) {
-            // If the values are not same, then hint is sent with newer value.
-            // And because composition always follows the notifyExpectedPresentIfRequired, we can
-            // skip updating the lastExpectedPresentTimestamp in this case.
-            notifyExpectedPresentData.lastExpectedPresentTimestamp
-                    .compare_exchange_weak(lastExpectedPresentTimestamp, expectedPresentTime);
-        }
-    }
     // Store the present time just before calling to the composition engine so we could notify
     // the scheduler.
     const auto presentTime = systemTime();
@@ -2952,6 +2940,7 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
         scheduleComposite(FrameHint::kNone);
     }
 
+    mNotifyExpectedPresentMap[pacesetterId].hintStatus = NotifyExpectedPresentHintStatus::Start;
     onCompositionPresented(pacesetterId, frameTargeters, presentTime);
 
     const bool hadGpuComposited =
@@ -3423,7 +3412,7 @@ void SurfaceFlinger::commitTransactions() {
 std::pair<DisplayModes, DisplayModePtr> SurfaceFlinger::loadDisplayModes(
         PhysicalDisplayId displayId) const {
     std::vector<HWComposer::HWCDisplayMode> hwcModes;
-    std::optional<hal::HWDisplayId> activeModeHwcId;
+    std::optional<hal::HWConfigId> activeModeHwcIdOpt;
 
     int attempt = 0;
     constexpr int kMaxAttempts = 3;
@@ -3431,10 +3420,10 @@ std::pair<DisplayModes, DisplayModePtr> SurfaceFlinger::loadDisplayModes(
         hwcModes = getHwComposer().getModes(displayId,
                                             scheduler::RefreshRateSelector::kMinSupportedFrameRate
                                                     .getPeriodNsecs());
-        activeModeHwcId = getHwComposer().getActiveMode(displayId);
+        activeModeHwcIdOpt = getHwComposer().getActiveMode(displayId).value_opt();
 
-        const auto isActiveMode = [activeModeHwcId](const HWComposer::HWCDisplayMode& mode) {
-            return mode.hwcId == activeModeHwcId;
+        const auto isActiveMode = [activeModeHwcIdOpt](const HWComposer::HWCDisplayMode& mode) {
+            return mode.hwcId == activeModeHwcIdOpt;
         };
 
         if (std::any_of(hwcModes.begin(), hwcModes.end(), isActiveMode)) {
@@ -3444,7 +3433,7 @@ std::pair<DisplayModes, DisplayModePtr> SurfaceFlinger::loadDisplayModes(
 
     if (attempt == kMaxAttempts) {
         const std::string activeMode =
-                activeModeHwcId ? std::to_string(*activeModeHwcId) : "unknown"s;
+                activeModeHwcIdOpt ? std::to_string(*activeModeHwcIdOpt) : "unknown"s;
         ALOGE("HWC failed to report an active mode that is supported: activeModeHwcId=%s, "
               "hwcModes={%s}",
               activeMode.c_str(), base::Join(hwcModes, ", ").c_str());
@@ -3488,8 +3477,8 @@ std::pair<DisplayModes, DisplayModePtr> SurfaceFlinger::loadDisplayModes(
     // Keep IDs if modes have not changed.
     const auto& modes = sameModes ? oldModes : newModes;
     const DisplayModePtr activeMode =
-            std::find_if(modes.begin(), modes.end(), [activeModeHwcId](const auto& pair) {
-                return pair.second->getHwcId() == activeModeHwcId;
+            std::find_if(modes.begin(), modes.end(), [activeModeHwcIdOpt](const auto& pair) {
+                return pair.second->getHwcId() == activeModeHwcIdOpt;
             })->second;
 
     return {modes, activeMode};
@@ -3983,6 +3972,9 @@ void SurfaceFlinger::processDisplayChangesLocked() {
         mVisibleRegionsDirty = true;
         mUpdateInputInfo = true;
 
+        // Apply the current color matrix to any added or changed display.
+        mCurrentState.colorMatrixChanged = true;
+
         // find the displays that were removed
         // (ie: in drawing state but not in current state)
         // also handle displays that changed
@@ -4326,8 +4318,9 @@ void SurfaceFlinger::onChoreographerAttached() {
     }
 }
 
-void SurfaceFlinger::onVsyncGenerated(TimePoint expectedPresentTime,
-                                      ftl::NonNull<DisplayModePtr> modePtr, Fps renderRate) {
+void SurfaceFlinger::onExpectedPresentTimePosted(TimePoint expectedPresentTime,
+                                                 ftl::NonNull<DisplayModePtr> modePtr,
+                                                 Fps renderRate) {
     const auto vsyncPeriod = modePtr->getVsyncRate().getPeriod();
     const auto timeoutOpt = [&]() -> std::optional<Period> {
         const auto vrrConfig = modePtr->getVrrConfig();
@@ -4348,45 +4341,91 @@ void SurfaceFlinger::notifyExpectedPresentIfRequired(PhysicalDisplayId displayId
                                                      TimePoint expectedPresentTime,
                                                      Fps frameInterval,
                                                      std::optional<Period> timeoutOpt) {
-    {
-        auto& data = mNotifyExpectedPresentMap[displayId];
-        const auto lastExpectedPresentTimestamp = data.lastExpectedPresentTimestamp.load();
-        const auto lastFrameInterval = data.lastFrameInterval;
-        data.lastFrameInterval = frameInterval;
-        const auto threshold = Duration::fromNs(vsyncPeriod.ns() / 2);
+    auto& data = mNotifyExpectedPresentMap[displayId];
+    const auto lastExpectedPresentTimestamp = data.lastExpectedPresentTimestamp;
+    const auto lastFrameInterval = data.lastFrameInterval;
+    data.lastFrameInterval = frameInterval;
+    data.lastExpectedPresentTimestamp = expectedPresentTime;
+    const auto threshold = Duration::fromNs(vsyncPeriod.ns() / 2);
 
-        const constexpr nsecs_t kOneSecondNs =
-                std::chrono::duration_cast<std::chrono::nanoseconds>(1s).count();
-        const auto timeout = Period::fromNs(timeoutOpt && timeoutOpt->ns() > 0 ? timeoutOpt->ns()
-                                                                               : kOneSecondNs);
-        const bool frameIntervalIsOnCadence =
-                isFrameIntervalOnCadence(expectedPresentTime, lastExpectedPresentTimestamp,
-                                         lastFrameInterval, timeout, threshold);
+    const constexpr nsecs_t kOneSecondNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(1s).count();
+    const auto timeout =
+            Period::fromNs(timeoutOpt && timeoutOpt->ns() > 0 ? timeoutOpt->ns() : kOneSecondNs);
+    const bool frameIntervalIsOnCadence =
+            isFrameIntervalOnCadence(expectedPresentTime, lastExpectedPresentTimestamp,
+                                     lastFrameInterval, timeout, threshold);
 
-        const bool expectedPresentWithinTimeout =
-                isExpectedPresentWithinTimeout(expectedPresentTime, lastExpectedPresentTimestamp,
-                                               timeoutOpt, threshold);
+    const bool expectedPresentWithinTimeout =
+            isExpectedPresentWithinTimeout(expectedPresentTime, lastExpectedPresentTimestamp,
+                                           timeoutOpt, threshold);
+    if (expectedPresentWithinTimeout && frameIntervalIsOnCadence) {
+        return;
+    }
 
-        using fps_approx_ops::operator!=;
-        if (frameIntervalIsOnCadence && frameInterval != lastFrameInterval) {
-            data.lastExpectedPresentTimestamp = expectedPresentTime;
-        }
-
-        if (expectedPresentWithinTimeout && frameIntervalIsOnCadence) {
+    auto hintStatus = data.hintStatus.load();
+    if (!expectedPresentWithinTimeout) {
+        if (hintStatus != NotifyExpectedPresentHintStatus::Sent ||
+            (timeoutOpt && timeoutOpt->ns() == 0)) {
+            // Send the hint immediately if timeout, as the hint gets
+            // delayed otherwise, as the frame is scheduled close
+            // to the actual present.
+            if (data.hintStatus
+                        .compare_exchange_strong(hintStatus,
+                                                 NotifyExpectedPresentHintStatus::ScheduleOnTx)) {
+                scheduleNotifyExpectedPresentHint(displayId);
+            }
             return;
         }
-        data.lastExpectedPresentTimestamp = expectedPresentTime;
+    }
+
+    if (hintStatus != NotifyExpectedPresentHintStatus::Start) {
+        return;
+    }
+    data.hintStatus.store(NotifyExpectedPresentHintStatus::ScheduleOnPresent);
+    mScheduler->scheduleFrame();
+}
+
+void SurfaceFlinger::scheduleNotifyExpectedPresentHint(PhysicalDisplayId displayId) {
+    auto itr = mNotifyExpectedPresentMap.find(displayId);
+    if (itr == mNotifyExpectedPresentMap.end()) {
+        return;
     }
 
     const char* const whence = __func__;
-    static_cast<void>(mScheduler->schedule([=, this]() FTL_FAKE_GUARD(kMainThreadContext) {
-        const auto status = getHwComposer().notifyExpectedPresent(displayId, expectedPresentTime,
-                                                                  frameInterval);
+    const auto sendHint = [=, this]() {
+        auto& data = mNotifyExpectedPresentMap.at(displayId);
+        data.hintStatus.store(NotifyExpectedPresentHintStatus::Sent);
+        const auto status =
+                getHwComposer().notifyExpectedPresent(displayId, data.lastExpectedPresentTimestamp,
+                                                      data.lastFrameInterval);
         if (status != NO_ERROR) {
             ALOGE("%s failed to notifyExpectedPresentHint for display %" PRId64, whence,
                   displayId.value);
         }
-    }));
+    };
+
+    if (itr->second.hintStatus == NotifyExpectedPresentHintStatus::ScheduleOnTx) {
+        return static_cast<void>(mScheduler->schedule([=,
+                                                       this]() FTL_FAKE_GUARD(kMainThreadContext) {
+            auto& data = mNotifyExpectedPresentMap.at(displayId);
+            auto scheduleHintOnTx = NotifyExpectedPresentHintStatus::ScheduleOnTx;
+            if (data.hintStatus.compare_exchange_strong(scheduleHintOnTx,
+                                                        NotifyExpectedPresentHintStatus::Sent)) {
+                sendHint();
+            }
+        }));
+    }
+    sendHint();
+}
+
+void SurfaceFlinger::sendNotifyExpectedPresentHint(PhysicalDisplayId displayId) {
+    if (auto itr = mNotifyExpectedPresentMap.find(displayId);
+        itr == mNotifyExpectedPresentMap.end() ||
+        itr->second.hintStatus != NotifyExpectedPresentHintStatus::ScheduleOnPresent) {
+        return;
+    }
+    scheduleNotifyExpectedPresentHint(displayId);
 }
 
 void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
@@ -4428,8 +4467,7 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
 
     mScheduler = std::make_unique<Scheduler>(static_cast<ICompositor&>(*this),
                                              static_cast<ISchedulerCallback&>(*this), features,
-                                             getFactory(), activeRefreshRate, *mTimeStats,
-                                             static_cast<IVsyncTrackerCallback&>(*this));
+                                             getFactory(), activeRefreshRate, *mTimeStats);
     mScheduler->registerDisplay(display->getPhysicalId(), display->holdRefreshRateSelector());
     if (FlagManager::getInstance().vrr_config()) {
         mScheduler->setRenderRate(display->getPhysicalId(), activeMode.fps);
@@ -4488,7 +4526,6 @@ void SurfaceFlinger::doCommitTransactions() {
     }
 
     mDrawingState = mCurrentState;
-    // clear the "changed" flags in current state
     mCurrentState.colorMatrixChanged = false;
 
     if (mVisibleRegionsDirty) {
@@ -6017,7 +6054,7 @@ status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, gui::CreateSurface
         case ISurfaceComposerClient::eFXSurfaceContainer:
         case ISurfaceComposerClient::eFXSurfaceBufferState:
             args.flags |= ISurfaceComposerClient::eNoColorFill;
-            FMT_FALLTHROUGH;
+            [[fallthrough]];
         case ISurfaceComposerClient::eFXSurfaceEffect: {
             result = createBufferStateLayer(args, &outResult.handle, &layer);
             std::atomic<int32_t>* pendingBufferCounter = layer->getPendingBufferCounter();
@@ -8542,14 +8579,23 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
                                                      : ftl::yield(present()).share();
 
     for (auto& [layer, layerFE] : layers) {
-        layer->onLayerDisplayed(ftl::Future(presentFuture)
-                                        .then([layerFE = std::move(layerFE)](FenceResult) {
-                                            return layerFE->stealCompositionResult()
-                                                    .releaseFences.back()
-                                                    .first.get();
-                                        })
-                                        .share(),
-                                ui::INVALID_LAYER_STACK);
+        layer->onLayerDisplayed(presentFuture, ui::INVALID_LAYER_STACK,
+                                [layerFE = std::move(layerFE)](FenceResult) {
+                                    if (FlagManager::getInstance()
+                                                .screenshot_fence_preservation()) {
+                                        const auto compositionResult =
+                                                layerFE->stealCompositionResult();
+                                        const auto& fences = compositionResult.releaseFences;
+                                        // CompositionEngine may choose to cull layers that
+                                        // aren't visible, so pass a non-fence.
+                                        return fences.empty() ? Fence::NO_FENCE
+                                                              : fences.back().first.get();
+                                    } else {
+                                        return layerFE->stealCompositionResult()
+                                                .releaseFences.back()
+                                                .first.get();
+                                    }
+                                });
     }
 
     return presentFuture;
