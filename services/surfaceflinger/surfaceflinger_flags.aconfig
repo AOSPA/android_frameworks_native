@@ -98,10 +98,21 @@ flag {
   namespace: "core_graphics"
   description: "Whether to use the closest known refresh rate to determine the fps consistency."
   bug: "299201319"
+  is_fixed_read_only: true
 }
 
+# This flag is broken.
+# See alternative one: cache_when_source_crop_layer_only_moved
+# flag {
+#   name: "cache_if_source_crop_layer_only_moved"
+#   namespace: "core_graphics"
+#   description: "do not flatten layers if source crop is only moved"
+#   bug: "305718400"
+#   is_fixed_read_only: true
+# }
+
 flag {
-  name: "cache_if_source_crop_layer_only_moved"
+  name: "cache_when_source_crop_layer_only_moved"
   namespace: "core_graphics"
   description: "do not flatten layers if source crop is only moved"
   bug: "305718400"
@@ -137,5 +148,21 @@ flag {
   namespace: "game"
   description: "This flag guards the new behavior with the addition of Game Default Frame Rate feature."
   bug: "286084594"
+  is_fixed_read_only: true
+}
+
+flag {
+  name: "vulkan_renderengine"
+  namespace: "core_graphics"
+  description: "Use Vulkan backend in RenderEngine prior to switching to Graphite."
+  bug: "293371537"
+  is_fixed_read_only: true
+}
+
+flag {
+  name: "graphite_renderengine"
+  namespace: "core_graphics"
+  description: "Use Skia's Graphite Vulkan backend in RenderEngine."
+  bug: "293371537"
   is_fixed_read_only: true
 }

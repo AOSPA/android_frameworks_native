@@ -57,8 +57,12 @@
 #include "FrameRateOverrideMappings.h"
 #include "FrontEnd/LayerHandle.h"
 #include "OneShotTimer.h"
+#include "RefreshRateStats.h"
+#include "SurfaceFlingerFactory.h"
 #include "SurfaceFlingerProperties.h"
+#include "TimeStats/TimeStats.h"
 #include "VSyncTracker.h"
+#include "VsyncConfiguration.h"
 #include "VsyncController.h"
 #include "VsyncSchedule.h"
 
@@ -73,10 +77,14 @@
 namespace android::scheduler {
 
 Scheduler::Scheduler(ICompositor& compositor, ISchedulerCallback& callback, FeatureFlags features,
-                     sp<VsyncModulator> modulatorPtr, IVsyncTrackerCallback& vsyncTrackerCallback)
-      : impl::MessageQueue(compositor),
+                     surfaceflinger::Factory& factory, Fps activeRefreshRate, TimeStats& timeStats,
+                     IVsyncTrackerCallback& vsyncTrackerCallback)
+      : android::impl::MessageQueue(compositor),
         mFeatures(features),
-        mVsyncModulator(std::move(modulatorPtr)),
+        mVsyncConfiguration(factory.createVsyncConfiguration(activeRefreshRate)),
+        mVsyncModulator(sp<VsyncModulator>::make(mVsyncConfiguration->getCurrentConfigs())),
+        mRefreshRateStats(std::make_unique<RefreshRateStats>(timeStats, activeRefreshRate,
+                                                             hal::PowerMode::OFF)),
         mSchedulerCallback(callback),
         mVsyncTrackerCallback(vsyncTrackerCallback) {}
 
@@ -188,9 +196,9 @@ void Scheduler::onFrameSignal(ICompositor& compositor, VsyncId vsyncId,
     const FrameTargeter::BeginFrameArgs beginFrameArgs =
             {.frameBeginTime = SchedulerClock::now(),
              .vsyncId = vsyncId,
-             // TODO(b/255601557): Calculate per display.
              .expectedVsyncTime = expectedVsyncTime,
-             .sfWorkDuration = mVsyncModulator->getVsyncConfig().sfWorkDuration};
+             .sfWorkDuration = mVsyncModulator->getVsyncConfig().sfWorkDuration,
+             .hwcMinWorkDuration = mVsyncConfiguration->getCurrentConfigs().hwcMinWorkDuration};
 
     ftl::NonNull<const Display*> pacesetterPtr = pacesetterPtrLocked();
     pacesetterPtr->targeterPtr->beginFrame(beginFrameArgs, *pacesetterPtr->schedulePtr);
@@ -199,11 +207,20 @@ void Scheduler::onFrameSignal(ICompositor& compositor, VsyncId vsyncId,
         FrameTargets targets;
         targets.try_emplace(pacesetterPtr->displayId, &pacesetterPtr->targeterPtr->target());
 
+        // TODO (b/256196556): Followers should use the next VSYNC after the frontrunner, not the
+        // pacesetter.
+        // Update expectedVsyncTime, which may have been adjusted by beginFrame.
+        expectedVsyncTime = pacesetterPtr->targeterPtr->target().expectedPresentTime();
+
         for (const auto& [id, display] : mDisplays) {
             if (id == pacesetterPtr->displayId) continue;
 
+            auto followerBeginFrameArgs = beginFrameArgs;
+            followerBeginFrameArgs.expectedVsyncTime =
+                    display.schedulePtr->vsyncDeadlineAfter(expectedVsyncTime);
+
             FrameTargeter& targeter = *display.targeterPtr;
-            targeter.beginFrame(beginFrameArgs, *display.schedulePtr);
+            targeter.beginFrame(followerBeginFrameArgs, *display.schedulePtr);
             targets.try_emplace(id, &targeter.target());
         }
 
@@ -313,9 +330,10 @@ ConnectionHandle Scheduler::createEventThread(Cycle cycle,
                                               frametimeline::TokenManager* tokenManager,
                                               std::chrono::nanoseconds workDuration,
                                               std::chrono::nanoseconds readyDuration) {
-    auto eventThread = std::make_unique<impl::EventThread>(cycle == Cycle::Render ? "app" : "appSf",
-                                                           getVsyncSchedule(), tokenManager, *this,
-                                                           workDuration, readyDuration);
+    auto eventThread =
+            std::make_unique<android::impl::EventThread>(cycle == Cycle::Render ? "app" : "appSf",
+                                                         getVsyncSchedule(), tokenManager, *this,
+                                                         workDuration, readyDuration);
 
     auto& handle = cycle == Cycle::Render ? mAppConnectionHandle : mSfConnectionHandle;
     handle = createConnection(std::move(eventThread));
@@ -501,8 +519,23 @@ void Scheduler::setDuration(ConnectionHandle handle, std::chrono::nanoseconds wo
     thread->setDuration(workDuration, readyDuration);
 }
 
-void Scheduler::setVsyncConfigSet(const VsyncConfigSet& configs, Period vsyncPeriod) {
-    setVsyncConfig(mVsyncModulator->setVsyncConfigSet(configs), vsyncPeriod);
+void Scheduler::updatePhaseConfiguration(Fps refreshRate) {
+    mRefreshRateStats->setRefreshRate(refreshRate);
+    mVsyncConfiguration->setRefreshRateFps(refreshRate);
+    setVsyncConfig(mVsyncModulator->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs()),
+                   refreshRate.getPeriod());
+}
+
+void Scheduler::resetPhaseConfiguration(Fps refreshRate) {
+    // Cancel the pending refresh rate change, if any, before updating the phase configuration.
+    mVsyncModulator->cancelRefreshRateChange();
+
+    mVsyncConfiguration->reset();
+    updatePhaseConfiguration(refreshRate);
+}
+
+void Scheduler::setActiveDisplayPowerModeForRefreshRateStats(hal::PowerMode powerMode) {
+    mRefreshRateStats->setPowerMode(powerMode);
 }
 
 void Scheduler::setVsyncConfig(const VsyncConfig& config, Period vsyncPeriod) {
@@ -566,7 +599,7 @@ void Scheduler::onHardwareVsyncRequest(PhysicalDisplayId id, bool enabled) {
 
     // On main thread to serialize reads/writes of pending hardware VSYNC state.
     static_cast<void>(
-            schedule([=]() FTL_FAKE_GUARD(mDisplayLock) FTL_FAKE_GUARD(kMainThreadContext) {
+            schedule([=, this]() FTL_FAKE_GUARD(mDisplayLock) FTL_FAKE_GUARD(kMainThreadContext) {
                 ATRACE_NAME(ftl::Concat(whence, ' ', id.value, ' ', enabled).c_str());
 
                 if (const auto displayOpt = mDisplays.get(id)) {
@@ -617,8 +650,10 @@ Fps Scheduler::getNextFrameInterval(PhysicalDisplayId id,
     const Display& display = *displayOpt;
     const nsecs_t threshold =
             display.selectorPtr->getActiveMode().modePtr->getVsyncRate().getPeriodNsecs() / 2;
-    const nsecs_t nextVsyncTime = display.schedulePtr->getTracker().nextAnticipatedVSyncTimeFrom(
-            currentExpectedPresentTime.ns() + threshold);
+    const nsecs_t nextVsyncTime =
+            display.schedulePtr->getTracker()
+                    .nextAnticipatedVSyncTimeFrom(currentExpectedPresentTime.ns() + threshold,
+                                                  currentExpectedPresentTime.ns());
     return Fps::fromPeriodNsecs(nextVsyncTime - currentExpectedPresentTime.ns());
 }
 
@@ -871,6 +906,12 @@ void Scheduler::dump(utils::Dumper& dumper) const {
     }
 
     mFrameRateOverrideMappings.dump(dumper);
+    dumper.eol();
+
+    mVsyncConfiguration->dump(dumper.out());
+    dumper.eol();
+
+    mRefreshRateStats->dump(dumper.out());
     dumper.eol();
 
     {

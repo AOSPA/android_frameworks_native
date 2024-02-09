@@ -321,7 +321,7 @@ void EventThread::setDuration(std::chrono::nanoseconds workDuration,
 
     mVsyncRegistration.update({.workDuration = mWorkDuration.get().count(),
                                .readyDuration = mReadyDuration.count(),
-                               .earliestVsync = mLastVsyncCallbackTime.ns()});
+                               .lastVsync = mLastVsyncCallbackTime.ns()});
 }
 
 sp<EventThreadConnection> EventThread::createEventConnection(
@@ -529,7 +529,7 @@ void EventThread::threadMain(std::unique_lock<std::mutex>& lock) {
             const auto scheduleResult =
                     mVsyncRegistration.schedule({.workDuration = mWorkDuration.get().count(),
                                                  .readyDuration = mReadyDuration.count(),
-                                                 .earliestVsync = mLastVsyncCallbackTime.ns()});
+                                                 .lastVsync = mLastVsyncCallbackTime.ns()});
             LOG_ALWAYS_FATAL_IF(!scheduleResult, "Error scheduling callback");
         } else {
             mVsyncRegistration.cancel();
@@ -583,6 +583,9 @@ bool EventThread::shouldConsumeEvent(const DisplayEventReceiver::Event& event,
 
     switch (event.header.type) {
         case DisplayEventReceiver::DISPLAY_EVENT_HOTPLUG:
+            return true;
+
+        case DisplayEventReceiver::DISPLAY_EVENT_HDCP_LEVELS_CHANGE:
             return true;
 
         case DisplayEventReceiver::DISPLAY_EVENT_MODE_CHANGE: {
@@ -798,7 +801,7 @@ scheduler::VSyncCallbackRegistration EventThread::onNewVsyncScheduleInternal(
     if (reschedule) {
         mVsyncRegistration.schedule({.workDuration = mWorkDuration.get().count(),
                                      .readyDuration = mReadyDuration.count(),
-                                     .earliestVsync = mLastVsyncCallbackTime.ns()});
+                                     .lastVsync = mLastVsyncCallbackTime.ns()});
     }
     return oldRegistration;
 }

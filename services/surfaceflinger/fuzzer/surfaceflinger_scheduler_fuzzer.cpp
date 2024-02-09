@@ -24,6 +24,7 @@
 
 #include "Scheduler/OneShotTimer.h"
 #include "Scheduler/RefreshRateSelector.h"
+#include "Scheduler/RefreshRateStats.h"
 #include "Scheduler/VSyncDispatchTimerQueue.h"
 #include "Scheduler/VSyncPredictor.h"
 #include "Scheduler/VSyncReactor.h"
@@ -134,13 +135,13 @@ void SchedulerFuzzer::fuzzCallbackToken(scheduler::VSyncDispatchTimerQueue* disp
                 dispatch->schedule(tmp,
                                    {.workDuration = mFdp.ConsumeIntegral<nsecs_t>(),
                                     .readyDuration = mFdp.ConsumeIntegral<nsecs_t>(),
-                                    .earliestVsync = mFdp.ConsumeIntegral<nsecs_t>()});
+                                    .lastVsync = mFdp.ConsumeIntegral<nsecs_t>()});
             },
             "o.o");
     dispatch->schedule(tmp,
                        {.workDuration = mFdp.ConsumeIntegral<nsecs_t>(),
                         .readyDuration = mFdp.ConsumeIntegral<nsecs_t>(),
-                        .earliestVsync = mFdp.ConsumeIntegral<nsecs_t>()});
+                        .lastVsync = mFdp.ConsumeIntegral<nsecs_t>()});
     dispatch->unregisterCallback(tmp);
     dispatch->cancel(tmp);
 }
@@ -162,20 +163,20 @@ void SchedulerFuzzer::fuzzVSyncDispatchTimerQueue() {
     entry.update(*stubTracker, 0);
     entry.schedule({.workDuration = mFdp.ConsumeIntegral<nsecs_t>(),
                     .readyDuration = mFdp.ConsumeIntegral<nsecs_t>(),
-                    .earliestVsync = mFdp.ConsumeIntegral<nsecs_t>()},
+                    .lastVsync = mFdp.ConsumeIntegral<nsecs_t>()},
                    *stubTracker, 0);
     entry.disarm();
     entry.ensureNotRunning();
     entry.schedule({.workDuration = mFdp.ConsumeIntegral<nsecs_t>(),
                     .readyDuration = mFdp.ConsumeIntegral<nsecs_t>(),
-                    .earliestVsync = mFdp.ConsumeIntegral<nsecs_t>()},
+                    .lastVsync = mFdp.ConsumeIntegral<nsecs_t>()},
                    *stubTracker, 0);
     auto const wakeup = entry.wakeupTime();
     auto const ready = entry.readyTime();
     entry.callback(entry.executing(), *wakeup, *ready);
     entry.addPendingWorkloadUpdate({.workDuration = mFdp.ConsumeIntegral<nsecs_t>(),
                                     .readyDuration = mFdp.ConsumeIntegral<nsecs_t>(),
-                                    .earliestVsync = mFdp.ConsumeIntegral<nsecs_t>()});
+                                    .lastVsync = mFdp.ConsumeIntegral<nsecs_t>()});
     dump<scheduler::VSyncDispatchTimerQueueEntry>(&entry, &mFdp);
 }
 
@@ -425,7 +426,15 @@ void SchedulerFuzzer::fuzzPresentLatencyTracker() {
 }
 
 void SchedulerFuzzer::fuzzFrameTargeter() {
-    scheduler::FrameTargeter frameTargeter(kDisplayId, mFdp.ConsumeBool());
+    scheduler::FeatureFlags flags;
+    if (mFdp.ConsumeBool()) {
+        flags |= scheduler::Feature::kBackpressureGpuComposition;
+    }
+    if (mFdp.ConsumeBool()) {
+        flags |= scheduler::Feature::kExpectedPresentTime;
+    }
+
+    scheduler::FrameTargeter frameTargeter(kDisplayId, flags);
 
     const struct VsyncSource final : scheduler::IVsyncSource {
         explicit VsyncSource(FuzzedDataProvider& fuzzer) : fuzzer(fuzzer) {}
@@ -441,7 +450,8 @@ void SchedulerFuzzer::fuzzFrameTargeter() {
         frameTargeter.beginFrame({.frameBeginTime = getFuzzedTimePoint(mFdp),
                                   .vsyncId = getFuzzedVsyncId(mFdp),
                                   .expectedVsyncTime = getFuzzedTimePoint(mFdp),
-                                  .sfWorkDuration = getFuzzedDuration(mFdp)},
+                                  .sfWorkDuration = getFuzzedDuration(mFdp),
+                                  .hwcMinWorkDuration = getFuzzedDuration(mFdp)},
                                  vsyncSource);
 
         frameTargeter.setPresentFence(makeFakeFence());

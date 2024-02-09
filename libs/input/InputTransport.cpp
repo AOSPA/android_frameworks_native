@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <math.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -517,6 +518,38 @@ status_t InputChannel::receiveMessage(InputMessage* msg) {
     return OK;
 }
 
+bool InputChannel::probablyHasInput() const {
+    struct pollfd pfds = {.fd = mFd, .events = POLLIN};
+    if (::poll(&pfds, /*nfds=*/1, /*timeout=*/0) <= 0) {
+        // This can be a false negative because EINTR and ENOMEM are not handled. The latter should
+        // be extremely rare. The EINTR is also unlikely because it happens only when the signal
+        // arrives while the syscall is executed, and the syscall is quick. Hitting EINTR too often
+        // would be a sign of having too many signals, which is a bigger performance problem. A
+        // common tradition is to repeat the syscall on each EINTR, but it is not necessary here.
+        // In other words, the missing one liner is replaced by a multiline explanation.
+        return false;
+    }
+    // From poll(2): The bits returned in |revents| can include any of those specified in |events|,
+    // or one of the values POLLERR, POLLHUP, or POLLNVAL.
+    return (pfds.revents & POLLIN) != 0;
+}
+
+void InputChannel::waitForMessage(std::chrono::milliseconds timeout) const {
+    if (timeout < 0ms) {
+        LOG(FATAL) << "Timeout cannot be negative, received " << timeout.count();
+    }
+    struct pollfd pfds = {.fd = mFd, .events = POLLIN};
+    int ret;
+    std::chrono::time_point<std::chrono::steady_clock> stopTime =
+            std::chrono::steady_clock::now() + timeout;
+    std::chrono::milliseconds remaining = timeout;
+    do {
+        ret = ::poll(&pfds, /*nfds=*/1, /*timeout=*/remaining.count());
+        remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                stopTime - std::chrono::steady_clock::now());
+    } while (ret == -1 && errno == EINTR && remaining > 0ms);
+}
+
 std::unique_ptr<InputChannel> InputChannel::dup() const {
     base::unique_fd newFd(dupFd());
     return InputChannel::create(getName(), std::move(newFd), getConnectionToken());
@@ -850,6 +883,9 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                         mConsumeTimes.emplace(mMsg.header.seq, systemTime(SYSTEM_TIME_MONOTONIC));
                 LOG_ALWAYS_FATAL_IF(!inserted, "Already have a consume time for seq=%" PRIu32,
                                     mMsg.header.seq);
+
+                // Trace the event processing timeline - event was just read from the socket
+                ATRACE_ASYNC_BEGIN("InputConsumer processing", /*cookie=*/mMsg.header.seq);
             }
             if (result) {
                 // Consume the next batched event unless batches are being held for later.
@@ -1388,6 +1424,9 @@ status_t InputConsumer::sendUnchainedFinishedSignal(uint32_t seq, bool handled) 
         // message anymore. If the socket write did not succeed, we will try again and will still
         // need consume time.
         popConsumeTime(seq);
+
+        // Trace the event processing timeline - event was just finished
+        ATRACE_ASYNC_END("InputConsumer processing", /*cookie=*/seq);
     }
     return result;
 }
@@ -1404,6 +1443,10 @@ int32_t InputConsumer::getPendingBatchSource() const {
     const Batch& batch = mBatches[0];
     const InputMessage& head = batch.samples[0];
     return head.body.motion.source;
+}
+
+bool InputConsumer::probablyHasInput() const {
+    return hasPendingBatch() || mChannel->probablyHasInput();
 }
 
 ssize_t InputConsumer::findBatch(int32_t deviceId, int32_t source) const {

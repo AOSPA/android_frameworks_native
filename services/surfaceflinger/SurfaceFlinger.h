@@ -88,7 +88,6 @@
 #include "MutexUtils.h"
 #include "Scheduler/ISchedulerCallback.h"
 #include "Scheduler/RefreshRateSelector.h"
-#include "Scheduler/RefreshRateStats.h"
 #include "Scheduler/Scheduler.h"
 #include "SurfaceFlingerFactory.h"
 #include "ThreadContext.h"
@@ -738,7 +737,7 @@ private:
     // Show hdr sdr ratio overlay
     bool mHdrSdrRatioOverlay = false;
 
-    void setDesiredMode(display::DisplayModeRequest&&, bool force = false) REQUIRES(mStateLock);
+    void setDesiredMode(display::DisplayModeRequest&&) REQUIRES(mStateLock);
 
     status_t setActiveModeFromBackdoor(const sp<display::DisplayToken>&, DisplayModeId, Fps minFps,
                                        Fps maxFps);
@@ -746,9 +745,9 @@ private:
     void initiateDisplayModeChanges() REQUIRES(mStateLock, kMainThreadContext);
     void finalizeDisplayModeChange(DisplayDevice&) REQUIRES(mStateLock, kMainThreadContext);
 
-    // TODO(b/241285191): Move to Scheduler.
-    void dropModeRequest(display::DisplayModeRequest&&) REQUIRES(mStateLock);
-    void applyActiveMode(display::DisplayModeRequest&&) REQUIRES(mStateLock);
+    // TODO(b/241285191): Replace DisplayDevice with DisplayModeRequest, and move to Scheduler.
+    void dropModeRequest(const sp<DisplayDevice>&) REQUIRES(mStateLock);
+    void applyActiveMode(const sp<DisplayDevice>&) REQUIRES(mStateLock);
 
     // Called on the main thread in response to setPowerMode()
     void setPowerModeInternal(const sp<DisplayDevice>& display, hal::PowerMode mode)
@@ -805,7 +804,6 @@ private:
     void initScheduler(const sp<const DisplayDevice>&) REQUIRES(kMainThreadContext, mStateLock);
 
     void resetPhaseConfiguration(Fps) REQUIRES(mStateLock, kMainThreadContext);
-    void updatePhaseConfiguration(Fps) REQUIRES(mStateLock);
 
     /*
      * Transactions
@@ -1395,10 +1393,6 @@ private:
     scheduler::ConnectionHandle mAppConnectionHandle;
     scheduler::ConnectionHandle mSfConnectionHandle;
 
-    // Stores phase offsets configured per refresh rate.
-    std::unique_ptr<scheduler::VsyncConfiguration> mVsyncConfiguration;
-
-    std::unique_ptr<scheduler::RefreshRateStats> mRefreshRateStats;
     scheduler::PresentLatencyTracker mPresentLatencyTracker GUARDED_BY(kMainThreadContext);
 
     bool mLumaSampling = true;

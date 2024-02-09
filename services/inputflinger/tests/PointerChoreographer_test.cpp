@@ -145,15 +145,18 @@ private:
 };
 
 TEST_F(PointerChoreographerTest, ForwardsArgsToInnerListener) {
-    const std::vector<NotifyArgs> allArgs{NotifyInputDevicesChangedArgs{},
-                                          NotifyConfigurationChangedArgs{},
-                                          NotifyKeyArgs{},
-                                          NotifyMotionArgs{},
-                                          NotifySensorArgs{},
-                                          NotifySwitchArgs{},
-                                          NotifyDeviceResetArgs{},
-                                          NotifyPointerCaptureChangedArgs{},
-                                          NotifyVibratorStateArgs{}};
+    const std::vector<NotifyArgs>
+            allArgs{NotifyInputDevicesChangedArgs{},
+                    NotifyConfigurationChangedArgs{},
+                    KeyArgsBuilder(AKEY_EVENT_ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).build(),
+                    MotionArgsBuilder(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                            .pointer(FIRST_TOUCH_POINTER)
+                            .build(),
+                    NotifySensorArgs{},
+                    NotifySwitchArgs{},
+                    NotifyDeviceResetArgs{},
+                    NotifyPointerCaptureChangedArgs{},
+                    NotifyVibratorStateArgs{}};
 
     for (auto notifyArgs : allArgs) {
         mChoreographer.notify(notifyArgs);
@@ -1444,6 +1447,15 @@ TEST_F(PointerChoreographerTest, SetsPointerIconForStylus) {
     ASSERT_FALSE(mChoreographer.setPointerIcon(PointerIconStyle::TYPE_TEXT, DISPLAY_ID,
                                                SECOND_DEVICE_ID));
     pc->assertPointerIconNotSet();
+
+    // The stylus stops hovering. This should cause the icon to be reset.
+    mChoreographer.notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_HOVER_EXIT, AINPUT_SOURCE_STYLUS)
+                    .pointer(STYLUS_POINTER)
+                    .deviceId(DEVICE_ID)
+                    .displayId(DISPLAY_ID)
+                    .build());
+    pc->assertPointerIconSet(PointerIconStyle::TYPE_NOT_SPECIFIED);
 }
 
 TEST_F(PointerChoreographerTest, SetsCustomPointerIconForStylus) {

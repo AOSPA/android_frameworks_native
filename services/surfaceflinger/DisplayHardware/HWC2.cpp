@@ -27,6 +27,7 @@
 #include "HWC2.h"
 
 #include <android/configuration.h>
+#include <common/FlagManager.h>
 #include <ui/Fence.h>
 #include <ui/FloatRect.h>
 #include <ui/GraphicBuffer.h>
@@ -165,8 +166,7 @@ Error Display::getChangedCompositionTypes(std::unordered_map<HWC2::Layer*, Compo
     auto intError = mComposer.getChangedCompositionTypes(
             mId, &layerIds, &types);
     uint32_t numElements = layerIds.size();
-    auto error = static_cast<Error>(intError);
-    error = static_cast<Error>(intError);
+    const auto error = static_cast<Error>(intError);
     if (error != Error::NONE) {
         return error;
     }
@@ -417,7 +417,19 @@ Error Display::setActiveConfigWithConstraints(hal::HWConfigId configId,
                                               VsyncPeriodChangeTimeline* outTimeline) {
     ALOGV("[%" PRIu64 "] setActiveConfigWithConstraints", mId);
 
-    if (isVsyncPeriodSwitchSupported()) {
+    // FIXME (b/319505580): At least the first config set on an external display must be
+    // `setActiveConfig`, so skip over the block that calls `setActiveConfigWithConstraints`
+    // for simplicity.
+    ui::DisplayConnectionType type = ui::DisplayConnectionType::Internal;
+    const bool connected_display = FlagManager::getInstance().connected_display();
+    if (connected_display) {
+        if (auto err = getConnectionType(&type); err != Error::NONE) {
+            return err;
+        }
+    }
+
+    if (isVsyncPeriodSwitchSupported() &&
+        (!connected_display || type != ui::DisplayConnectionType::External)) {
         Hwc2::IComposerClient::VsyncPeriodChangeConstraints hwc2Constraints;
         hwc2Constraints.desiredTimeNanos = constraints.desiredTimeNanos;
         hwc2Constraints.seamlessRequired = constraints.seamlessRequired;

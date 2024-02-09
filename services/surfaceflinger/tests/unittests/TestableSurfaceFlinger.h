@@ -216,6 +216,10 @@ public:
 
     using DisplayModesVariant = std::variant<DefaultDisplayMode, RefreshRateSelectorPtr>;
 
+    surfaceflinger::Factory& getFactory() { return mFactory; }
+
+    TimeStats& getTimeStats() { return *mFlinger->mTimeStats; }
+
     void setupScheduler(
             std::unique_ptr<scheduler::VsyncController> vsyncController,
             std::shared_ptr<scheduler::VSyncTracker> vsyncTracker,
@@ -234,13 +238,6 @@ public:
                 },
                 [](RefreshRateSelectorPtr selectorPtr) { return selectorPtr; });
 
-        const auto fps = selectorPtr->getActiveMode().fps;
-        mFlinger->mVsyncConfiguration = mFactory.createVsyncConfiguration(fps);
-
-        mFlinger->mRefreshRateStats =
-                std::make_unique<scheduler::RefreshRateStats>(*mFlinger->mTimeStats, fps,
-                                                              hal::PowerMode::OFF);
-
         mTokenManager = std::make_unique<frametimeline::impl::TokenManager>();
 
         using ISchedulerCallback = scheduler::ISchedulerCallback;
@@ -254,23 +251,21 @@ public:
                 ? static_cast<VsyncTrackerCallback&>(mNoOpVsyncTrackerCallback)
                 : static_cast<VsyncTrackerCallback&>(mVsyncTrackerCallback);
 
-        auto modulatorPtr = sp<scheduler::VsyncModulator>::make(
-                mFlinger->mVsyncConfiguration->getCurrentConfigs());
-
         if (useNiceMock) {
             mScheduler =
                     new testing::NiceMock<scheduler::TestableScheduler>(std::move(vsyncController),
                                                                         std::move(vsyncTracker),
                                                                         std::move(selectorPtr),
-                                                                        std::move(modulatorPtr),
+                                                                        mFactory,
+                                                                        *mFlinger->mTimeStats,
                                                                         schedulerCallback,
                                                                         vsyncTrackerCallback);
         } else {
             mScheduler = new scheduler::TestableScheduler(std::move(vsyncController),
                                                           std::move(vsyncTracker),
-                                                          std::move(selectorPtr),
-                                                          std::move(modulatorPtr),
-                                                          schedulerCallback, vsyncTrackerCallback);
+                                                          std::move(selectorPtr), mFactory,
+                                                          *mFlinger->mTimeStats, schedulerCallback,
+                                                          vsyncTrackerCallback);
         }
 
         mScheduler->initVsync(mScheduler->getVsyncSchedule()->getDispatch(), *mTokenManager, 0ms);
@@ -303,13 +298,13 @@ public:
         auto vsyncController = makeMock<mock::VsyncController>(options.useNiceMock);
         auto vsyncTracker = makeSharedMock<mock::VSyncTracker>(options.useNiceMock);
 
-        EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
+        EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_, _)).WillRepeatedly(Return(0));
         EXPECT_CALL(*vsyncTracker, currentPeriod())
                 .WillRepeatedly(Return(FakeHwcDisplayInjector::DEFAULT_VSYNC_PERIOD));
         EXPECT_CALL(*vsyncTracker, minFramePeriod())
                 .WillRepeatedly(
                         Return(Period::fromNs(FakeHwcDisplayInjector::DEFAULT_VSYNC_PERIOD)));
-        EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_)).WillRepeatedly(Return(0));
+        EXPECT_CALL(*vsyncTracker, nextAnticipatedVSyncTimeFrom(_, _)).WillRepeatedly(Return(0));
         setupScheduler(std::move(vsyncController), std::move(vsyncTracker), std::move(eventThread),
                        std::move(sfEventThread), DefaultDisplayMode{options.displayId},
                        SchedulerCallbackImpl::kNoOp, VsyncTrackerCallbackImpl::kNoOp,
@@ -391,13 +386,14 @@ public:
         LOG_ALWAYS_FATAL_IF(!displayIdOpt);
         const auto displayId = *displayIdOpt;
 
-        constexpr bool kBackpressureGpuComposition = true;
-        scheduler::FrameTargeter frameTargeter(displayId, kBackpressureGpuComposition);
+        scheduler::FrameTargeter frameTargeter(displayId,
+                                               scheduler::Feature::kBackpressureGpuComposition);
 
         frameTargeter.beginFrame({.frameBeginTime = frameTime,
                                   .vsyncId = vsyncId,
                                   .expectedVsyncTime = expectedVsyncTime,
-                                  .sfWorkDuration = 10ms},
+                                  .sfWorkDuration = 10ms,
+                                  .hwcMinWorkDuration = 10ms},
                                  *mScheduler->getVsyncSchedule());
 
         scheduler::FrameTargets targets;
@@ -482,10 +478,6 @@ public:
     auto setDisplayBrightness(const sp<IBinder>& display,
                               const gui::DisplayBrightness& brightness) {
         return mFlinger->setDisplayBrightness(display, brightness);
-    }
-
-    static const auto& getPendingMode(const sp<DisplayDevice>& display) {
-        return display->mPendingModeOpt;
     }
 
     // Allow reading display state without locking, as if called on the SF main thread.

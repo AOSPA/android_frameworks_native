@@ -30,6 +30,7 @@
 
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
+#include <common/FlagManager.h>
 #include <compositionengine/CompositionEngine.h>
 #include <compositionengine/Display.h>
 #include <compositionengine/DisplayColorProfile.h>
@@ -228,7 +229,19 @@ void DisplayDevice::setActiveMode(DisplayModeId modeId, Fps vsyncRate, Fps rende
 bool DisplayDevice::initiateModeChange(display::DisplayModeRequest&& desiredMode,
                                        const hal::VsyncPeriodChangeConstraints& constraints,
                                        hal::VsyncPeriodChangeTimeline& outTimeline) {
+    // TODO(b/255635711): Flow the DisplayModeRequest through the desired/pending/active states. For
+    // now, `desiredMode` and `mDesiredModeOpt` are one and the same, but the latter is not cleared
+    // until the next `SF::initiateDisplayModeChanges`. However, the desired mode has been consumed
+    // at this point, so clear the `force` flag to prevent an endless loop of `initiateModeChange`.
+    if (FlagManager::getInstance().connected_display()) {
+        std::scoped_lock lock(mDesiredModeLock);
+        if (mDesiredModeOpt) {
+            mDesiredModeOpt->force = false;
+        }
+    }
+
     mPendingModeOpt = std::move(desiredMode);
+    mIsModeSetPending = true;
 
     const auto& mode = *mPendingModeOpt->mode.modePtr;
 
@@ -241,22 +254,9 @@ bool DisplayDevice::initiateModeChange(display::DisplayModeRequest&& desiredMode
     return true;
 }
 
-auto DisplayDevice::finalizeModeChange() -> ModeChange {
-    if (!mPendingModeOpt) return NoModeChange{"No pending mode"};
-
-    auto pendingMode = *std::exchange(mPendingModeOpt, std::nullopt);
-    auto& pendingModePtr = pendingMode.mode.modePtr;
-
-    if (!mRefreshRateSelector->displayModes().contains(pendingModePtr->getId())) {
-        return NoModeChange{"Unknown pending mode"};
-    }
-
-    if (getActiveMode().modePtr->getResolution() != pendingModePtr->getResolution()) {
-        return ResolutionChange{std::move(pendingMode)};
-    }
-
-    setActiveMode(pendingModePtr->getId(), pendingModePtr->getVsyncRate(), pendingMode.mode.fps);
-    return RefreshRateChange{std::move(pendingMode)};
+void DisplayDevice::finalizeModeChange(DisplayModeId modeId, Fps vsyncRate, Fps renderFps) {
+    setActiveMode(modeId, vsyncRate, renderFps);
+    mIsModeSetPending = false;
 }
 
 nsecs_t DisplayDevice::getVsyncPeriodFromHWC() const {
@@ -545,8 +545,7 @@ void DisplayDevice::animateOverlay() {
     }
 }
 
-auto DisplayDevice::setDesiredMode(display::DisplayModeRequest&& desiredMode, bool force)
-        -> DesiredModeAction {
+auto DisplayDevice::setDesiredMode(display::DisplayModeRequest&& desiredMode) -> DesiredModeAction {
     ATRACE_CALL();
 
     const auto& desiredModePtr = desiredMode.mode.modePtr;
@@ -554,20 +553,26 @@ auto DisplayDevice::setDesiredMode(display::DisplayModeRequest&& desiredMode, bo
     LOG_ALWAYS_FATAL_IF(getPhysicalId() != desiredModePtr->getPhysicalDisplayId(),
                         "DisplayId mismatch");
 
-    ALOGV("%s(%s)", __func__, to_string(*desiredModePtr).c_str());
+    // TODO (b/318533819): Stringize DisplayModeRequest.
+    ALOGD("%s(%s, force=%s)", __func__, to_string(*desiredModePtr).c_str(),
+          desiredMode.force ? "true" : "false");
 
     std::scoped_lock lock(mDesiredModeLock);
     if (mDesiredModeOpt) {
         // A mode transition was already scheduled, so just override the desired mode.
         const bool emitEvent = mDesiredModeOpt->emitEvent;
+        const bool force = mDesiredModeOpt->force;
         mDesiredModeOpt = std::move(desiredMode);
         mDesiredModeOpt->emitEvent |= emitEvent;
+        if (FlagManager::getInstance().connected_display()) {
+            mDesiredModeOpt->force |= force;
+        }
         return DesiredModeAction::None;
     }
 
     // If the desired mode is already active...
     const auto activeMode = refreshRateSelector().getActiveMode();
-    if (!force && activeMode.modePtr->getId() == desiredModePtr->getId()) {
+    if (!desiredMode.force && activeMode.modePtr->getId() == desiredModePtr->getId()) {
         if (activeMode == desiredMode.mode) {
             return DesiredModeAction::None;
         }
@@ -594,14 +599,10 @@ auto DisplayDevice::getDesiredMode() const -> DisplayModeRequestOpt {
     return mDesiredModeOpt;
 }
 
-auto DisplayDevice::takeDesiredMode() -> DisplayModeRequestOpt {
-    DisplayModeRequestOpt desiredModeOpt;
-    {
-        std::scoped_lock lock(mDesiredModeLock);
-        std::swap(mDesiredModeOpt, desiredModeOpt);
-        mHasDesiredModeTrace = false;
-    }
-    return desiredModeOpt;
+void DisplayDevice::clearDesiredMode() {
+    std::scoped_lock lock(mDesiredModeLock);
+    mDesiredModeOpt.reset();
+    mHasDesiredModeTrace = false;
 }
 
 void DisplayDevice::adjustRefreshRate(Fps pacesetterDisplayRefreshRate) {

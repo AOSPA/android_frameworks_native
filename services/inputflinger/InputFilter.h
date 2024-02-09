@@ -19,6 +19,7 @@
 #include <aidl/com/android/server/inputflinger/IInputFlingerRust.h>
 #include <utils/Mutex.h>
 #include "InputFilterCallbacks.h"
+#include "InputFilterPolicyInterface.h"
 #include "InputListener.h"
 #include "NotifyArgs.h"
 
@@ -45,8 +46,10 @@ public:
             aidl::com::android::server::inputflinger::IInputFilter::IInputFilterCallbacks;
     using InputFilterConfiguration =
             aidl::com::android::server::inputflinger::InputFilterConfiguration;
+    using AidlDeviceInfo = aidl::com::android::server::inputflinger::DeviceInfo;
 
-    explicit InputFilter(InputListenerInterface& listener, IInputFlingerRust&);
+    explicit InputFilter(InputListenerInterface& listener, IInputFlingerRust& rust,
+                         InputFilterPolicyInterface& policy);
     ~InputFilter() override = default;
     void notifyInputDevicesChanged(const NotifyInputDevicesChangedArgs& args) override;
     void notifyConfigurationChanged(const NotifyConfigurationChangedArgs& args) override;
@@ -64,11 +67,16 @@ public:
 private:
     InputListenerInterface& mNextListener;
     std::shared_ptr<InputFilterCallbacks> mCallbacks;
+    InputFilterPolicyInterface& mPolicy;
     std::shared_ptr<IInputFilter> mInputFilterRust;
+    // Keep track of connected peripherals, so that if filters are enabled later, we can pass that
+    // info to the filters
+    std::vector<AidlDeviceInfo> mDeviceInfos;
     mutable std::mutex mLock;
     InputFilterConfiguration mConfig GUARDED_BY(mLock);
 
     bool isFilterEnabled();
+    void notifyConfigurationChangedLocked() REQUIRES(mLock);
 };
 
 } // namespace android

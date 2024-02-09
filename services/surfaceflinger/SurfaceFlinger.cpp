@@ -65,7 +65,6 @@
 #include <ftl/concat.h>
 #include <ftl/fake_guard.h>
 #include <ftl/future.h>
-#include <ftl/match.h>
 #include <ftl/unit.h>
 #include <gui/AidlStatusUtil.h>
 #include <gui/BufferQueue.h>
@@ -972,7 +971,7 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
             mQtiSFExtnIntf->qtiPostInit(static_cast<android::impl::HWComposer&>(
                                                 mCompositionEngine->getHwComposer()),
                                         static_cast<Hwc2::impl::PowerAdvisor*>(mPowerAdvisor.get()),
-                                        mVsyncConfiguration.get(), getHwComposer().getComposer());
+                                        mScheduler->getVsyncConfiguration_ptr(), getHwComposer().getComposer());
    surfaceflingerextension::QtiExtensionContext::instance().setCompositionEngine(
             &getCompositionEngine());
     mQtiSFExtnIntf->qtiStartUnifiedDraw();
@@ -1138,7 +1137,7 @@ void SurfaceFlinger::getDynamicDisplayInfoInternal(ui::DynamicDisplayInfo*& info
         outMode.peakRefreshRate = peakFps.getValue();
         outMode.vsyncRate = mode->getVsyncRate().getValue();
 
-        const auto vsyncConfigSet = mVsyncConfiguration->getConfigsForRefreshRate(
+        const auto vsyncConfigSet = mScheduler->getVsyncConfiguration().getConfigsForRefreshRate(
                 Fps::fromValue(outMode.peakRefreshRate));
         outMode.appVsyncOffset = vsyncConfigSet.late.appOffset;
         outMode.sfVsyncOffset = vsyncConfigSet.late.sfOffset;
@@ -1265,7 +1264,7 @@ status_t SurfaceFlinger::getDisplayStats(const sp<IBinder>& displayToken,
     return NO_ERROR;
 }
 
-void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode, bool force) {
+void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode) {
     const auto mode = desiredMode.mode;
     const auto displayId = mode.modePtr->getPhysicalDisplayId();
 
@@ -1273,19 +1272,19 @@ void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode, b
 
     const auto display = getDisplayDeviceLocked(displayId);
     if (!display) {
-        ALOGW("%s: Unknown display %s", __func__, to_string(displayId).c_str());
+        ALOGW("%s: display is no longer valid", __func__);
         return;
     }
 
     /* QTI_BEGIN */
-    if (mQtiSFExtnIntf->qtiIsFpsDeferNeeded(desiredMode.mode.fps.getValue())) {
+    if (mQtiSFExtnIntf->qtiIsFpsDeferNeeded(mode.fps.getValue())) {
         return;
     }
     /* QTI_END */
 
     const bool emitEvent = desiredMode.emitEvent;
 
-    switch (display->setDesiredMode(std::move(desiredMode), force)) {
+    switch (display->setDesiredMode(std::move(desiredMode))) {
         case DisplayDevice::DesiredModeAction::InitiateDisplayModeSwitch:
             // DisplayDevice::setDesiredMode updated the render rate, so inform Scheduler.
             mScheduler->setRenderRate(displayId,
@@ -1304,7 +1303,7 @@ void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode, b
             mScheduler->modulateVsync(displayId, &VsyncModulator::onRefreshRateChangeInitiated);
 
             if (displayId == mActiveDisplayId) {
-                updatePhaseConfiguration(mode.fps);
+                mScheduler->updatePhaseConfiguration(mode.fps);
             }
 
             mScheduler->setModeChangePending(true);
@@ -1313,8 +1312,7 @@ void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode, b
             mScheduler->setRenderRate(displayId, mode.fps);
 
             if (displayId == mActiveDisplayId) {
-                updatePhaseConfiguration(mode.fps);
-                mRefreshRateStats->setRefreshRate(mode.fps);
+                mScheduler->updatePhaseConfiguration(mode.fps);
             }
 
             if (emitEvent) {
@@ -1326,8 +1324,8 @@ void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode, b
     }
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiSetContentFps(desiredMode.mode.fps.getValue());
-    mQtiSFExtnIntf->qtiDolphinSetVsyncPeriod(desiredMode.mode.fps.getPeriodNsecs());
+    mQtiSFExtnIntf->qtiSetContentFps(mode.fps.getValue());
+    mQtiSFExtnIntf->qtiDolphinSetVsyncPeriod(mode.fps.getPeriodNsecs());
     /* QTI_END */
 }
 
@@ -1386,56 +1384,61 @@ void SurfaceFlinger::finalizeDisplayModeChange(DisplayDevice& display) {
     const auto displayId = display.getPhysicalId();
     ATRACE_NAME(ftl::Concat(__func__, ' ', displayId.value).c_str());
 
-    ftl::match(
-            display.finalizeModeChange(),
-            [this, displayId](DisplayDevice::RefreshRateChange change) {
-                ftl::FakeGuard guard(mStateLock);
+    const auto pendingModeOpt = display.getPendingMode();
+    if (!pendingModeOpt) {
+        // There is no pending mode change. This can happen if the active
+        // display changed and the mode change happened on a different display.
+        return;
+    }
 
-                if (change.activeMode.emitEvent) {
-                    dispatchDisplayModeChangeEvent(displayId, change.activeMode.mode);
-                }
+    const auto& activeMode = pendingModeOpt->mode;
 
-                applyActiveMode(std::move(change.activeMode));
-            },
-            [&](DisplayDevice::ResolutionChange change) {
-                auto& state = mCurrentState.displays.editValueFor(display.getDisplayToken());
-                // Assign a new sequence ID to recreate the display and so its framebuffer.
-                state.sequenceId = DisplayDeviceState{}.sequenceId;
-                state.physical->activeMode = change.activeMode.mode.modePtr.get();
+    if (display.getActiveMode().modePtr->getResolution() != activeMode.modePtr->getResolution()) {
+        auto& state = mCurrentState.displays.editValueFor(display.getDisplayToken());
+        // We need to generate new sequenceId in order to recreate the display (and this
+        // way the framebuffer).
+        state.sequenceId = DisplayDeviceState{}.sequenceId;
+        state.physical->activeMode = activeMode.modePtr.get();
+        processDisplayChangesLocked();
 
-                ftl::FakeGuard guard1(kMainThreadContext);
-                ftl::FakeGuard guard2(mStateLock);
-                processDisplayChangesLocked();
+        // processDisplayChangesLocked will update all necessary components so we're done here.
+        return;
+    }
 
-                applyActiveMode(std::move(change.activeMode));
-            },
-            [](DisplayDevice::NoModeChange noChange) {
-                // TODO(b/255635821): Remove this case, as it should no longer happen.
-                ALOGE("A mode change was initiated but not finalized: %s", noChange.reason);
-            });
+    display.finalizeModeChange(activeMode.modePtr->getId(), activeMode.modePtr->getVsyncRate(),
+                               activeMode.fps);
+
+    if (displayId == mActiveDisplayId) {
+        mScheduler->updatePhaseConfiguration(activeMode.fps);
+    }
+
+    if (pendingModeOpt->emitEvent) {
+        dispatchDisplayModeChangeEvent(displayId, activeMode);
+    }
 }
 
-void SurfaceFlinger::dropModeRequest(display::DisplayModeRequest&& request) {
-    if (request.mode.modePtr->getPhysicalDisplayId() == mActiveDisplayId) {
+void SurfaceFlinger::dropModeRequest(const sp<DisplayDevice>& display) {
+    display->clearDesiredMode();
+    if (display->getPhysicalId() == mActiveDisplayId) {
         // TODO(b/255635711): Check for pending mode changes on other displays.
         mScheduler->setModeChangePending(false);
     }
 }
 
-void SurfaceFlinger::applyActiveMode(display::DisplayModeRequest&& activeMode) {
-    auto activeModePtr = activeMode.mode.modePtr;
+void SurfaceFlinger::applyActiveMode(const sp<DisplayDevice>& display) {
+    const auto activeModeOpt = display->getDesiredMode();
+    auto activeModePtr = activeModeOpt->mode.modePtr;
     const auto displayId = activeModePtr->getPhysicalDisplayId();
-    const auto renderFps = activeMode.mode.fps;
+    const auto renderFps = activeModeOpt->mode.fps;
 
-    dropModeRequest(std::move(activeMode));
+    dropModeRequest(display);
 
     constexpr bool kAllowToEnable = true;
     mScheduler->resyncToHardwareVsync(displayId, kAllowToEnable, std::move(activeModePtr).take());
     mScheduler->setRenderRate(displayId, renderFps);
 
     if (displayId == mActiveDisplayId) {
-        mRefreshRateStats->setRefreshRate(renderFps);
-        updatePhaseConfiguration(renderFps);
+        mScheduler->updatePhaseConfiguration(renderFps);
     }
 }
 
@@ -1448,50 +1451,51 @@ void SurfaceFlinger::initiateDisplayModeChanges() {
         const auto display = getDisplayDeviceLocked(id);
         if (!display) continue;
 
-        auto desiredModeOpt = display->takeDesiredMode();
+        auto desiredModeOpt = display->getDesiredMode();
         if (!desiredModeOpt) {
             continue;
         }
 
-        auto desiredMode = std::move(*desiredModeOpt);
-
         if (!shouldApplyRefreshRateSelectorPolicy(*display)) {
-            dropModeRequest(std::move(desiredMode));
+            dropModeRequest(display);
             continue;
         }
 
-        const auto desiredModeId = desiredMode.mode.modePtr->getId();
+        const auto desiredModeId = desiredModeOpt->mode.modePtr->getId();
         const auto displayModePtrOpt = physical.snapshot().displayModes().get(desiredModeId);
 
         if (!displayModePtrOpt) {
-            ALOGW("%s: Unknown mode %d for display %s", __func__, desiredModeId.value(),
-                  to_string(id).c_str());
-            dropModeRequest(std::move(desiredMode));
+            ALOGW("Desired display mode is no longer supported. Mode ID = %d",
+                  desiredModeId.value());
+            dropModeRequest(display);
             continue;
         }
 
-        if (display->getActiveMode() == desiredMode.mode) {
-            dropModeRequest(std::move(desiredMode));
+        ALOGV("%s changing active mode to %d(%s) for display %s", __func__, desiredModeId.value(),
+              to_string(displayModePtrOpt->get()->getVsyncRate()).c_str(),
+              to_string(display->getId()).c_str());
+
+        if ((!FlagManager::getInstance().connected_display() || !desiredModeOpt->force) &&
+            display->getActiveMode() == desiredModeOpt->mode) {
+            applyActiveMode(display);
             continue;
         }
 
-        // The desired mode is different from the active mode. However, the allowed modes might have
-        // changed since setDesiredMode scheduled a mode transition.
-        if (!display->refreshRateSelector().isModeAllowed(desiredMode.mode)) {
-            dropModeRequest(std::move(desiredMode));
+        // Desired active mode was set, it is different than the mode currently in use, however
+        // allowed modes might have changed by the time we process the refresh.
+        // Make sure the desired mode is still allowed
+        if (!display->refreshRateSelector().isModeAllowed(desiredModeOpt->mode)) {
+            dropModeRequest(display);
             continue;
         }
 
-        ALOGV("Mode setting display %s to %d (%s)", to_string(id).c_str(), desiredModeId.value(),
-              to_string(displayModePtrOpt.value().get()->getVsyncRate()).c_str());
-
-        // TODO(b/142753666): Use constraints.
+        // TODO(b/142753666) use constrains
         hal::VsyncPeriodChangeConstraints constraints;
         constraints.desiredTimeNanos = systemTime();
         constraints.seamlessRequired = false;
         hal::VsyncPeriodChangeTimeline outTimeline;
 
-        if (!display->initiateModeChange(std::move(desiredMode), constraints, outTimeline)) {
+        if (!display->initiateModeChange(std::move(*desiredModeOpt), constraints, outTimeline)) {
             continue;
         }
 
@@ -1511,6 +1515,11 @@ void SurfaceFlinger::initiateDisplayModeChanges() {
     if (displayToUpdateImmediately) {
         const auto display = getDisplayDeviceLocked(*displayToUpdateImmediately);
         finalizeDisplayModeChange(*display);
+
+        const auto desiredModeOpt = display->getDesiredMode();
+        if (desiredModeOpt && display->getActiveMode() == desiredModeOpt->mode) {
+            applyActiveMode(display);
+        }
     }
 }
 
@@ -2484,6 +2493,13 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
             const bool willReleaseBufferOnLatch = layer->willReleaseBufferOnLatch();
 
             auto it = mLegacyLayers.find(layer->id);
+            if (it == mLegacyLayers.end() &&
+                layer->changes.test(frontend::RequestedLayerState::Changes::Destroyed)) {
+                // Layer handle was created and immediately destroyed. It was destroyed before it
+                // was added to the map.
+                continue;
+            }
+
             LLOG_ALWAYS_FATAL_WITH_TRACE_IF(it == mLegacyLayers.end(),
                                             "Couldnt find layer object for %s",
                                             layer->getDebugString().c_str());
@@ -2560,7 +2576,7 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     ATRACE_NAME(ftl::Concat(__func__, ' ', ftl::to_underlying(vsyncId)).c_str());
 
     /* QTI_BEGIN */
-    //mQtiSFExtnIntf->qtiOnVsync(expectedVsyncTime.ns());
+    mQtiSFExtnIntf->qtiOnVsync(0);
     /* QTI_END */
 
     // mScheduledPresentTime = expectedVsyncTime;
@@ -2789,6 +2805,8 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
         if (const auto display = getCompositionDisplayLocked(id)) {
             refreshArgs.outputs.push_back(display);
         }
+
+        refreshArgs.frameTargets.try_emplace(id, &targeter->target());
     }
 
     std::vector<DisplayId> displayIds;
@@ -2857,23 +2875,10 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
         refreshArgs.devOptFlashDirtyRegionsDelay = std::chrono::milliseconds(mDebugFlashDelay);
     }
 
-    const Period minFramePeriod = mScheduler->getVsyncSchedule()->minFramePeriod();
-
-    if (!getHwComposer().getComposer()->isSupported(
-                Hwc2::Composer::OptionalFeature::ExpectedPresentTime) &&
-        pacesetterTarget.wouldPresentEarly(minFramePeriod)) {
-        const auto hwcMinWorkDuration = mVsyncConfiguration->getCurrentConfigs().hwcMinWorkDuration;
-
-        // TODO(b/255601557): Calculate and pass per-display values for each FrameTarget.
-        refreshArgs.earliestPresentTime =
-                pacesetterTarget.previousFrameVsyncTime(minFramePeriod) - hwcMinWorkDuration;
-    }
-
     const TimePoint expectedPresentTime = pacesetterTarget.expectedPresentTime();
     // TODO(b/255601557) Update frameInterval per display
     refreshArgs.frameInterval = mScheduler->getNextFrameInterval(pacesetterId, expectedPresentTime);
     refreshArgs.scheduledFrameTime = mScheduler->getScheduledFrameTime();
-    refreshArgs.expectedPresentTime = expectedPresentTime.ns();
     refreshArgs.hasTrustedPresentationListener = mNumTrustedPresentationListeners > 0;
     {
         auto& notifyExpectedPresentData = mNotifyExpectedPresentMap[pacesetterId];
@@ -2892,7 +2897,7 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
     const auto presentTime = systemTime();
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiSetDisplayElapseTime(refreshArgs.earliestPresentTime);
+    //mQtiSFExtnIntf->qtiSetDisplayElapseTime(refreshArgs.earliestPrsesentTime);
     /* QTI_END */
 
     constexpr bool kCursorOnly = false;
@@ -3174,7 +3179,8 @@ void SurfaceFlinger::onCompositionPresented(PhysicalDisplayId pacesetterId,
     const auto schedule = mScheduler->getVsyncSchedule();
     const TimePoint vsyncDeadline = schedule->vsyncDeadlineAfter(presentTime);
     const Period vsyncPeriod = schedule->period();
-    const nsecs_t vsyncPhase = mVsyncConfiguration->getCurrentConfigs().late.sfOffset;
+    const nsecs_t vsyncPhase =
+            mScheduler->getVsyncConfiguration().getCurrentConfigs().late.sfOffset;
 
     const CompositorTiming compositorTiming(vsyncDeadline.ns(), vsyncPeriod.ns(), vsyncPhase,
                                             presentLatency.ns());
@@ -3426,13 +3432,87 @@ std::pair<DisplayModes, DisplayModePtr> SurfaceFlinger::loadDisplayModes(
     std::vector<HWComposer::HWCDisplayMode> hwcModes;
     std::optional<hal::HWDisplayId> activeModeHwcId;
 
+    const bool isExternalDisplay = FlagManager::getInstance().connected_display() &&
+            getHwComposer().getDisplayConnectionType(displayId) ==
+                    ui::DisplayConnectionType::External;
+
     int attempt = 0;
     constexpr int kMaxAttempts = 3;
     do {
         hwcModes = getHwComposer().getModes(displayId,
                                             scheduler::RefreshRateSelector::kMinSupportedFrameRate
                                                     .getPeriodNsecs());
+
         activeModeHwcId = getHwComposer().getActiveMode(displayId);
+
+        if (isExternalDisplay) {
+            constexpr nsecs_t k59HzVsyncPeriod = 16949153;
+            constexpr nsecs_t k60HzVsyncPeriod = 16666667;
+
+            // DM sets the initial mode for an external display to 1080p@60, but
+            // this comes after SF creates its own state (including the
+            // DisplayDevice). For now, pick the same mode in order to avoid
+            // inconsistent state and unnecessary mode switching.
+            // TODO (b/318534874): Let DM decide the initial mode.
+            //
+            // Try to find 1920x1080 @ 60 Hz
+            if (const auto iter = std::find_if(hwcModes.begin(), hwcModes.end(),
+                                               [](const auto& mode) {
+                                                   return mode.width == 1920 &&
+                                                           mode.height == 1080 &&
+                                                           mode.vsyncPeriod == k60HzVsyncPeriod;
+                                               });
+                iter != hwcModes.end()) {
+                activeModeHwcId = iter->hwcId;
+                break;
+            }
+
+            // Try to find 1920x1080 @ 59-60 Hz
+            if (const auto iter = std::find_if(hwcModes.begin(), hwcModes.end(),
+                                               [](const auto& mode) {
+                                                   return mode.width == 1920 &&
+                                                           mode.height == 1080 &&
+                                                           mode.vsyncPeriod >= k60HzVsyncPeriod &&
+                                                           mode.vsyncPeriod <= k59HzVsyncPeriod;
+                                               });
+                iter != hwcModes.end()) {
+                activeModeHwcId = iter->hwcId;
+                break;
+            }
+
+            // The display does not support 1080p@60, and this is the last attempt to pick a display
+            // mode. Prefer 60 Hz if available, with the closest resolution to 1080p.
+            if (attempt + 1 == kMaxAttempts) {
+                std::vector<HWComposer::HWCDisplayMode> hwcModeOpts;
+
+                for (const auto& mode : hwcModes) {
+                    if (mode.width <= 1920 && mode.height <= 1080 &&
+                        mode.vsyncPeriod >= k60HzVsyncPeriod &&
+                        mode.vsyncPeriod <= k59HzVsyncPeriod) {
+                        hwcModeOpts.push_back(mode);
+                    }
+                }
+
+                if (const auto iter = std::max_element(hwcModeOpts.begin(), hwcModeOpts.end(),
+                                                       [](const auto& a, const auto& b) {
+                                                           const auto aSize = a.width * a.height;
+                                                           const auto bSize = b.width * b.height;
+                                                           if (aSize < bSize)
+                                                               return true;
+                                                           else if (aSize == bSize)
+                                                               return a.vsyncPeriod > b.vsyncPeriod;
+                                                           else
+                                                               return false;
+                                                       });
+                    iter != hwcModeOpts.end()) {
+                    activeModeHwcId = iter->hwcId;
+                    break;
+                }
+
+                // hwcModeOpts was empty, use hwcModes[0] as the last resort
+                activeModeHwcId = hwcModes[0].hwcId;
+            }
+        }
 
         const auto isActiveMode = [activeModeHwcId](const HWComposer::HWCDisplayMode& mode) {
             return mode.hwcId == activeModeHwcId;
@@ -3493,6 +3573,10 @@ std::pair<DisplayModes, DisplayModePtr> SurfaceFlinger::loadDisplayModes(
                 return pair.second->getHwcId() == activeModeHwcId;
             })->second;
 
+    if (isExternalDisplay) {
+        ALOGI("External display %s initial mode: {%s}", to_string(displayId).c_str(),
+              to_string(*activeMode).c_str());
+    }
     return {modes, activeMode};
 }
 
@@ -3854,6 +3938,27 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     /* QTI_BEGIN */
     mQtiSFExtnIntf->qtiCreateSmomoInstance(state);
     /* QTI_END */
+
+    // For an external display, loadDisplayModes already selected the same mode
+    // as DM, but SF still needs to be updated to match.
+    // TODO (b/318534874): Let DM decide the initial mode.
+    if (const auto& physical = state.physical;
+        mScheduler && physical && FlagManager::getInstance().connected_display()) {
+        const bool isInternalDisplay = mPhysicalDisplays.get(physical->id)
+                                               .transform(&PhysicalDisplay::isInternal)
+                                               .value_or(false);
+
+        if (!isInternalDisplay) {
+            auto activeModePtr = physical->activeMode;
+            const auto fps = activeModePtr->getPeakFps();
+
+            setDesiredMode(
+                    {.mode = scheduler::FrameRateMode{fps,
+                                                      ftl::as_non_null(std::move(activeModePtr))},
+                     .emitEvent = false,
+                     .force = true});
+        }
+    }
 }
 
 void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
@@ -3908,6 +4013,9 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
             if (display->isVirtual()) {
                 releaseVirtualDisplay(display->getVirtualId());
             }
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
+            /* QTI_END */
         }
 
         mDisplays.erase(displayToken);
@@ -3966,12 +4074,7 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
 }
 
 void SurfaceFlinger::resetPhaseConfiguration(Fps refreshRate) {
-    // Cancel the pending refresh rate change, if any, before updating the phase configuration.
-    mScheduler->vsyncModulator().cancelRefreshRateChange();
-
-    mVsyncConfiguration->reset();
-    updatePhaseConfiguration(refreshRate);
-    mRefreshRateStats->setRefreshRate(refreshRate);
+    mScheduler->resetPhaseConfiguration(refreshRate);
 
     /* QTI_BEGIN */
     mQtiSFExtnIntf->qtiUpdateVsyncConfiguration();
@@ -4341,7 +4444,7 @@ void SurfaceFlinger::onVsyncGenerated(TimePoint expectedPresentTime,
         const auto notifyExpectedPresentConfig =
                 modePtr->getVrrConfig()->notifyExpectedPresentConfig;
         if (!notifyExpectedPresentConfig) return std::nullopt;
-        return Period::fromNs(notifyExpectedPresentConfig->notifyExpectedPresentTimeoutNs);
+        return Period::fromNs(notifyExpectedPresentConfig->timeoutNs);
     }();
 
     notifyExpectedPresentIfRequired(modePtr->getPhysicalDisplayId(), vsyncPeriod,
@@ -4401,10 +4504,6 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
 
     const auto activeMode = display->refreshRateSelector().getActiveMode();
     const Fps activeRefreshRate = activeMode.fps;
-    mRefreshRateStats =
-            std::make_unique<RefreshRateStats>(*mTimeStats, activeRefreshRate, hal::PowerMode::OFF);
-
-    mVsyncConfiguration = getFactory().createVsyncConfiguration(activeRefreshRate);
 
     FeatureFlags features;
 
@@ -4430,12 +4529,14 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
     if (mBackpressureGpuComposition) {
         features |= Feature::kBackpressureGpuComposition;
     }
-
-    auto modulatorPtr = sp<VsyncModulator>::make(mVsyncConfiguration->getCurrentConfigs());
+    if (getHwComposer().getComposer()->isSupported(
+                Hwc2::Composer::OptionalFeature::ExpectedPresentTime)) {
+        features |= Feature::kExpectedPresentTime;
+    }
 
     mScheduler = std::make_unique<Scheduler>(static_cast<ICompositor&>(*this),
                                              static_cast<ISchedulerCallback&>(*this), features,
-                                             std::move(modulatorPtr),
+                                             getFactory(), activeRefreshRate, *mTimeStats,
                                              static_cast<IVsyncTrackerCallback&>(*this));
     mScheduler->registerDisplay(display->getPhysicalId(), display->holdRefreshRateSelector());
     if (FlagManager::getInstance().vrr_config()) {
@@ -4443,7 +4544,7 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
     }
     mScheduler->startTimers();
 
-    const auto configs = mVsyncConfiguration->getCurrentConfigs();
+    const auto configs = mScheduler->getVsyncConfiguration().getCurrentConfigs();
 
     mAppConnectionHandle =
             mScheduler->createEventThread(Scheduler::Cycle::Render,
@@ -4463,12 +4564,6 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
             sp<RegionSamplingThread>::make(*this,
                                            RegionSamplingThread::EnvironmentTimingTunables());
     mFpsReporter = sp<FpsReporter>::make(*mFrameTimeline, *this);
-}
-
-void SurfaceFlinger::updatePhaseConfiguration(Fps refreshRate) {
-    mVsyncConfiguration->setRefreshRateFps(refreshRate);
-    mScheduler->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs(),
-                                  refreshRate.getPeriod());
 }
 
 void SurfaceFlinger::doCommitTransactions() {
@@ -4873,7 +4968,7 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
         if (mQtiSFExtnIntf->qtiIsFrameEarly(layer->qtiGetSmomoLayerStackId(), layer->getSequence(),
                                             desiredPresentTime.ns())) {
             ready = TransactionReadiness::NotReady;
-            return false;
+            return TraverseBuffersReturnValues::STOP_TRAVERSAL;
         }
         /* QTI_END */
 
@@ -4986,6 +5081,16 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
             ready = TransactionReadiness::NotReady;
             return TraverseBuffersReturnValues::STOP_TRAVERSAL;
         }
+
+        /* QTI_BEGIN */
+        sp<Layer> layerHandle = LayerHandle::getLayer(s.surface);
+        TimePoint desiredPresentTime = TimePoint::fromNs(transaction.desiredPresentTime);
+        if (mQtiSFExtnIntf->qtiIsFrameEarly(layerHandle->qtiGetSmomoLayerStackId(),
+                                            layerHandle->getSequence(), desiredPresentTime.ns())) {
+            ready = TransactionReadiness::NotReady;
+            return TraverseBuffersReturnValues::STOP_TRAVERSAL;
+        }
+        /* QTI_END */
 
         const bool acquireFenceAvailable = s.bufferData &&
                 s.bufferData->flags.test(BufferData::BufferDataChange::fenceChanged) &&
@@ -6292,7 +6397,7 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
 
     if (displayId == mActiveDisplayId) {
         mTimeStats->setPowerMode(mode);
-        mRefreshRateStats->setPowerMode(mode);
+        mScheduler->setActiveDisplayPowerModeForRefreshRateStats(mode);
     }
 
     /* QTI_BEGIN */
@@ -6461,10 +6566,6 @@ void SurfaceFlinger::dumpScheduler(std::string& result) const {
     dumper.dump("debugDisplayModeSetByBackdoor"sv, mDebugDisplayModeSetByBackdoor);
     dumper.eol();
 
-    mRefreshRateStats->dump(result);
-    dumper.eol();
-
-    mVsyncConfiguration->dump(result);
     StringAppendF(&result,
                   "         present offset: %9" PRId64 " ns\t        VSYNC period: %9" PRId64
                   " ns\n\n",
@@ -7753,7 +7854,7 @@ void SurfaceFlinger::kernelTimerChanged(bool expired) {
     if (!updateOverlay) return;
 
     // Update the overlay on the main thread to avoid race conditions with
-    // RefreshRateSelector::getActiveMode.
+    // RefreshRateSelector::getActiveMode
     static_cast<void>(mScheduler->schedule([=, this] {
         const auto display = FTL_FAKE_GUARD(mStateLock, getDefaultDisplayDeviceLocked());
         if (!display) {
@@ -8286,7 +8387,7 @@ void SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
     bool hasProtectedLayer = false;
     if (allowProtected && supportsProtected) {
         hasProtectedLayer = mScheduler
-                                    ->schedule([=]() {
+                                    ->schedule([=, this]() {
                                         bool protectedLayerFound = false;
                                         auto layers = getLayerSnapshots();
                                         for (auto& [layer, layerFe] : layers) {
@@ -8732,7 +8833,7 @@ status_t SurfaceFlinger::applyRefreshRateSelectorPolicy(
     }
     /* QTI_END */
     
-    setDesiredMode({std::move(preferredMode), .emitEvent = true}, force);
+    setDesiredMode({std::move(preferredMode), .emitEvent = true, .force = force});
 
     /* QTI_BEGIN */
     mQtiSFExtnIntf->qtiSetRefreshRates(displayId);
@@ -9003,7 +9104,8 @@ uint32_t SurfaceFlinger::getMaxAcquiredBufferCountForCurrentRefreshRate(uid_t ui
 }
 
 int SurfaceFlinger::getMaxAcquiredBufferCountForRefreshRate(Fps refreshRate) const {
-    const auto vsyncConfig = mVsyncConfiguration->getConfigsForRefreshRate(refreshRate).late;
+    const auto vsyncConfig =
+            mScheduler->getVsyncConfiguration().getConfigsForRefreshRate(refreshRate).late;
     const auto presentLatency = vsyncConfig.appWorkDuration + vsyncConfig.sfWorkDuration;
     return calculateMaxAcquiredBufferCount(refreshRate, presentLatency);
 }
