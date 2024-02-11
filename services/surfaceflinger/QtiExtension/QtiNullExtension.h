@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -145,6 +145,9 @@ public:
     bool qtiFbScalingOnDisplayChange(const wp<IBinder>& displayToken, sp<DisplayDevice> display,
                                      const DisplayDeviceState& drawingState) override;
     void qtiFbScalingOnPowerChange(sp<DisplayDevice> display) override;
+    void qtiDumpMini(std::string& result) override;
+    status_t qtiDoDumpContinuous(int fd, const DumpArgs& args) override;
+    void qtiDumpDrawCycle(bool prePrepare) override;
 
 private:
     SurfaceFlinger* mQtiFlinger = nullptr;

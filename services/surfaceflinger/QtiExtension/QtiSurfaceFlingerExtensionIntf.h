@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -15,6 +15,7 @@ class DisplayExtnIntf;
 } // namespace composer
 using android::scheduler::VsyncConfiguration;
 namespace android::surfaceflingerextension {
+using DumpArgs = Vector<String16>;
 
 class QtiHWComposerExtensionIntf;
 
@@ -178,6 +179,9 @@ public:
                                              sp<DisplayDevice> display,
                                              const DisplayDeviceState& drawingState) = 0;
     virtual void qtiFbScalingOnPowerChange(sp<DisplayDevice> display) = 0;
+    virtual void qtiDumpMini(std::string& result) = 0;
+    virtual status_t qtiDoDumpContinuous(int fd, const DumpArgs& args) = 0;
+    virtual void qtiDumpDrawCycle(bool prePrepare) = 0;
 };
 
 } // namespace android::surfaceflingerextension

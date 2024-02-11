@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
@@ -28,9 +28,14 @@
 #include <compositionengine/impl/Display.h>
 #include <ui/DisplayStatInfo.h>
 #include <vector>
+#include <sys/stat.h>
+#include <fstream>
+#include <ui/GraphicBufferAllocator.h>
+#include <layerproto/LayerProtoParser.h>
 
 using aidl::vendor::qti::hardware::display::config::IDisplayConfig;
 using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+using android::base::StringAppendF;
 
 using android::compositionengine::Display;
 using android::compositionengineextension::QtiRenderSurfaceExtension;
@@ -2136,6 +2141,164 @@ void QtiSurfaceFlingerExtension::qtiFbScalingOnPowerChange(sp<DisplayDevice> dis
     // releases the FrameBuffer that was acquired as part of queueBuffer()
     compositionDisplay->getRenderSurface()->onPresentDisplayCompleted();
     mQtiDisplaySizeChanged = false;
+}
+
+void QtiSurfaceFlingerExtension::qtiDumpMini(std::string& result) {
+    Mutex::Autolock lock(mQtiFlinger->mStateLock);
+    for (const auto& [token, display] : mQtiFlinger->mDisplays) {
+        const auto displayId = PhysicalDisplayId::tryCast(display->getId());
+        if (!displayId) {
+            continue;
+        }
+        StringAppendF(&result, "Display %s HWC layers:\n", to_string(*displayId).c_str());
+        Layer::miniDumpHeader(result);
+        const DisplayDevice& displayDevice = *display;
+        mQtiFlinger->mDrawingState.traverseInZOrder(
+                        [&](Layer* layer) { layer->miniDump(result, displayDevice); });
+        result.append("\n");
+    }
+
+    result.append("h/w composer state:\n");
+    StringAppendF(&result, "  h/w composer %s\n",
+                  mQtiFlinger->mDebugDisableHWC ? "disabled" : "enabled");
+    mQtiFlinger->getHwComposer().dump(result);
+}
+
+status_t QtiSurfaceFlingerExtension::qtiDoDumpContinuous(int fd, const DumpArgs& args) {
+    // Format: adb shell dumpsys SurfaceFlinger --file --nolimit
+    size_t numArgs = args.size();
+    status_t err = NO_ERROR;
+
+    if (args[0] == String16("--allocated_buffers")) {
+        std::string dumpsys;
+        GraphicBufferAllocator& alloc(GraphicBufferAllocator::get());
+        alloc.dump(dumpsys);
+        write(fd, dumpsys.c_str(), dumpsys.size());
+        return NO_ERROR;
+    }
+
+    Mutex::Autolock _l(mFileDump.lock);
+    // Same command is used to start and end dump.
+    mFileDump.running = !mFileDump.running;
+    // selection of full dumpsys or not (defualt, dumpsys will be minimum required)
+    // Format: adb shell dumpsys SurfaceFlinger --file --nolimit --full-dump
+    if (mFileDump.running) {
+        std::ofstream ofs;
+        ofs.open(mFileDump.name, std::ofstream::out | std::ofstream::trunc);
+        if (!ofs) {
+            mFileDump.running = false;
+            err = UNKNOWN_ERROR;
+        } else {
+            ofs.close();
+            mFileDump.position = 0;
+            if (numArgs >= 2 && (args[1] == String16("--nolimit"))) {
+               mFileDump.noLimit = true;
+               if (numArgs == 3 && args[2] == String16("--full-dump"))
+                  mFileDump.fullDump = true;
+            } else {
+                mFileDump.noLimit = false;
+                mFileDump.fullDump = false;
+            }
+        }
+    }
+
+    std::string result;
+    result += mFileDump.running ? "Start" : "End";
+    result += mFileDump.noLimit ? " unlimited" : " fixed limit";
+    result += " dumpsys to file : ";
+    result += mFileDump.name;
+    result += "\n";
+    write(fd, result.c_str(), result.size());
+
+    return NO_ERROR;
+}
+
+void QtiSurfaceFlingerExtension::qtiDumpDrawCycle(bool prePrepare) {
+    Mutex::Autolock _l(mFileDump.lock);
+
+    // User might stop dump collection in middle of prepare & commit.
+    // Collect dumpsys again after commit and replace.
+    if (!mFileDump.running && !mFileDump.replaceAfterCommit) {
+        return;
+    }
+    Vector<String16> args;
+    std::string dumpsys;
+    {
+    if (mFileDump.fullDump) {
+        Mutex::Autolock lock(mQtiFlinger->mStateLock);
+        std::string compositionLayers;
+        StringAppendF(&compositionLayers, "Composition layers\n");
+        mQtiFlinger->mDrawingState.traverseInZOrder([&](Layer* layer) {
+            auto* compositionState = layer->getCompositionState();
+            if (!compositionState || !compositionState->isVisible) return;
+            android::base::StringAppendF(&compositionLayers, "* Layer %p (%s)\n", layer,
+                                            layer->getDebugName() ? layer->getDebugName()
+                                                                : "<unknown>");
+            compositionState->dump(compositionLayers);
+        });
+        mQtiFlinger->dumpAllLocked(args, compositionLayers, dumpsys);
+    } else {
+        qtiDumpMini(dumpsys);
+    }
+    }
+
+    if (mFileDump.fullDump) {
+        LayersTraceFileProto traceFileProto = mQtiFlinger->mLayerTracing.createTraceFileProto();
+        LayersTraceProto* layersTrace = traceFileProto.add_entry();
+        LayersProto layersProto = mQtiFlinger->dumpDrawingStateProto(LayerTracing::TRACE_ALL);
+        layersTrace->mutable_layers()->Swap(&layersProto);
+        auto displayProtos = mQtiFlinger->dumpDisplayProto();
+        layersTrace->mutable_displays()->Swap(&displayProtos);
+        const auto layerTree = LayerProtoParser::generateLayerTree(layersTrace->layers());
+        dumpsys.append(LayerProtoParser::layerTreeToString(layerTree));
+        dumpsys.append("\n");
+        dumpsys.append("Offscreen Layers:\n");
+        for (Layer* offscreenLayer : mQtiFlinger->mOffscreenLayers) {
+            offscreenLayer->traverse(LayerVector::StateSet::Drawing,
+                                    [&](Layer* layer) {
+            layer->dumpOffscreenDebugInfo(dumpsys);});
+        }
+    }
+
+    char timeStamp[32];
+    char dataSize[32];
+    char hms[32];
+    long millis;
+    struct timeval tv;
+    struct tm *ptm;
+    gettimeofday(&tv, NULL);
+    ptm = localtime(&tv.tv_sec);
+    strftime (hms, sizeof (hms), "%H:%M:%S", ptm);
+    millis = tv.tv_usec / 1000;
+    snprintf(timeStamp, sizeof(timeStamp), "Timestamp: %s.%03ld", hms, millis);
+    snprintf(dataSize, sizeof(dataSize), "Size: %8zu", dumpsys.size());
+    std::fstream fs;
+    fs.open(mFileDump.name, std::ios::app);
+    if (!fs) {
+        ALOGE("Failed to open %s file for dumpsys", mFileDump.name);
+        return;
+    }
+    // Format:
+    //    | start code | after commit? | time stamp | dump size | dump data |
+    fs.seekp(mFileDump.position, std::ios::beg);
+    fs << "#@#@-- DUMPSYS START --@#@#" << std::endl;
+    fs << "PostCommit: " << ( prePrepare ? "false" : "true" ) << std::endl;
+    fs << timeStamp << std::endl;
+    fs << dataSize << std::endl;
+    fs << dumpsys << std::endl;
+
+    if (prePrepare) {
+        mFileDump.replaceAfterCommit = true;
+    } else {
+        mFileDump.replaceAfterCommit = false;
+        // Reposition only after commit.
+        // Keep file size to appx 20 MB limit by default, wrap around if exceeds.
+        mFileDump.position = fs.tellp();
+        if (!mFileDump.noLimit && (mFileDump.position > (20 * 1024 * 1024))) {
+            mFileDump.position = 0;
+        }
+    }
+    fs.close();
 }
 
 void QtiSurfaceFlingerExtension::qtiAllowIdleFallback() {

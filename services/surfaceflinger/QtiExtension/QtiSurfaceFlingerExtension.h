@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -253,7 +253,20 @@ public:
     bool qtiFbScalingOnDisplayChange(const wp<IBinder>& displayToken, sp<DisplayDevice> display,
                                      const DisplayDeviceState& drawingState) override;
     void qtiFbScalingOnPowerChange(sp<DisplayDevice> display) override;
+    void qtiDumpMini(std::string& result) override;
+    status_t qtiDoDumpContinuous(int fd, const DumpArgs& args) override;
+    void qtiDumpDrawCycle(bool prePrepare) override;
     void qtiAllowIdleFallback();
+
+    struct {
+      Mutex lock;
+      const char *name = "/data/misc/wmtrace/dumpsys.txt";
+      bool running = false;
+      bool noLimit = false;
+      bool fullDump = false;
+      bool replaceAfterCommit = false;
+      long long int position = 0;
+    } mFileDump;
 
 private:
     SmomoIntf* qtiGetSmomoInstance(const uint32_t layerStackId) const;
