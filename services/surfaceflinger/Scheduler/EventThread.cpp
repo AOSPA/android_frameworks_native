@@ -405,6 +405,9 @@ VsyncEventData EventThread::getLatestVsyncEventData(
     }();
     generateFrameTimeline(vsyncEventData, frameInterval.ns(), systemTime(SYSTEM_TIME_MONOTONIC),
                           presentTime, deadline);
+    if (FlagManager::getInstance().vrr_config()) {
+        mCallback.onExpectedPresentTimePosted(TimePoint::fromNs(presentTime));
+    }
     return vsyncEventData;
 }
 
@@ -734,6 +737,11 @@ void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
             /* QTI_BEGIN */
         }
         /* QTI_END */
+    }
+    if (event.header.type == DisplayEventReceiver::DISPLAY_EVENT_VSYNC &&
+        FlagManager::getInstance().vrr_config()) {
+        mCallback.onExpectedPresentTimePosted(
+                TimePoint::fromNs(event.vsync.vsyncData.preferredExpectedPresentationTime()));
     }
 }
 
