@@ -1866,7 +1866,7 @@ void QtiSurfaceFlingerExtension::qtiNotifyResolutionSwitch(int displayId, int32_
         const int32_t modePeriod = static_cast<int32_t>(modeFPS.getPeriodNsecs());
 
         if (modeWidth == width && modeHeight == height && vsyncPeriod == modePeriod) {
-            newModeId = static_cast<int32_t>(mode->getId().value());
+            newModeId = static_cast<int32_t>(ftl::to_underlying(mode->getId()));
             break;
         }
     }

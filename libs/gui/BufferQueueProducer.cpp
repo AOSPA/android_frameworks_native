@@ -917,6 +917,9 @@ status_t BufferQueueProducer::queueBuffer(int slot,
     int callbackTicket = 0;
     uint64_t currentFrameNumber = 0;
     BufferItem item;
+    int connectedApi;
+    sp<Fence> lastQueuedFence;
+
     { // Autolock scope
         std::lock_guard<std::mutex> lock(mCore->mMutex);
 
@@ -1086,6 +1089,13 @@ status_t BufferQueueProducer::queueBuffer(int slot,
         callbackTicket = mNextCallbackTicket++;
 
         VALIDATE_CONSISTENCY();
+
+        connectedApi = mCore->mConnectedApi;
+        lastQueuedFence = std::move(mLastQueueBufferFence);
+
+        mLastQueueBufferFence = std::move(acquireFence);
+        mLastQueuedCrop = item.mCrop;
+        mLastQueuedTransform = item.mTransform;
     } // Autolock scope
 
     // It is okay not to clear the GraphicBuffer when the consumer is SurfaceFlinger because
@@ -1109,9 +1119,6 @@ status_t BufferQueueProducer::queueBuffer(int slot,
     // Call back without the main BufferQueue lock held, but with the callback
     // lock held so we can ensure that callbacks occur in order
 
-    int connectedApi;
-    sp<Fence> lastQueuedFence;
-
     { // scope for the lock
         std::unique_lock<std::mutex> lock(mCallbackMutex);
         while (callbackTicket != mCurrentCallbackTicket) {
@@ -1123,13 +1130,6 @@ status_t BufferQueueProducer::queueBuffer(int slot,
         } else if (frameReplacedListener != nullptr) {
             frameReplacedListener->onFrameReplaced(item);
         }
-
-        connectedApi = mCore->mConnectedApi;
-        lastQueuedFence = std::move(mLastQueueBufferFence);
-
-        mLastQueueBufferFence = std::move(acquireFence);
-        mLastQueuedCrop = item.mCrop;
-        mLastQueuedTransform = item.mTransform;
 
         ++mCurrentCallbackTicket;
         mCallbackCondition.notify_all();
@@ -1683,9 +1683,10 @@ status_t BufferQueueProducer::setLegacyBufferDrop(bool drop) {
 status_t BufferQueueProducer::getLastQueuedBuffer(sp<GraphicBuffer>* outBuffer,
         sp<Fence>* outFence, float outTransformMatrix[16]) {
     ATRACE_CALL();
-    BQ_LOGV("getLastQueuedBuffer");
 
     std::lock_guard<std::mutex> lock(mCore->mMutex);
+    BQ_LOGV("getLastQueuedBuffer, slot=%d", mCore->mLastQueuedSlot);
+
     if (mCore->mLastQueuedSlot == BufferItem::INVALID_BUFFER_SLOT) {
         *outBuffer = nullptr;
         *outFence = Fence::NO_FENCE;
@@ -1709,10 +1710,11 @@ status_t BufferQueueProducer::getLastQueuedBuffer(sp<GraphicBuffer>* outBuffer,
 status_t BufferQueueProducer::getLastQueuedBuffer(sp<GraphicBuffer>* outBuffer, sp<Fence>* outFence,
                                                   Rect* outRect, uint32_t* outTransform) {
     ATRACE_CALL();
-    BQ_LOGV("getLastQueuedBuffer");
 
     std::lock_guard<std::mutex> lock(mCore->mMutex);
-    if (mCore->mLastQueuedSlot == BufferItem::INVALID_BUFFER_SLOT) {
+    BQ_LOGV("getLastQueuedBuffer, slot=%d", mCore->mLastQueuedSlot);
+    if (mCore->mLastQueuedSlot == BufferItem::INVALID_BUFFER_SLOT ||
+        mSlots[mCore->mLastQueuedSlot].mBufferState.isDequeued()) {
         *outBuffer = nullptr;
         *outFence = Fence::NO_FENCE;
         return NO_ERROR;
