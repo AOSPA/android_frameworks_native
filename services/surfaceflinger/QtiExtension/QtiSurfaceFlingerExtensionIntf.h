@@ -53,7 +53,7 @@ public:
                                                           uint32_t layerStackId) = 0;
     virtual bool qtiIsInternalPresentationDisplays() = 0;
     virtual bool qtiIsWakeUpPresentationDisplays() = 0;
-    virtual void qtiResetEarlyWakeUp() = 0;
+    virtual void qtiResetSFExtn() = 0;
     virtual void qtiSetDisplayExtnActiveConfig(uint32_t displayId, uint32_t activeConfigId) = 0;
     virtual void qtiUpdateDisplayExtension(uint32_t displayId, uint32_t configId,
                                            bool connected) = 0;

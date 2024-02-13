@@ -26,7 +26,7 @@ public:
                                                   uint32_t layerStackId) override;
     bool qtiIsInternalPresentationDisplays() override;
     bool qtiIsWakeUpPresentationDisplays() override;
-    void qtiResetEarlyWakeUp() override;
+    void qtiResetSFExtn() override;
     void qtiSetDisplayExtnActiveConfig(uint32_t displayId, uint32_t activeConfigId) override;
     void qtiUpdateDisplayExtension(uint32_t displayId, uint32_t configId, bool connected) override;
     void qtiUpdateDisplaysList(sp<DisplayDevice> display, bool addDisplay) override;

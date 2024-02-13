@@ -126,7 +126,7 @@ public:
                                                   uint32_t layerStackId) override;
     bool qtiIsInternalPresentationDisplays() { return mQtiInternalPresentationDisplays; };
     bool qtiIsWakeUpPresentationDisplays() { return mQtiWakeUpPresentationDisplays; };
-    void qtiResetEarlyWakeUp() override;
+    void qtiResetSFExtn() override;
     void qtiSetDisplayExtnActiveConfig(uint32_t displayId, uint32_t activeConfigId) override;
     void qtiUpdateDisplayExtension(uint32_t displayId, uint32_t configId, bool connected) override;
     void qtiUpdateDisplaysList(sp<DisplayDevice> display, bool addDisplay) override;
@@ -274,6 +274,7 @@ private:
     float mQtiThermalLevelFps = 0;
     float mQtiLastCachedFps = 0;
     bool mQtiAllowThermalFpsChange = false;
+    bool mQtiRequestedContentFps = false;
 
     std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
     std::shared_ptr<DisplayConfigAidlCallbackHandler> mQtiAidlCallbackHandler = nullptr;

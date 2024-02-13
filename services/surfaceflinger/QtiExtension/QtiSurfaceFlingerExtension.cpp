@@ -309,8 +309,9 @@ void QtiSurfaceFlingerExtension::qtiHandlePresentationDisplaysEarlyWakeup(size_t
     mQtiWakeUpPresentationDisplays = false;
 }
 
-void QtiSurfaceFlingerExtension::qtiResetEarlyWakeUp() {
+void QtiSurfaceFlingerExtension::qtiResetSFExtn() {
     mQtiSendEarlyWakeUp = false;
+    mQtiRequestedContentFps = false;
 }
 
 void QtiSurfaceFlingerExtension::qtiSetDisplayExtnActiveConfig(uint32_t displayId,
@@ -576,8 +577,9 @@ void QtiSurfaceFlingerExtension::qtiNotifyDisplayUpdateImminent() {
 }
 
 void QtiSurfaceFlingerExtension::qtiSetContentFps(uint32_t contentFps) {
-    if (mQtiFlinger->mBootFinished && mQtiDisplayExtnIntf &&
+    if (mQtiFlinger->mBootFinished && mQtiDisplayExtnIntf && !mQtiRequestedContentFps &&
         contentFps != mQtiCurrentFps) {
+        mQtiRequestedContentFps = true;
         mQtiSentInitialFps = mQtiDisplayExtnIntf->SetContentFps(contentFps) == 0;
 
         if (mQtiSentInitialFps) {

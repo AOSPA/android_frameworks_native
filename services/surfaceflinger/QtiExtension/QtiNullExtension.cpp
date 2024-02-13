@@ -33,7 +33,7 @@ bool QtiNullExtension::qtiIsInternalPresentationDisplays() {
 bool QtiNullExtension::qtiIsWakeUpPresentationDisplays() {
     return false;
 }
-void QtiNullExtension::qtiResetEarlyWakeUp() {}
+void QtiNullExtension::qtiResetSFExtn() {}
 void QtiNullExtension::qtiSetDisplayExtnActiveConfig(uint32_t displayId, uint32_t activeConfigId) {}
 void QtiNullExtension::qtiUpdateDisplayExtension(uint32_t displayId, uint32_t configId,
                                                  bool connected) {}

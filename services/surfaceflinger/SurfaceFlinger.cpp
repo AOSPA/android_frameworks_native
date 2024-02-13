@@ -2594,7 +2594,7 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     mQtiSFExtnIntf->qtiUpdateFrameScheduler();
     mQtiSFExtnIntf->qtiSyncToDisplayHardware();
     // TODO(rmedel): Handle locking for early wake up
-    mQtiSFExtnIntf->qtiResetEarlyWakeUp();
+    mQtiSFExtnIntf->qtiResetSFExtn();
     /* QTI_END */
 
     // const Period vsyncPeriod = mScheduler->getVsyncSchedule()->period();
