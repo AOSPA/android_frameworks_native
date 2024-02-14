@@ -4088,8 +4088,10 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
     /* QTI_BEGIN */
     // Setting mRequestDisplayModeFlag as true and storing thread Id to avoid acquiring the same
     // mutex again in a single thread
-    mRequestDisplayModeFlag = true;
-    mFlagThread = std::this_thread::get_id();
+    if (std::this_thread::get_id() != mMainThreadId) {
+        mRequestDisplayModeFlag = true;
+        mFlagThread = std::this_thread::get_id();
+    }
     /* QTI_END */
 
     for (auto& request : modeRequests) {
@@ -4124,8 +4126,10 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
         }
     }
     /* QTI_BEGIN */
-    mRequestDisplayModeFlag = false;
-    mFlagThread = mMainThreadId;
+    if (std::this_thread::get_id() != mMainThreadId) {
+        mRequestDisplayModeFlag = false;
+        mFlagThread = mMainThreadId;
+    }
     /* QTI_END */
 }
 
