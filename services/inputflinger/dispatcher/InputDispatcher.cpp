@@ -121,11 +121,6 @@ constexpr nsecs_t SLOW_EVENT_PROCESSING_WARNING_TIMEOUT = 2000 * 1000000LL; // 2
 // Log a warning when an interception call takes longer than this to process.
 constexpr std::chrono::milliseconds SLOW_INTERCEPTION_THRESHOLD = 50ms;
 
-// Additional key latency in case a connection is still processing some motion events.
-// This will help with the case when a user touched a button that opens a new window,
-// and gives us the chance to dispatch the key to this new window.
-constexpr std::chrono::nanoseconds KEY_WAITING_FOR_EVENTS_TIMEOUT = 500ms;
-
 // Number of recent events to keep for debugging purposes.
 constexpr size_t RECENT_QUEUE_MAX_SIZE = 10;
 
@@ -434,15 +429,6 @@ std::unique_ptr<DispatchEntry> createDispatchEntry(const InputTarget& inputTarge
                                             firstPointerTransform, inputTarget.displayTransform,
                                             inputTarget.globalScaleFactor, uid, vsyncId, windowId);
     return dispatchEntry;
-}
-
-status_t openInputChannelPair(const std::string& name, std::shared_ptr<InputChannel>& serverChannel,
-                              std::unique_ptr<InputChannel>& clientChannel) {
-    std::unique_ptr<InputChannel> uniqueServerChannel;
-    status_t result = InputChannel::openInputChannelPair(name, uniqueServerChannel, clientChannel);
-
-    serverChannel = std::move(uniqueServerChannel);
-    return result;
 }
 
 template <typename T>
@@ -815,6 +801,20 @@ int32_t getUserActivityEventType(const EventEntry& eventEntry) {
             LOG_ALWAYS_FATAL("%s events are not user activity",
                              ftl::enum_string(eventEntry.type).c_str());
         }
+    }
+}
+
+std::pair<bool /*cancelPointers*/, bool /*cancelNonPointers*/> expandCancellationMode(
+        CancelationOptions::Mode mode) {
+    switch (mode) {
+        case CancelationOptions::Mode::CANCEL_ALL_EVENTS:
+            return {true, true};
+        case CancelationOptions::Mode::CANCEL_POINTER_EVENTS:
+            return {true, false};
+        case CancelationOptions::Mode::CANCEL_NON_POINTER_EVENTS:
+            return {false, true};
+        case CancelationOptions::Mode::CANCEL_FALLBACK_EVENTS:
+            return {false, true};
     }
 }
 
@@ -1201,7 +1201,7 @@ bool InputDispatcher::isStaleEvent(nsecs_t currentTime, const EventEntry& entry)
  * Return true if the events preceding this incoming motion event should be dropped
  * Return false otherwise (the default behaviour)
  */
-bool InputDispatcher::shouldPruneInboundQueueLocked(const MotionEntry& motionEntry) {
+bool InputDispatcher::shouldPruneInboundQueueLocked(const MotionEntry& motionEntry) const {
     const bool isPointerDownEvent = motionEntry.action == AMOTION_EVENT_ACTION_DOWN &&
             isFromSource(motionEntry.source, AINPUT_SOURCE_CLASS_POINTER);
 
@@ -1250,16 +1250,6 @@ bool InputDispatcher::shouldPruneInboundQueueLocked(const MotionEntry& motionEnt
         }
     }
 
-    // Prevent getting stuck: if we have a pending key event, and some motion events that have not
-    // yet been processed by some connections, the dispatcher will wait for these motion
-    // events to be processed before dispatching the key event. This is because these motion events
-    // may cause a new window to be launched, which the user might expect to receive focus.
-    // To prevent waiting forever for such events, just send the key to the currently focused window
-    if (isPointerDownEvent && mKeyIsWaitingForEventsTimeout) {
-        ALOGD("Received a new pointer down event, stop waiting for events to process and "
-              "just send the pending key event to the focused window.");
-        mKeyIsWaitingForEventsTimeout = now();
-    }
     return false;
 }
 
@@ -1306,6 +1296,20 @@ bool InputDispatcher::enqueueInboundEventLocked(std::unique_ptr<EventEntry> newE
             if (shouldPruneInboundQueueLocked(motionEntry)) {
                 mNextUnblockedEvent = mInboundQueue.back();
                 needWake = true;
+            }
+
+            const bool isPointerDownEvent = motionEntry.action == AMOTION_EVENT_ACTION_DOWN &&
+                    isFromSource(motionEntry.source, AINPUT_SOURCE_CLASS_POINTER);
+            if (isPointerDownEvent && mKeyIsWaitingForEventsTimeout) {
+                // Prevent waiting too long for unprocessed events: if we have a pending key event,
+                // and some other events have not yet been processed, the dispatcher will wait for
+                // these events to be processed before dispatching the key event. This is because
+                // the unprocessed events may cause the focus to change (for example, by launching a
+                // new window or tapping a different window). To prevent waiting too long, we force
+                // the key to be sent to the currently focused window when a new tap comes in.
+                ALOGD("Received a new pointer down event, stop waiting for events to process and "
+                      "just send the pending key event to the currently focused window.");
+                mKeyIsWaitingForEventsTimeout = now();
             }
             break;
         }
@@ -2109,7 +2113,9 @@ void InputDispatcher::cancelEventsForAnrLocked(const std::shared_ptr<Connection>
     if (connection->status == Connection::Status::NORMAL) {
         CancelationOptions options(CancelationOptions::Mode::CANCEL_ALL_EVENTS,
                                    "application not responding");
-        synthesizeCancelationEventsForConnectionLocked(connection, options);
+        synthesizeCancelationEventsForConnectionLocked(connection, options,
+                                                       getWindowHandleLocked(
+                                                               connection->getToken()));
     }
 }
 
@@ -2167,7 +2173,8 @@ bool InputDispatcher::shouldWaitToSendKeyLocked(nsecs_t currentTime,
         // Start the timer
         // Wait to send key because there are unprocessed events that may cause focus to change
         mKeyIsWaitingForEventsTimeout = currentTime +
-                std::chrono::duration_cast<std::chrono::nanoseconds>(KEY_WAITING_FOR_EVENTS_TIMEOUT)
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        mPolicy.getKeyWaitingForEventsTimeout())
                         .count();
         return true;
     }
@@ -3410,7 +3417,13 @@ void InputDispatcher::enqueueDispatchEntryAndStartDispatchCycleLocked(
 void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connection>& connection,
                                                  std::shared_ptr<const EventEntry> eventEntry,
                                                  const InputTarget& inputTarget) {
-    // TODO(b/210460522): Verify all targets excluding global monitors are associated with a window.
+    const bool isKeyOrMotion = eventEntry->type == EventEntry::Type::KEY ||
+            eventEntry->type == EventEntry::Type::MOTION;
+    if (isKeyOrMotion && !inputTarget.windowHandle && !connection->monitor) {
+        LOG(FATAL) << "All InputTargets for non-monitors must be associated with a window; target: "
+                   << inputTarget << " connection: " << connection->getInputChannelName()
+                   << " entry: " << eventEntry->getDescription();
+    }
     // This is a new event.
     // Enqueue a new dispatch entry onto the outbound queue for this connection.
     std::unique_ptr<DispatchEntry> dispatchEntry =
@@ -4059,22 +4072,78 @@ int InputDispatcher::handleReceiveCallback(int events, sp<IBinder> connectionTok
 
 void InputDispatcher::synthesizeCancelationEventsForAllConnectionsLocked(
         const CancelationOptions& options) {
-    for (const auto& [token, connection] : mConnectionsByToken) {
-        synthesizeCancelationEventsForConnectionLocked(connection, options);
+    // Cancel windows (i.e. non-monitors).
+    // A channel must have at least one window to receive any input. If a window was removed, the
+    // event streams directed to the window will already have been canceled during window removal.
+    // So there is no need to generate cancellations for connections without any windows.
+    const auto [cancelPointers, cancelNonPointers] = expandCancellationMode(options.mode);
+    // Generate cancellations for touched windows first. This is to avoid generating cancellations
+    // through a non-touched window if there are more than one window for an input channel.
+    if (cancelPointers) {
+        for (const auto& [displayId, touchState] : mTouchStatesByDisplay) {
+            if (options.displayId.has_value() && options.displayId != displayId) {
+                continue;
+            }
+            for (const auto& touchedWindow : touchState.windows) {
+                synthesizeCancelationEventsForWindowLocked(touchedWindow.windowHandle, options);
+            }
+        }
     }
+    // Follow up by generating cancellations for all windows, because we don't explicitly track
+    // the windows that have an ongoing focus event stream.
+    if (cancelNonPointers) {
+        for (const auto& [_, handles] : mWindowHandlesByDisplay) {
+            for (const auto& windowHandle : handles) {
+                synthesizeCancelationEventsForWindowLocked(windowHandle, options);
+            }
+        }
+    }
+
+    // Cancel monitors.
+    synthesizeCancelationEventsForMonitorsLocked(options);
 }
 
 void InputDispatcher::synthesizeCancelationEventsForMonitorsLocked(
         const CancelationOptions& options) {
     for (const auto& [_, monitors] : mGlobalMonitorsByDisplay) {
         for (const Monitor& monitor : monitors) {
-            synthesizeCancelationEventsForConnectionLocked(monitor.connection, options);
+            synthesizeCancelationEventsForConnectionLocked(monitor.connection, options,
+                                                           /*window=*/nullptr);
         }
     }
 }
 
+void InputDispatcher::synthesizeCancelationEventsForWindowLocked(
+        const sp<WindowInfoHandle>& windowHandle, const CancelationOptions& options,
+        const std::shared_ptr<Connection>& connection) {
+    if (windowHandle == nullptr) {
+        LOG(FATAL) << __func__ << ": Window handle must not be null";
+    }
+    if (connection) {
+        // The connection can be optionally provided to avoid multiple lookups.
+        if (windowHandle->getToken() != connection->getToken()) {
+            LOG(FATAL) << __func__
+                       << ": Wrong connection provided for window: " << windowHandle->getName();
+        }
+    }
+
+    std::shared_ptr<Connection> resolvedConnection =
+            connection ? connection : getConnectionLocked(windowHandle->getToken());
+    if (!resolvedConnection) {
+        LOG(DEBUG) << __func__ << "No connection found for window: " << windowHandle->getName();
+        return;
+    }
+    synthesizeCancelationEventsForConnectionLocked(resolvedConnection, options, windowHandle);
+}
+
 void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
-        const std::shared_ptr<Connection>& connection, const CancelationOptions& options) {
+        const std::shared_ptr<Connection>& connection, const CancelationOptions& options,
+        const sp<WindowInfoHandle>& window) {
+    if (!connection->monitor && window == nullptr) {
+        LOG(FATAL) << __func__
+                   << ": Cannot send event to non-monitor channel without a window - channel: "
+                   << connection->getInputChannelName();
+    }
     if (connection->status != Connection::Status::NORMAL) {
         return;
     }
@@ -4111,10 +4180,7 @@ void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
         switch (cancelationEventEntry->type) {
             case EventEntry::Type::KEY: {
                 const auto& keyEntry = static_cast<const KeyEntry&>(*cancelationEventEntry);
-                const std::optional<int32_t> targetDisplay = keyEntry.displayId != ADISPLAY_ID_NONE
-                        ? std::make_optional(keyEntry.displayId)
-                        : std::nullopt;
-                if (const auto& window = getWindowHandleLocked(token, targetDisplay); window) {
+                if (window) {
                     addWindowTargetLocked(window, InputTarget::DispatchMode::AS_IS,
                                           /*targetFlags=*/{}, keyEntry.downTime, targets);
                 } else {
@@ -4125,11 +4191,7 @@ void InputDispatcher::synthesizeCancelationEventsForConnectionLocked(
             }
             case EventEntry::Type::MOTION: {
                 const auto& motionEntry = static_cast<const MotionEntry&>(*cancelationEventEntry);
-                const std::optional<int32_t> targetDisplay =
-                        motionEntry.displayId != ADISPLAY_ID_NONE
-                        ? std::make_optional(motionEntry.displayId)
-                        : std::nullopt;
-                if (const auto& window = getWindowHandleLocked(token, targetDisplay); window) {
+                if (window) {
                     std::bitset<MAX_POINTER_ID + 1> pointerIds;
                     for (uint32_t pointerIndex = 0; pointerIndex < motionEntry.getPointerCount();
                          pointerIndex++) {
@@ -4203,7 +4265,12 @@ void InputDispatcher::synthesizePointerDownEventsForConnectionLocked(
               connection->getInputChannelName().c_str(), downEvents.size());
     }
 
-    sp<WindowInfoHandle> windowHandle = getWindowHandleLocked(connection->getToken());
+    const auto [_, touchedWindowState, displayId] =
+            findTouchStateWindowAndDisplayLocked(connection->getToken());
+    if (touchedWindowState == nullptr) {
+        LOG(FATAL) << __func__ << ": Touch state is out of sync: No touched window for token";
+    }
+    const auto& windowHandle = touchedWindowState->windowHandle;
 
     const bool wasEmpty = connection->outboundQueue.empty();
     for (std::unique_ptr<EventEntry>& downEventEntry : downEvents) {
@@ -4254,17 +4321,6 @@ void InputDispatcher::synthesizePointerDownEventsForConnectionLocked(
     // If the outbound queue was previously empty, start the dispatch cycle going.
     if (wasEmpty && !connection->outboundQueue.empty()) {
         startDispatchCycleLocked(downTime, connection);
-    }
-}
-
-void InputDispatcher::synthesizeCancelationEventsForWindowLocked(
-        const sp<WindowInfoHandle>& windowHandle, const CancelationOptions& options) {
-    if (windowHandle != nullptr) {
-        std::shared_ptr<Connection> wallpaperConnection =
-                getConnectionLocked(windowHandle->getToken());
-        if (wallpaperConnection != nullptr) {
-            synthesizeCancelationEventsForConnectionLocked(wallpaperConnection, options);
-        }
     }
 }
 
@@ -4961,7 +5017,7 @@ std::unique_ptr<VerifiedInputEvent> InputDispatcher::verifyInputEvent(const Inpu
             break;
         }
         default: {
-            ALOGE("Cannot verify events of type %" PRId32, event.getType());
+            LOG(ERROR) << "Cannot verify events of type " << ftl::enum_string(event.getType());
             return nullptr;
         }
     }
@@ -5286,6 +5342,7 @@ void InputDispatcher::setInputWindowsLocked(
 
     // Copy old handles for release if they are no longer present.
     const std::vector<sp<WindowInfoHandle>> oldWindowHandles = getWindowHandlesLocked(displayId);
+    const sp<WindowInfoHandle> removedFocusedWindowHandle = getFocusedWindowHandleLocked(displayId);
 
     updateWindowHandlesForDisplayLocked(windowInfoHandles, displayId);
 
@@ -5294,7 +5351,7 @@ void InputDispatcher::setInputWindowsLocked(
     std::optional<FocusResolver::FocusChanges> changes =
             mFocusResolver.setInputWindows(displayId, windowHandles);
     if (changes) {
-        onFocusChangedLocked(*changes);
+        onFocusChangedLocked(*changes, removedFocusedWindowHandle);
     }
 
     std::unordered_map<int32_t, TouchState>::iterator stateIt =
@@ -5306,19 +5363,16 @@ void InputDispatcher::setInputWindowsLocked(
             if (getWindowHandleLocked(touchedWindow.windowHandle) == nullptr) {
                 LOG(INFO) << "Touched window was removed: " << touchedWindow.windowHandle->getName()
                           << " in display %" << displayId;
-                std::shared_ptr<Connection> touchedConnection =
-                        getConnectionLocked(touchedWindow.windowHandle->getToken());
-                if (touchedConnection != nullptr) {
-                    CancelationOptions options(CancelationOptions::Mode::CANCEL_POINTER_EVENTS,
-                                               "touched window was removed");
-                    synthesizeCancelationEventsForConnectionLocked(touchedConnection, options);
-                    // Since we are about to drop the touch, cancel the events for the wallpaper as
-                    // well.
-                    if (touchedWindow.targetFlags.test(InputTarget::Flags::FOREGROUND) &&
-                        touchedWindow.windowHandle->getInfo()->inputConfig.test(
-                                gui::WindowInfo::InputConfig::DUPLICATE_TOUCH_TO_WALLPAPER)) {
-                        sp<WindowInfoHandle> wallpaper = state.getWallpaperWindow();
-                        synthesizeCancelationEventsForWindowLocked(wallpaper, options);
+                CancelationOptions options(CancelationOptions::Mode::CANCEL_POINTER_EVENTS,
+                                           "touched window was removed");
+                synthesizeCancelationEventsForWindowLocked(touchedWindow.windowHandle, options);
+                // Since we are about to drop the touch, cancel the events for the wallpaper as
+                // well.
+                if (touchedWindow.targetFlags.test(InputTarget::Flags::FOREGROUND) &&
+                    touchedWindow.windowHandle->getInfo()->inputConfig.test(
+                            gui::WindowInfo::InputConfig::DUPLICATE_TOUCH_TO_WALLPAPER)) {
+                    if (const auto& ww = state.getWallpaperWindow(); ww) {
+                        synthesizeCancelationEventsForWindowLocked(ww, options);
                     }
                 }
                 state.windows.erase(state.windows.begin() + i);
@@ -5416,14 +5470,16 @@ void InputDispatcher::setFocusedDisplay(int32_t displayId) {
             sp<IBinder> oldFocusedWindowToken =
                     mFocusResolver.getFocusedWindowToken(mFocusedDisplayId);
             if (oldFocusedWindowToken != nullptr) {
-                std::shared_ptr<Connection> connection = getConnectionLocked(oldFocusedWindowToken);
-                if (connection != nullptr) {
-                    CancelationOptions
-                            options(CancelationOptions::Mode::CANCEL_NON_POINTER_EVENTS,
-                                    "The display which contains this window no longer has focus.");
-                    options.displayId = ADISPLAY_ID_NONE;
-                    synthesizeCancelationEventsForConnectionLocked(connection, options);
+                const auto windowHandle =
+                        getWindowHandleLocked(oldFocusedWindowToken, mFocusedDisplayId);
+                if (windowHandle == nullptr) {
+                    LOG(FATAL) << __func__ << ": Previously focused token did not have a window";
                 }
+                CancelationOptions
+                        options(CancelationOptions::Mode::CANCEL_NON_POINTER_EVENTS,
+                                "The display which contains this window no longer has focus.");
+                options.displayId = ADISPLAY_ID_NONE;
+                synthesizeCancelationEventsForWindowLocked(windowHandle, options);
             }
             mFocusedDisplayId = displayId;
 
@@ -5603,9 +5659,10 @@ bool InputDispatcher::transferTouchFocus(const sp<IBinder>& fromToken, const sp<
         }
         const int32_t deviceId = *deviceIds.begin();
 
-        sp<WindowInfoHandle> toWindowHandle = getWindowHandleLocked(toToken, displayId);
-        if (toWindowHandle == nullptr) {
-            ALOGW("Cannot transfer touch because to window not found.");
+        const sp<WindowInfoHandle> fromWindowHandle = touchedWindow->windowHandle;
+        const sp<WindowInfoHandle> toWindowHandle = getWindowHandleLocked(toToken, displayId);
+        if (!toWindowHandle) {
+            ALOGW("Cannot transfer touch because the transfer target window was not found.");
             return false;
         }
 
@@ -5618,7 +5675,6 @@ bool InputDispatcher::transferTouchFocus(const sp<IBinder>& fromToken, const sp<
         // Erase old window.
         ftl::Flags<InputTarget::Flags> oldTargetFlags = touchedWindow->targetFlags;
         std::vector<PointerProperties> pointers = touchedWindow->getTouchingPointers(deviceId);
-        sp<WindowInfoHandle> fromWindowHandle = touchedWindow->windowHandle;
         state->removeWindowByToken(fromToken);
 
         // Add new window.
@@ -5650,7 +5706,7 @@ bool InputDispatcher::transferTouchFocus(const sp<IBinder>& fromToken, const sp<
             fromConnection->inputState.mergePointerStateTo(toConnection->inputState);
             CancelationOptions options(CancelationOptions::Mode::CANCEL_POINTER_EVENTS,
                                        "transferring touch from this window to another window");
-            synthesizeCancelationEventsForConnectionLocked(fromConnection, options);
+            synthesizeCancelationEventsForWindowLocked(fromWindowHandle, options, fromConnection);
             synthesizePointerDownEventsForConnectionLocked(downTimeInTarget, toConnection,
                                                            newTargetFlags);
 
@@ -5887,7 +5943,7 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) const {
         for (const auto& [token, connection] : mConnectionsByToken) {
             dump += StringPrintf(INDENT2 "%i: channelName='%s', "
                                          "status=%s, monitor=%s, responsive=%s\n",
-                                 connection->inputPublisher.getChannel()->getFd(),
+                                 connection->inputPublisher.getChannel().getFd(),
                                  connection->getInputChannelName().c_str(),
                                  ftl::enum_string(connection->status).c_str(),
                                  toString(connection->monitor), toString(connection->responsive));
@@ -5998,9 +6054,9 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputChannel(const 
 Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputMonitor(int32_t displayId,
                                                                           const std::string& name,
                                                                           gui::Pid pid) {
-    std::shared_ptr<InputChannel> serverChannel;
+    std::unique_ptr<InputChannel> serverChannel;
     std::unique_ptr<InputChannel> clientChannel;
-    status_t result = openInputChannelPair(name, serverChannel, clientChannel);
+    status_t result = InputChannel::openInputChannelPair(name, serverChannel, clientChannel);
     if (result) {
         return base::Error(result) << "Failed to open input channel pair with name " << name;
     }
@@ -6013,10 +6069,11 @@ Result<std::unique_ptr<InputChannel>> InputDispatcher::createInputMonitor(int32_
                                           << " without a specified display.";
         }
 
-        std::shared_ptr<Connection> connection =
-                std::make_shared<Connection>(serverChannel, /*monitor=*/true, mIdGenerator);
         const sp<IBinder>& token = serverChannel->getConnectionToken();
         const int fd = serverChannel->getFd();
+        std::shared_ptr<Connection> connection =
+                std::make_shared<Connection>(std::move(serverChannel), /*monitor=*/true,
+                                             mIdGenerator);
 
         auto [_, inserted] = mConnectionsByToken.emplace(token, connection);
         if (!inserted) {
@@ -6067,7 +6124,7 @@ status_t InputDispatcher::removeInputChannelLocked(const sp<IBinder>& connection
         removeMonitorChannelLocked(connectionToken);
     }
 
-    mLooper->removeFd(connection->inputPublisher.getChannel()->getFd());
+    mLooper->removeFd(connection->inputPublisher.getChannel().getFd());
 
     nsecs_t currentTime = now();
     abortBrokenDispatchCycleLocked(currentTime, connection, notify);
@@ -6131,12 +6188,10 @@ status_t InputDispatcher::pilferPointersLocked(const sp<IBinder>& token) {
 
         std::string canceledWindows;
         for (const TouchedWindow& w : state.windows) {
-            const std::shared_ptr<Connection> connection =
-                    getConnectionLocked(w.windowHandle->getToken());
-            if (connection != nullptr && connection->getToken() != token) {
-                synthesizeCancelationEventsForConnectionLocked(connection, options);
+            if (w.windowHandle->getToken() != token) {
+                synthesizeCancelationEventsForWindowLocked(w.windowHandle, options);
                 canceledWindows += canceledWindows.empty() ? "[" : ", ";
-                canceledWindows += connection->getInputChannelName();
+                canceledWindows += w.windowHandle->getName();
             }
         }
         canceledWindows += canceledWindows.empty() ? "[]" : "]";
@@ -6297,8 +6352,18 @@ void InputDispatcher::doDispatchCycleFinishedCommand(nsecs_t finishTime,
         }
         traceWaitQueueLength(*connection);
         if (fallbackKeyEntry && connection->status == Connection::Status::NORMAL) {
-            const InputTarget target{.connection = connection, .flags = dispatchEntry->targetFlags};
-            enqueueDispatchEntryLocked(connection, std::move(fallbackKeyEntry), target);
+            const auto windowHandle = getWindowHandleLocked(connection->getToken());
+            // Only dispatch fallbacks if there is a window for the connection.
+            if (windowHandle != nullptr) {
+                const auto inputTarget =
+                        createInputTargetLocked(windowHandle, InputTarget::DispatchMode::AS_IS,
+                                                dispatchEntry->targetFlags,
+                                                fallbackKeyEntry->downTime);
+                if (inputTarget.has_value()) {
+                    enqueueDispatchEntryLocked(connection, std::move(fallbackKeyEntry),
+                                               *inputTarget);
+                }
+            }
         }
         releaseDispatchEntry(std::move(dispatchEntry));
     }
@@ -6530,14 +6595,18 @@ std::unique_ptr<const KeyEntry> InputDispatcher::afterKeyEventLockedInterruptabl
 
             mLock.lock();
 
-            // Cancel the fallback key.
+            // Cancel the fallback key, but only if we still have a window for the channel.
+            // It could have been removed during the policy call.
             if (*fallbackKeyCode != AKEYCODE_UNKNOWN) {
-                CancelationOptions options(CancelationOptions::Mode::CANCEL_FALLBACK_EVENTS,
-                                           "application handled the original non-fallback key "
-                                           "or is no longer a foreground target, "
-                                           "canceling previously dispatched fallback key");
-                options.keyCode = *fallbackKeyCode;
-                synthesizeCancelationEventsForConnectionLocked(connection, options);
+                const auto windowHandle = getWindowHandleLocked(connection->getToken());
+                if (windowHandle != nullptr) {
+                    CancelationOptions options(CancelationOptions::Mode::CANCEL_FALLBACK_EVENTS,
+                                               "application handled the original non-fallback key "
+                                               "or is no longer a foreground target, "
+                                               "canceling previously dispatched fallback key");
+                    options.keyCode = *fallbackKeyCode;
+                    synthesizeCancelationEventsForWindowLocked(windowHandle, options, connection);
+                }
             }
             connection->inputState.removeFallbackKey(originalKeyCode);
         }
@@ -6613,10 +6682,13 @@ std::unique_ptr<const KeyEntry> InputDispatcher::afterKeyEventLockedInterruptabl
                 }
             }
 
-            CancelationOptions options(CancelationOptions::Mode::CANCEL_FALLBACK_EVENTS,
-                                       "canceling fallback, policy no longer desires it");
-            options.keyCode = *fallbackKeyCode;
-            synthesizeCancelationEventsForConnectionLocked(connection, options);
+            const auto windowHandle = getWindowHandleLocked(connection->getToken());
+            if (windowHandle != nullptr) {
+                CancelationOptions options(CancelationOptions::Mode::CANCEL_FALLBACK_EVENTS,
+                                           "canceling fallback, policy no longer desires it");
+                options.keyCode = *fallbackKeyCode;
+                synthesizeCancelationEventsForWindowLocked(windowHandle, options, connection);
+            }
 
             fallback = false;
             *fallbackKeyCode = AKEYCODE_UNKNOWN;
@@ -6755,15 +6827,19 @@ void InputDispatcher::setFocusedWindow(const FocusRequest& request) {
     mLooper->wake();
 }
 
-void InputDispatcher::onFocusChangedLocked(const FocusResolver::FocusChanges& changes) {
+void InputDispatcher::onFocusChangedLocked(const FocusResolver::FocusChanges& changes,
+                                           const sp<WindowInfoHandle> removedFocusedWindowHandle) {
     if (changes.oldFocus) {
-        std::shared_ptr<Connection> focusedConnection = getConnectionLocked(changes.oldFocus);
-        if (focusedConnection) {
-            CancelationOptions options(CancelationOptions::Mode::CANCEL_NON_POINTER_EVENTS,
-                                       "focus left window");
-            synthesizeCancelationEventsForConnectionLocked(focusedConnection, options);
-            enqueueFocusEventLocked(changes.oldFocus, /*hasFocus=*/false, changes.reason);
+        const auto resolvedWindow = removedFocusedWindowHandle != nullptr
+                ? removedFocusedWindowHandle
+                : getWindowHandleLocked(changes.oldFocus, changes.displayId);
+        if (resolvedWindow == nullptr) {
+            LOG(FATAL) << __func__ << ": Previously focused token did not have a window";
         }
+        CancelationOptions options(CancelationOptions::Mode::CANCEL_NON_POINTER_EVENTS,
+                                   "focus left window");
+        synthesizeCancelationEventsForWindowLocked(resolvedWindow, options);
+        enqueueFocusEventLocked(changes.oldFocus, /*hasFocus=*/false, changes.reason);
     }
     if (changes.newFocus) {
         resetNoFocusedWindowTimeoutLocked();

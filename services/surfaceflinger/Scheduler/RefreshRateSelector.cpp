@@ -286,7 +286,8 @@ struct RefreshRateSelector::RefreshRateScoreComparator {
 std::string RefreshRateSelector::Policy::toString() const {
     return base::StringPrintf("{defaultModeId=%d, allowGroupSwitching=%s"
                               ", primaryRanges=%s, appRequestRanges=%s}",
-                              defaultMode.value(), allowGroupSwitching ? "true" : "false",
+                              ftl::to_underlying(defaultMode),
+                              allowGroupSwitching ? "true" : "false",
                               to_string(primaryRanges).c_str(),
                               to_string(appRequestRanges).c_str());
 }
@@ -854,7 +855,7 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
         ALOGV("Touch Boost");
         ATRACE_FORMAT_INSTANT("%s (Touch Boost [late])",
                               to_string(touchRefreshRates.front().frameRateMode.fps).c_str());
-        return {touchRefreshRates, GlobalSignals{.touch = signals.touch}};
+        return {touchRefreshRates, GlobalSignals{.touch = true}};
     }
 
     // If we never scored any layers, and we don't favor high refresh rates, prefer to stay with the

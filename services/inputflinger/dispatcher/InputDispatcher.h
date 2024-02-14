@@ -477,7 +477,7 @@ private:
 
     bool isStaleEvent(nsecs_t currentTime, const EventEntry& entry);
 
-    bool shouldPruneInboundQueueLocked(const MotionEntry& motionEntry) REQUIRES(mLock);
+    bool shouldPruneInboundQueueLocked(const MotionEntry& motionEntry) const REQUIRES(mLock);
 
     /**
      * Time to stop waiting for the events to be processed while trying to dispatch a key.
@@ -628,17 +628,20 @@ private:
             REQUIRES(mLock);
     void synthesizeCancelationEventsForMonitorsLocked(const CancelationOptions& options)
             REQUIRES(mLock);
-    void synthesizeCancelationEventsForConnectionLocked(
-            const std::shared_ptr<Connection>& connection, const CancelationOptions& options)
+    void synthesizeCancelationEventsForWindowLocked(const sp<gui::WindowInfoHandle>&,
+                                                    const CancelationOptions&,
+                                                    const std::shared_ptr<Connection>& = nullptr)
             REQUIRES(mLock);
+    // This is a convenience function used to generate cancellation for a connection without having
+    // to check whether it's a monitor or a window. For non-monitors, the window handle must not be
+    // null. Always prefer the "-ForWindow" method above when explicitly dealing with windows.
+    void synthesizeCancelationEventsForConnectionLocked(
+            const std::shared_ptr<Connection>& connection, const CancelationOptions& options,
+            const sp<gui::WindowInfoHandle>& window) REQUIRES(mLock);
 
     void synthesizePointerDownEventsForConnectionLocked(
             const nsecs_t downTime, const std::shared_ptr<Connection>& connection,
             ftl::Flags<InputTarget::Flags> targetFlags) REQUIRES(mLock);
-
-    void synthesizeCancelationEventsForWindowLocked(
-            const sp<android::gui::WindowInfoHandle>& windowHandle,
-            const CancelationOptions& options) REQUIRES(mLock);
 
     // Splitting motion events across windows. When splitting motion event for a target,
     // splitDownTime refers to the time of first 'down' event on that particular target
@@ -666,7 +669,9 @@ private:
                                         bool handled, nsecs_t consumeTime) REQUIRES(mLock);
     void doInterceptKeyBeforeDispatchingCommand(const sp<IBinder>& focusedWindowToken,
                                                 const KeyEntry& entry) REQUIRES(mLock);
-    void onFocusChangedLocked(const FocusResolver::FocusChanges& changes) REQUIRES(mLock);
+    void onFocusChangedLocked(const FocusResolver::FocusChanges& changes,
+                              const sp<gui::WindowInfoHandle> removedFocusedWindowHandle = nullptr)
+            REQUIRES(mLock);
     void sendFocusChangedCommandLocked(const sp<IBinder>& oldToken, const sp<IBinder>& newToken)
             REQUIRES(mLock);
     void sendDropWindowCommandLocked(const sp<IBinder>& token, float x, float y) REQUIRES(mLock);

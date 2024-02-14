@@ -54,6 +54,7 @@ namespace impl {
 using aidl::android::hardware::power::Boost;
 using aidl::android::hardware::power::Mode;
 using aidl::android::hardware::power::SessionHint;
+using aidl::android::hardware::power::SessionTag;
 using aidl::android::hardware::power::WorkDuration;
 
 PowerAdvisor::~PowerAdvisor() = default;
@@ -213,9 +214,12 @@ bool PowerAdvisor::supportsPowerHintSession() {
 
 bool PowerAdvisor::ensurePowerHintSessionRunning() {
     if (mHintSession == nullptr && !mHintSessionThreadIds.empty() && usePowerHintSession()) {
-        auto ret = getPowerHal().createHintSession(getpid(), static_cast<int32_t>(getuid()),
-                                                   mHintSessionThreadIds, mTargetDuration.ns());
-
+        auto ret =
+                getPowerHal().createHintSessionWithConfig(getpid(), static_cast<int32_t>(getuid()),
+                                                          mHintSessionThreadIds,
+                                                          mTargetDuration.ns(),
+                                                          SessionTag::SURFACEFLINGER,
+                                                          &mSessionConfig);
         if (ret.isOk()) {
             mHintSession = ret.value();
         }
