@@ -28,6 +28,7 @@
 
 namespace android {
 
+using namespace com::android::graphics::surfaceflinger;
 using testing::Return;
 
 class TestableFlagManager : public FlagManager {
@@ -86,26 +87,26 @@ TEST_F(FlagManagerTest, legacyReturnsValue) {
 
 TEST_F(FlagManagerTest, creashesIfQueriedBeforeBoot) {
     mFlagManager.markBootIncomplete();
-    EXPECT_DEATH(FlagManager::getInstance().late_boot_misc2(), "");
+    EXPECT_DEATH(FlagManager::getInstance()
+        .refresh_rate_overlay_on_external_display(), "");
 }
 
 TEST_F(FlagManagerTest, returnsOverrideTrue) {
     mFlagManager.markBootCompleted();
 
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::late_boot_misc2, false);
+    SET_FLAG_FOR_TEST(flags::refresh_rate_overlay_on_external_display, false);
 
     // This is stored in a static variable, so this test depends on the fact
     // that this flag has not been read in this process.
     EXPECT_CALL(mFlagManager, getBoolProperty).WillOnce(Return(true));
-    EXPECT_TRUE(mFlagManager.late_boot_misc2());
+    EXPECT_TRUE(mFlagManager.refresh_rate_overlay_on_external_display());
 
     // Further calls will not result in further calls to getBoolProperty.
-    EXPECT_TRUE(mFlagManager.late_boot_misc2());
+    EXPECT_TRUE(mFlagManager.refresh_rate_overlay_on_external_display());
 }
 
 TEST_F(FlagManagerTest, returnsOverrideReadonly) {
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::add_sf_skipped_frames_to_trace,
-                      false);
+    SET_FLAG_FOR_TEST(flags::add_sf_skipped_frames_to_trace, false);
 
     // This is stored in a static variable, so this test depends on the fact
     // that this flag has not been read in this process.
@@ -116,9 +117,7 @@ TEST_F(FlagManagerTest, returnsOverrideReadonly) {
 TEST_F(FlagManagerTest, returnsOverrideFalse) {
     mFlagManager.markBootCompleted();
 
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::
-                              refresh_rate_overlay_on_external_display,
-                      true);
+    SET_FLAG_FOR_TEST(flags::refresh_rate_overlay_on_external_display, true);
 
     // This is stored in a static variable, so this test depends on the fact
     // that this flag has not been read in this process.
@@ -129,7 +128,7 @@ TEST_F(FlagManagerTest, returnsOverrideFalse) {
 TEST_F(FlagManagerTest, ignoresOverrideInUnitTestMode) {
     mFlagManager.setUnitTestMode();
 
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::multithreaded_present, true);
+    SET_FLAG_FOR_TEST(flags::multithreaded_present, true);
 
     // If this has not been called in this process, it will be called.
     // Regardless, the result is ignored.
@@ -144,17 +143,13 @@ TEST_F(FlagManagerTest, returnsValue) {
     EXPECT_CALL(mFlagManager, getBoolProperty).WillRepeatedly(Return(std::nullopt));
 
     {
-        // TODO(b/304338314): Set the flag value instead of skipping the test
-        SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::late_boot_misc2, true);
-        if (com::android::graphics::surfaceflinger::flags::late_boot_misc2()) GTEST_SKIP();
-        EXPECT_EQ(true, mFlagManager.late_boot_misc2());
+        SET_FLAG_FOR_TEST(flags::refresh_rate_overlay_on_external_display, true);
+        EXPECT_EQ(true, mFlagManager.refresh_rate_overlay_on_external_display());
     }
 
     {
-        // TODO(b/304338314): Set the flag value instead of skipping the test
-        SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::late_boot_misc2, false);
-        if (com::android::graphics::surfaceflinger::flags::late_boot_misc2()) GTEST_SKIP();
-        EXPECT_EQ(false, mFlagManager.late_boot_misc2());
+        SET_FLAG_FOR_TEST(flags::refresh_rate_overlay_on_external_display, false);
+        EXPECT_EQ(false, mFlagManager.refresh_rate_overlay_on_external_display());
     }
 }
 
@@ -164,16 +159,12 @@ TEST_F(FlagManagerTest, readonlyReturnsValue) {
     EXPECT_CALL(mFlagManager, getBoolProperty).WillRepeatedly(Return(std::nullopt));
 
     {
-        // TODO(b/304338314): Set the flag value instead of skipping the test
-        SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::misc1, true);
-        if (com::android::graphics::surfaceflinger::flags::misc1()) GTEST_SKIP();
+        SET_FLAG_FOR_TEST(flags::misc1, true);
         EXPECT_EQ(true, mFlagManager.misc1());
     }
 
     {
-        // TODO(b/304338314): Set the flag value instead of skipping the test
-        SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::misc1, false);
-        if (com::android::graphics::surfaceflinger::flags::misc1()) GTEST_SKIP();
+        SET_FLAG_FOR_TEST(flags::misc1, false);
         EXPECT_EQ(false, mFlagManager.misc1());
     }
 }
@@ -181,18 +172,15 @@ TEST_F(FlagManagerTest, readonlyReturnsValue) {
 TEST_F(FlagManagerTest, dontSkipOnEarlyIsNotCached) {
     EXPECT_CALL(mFlagManager, getBoolProperty).WillRepeatedly(Return(std::nullopt));
 
-    const auto initialValue = com::android::graphics::surfaceflinger::flags::dont_skip_on_early();
+    const auto initialValue = flags::dont_skip_on_early();
 
-    // TODO(b/304338314): Set the flag value instead of skipping the test
-    /*
-    com::android::graphics::surfaceflinger::flags::dont_skip_on_early(true);
+    flags::dont_skip_on_early(true);
     EXPECT_EQ(true, mFlagManager.dont_skip_on_early());
 
-    com::android::graphics::surfaceflinger::flags::dont_skip_on_early(false);
+    flags::dont_skip_on_early(false);
     EXPECT_EQ(false, mFlagManager.dont_skip_on_early());
 
-    com::android::graphics::surfaceflinger::flags::dont_skip_on_early(initialValue);
-     * */
+    flags::dont_skip_on_early(initialValue);
 }
 
 } // namespace android

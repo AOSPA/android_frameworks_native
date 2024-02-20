@@ -1,4 +1,5 @@
 package: "com.android.graphics.surfaceflinger.flags"
+container: "system"
 
 flag {
   name: "misc1"
@@ -14,13 +15,6 @@ flag {
   description: "Controls SurfaceFlinger support for Connected Displays in 24Q1"
   bug: "278199093"
   is_fixed_read_only: true
-}
-
-flag{
-  name: "late_boot_misc2"
-  namespace: "core_graphics"
-  description: "This flag controls minor miscellaneous SurfaceFlinger changes. Cannot be read before boot finished!"
-  bug: "297389311"
 }
 
 flag {
