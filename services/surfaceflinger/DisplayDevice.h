@@ -205,8 +205,7 @@ public:
 
     enum class DesiredModeAction { None, InitiateDisplayModeSwitch, InitiateRenderRateSwitch };
 
-    DesiredModeAction setDesiredMode(display::DisplayModeRequest&&, bool force = false)
-            EXCLUDES(mDesiredModeLock);
+    DesiredModeAction setDesiredMode(display::DisplayModeRequest&&) EXCLUDES(mDesiredModeLock);
 
     using DisplayModeRequestOpt = ftl::Optional<display::DisplayModeRequest>;
 
