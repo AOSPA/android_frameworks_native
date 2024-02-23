@@ -3495,6 +3495,9 @@ void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connectio
                             InputTarget::Flags::WINDOW_IS_PARTIALLY_OBSCURED)) {
                     resolvedFlags |= AMOTION_EVENT_FLAG_WINDOW_IS_PARTIALLY_OBSCURED;
                 }
+                if (dispatchEntry->targetFlags.test(InputTarget::Flags::NO_FOCUS_CHANGE)) {
+                    resolvedFlags |= AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE;
+                }
 
                 dispatchEntry->resolvedFlags = resolvedFlags;
                 if (resolvedAction != motionEntry.action) {
@@ -3569,8 +3572,7 @@ void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connectio
                              << "~ dropping inconsistent event: " << *dispatchEntry;
                 return; // skip the inconsistent event
             }
-
-            if ((resolvedMotion->flags & AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE) &&
+            if ((dispatchEntry->resolvedFlags & AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE) &&
                 (resolvedMotion->policyFlags & POLICY_FLAG_TRUSTED)) {
                 // Skip reporting pointer down outside focus to the policy.
                 break;
@@ -5642,8 +5644,8 @@ InputDispatcher::findTouchStateWindowAndDisplayLocked(const sp<IBinder>& token) 
     return std::make_tuple(nullptr, nullptr, ADISPLAY_ID_DEFAULT);
 }
 
-bool InputDispatcher::transferTouchFocus(const sp<IBinder>& fromToken, const sp<IBinder>& toToken,
-                                         bool isDragDrop) {
+bool InputDispatcher::transferTouchGesture(const sp<IBinder>& fromToken, const sp<IBinder>& toToken,
+                                           bool isDragDrop) {
     if (fromToken == toToken) {
         if (DEBUG_FOCUS) {
             ALOGD("Trivial transfer to same window.");
@@ -5677,7 +5679,7 @@ bool InputDispatcher::transferTouchFocus(const sp<IBinder>& fromToken, const sp<
         }
 
         if (DEBUG_FOCUS) {
-            ALOGD("transferTouchFocus: fromWindowHandle=%s, toWindowHandle=%s",
+            ALOGD("%s: fromWindowHandle=%s, toWindowHandle=%s", __func__,
                   touchedWindow->windowHandle->getName().c_str(),
                   toWindowHandle->getName().c_str());
         }
@@ -5694,6 +5696,8 @@ bool InputDispatcher::transferTouchFocus(const sp<IBinder>& fromToken, const sp<
         if (canReceiveForegroundTouches(*toWindowHandle->getInfo())) {
             newTargetFlags |= InputTarget::Flags::FOREGROUND;
         }
+        // Transferring touch focus using this API should not effect the focused window.
+        newTargetFlags |= InputTarget::Flags::NO_FOCUS_CHANGE;
         state->addOrUpdateWindow(toWindowHandle, InputTarget::DispatchMode::AS_IS, newTargetFlags,
                                  deviceId, pointers, downTimeInTarget);
 
@@ -5761,7 +5765,8 @@ sp<WindowInfoHandle> InputDispatcher::findTouchedForegroundWindowLocked(int32_t 
 }
 
 // Binder call
-bool InputDispatcher::transferTouch(const sp<IBinder>& destChannelToken, int32_t displayId) {
+bool InputDispatcher::transferTouchOnDisplay(const sp<IBinder>& destChannelToken,
+                                             int32_t displayId) {
     sp<IBinder> fromToken;
     { // acquire lock
         std::scoped_lock _l(mLock);
@@ -5781,7 +5786,7 @@ bool InputDispatcher::transferTouch(const sp<IBinder>& destChannelToken, int32_t
         fromToken = from->getToken();
     } // release lock
 
-    return transferTouchFocus(fromToken, destChannelToken);
+    return transferTouchGesture(fromToken, destChannelToken);
 }
 
 void InputDispatcher::resetAndDropEverythingLocked(const char* reason) {
@@ -7082,7 +7087,8 @@ void InputDispatcher::transferWallpaperTouch(ftl::Flags<InputTarget::Flags> oldT
 
     if (newWallpaper != nullptr) {
         nsecs_t downTimeInTarget = now();
-        ftl::Flags<InputTarget::Flags> wallpaperFlags = oldTargetFlags & InputTarget::Flags::SPLIT;
+        ftl::Flags<InputTarget::Flags> wallpaperFlags = newTargetFlags;
+        wallpaperFlags |= oldTargetFlags & InputTarget::Flags::SPLIT;
         wallpaperFlags |= InputTarget::Flags::WINDOW_IS_OBSCURED |
                 InputTarget::Flags::WINDOW_IS_PARTIALLY_OBSCURED;
         state.addOrUpdateWindow(newWallpaper, InputTarget::DispatchMode::AS_IS, wallpaperFlags,

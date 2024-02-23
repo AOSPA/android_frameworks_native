@@ -239,7 +239,7 @@ public:
         bool autoRefresh = false;
         bool dimmingEnabled = true;
         float currentHdrSdrRatio = 1.f;
-        float desiredHdrSdrRatio = 1.f;
+        float desiredHdrSdrRatio = -1.f;
         gui::CachingHint cachingHint = gui::CachingHint::Enabled;
         int64_t latchedVsyncId = 0;
         bool useVsyncIdForRefreshRateSelection = false;
@@ -323,6 +323,7 @@ public:
     void setDesiredPresentTime(nsecs_t /*desiredPresentTime*/, bool /*isAutoTimestamp*/);
     bool setDataspace(ui::Dataspace /*dataspace*/);
     bool setExtendedRangeBrightness(float currentBufferRatio, float desiredRatio);
+    bool setDesiredHdrHeadroom(float desiredRatio);
     bool setCachingHint(gui::CachingHint cachingHint);
     bool setHdrMetadata(const HdrMetadata& /*hdrMetadata*/);
     bool setSurfaceDamageRegion(const Region& /*surfaceDamage*/);
@@ -552,7 +553,7 @@ public:
         sp<IBinder> mReleaseBufferEndpoint;
 
         bool mFrameLatencyNeeded{false};
-        float mDesiredHdrSdrRatio = 1.f;
+        float mDesiredHdrSdrRatio = -1.f;
     };
 
     BufferInfo mBufferInfo;
