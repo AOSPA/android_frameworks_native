@@ -16,7 +16,7 @@
 
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -3594,8 +3594,16 @@ void Layer::gatherBufferInfo() {
         {
             ATRACE_NAME("getDataspace");
             err = mapper.getDataspace(mBufferInfo.mBuffer->getBuffer()->handle, &dataspace);
+            /* QTI_BEGIN */
+            if (dataspace == ui::Dataspace::UNKNOWN) {
+              ALOGW("%s: Received unknown dataspace from gralloc", __func__);
+            }
+            /* QTI_END */
         }
-        if (err != OK || dataspace != mBufferInfo.mDataspace) {
+        if ((err != OK || dataspace != mBufferInfo.mDataspace)
+            /* QTI_BEGIN */
+            && dataspace != ui::Dataspace::UNKNOWN) {
+            /* QTI_END */
             {
                 ATRACE_NAME("setDataspace");
                 err = mapper.setDataspace(mBufferInfo.mBuffer->getBuffer()->handle,
