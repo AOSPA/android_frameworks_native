@@ -593,10 +593,27 @@ void QtiSurfaceFlingerExtension::qtiSetContentFps(uint32_t contentFps) {
     if (mQtiFlinger->mBootFinished && mQtiDisplayExtnIntf && !mQtiRequestedContentFps &&
         contentFps != mQtiCurrentFps) {
         mQtiRequestedContentFps = true;
+        if (mQtiFailedAttempts % (int) ceil(contentFps/10) != 0) {
+            mQtiFailedAttempts += 1;
+            return;
+        }
+
+        auto perf_hal_status = base::GetProperty("init.svc.perf2-hal-1-0", "");
+        if (perf_hal_status == "stopped") {
+            ALOGV("Perf-Hal service is stopped number of attempts %d", mQtiFailedAttempts);
+            mQtiFailedAttempts += 1;
+            if (mQtiFailedAttempts > (int) contentFps / 2) {
+                mQtiFailedAttempts = 0;
+                mQtiCurrentFps = contentFps;
+            }
+            return;
+        }
+
         mQtiSentInitialFps = mQtiDisplayExtnIntf->SetContentFps(contentFps) == 0;
 
         if (mQtiSentInitialFps) {
             mQtiCurrentFps = contentFps;
+            mQtiFailedAttempts = 0;
             ALOGV("Successfully sent content fps %d", contentFps);
         } else {
             // This floods the log with warning. Changed it to verbose

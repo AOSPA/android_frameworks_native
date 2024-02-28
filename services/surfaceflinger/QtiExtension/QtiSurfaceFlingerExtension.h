@@ -280,6 +280,7 @@ private:
     float mQtiLastCachedFps = 0;
     bool mQtiAllowThermalFpsChange = false;
     bool mQtiRequestedContentFps = false;
+    int mQtiFailedAttempts = 0;
 
     std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
     std::shared_ptr<DisplayConfigAidlCallbackHandler> mQtiAidlCallbackHandler = nullptr;
