@@ -2517,6 +2517,10 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
                 mLayersWithBuffersRemoved.emplace(it->second);
             }
             it->second->latchBufferImpl(unused, latchTime, bgColorOnly);
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiDolphinTrackBufferDecrement(it->second->getDebugName(),
+                    *it->second->getPendingBufferCounter());
+            /* QTI_END */
             newDataLatched = true;
 
             mLayersWithQueuedFrames.emplace(it->second);
