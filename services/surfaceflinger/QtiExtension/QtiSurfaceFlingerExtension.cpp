@@ -591,14 +591,14 @@ void QtiSurfaceFlingerExtension::qtiSetContentFps(uint32_t contentFps) {
 }
 
 void QtiSurfaceFlingerExtension::qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display,
-                                                         hal::PowerMode mode) {
+                                                         hal::PowerMode mode, bool isInternal) {
     if (!display) {
         return;
     }
 
     bool earlyWakeUpEnabled =
             mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kEarlyWakeUp);
-    if (earlyWakeUpEnabled && qtiIsInternalDisplay(display)) {
+    if (earlyWakeUpEnabled && isInternal) {
         uint32_t hwcDisplayId;
         if (qtiGetHwcDisplayId(display, &hwcDisplayId)) {
             // Enable/disable Early Wake-up feature on a display based on its Power mode.
@@ -1098,45 +1098,57 @@ void QtiSurfaceFlingerExtension::qtiCheckVirtualDisplayHint(const Vector<Display
         return;
     }
 
-    for (const DisplayState& s : displays) {
-        const ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(s.token);
-        if (index < 0) continue;
+    bool createVirtualDisplay = false;
+    int width = 0, height = 0, format = 0;
+    {
+        if (!mQtiFlinger->mRequestDisplayModeFlag ||
+            (mQtiFlinger->mFlagThread != std::this_thread::get_id())) {
+            Mutex::Autolock lock(mQtiFlinger->mStateLock);
+        }
+        for (const DisplayState& s : displays) {
+            const ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(s.token);
+            if (index < 0) continue;
 
-        DisplayDeviceState& state =
-                mQtiFlinger->mCurrentState.displays.editValueAt(static_cast<size_t>(index));
-        const uint32_t what = s.what;
-        if (what & DisplayState::eSurfaceChanged) {
-            if (IInterface::asBinder(state.surface) != IInterface::asBinder(s.surface)) {
-                if (state.isVirtual() && s.surface != nullptr) {
-                    int width = 0;
-                    int status = s.surface->query(NATIVE_WINDOW_WIDTH, &width);
-                    ALOGE_IF(status != NO_ERROR, "Unable to query width (%d)", status);
-                    int height = 0;
-                    status = s.surface->query(NATIVE_WINDOW_HEIGHT, &height);
-                    ALOGE_IF(status != NO_ERROR, "Unable to query height (%d)", status);
-                    int format = 0;
-                    status = s.surface->query(NATIVE_WINDOW_FORMAT, &format);
-                    ALOGE_IF(status != NO_ERROR, "Unable to query format (%d)", status);
-                    size_t maxVirtualDisplaySize =
-                            mQtiFlinger->getHwComposer().getMaxVirtualDisplayDimension();
+            DisplayDeviceState& state =
+                    mQtiFlinger->mCurrentState.displays.editValueAt(static_cast<size_t>(index));
+            const uint32_t what = s.what;
+            if (what & DisplayState::eSurfaceChanged) {
+                if (IInterface::asBinder(state.surface) != IInterface::asBinder(s.surface)) {
+                    if (state.isVirtual() && s.surface != nullptr) {
+                        width = 0;
+                        int status = s.surface->query(NATIVE_WINDOW_WIDTH, &width);
+                        ALOGE_IF(status != NO_ERROR, "Unable to query width (%d)", status);
+                        height = 0;
+                        status = s.surface->query(NATIVE_WINDOW_HEIGHT, &height);
+                        ALOGE_IF(status != NO_ERROR, "Unable to query height (%d)", status);
+                        format = 0;
+                        status = s.surface->query(NATIVE_WINDOW_FORMAT, &format);
+                        ALOGE_IF(status != NO_ERROR, "Unable to query format (%d)", status);
+                        size_t maxVirtualDisplaySize =
+                                mQtiFlinger->getHwComposer().getMaxVirtualDisplayDimension();
 
-                    // Create VDS if IDisplayConfig AIDL/HIDL is present and if
-                    // the resolution is within the maximum allowed dimension for VDS
-                    if (mQtiEnabledIDC && (maxVirtualDisplaySize == 0 ||
-                         ((uint64_t)width <= maxVirtualDisplaySize &&
-                          (uint64_t)height <= maxVirtualDisplaySize))) {
-                        uint64_t usage = 0;
-                        // Replace with native_window_get_consumer_usage ?
-                        status = s.surface->getConsumerUsage(&usage);
-                        ALOGW_IF(status != NO_ERROR, "Unable to query usage (%d)", status);
-                        if ((status == NO_ERROR) && qtiCanAllocateHwcDisplayIdForVDS(usage)) {
-                            qtiCreateVirtualDisplay(width, height, format);
-                            return;
+                        // Create VDS if IDisplayConfig AIDL/HIDL is present and if
+                        // the resolution is within the maximum allowed dimension for VDS
+                        if (mQtiEnabledIDC && (maxVirtualDisplaySize == 0 ||
+                            ((uint64_t)width <= maxVirtualDisplaySize &&
+                            (uint64_t)height <= maxVirtualDisplaySize))) {
+                            uint64_t usage = 0;
+                            // Replace with native_window_get_consumer_usage ?
+                            status = s.surface->getConsumerUsage(&usage);
+                            ALOGW_IF(status != NO_ERROR, "Unable to query usage (%d)", status);
+                            if ((status == NO_ERROR) && qtiCanAllocateHwcDisplayIdForVDS(usage)) {
+                                createVirtualDisplay = true;
+                                return;
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    if (createVirtualDisplay) {
+        qtiCreateVirtualDisplay(width, height, format);
     }
 }
 
@@ -1556,7 +1568,10 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerStackId(hal::HWDisplayId hwc
 }
 
 uint32_t QtiSurfaceFlingerExtension::qtiGetLayerClass(std::string mName) {
-    if (mQtiLayerExt) {
+    bool mUseLayerExt =
+            mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kLayerExtension);
+
+    if (mUseLayerExt && mQtiLayerExt) {
         uint32_t layerClass = static_cast<uint32_t>(mQtiLayerExt->GetLayerClass(mName));
         return layerClass;
     }
@@ -1635,15 +1650,17 @@ void QtiSurfaceFlingerExtension::qtiDolphinTrackVsyncSignal() {
  * Methods internal to QtiSurfaceFlingerExtension
  */
 bool QtiSurfaceFlingerExtension::qtiIsInternalDisplay(const sp<DisplayDevice>& display) {
-    if (display) {
+    if (display && mQtiFlinger) {
         ConditionalLock lock(mQtiFlinger->mStateLock,
                              std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
-        const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(display->getPhysicalId());
-        const auto& physicalDisplay = displayOpt->get();
-        const auto& snapshot = physicalDisplay.snapshot();
+        if (!mQtiFlinger->mPhysicalDisplays.empty()) {
+            const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(display->getPhysicalId());
+            const auto& physicalDisplay = displayOpt->get();
+            const auto& snapshot = physicalDisplay.snapshot();
 
-        const auto connectionType = snapshot.connectionType();
-        return (connectionType == ui::DisplayConnectionType::Internal);
+            const auto connectionType = snapshot.connectionType();
+            return (connectionType == ui::DisplayConnectionType::Internal);
+        }
     }
     return false;
 }

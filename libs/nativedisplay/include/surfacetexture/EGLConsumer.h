@@ -25,6 +25,13 @@
 
 namespace android {
 
+/* QTI_BEGIN */
+namespace libnativedisplay {
+class QtiEglImageExtension;
+} // namespace libnativedisplay
+/* QTI_END */
+
+
 class SurfaceTexture;
 
 /*
@@ -208,6 +215,10 @@ protected:
         // mCropRect is the crop rectangle passed to EGL when mEglImage
         // was created.
         Rect mCropRect;
+
+        /* QTI_BEGIN */
+        std::shared_ptr<android::libnativedisplay::QtiEglImageExtension> mQtiEglImageExtn = nullptr;
+        /* QTI_END */
     };
 
     /**
@@ -304,6 +315,10 @@ protected:
      */
     static sp<GraphicBuffer> sReleasedTexImageBuffer;
     sp<EglImage> mReleasedTexImage;
+
+    /* QTI_BEGIN */
+    friend class android::libnativedisplay::QtiEglImageExtension;
+    /* QTI_END */
 };
 
 } // namespace android

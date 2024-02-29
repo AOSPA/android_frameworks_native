@@ -881,10 +881,6 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
 
     enableLatchUnsignaledConfig = getLatchUnsignaledConfig();
 
-    if (base::GetBoolProperty("debug.sf.enable_hwc_vds"s, false)) {
-        enableHalVirtualDisplays(true);
-    }
-
     // Process hotplug for displays connected at boot.
     LOG_ALWAYS_FATAL_IF(!configureLocked(),
                         "Initial display configuration failed: HWC did not hotplug");
@@ -970,6 +966,11 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
                                         mScheduler->getVsyncConfiguration_ptr(), getHwComposer().getComposer());
    surfaceflingerextension::QtiExtensionContext::instance().setCompositionEngine(
             &getCompositionEngine());
+
+    if (base::GetBoolProperty("debug.sf.enable_hwc_vds"s, false)) {
+        enableHalVirtualDisplays(true);
+    }
+
     mQtiSFExtnIntf->qtiStartUnifiedDraw();
     /* QTI_END */
 
@@ -2516,6 +2517,10 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
                 mLayersWithBuffersRemoved.emplace(it->second);
             }
             it->second->latchBufferImpl(unused, latchTime, bgColorOnly);
+            /* QTI_BEGIN */
+            mQtiSFExtnIntf->qtiDolphinTrackBufferDecrement(it->second->getDebugName(),
+                    *it->second->getPendingBufferCounter());
+            /* QTI_END */
             newDataLatched = true;
 
             mLayersWithQueuedFrames.emplace(it->second);
@@ -4373,6 +4378,12 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
     // Scheduler::chooseRefreshRateForContent
 
     ConditionalLock lock(mStateLock, std::this_thread::get_id() != mMainThreadId);
+    /* QTI_BEGIN */
+    // Setting mRequestDisplayModeFlag as true and storing thread Id to avoid acquiring the same
+    // mutex again in a single thread
+    mRequestDisplayModeFlag = true;
+    mFlagThread = std::this_thread::get_id();
+    /* QTI_END */
 
     for (auto& request : modeRequests) {
         const auto& modePtr = request.mode.modePtr;
@@ -4402,6 +4413,10 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
                   ftl::to_underlying(modePtr->getId()), to_string(displayId).c_str());
         }
     }
+    /* QTI_BEGIN */
+    mRequestDisplayModeFlag = false;
+    mFlagThread = mMainThreadId;
+    /* QTI_END */
 }
 
 void SurfaceFlinger::triggerOnFrameRateOverridesChanged() {
@@ -5007,15 +5022,18 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
         }
         /* QTI_END */
 
+        /* QTI_BEGIN */
+        bool qtiLatchMediaContent = mQtiSFExtnIntf->qtiLatchMediaContent(layer);
+        /* QTI_END */
+
+        // ignore the acquire fence if LatchUnsignaledConfig::Always is set.
+        const bool checkAcquireFence = enableLatchUnsignaledConfig != LatchUnsignaledConfig::Always
+            /* QTI_BEGIN */ || qtiLatchMediaContent /* QTI_END */;
         const bool acquireFenceAvailable = s.bufferData &&
                 s.bufferData->flags.test(BufferData::BufferDataChange::fenceChanged) &&
                 s.bufferData->acquireFence;
         const bool fenceSignaled = !acquireFenceAvailable ||
                 s.bufferData->acquireFence->getStatus() != Fence::Status::Unsignaled;
-
-        /* QTI_BEGIN */
-        bool qtiLatchMediaContent = mQtiSFExtnIntf->qtiLatchMediaContent(layer);
-        /* QTI_END */
 
         if (!fenceSignaled) {
             // check fence status
@@ -5023,7 +5041,7 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
                                                                     flushState.firstTransaction) &&
                     layer->isSimpleBufferUpdate(s);
 
-            if (allowLatchUnsignaled /* QTI_BEGIN */ || qtiLatchMediaContent /* QTI_END */) {
+            if (allowLatchUnsignaled /* QTI_BEGIN */ || !qtiLatchMediaContent /* QTI_END */) {
                 ATRACE_FORMAT("fence unsignaled try allowLatchUnsignaled %s",
                               layer->getDebugName());
                 ready = TransactionReadiness::NotReadyUnsignaled;
@@ -5309,7 +5327,9 @@ status_t SurfaceFlinger::setTransactionState(
     const int64_t postTime = systemTime();
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiCheckVirtualDisplayHint(displays);
+    if (std::this_thread::get_id() != mMainThreadId) {
+       mQtiSFExtnIntf->qtiCheckVirtualDisplayHint(displays);
+    }
     /* QTI_END */
 
     std::vector<uint64_t> uncacheBufferIds;
@@ -5339,7 +5359,9 @@ status_t SurfaceFlinger::setTransactionState(
             }
 
             /* QTI_BEGIN */
-            mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str());
+            if (!(flags & eOneWay)) {
+                mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str());
+            }
 
             mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(layer, desiredPresentTime, isAutoTimestamp,
                                                     resolvedState.externalTexture,
@@ -6445,7 +6467,7 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
     }
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiSetEarlyWakeUpConfig(display, mode);
+    mQtiSFExtnIntf->qtiSetEarlyWakeUpConfig(display, mode, isInternalDisplay);
     /* QTI_END */
 
     mScheduler->setDisplayPowerMode(displayId, mode);
@@ -6969,6 +6991,9 @@ void SurfaceFlinger::dumpAll(const DumpArgs& args, const std::string& compositio
     if (!lock.locked()) {
         StringAppendF(&result, "Dumping without lock after timeout: %s (%d)\n",
                       strerror(-lock.status), lock.status);
+        /* QTI_BEGIN */
+        return;
+        /* QTI_END */
     }
 
     const bool colorize = !args.empty() && args[0] == String16("--color");
