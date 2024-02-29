@@ -357,6 +357,11 @@ public:
         return sActiveDisplayRotationFlags;
     }
 
+    /* QTI_BEGIN */
+    bool mRequestDisplayModeFlag = false;
+    std::thread::id mFlagThread = std::this_thread::get_id();
+    /* QTI_END */
+
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
     virtual ~SurfaceFlinger();
