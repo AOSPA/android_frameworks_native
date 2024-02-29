@@ -5309,7 +5309,9 @@ status_t SurfaceFlinger::setTransactionState(
     const int64_t postTime = systemTime();
 
     /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiCheckVirtualDisplayHint(displays);
+    if (std::this_thread::get_id() != mMainThreadId) {
+       mQtiSFExtnIntf->qtiCheckVirtualDisplayHint(displays);
+    }
     /* QTI_END */
 
     std::vector<uint64_t> uncacheBufferIds;
