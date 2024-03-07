@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #undef LOG_TAG
 #define LOG_TAG "LayerHistory"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
@@ -209,6 +215,14 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
             if (vote.isNoVote()) {
                 continue;
             }
+
+            /* QTI_BEGIN */
+            if (refresh_rate_votes_.find(key) != refresh_rate_votes_.end() &&
+                refresh_rate_votes_[key] != -1) {
+              vote.fps = Fps::fromValue(refresh_rate_votes_[key]);
+              vote.type = LayerHistory::LayerVoteType::ExplicitExact;
+            }
+            /* QTI_END */
 
             // Compute the layer's position on the screen
             const Rect bounds = Rect(info->getBounds());

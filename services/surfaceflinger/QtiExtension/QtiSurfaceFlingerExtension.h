@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -13,6 +13,7 @@
 #include <binder/IBinder.h>
 #include <composer_extn_intf.h>
 #include <list>
+#include <map>
 
 #include "../DisplayHardware/HWComposer.h"
 #include "../DisplayHardware/PowerAdvisor.h"
@@ -139,6 +140,7 @@ public:
     composer::DisplayExtnIntf* qtiGetDisplayExtn() { return mQtiDisplayExtnIntf; }
     bool qtiLatchMediaContent(sp<Layer> layer) override;
     void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) override;
+    void qtiOnComposerHalRefresh() override;
 
     /*
      * Methods that call the FeatureManager APIs.
@@ -218,6 +220,7 @@ public:
     uint32_t qtiGetLayerClass(std::string mName) override;
     void qtiSetVisibleLayerInfo(DisplayId displayId,
                                     const char* name, int32_t sequence) override;
+    bool qtiIsSmomoOptimalRefreshActive() override;
 
     /*
      * Methods for Dolphin APIs
@@ -258,6 +261,7 @@ private:
     QtiWorkDurationsExtension* mQtiWorkDurationsExtn = nullptr;
     QtiDolphinWrapper* mQtiDolphinWrapper = nullptr;
 
+    bool mQtiSmomoOptimalRefreshActive = false;
     bool mQtiEnabledIDC = false;
     bool mQtiInitVsyncConfigurationExtn = false;
     bool mQtiInternalPresentationDisplays = false;
@@ -270,6 +274,7 @@ private:
     int mQtiRETid = 0;
     int mQtiSFTid = 0;
     int mQtiUiLayerFrameCount = 180;
+    bool mComposerRefreshNotified = false;
     uint32_t mQtiCurrentFps = 0;
     float mQtiThermalLevelFps = 0;
     float mQtiLastCachedFps = 0;

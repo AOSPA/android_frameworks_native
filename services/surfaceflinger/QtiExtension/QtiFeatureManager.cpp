@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
@@ -84,6 +84,10 @@ void QtiFeatureManager::qtiInit() {
     propName = qtiGetPropName(kSpecFence);
     mQtiEnableSpecFence = base::GetBoolProperty(propName, false);
     ALOGI_IF(mQtiEnableSpecFence, "Enable Spec Fence");
+
+    propName = qtiGetPropName(kSmomoOptimalRefreshRate);
+    mQtiEnableSmomoOptimalRefreshRate = base::GetBoolProperty(propName, false);
+    ALOGI_IF(mQtiEnableSmomoOptimalRefreshRate, "Enable Smomo Optimal Refresh Rate");
 }
 
 void QtiFeatureManager::qtiSetIDisplayConfig(std::shared_ptr<IDisplayConfig> aidl) {
@@ -140,6 +144,8 @@ bool QtiFeatureManager::qtiIsExtensionFeatureEnabled(QtiFeature feature) {
             return mQtiVsyncSourceReliableOnDoze;
         case QtiFeature::kWorkDurations:
             return mQtiUseWorkDurations;
+        case QtiFeature::kSmomoOptimalRefreshRate:
+            return mQtiEnableSmomoOptimalRefreshRate;
         default:
             ALOGW("Queried unknown SF extension feature %d", feature);
             return false;
@@ -178,6 +184,8 @@ string QtiFeatureManager::qtiGetPropName(QtiFeature feature) {
             return "vendor.display.vsync_reliable_on_doze";
         case QtiFeature::kWorkDurations:
             return "debug.sf.use_phase_offsets_as_durations";
+        case QtiFeature::kSmomoOptimalRefreshRate:
+            return "vendor.display.enable_optimal_refresh_rate";
         default:
             ALOGW("Queried unknown SF extension feature %d", feature);
             return "";

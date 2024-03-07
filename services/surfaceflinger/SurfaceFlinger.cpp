@@ -16,7 +16,7 @@
 
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -2253,6 +2253,9 @@ void SurfaceFlinger::onComposerHalSeamlessPossible(hal::HWDisplayId) {
 
 void SurfaceFlinger::onComposerHalRefresh(hal::HWDisplayId) {
     Mutex::Autolock lock(mStateLock);
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiOnComposerHalRefresh();
+    /* QTI_END */
     scheduleComposite(FrameHint::kNone);
 }
 
@@ -2576,6 +2579,10 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     ATRACE_NAME(ftl::Concat(__func__, ' ', ftl::to_underlying(vsyncId)).c_str());
 
     /* QTI_BEGIN */
+    std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
+    if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive()) {
+      lck.lock();
+    }
     mQtiSFExtnIntf->qtiOnVsync(0);
     /* QTI_END */
 
@@ -5298,6 +5305,12 @@ status_t SurfaceFlinger::setTransactionState(
         const std::vector<ListenerCallbacks>& listenerCallbacks, uint64_t transactionId,
         const std::vector<uint64_t>& mergedTransactionIds) {
     ATRACE_CALL();
+    /* QTI_BEGIN */
+    std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
+    if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive()) {
+      lck.lock();
+    }
+    /* QTI_END */
 
     IPCThreadState* ipc = IPCThreadState::self();
     const int originPid = ipc->getCallingPid();
