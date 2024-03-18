@@ -900,13 +900,17 @@ private:
     // Boot animation, on/off animations and screen capture
     void startBootAnim();
 
+    bool layersHasProtectedLayer(const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const;
+
     void captureScreenCommon(RenderAreaFuture, GetLayerSnapshotsFunction, ui::Size bufferSize,
                              ui::PixelFormat, bool allowProtected, bool grayscale,
                              const sp<IScreenCaptureListener>&);
-    ftl::SharedFuture<FenceResult> captureScreenCommon(
+
+    ftl::SharedFuture<FenceResult> captureScreenshot(
             RenderAreaFuture, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, const sp<IScreenCaptureListener>&);
+
     ftl::SharedFuture<FenceResult> renderScreenImpl(
             std::shared_ptr<const RenderArea>, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
@@ -1078,7 +1082,6 @@ private:
                                const DisplayDeviceState& drawingState)
             REQUIRES(mStateLock, kMainThreadContext);
 
-    void dispatchDisplayHotplugEvent(PhysicalDisplayId, bool connected);
     void dispatchDisplayModeChangeEvent(PhysicalDisplayId, const scheduler::FrameRateMode&)
             REQUIRES(mStateLock);
 
@@ -1384,12 +1387,7 @@ private:
 
     const std::string mHwcServiceName;
 
-    /*
-     * Scheduler
-     */
     std::unique_ptr<scheduler::Scheduler> mScheduler;
-    scheduler::ConnectionHandle mAppConnectionHandle;
-    scheduler::ConnectionHandle mSfConnectionHandle;
 
     scheduler::PresentLatencyTracker mPresentLatencyTracker GUARDED_BY(kMainThreadContext);
 
@@ -1533,7 +1531,9 @@ private:
     std::unordered_map<PhysicalDisplayId, NotifyExpectedPresentData> mNotifyExpectedPresentMap;
     void sendNotifyExpectedPresentHint(PhysicalDisplayId displayId) override
             REQUIRES(kMainThreadContext);
-    void scheduleNotifyExpectedPresentHint(PhysicalDisplayId displayId);
+    void scheduleNotifyExpectedPresentHint(PhysicalDisplayId displayId,
+                                           VsyncId vsyncId = VsyncId{
+                                                   FrameTimelineInfo::INVALID_VSYNC_ID});
     void notifyExpectedPresentIfRequired(PhysicalDisplayId, Period vsyncPeriod,
                                          TimePoint expectedPresentTime, Fps frameInterval,
                                          std::optional<Period> timeoutOpt);

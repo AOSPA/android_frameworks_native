@@ -3481,7 +3481,7 @@ void Dumpstate::MaybeSnapshotUiTraces() {
                                                   "tracing", "save-for-bugreport"});
     }
 
-    if (!android_tracing_perfetto_protolog()) {
+    if (!android_tracing_perfetto_protolog_tracing()) {
         dumpTracesForBugReportCommands.push_back({"dumpsys", "activity", "service",
                                                   "SystemUIService", "WMShell", "protolog",
                                                   "save-for-bugreport"});
