@@ -1,4 +1,5 @@
 package: "com.android.graphics.surfaceflinger.flags"
+container: "system"
 
 flag {
   name: "misc1"
@@ -16,13 +17,6 @@ flag {
   is_fixed_read_only: true
 }
 
-flag{
-  name: "late_boot_misc2"
-  namespace: "core_graphics"
-  description: "This flag controls minor miscellaneous SurfaceFlinger changes. Cannot be read before boot finished!"
-  bug: "297389311"
-}
-
 flag {
   name: "vrr_config"
   namespace: "core_graphics"
@@ -37,13 +31,6 @@ flag {
   description: "This flag controls batching on createLayer/destroyLayer command with executeCommand."
   bug: "290685621"
   is_fixed_read_only: true
-}
-
-flag {
-  name: "dont_skip_on_early"
-  namespace: "core_graphics"
-  description: "This flag is guarding the behaviour where SurfaceFlinger is trying to opportunistically present a frame when the configuration change from late to early"
-  bug: "273702768"
 }
 
 flag {
@@ -165,4 +152,45 @@ flag {
   description: "Use Skia's Graphite Vulkan backend in RenderEngine."
   bug: "293371537"
   is_fixed_read_only: true
+}
+
+flag {
+  name: "screenshot_fence_preservation"
+  namespace: "core_graphics"
+  description: "Bug fix around screenshot fences"
+  bug: "302703346"
+  is_fixed_read_only: true
+}
+
+flag {
+  name: "renderable_buffer_usage"
+  namespace: "core_graphics"
+  description: "Decide whether an ExternalTexture isRenderable based on its buffer's usage."
+  bug: "305445199"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
+  name: "restore_blur_step"
+  namespace: "core_graphics"
+  description: "Restore drawing the blur input prior to drawing blurred content."
+  bug: "255921628"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
+  name: "dont_skip_on_early_ro"
+  namespace: "core_graphics"
+  description: "This flag is guarding the behaviour where SurfaceFlinger is trying to opportunistically present a frame when the configuration change from late to early"
+  bug: "273702768"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
 }

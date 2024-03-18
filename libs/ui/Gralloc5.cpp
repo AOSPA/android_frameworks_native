@@ -89,10 +89,18 @@ static void *loadIMapperLibrary() {
             return nullptr;
         }
 
-        std::string lib_name = "mapper." + mapperSuffix + ".so";
-        void *so = android_load_sphal_library(lib_name.c_str(), RTLD_LOCAL | RTLD_NOW);
+        void* so = nullptr;
+        // TODO(b/322384429) switch this to __ANDROID_API_V__ when V is finalized
+        // TODO(b/302113279) use __ANDROID_VENDOR_API__ for vendor variant
+        if (__builtin_available(android __ANDROID_API_FUTURE__, *)) {
+            so = AServiceManager_openDeclaredPassthroughHal("mapper", mapperSuffix.c_str(),
+                                                            RTLD_LOCAL | RTLD_NOW);
+        } else {
+            std::string lib_name = "mapper." + mapperSuffix + ".so";
+            so = android_load_sphal_library(lib_name.c_str(), RTLD_LOCAL | RTLD_NOW);
+        }
         if (!so) {
-            ALOGE("Failed to load %s", lib_name.c_str());
+            ALOGE("Failed to load mapper.%s.so", mapperSuffix.c_str());
         }
         return so;
     }();
@@ -589,37 +597,8 @@ void Gralloc5Mapper::getTransportSize(buffer_handle_t bufferHandle, uint32_t *ou
 status_t Gralloc5Mapper::lock(buffer_handle_t bufferHandle, uint64_t usage, const Rect &bounds,
                               int acquireFence, void **outData, int32_t *outBytesPerPixel,
                               int32_t *outBytesPerStride) const {
-    std::vector<ui::PlaneLayout> planeLayouts;
-    status_t err = getPlaneLayouts(bufferHandle, &planeLayouts);
-
-    if (err == NO_ERROR && !planeLayouts.empty()) {
-        if (outBytesPerPixel) {
-            int32_t bitsPerPixel = planeLayouts.front().sampleIncrementInBits;
-            for (const auto &planeLayout : planeLayouts) {
-                if (bitsPerPixel != planeLayout.sampleIncrementInBits) {
-                    bitsPerPixel = -1;
-                }
-            }
-            if (bitsPerPixel >= 0 && bitsPerPixel % 8 == 0) {
-                *outBytesPerPixel = bitsPerPixel / 8;
-            } else {
-                *outBytesPerPixel = -1;
-            }
-        }
-        if (outBytesPerStride) {
-            int32_t bytesPerStride = planeLayouts.front().strideInBytes;
-            for (const auto &planeLayout : planeLayouts) {
-                if (bytesPerStride != planeLayout.strideInBytes) {
-                    bytesPerStride = -1;
-                }
-            }
-            if (bytesPerStride >= 0) {
-                *outBytesPerStride = bytesPerStride;
-            } else {
-                *outBytesPerStride = -1;
-            }
-        }
-    }
+    if (outBytesPerPixel) *outBytesPerPixel = -1;
+    if (outBytesPerStride) *outBytesPerStride = -1;
 
     auto status = mMapper->v5.lock(bufferHandle, usage, bounds, acquireFence, outData);
 

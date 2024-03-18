@@ -48,8 +48,6 @@ public:
     bool use_skia_tracing() const;
 
     /// Trunk stable server flags ///
-    bool late_boot_misc2() const;
-    bool dont_skip_on_early() const;
     bool refresh_rate_overlay_on_external_display() const;
 
     /// Trunk stable readonly flags ///
@@ -68,6 +66,11 @@ public:
     bool fp16_client_target() const;
     bool game_default_frame_rate() const;
     bool enable_layer_command_batching() const;
+    bool screenshot_fence_preservation() const;
+    bool vulkan_renderengine() const;
+    bool renderable_buffer_usage() const;
+    bool restore_blur_step() const;
+    bool dont_skip_on_early_ro() const;
 
 protected:
     // overridden for unit tests

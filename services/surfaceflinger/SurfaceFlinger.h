@@ -213,8 +213,7 @@ class SurfaceFlinger : public BnSurfaceComposer,
                        private HWC2::ComposerCallback,
                        private ICompositor,
                        private scheduler::ISchedulerCallback,
-                       private compositionengine::ICEPowerCallback,
-                       private scheduler::IVsyncTrackerCallback {
+                       private compositionengine::ICEPowerCallback {
 public:
     struct SkipInitializationTag {};
 
@@ -357,6 +356,11 @@ public:
     static ui::Transform::RotationFlags getActiveDisplayRotationFlags() {
         return sActiveDisplayRotationFlags;
     }
+
+    /* QTI_BEGIN */
+    bool mRequestDisplayModeFlag = false;
+    std::thread::id mFlagThread = std::this_thread::get_id();
+    /* QTI_END */
 
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
@@ -579,6 +583,7 @@ private:
 
     void captureDisplay(const DisplayCaptureArgs&, const sp<IScreenCaptureListener>&);
     void captureDisplay(DisplayId, const CaptureArgs&, const sp<IScreenCaptureListener>&);
+    ScreenCaptureResults captureLayersSync(const LayerCaptureArgs&);
     void captureLayers(const LayerCaptureArgs&, const sp<IScreenCaptureListener>&);
 
     status_t getDisplayStats(const sp<IBinder>& displayToken, DisplayStatInfo* stats);
@@ -704,13 +709,11 @@ private:
     void kernelTimerChanged(bool expired) override;
     void triggerOnFrameRateOverridesChanged() override;
     void onChoreographerAttached() override;
+    void onExpectedPresentTimePosted(TimePoint expectedPresentTime, ftl::NonNull<DisplayModePtr>,
+                                     Fps renderRate) override;
 
     // ICEPowerCallback overrides:
     void notifyCpuLoadUp() override;
-
-    // IVsyncTrackerCallback overrides
-    void onVsyncGenerated(TimePoint expectedPresentTime, ftl::NonNull<DisplayModePtr>,
-                          Fps renderRate) override;
 
     // Toggles the kernel idle timer on or off depending the policy decisions around refresh rates.
     void toggleKernelIdleTimer() REQUIRES(mStateLock);
@@ -924,7 +927,8 @@ private:
      * Display and layer stack management
      */
 
-    // Called during boot, and restart after system_server death.
+    // Called during boot and restart after system_server death, setting the stage for bootanimation
+    // before DisplayManager takes over.
     void initializeDisplays() REQUIRES(kMainThreadContext);
 
     sp<const DisplayDevice> getDisplayDeviceLocked(const wp<IBinder>& displayToken) const
@@ -1235,12 +1239,6 @@ private:
     float mGlobalSaturationFactor = 1.0f;
     mat4 mClientColorMatrix;
 
-    size_t mMaxGraphicBufferProducerListSize = MAX_LAYERS;
-    // If there are more GraphicBufferProducers tracked by SurfaceFlinger than
-    // this threshold, then begin logging.
-    size_t mGraphicBufferProducerListSizeLogThreshold =
-            static_cast<size_t>(0.95 * static_cast<double>(MAX_LAYERS));
-
     // protected by mStateLock (but we could use another lock)
     bool mLayersRemoved = false;
     bool mLayersAdded = false;
@@ -1513,14 +1511,28 @@ private:
     ftl::SmallMap<int64_t, sp<SurfaceControl>, 3> mMirrorMapForDebug;
 
     // NotifyExpectedPresentHint
+    enum class NotifyExpectedPresentHintStatus {
+        // Represents that framework can start sending hint if required.
+        Start,
+        // Represents that the hint is already sent.
+        Sent,
+        // Represents that the hint will be scheduled with a new frame.
+        ScheduleOnPresent,
+        // Represents that a hint will be sent instantly by scheduling on the main thread.
+        ScheduleOnTx
+    };
     struct NotifyExpectedPresentData {
-        // lastExpectedPresentTimestamp is read and write from multiple threads such as
-        // main thread, EventThread, MessageQueue. And is atomic for that reason.
-        std::atomic<TimePoint> lastExpectedPresentTimestamp{};
+        TimePoint lastExpectedPresentTimestamp{};
         Fps lastFrameInterval{};
+        // hintStatus is read and write from multiple threads such as
+        // main thread, EventThread. And is atomic for that reason.
+        std::atomic<NotifyExpectedPresentHintStatus> hintStatus =
+                NotifyExpectedPresentHintStatus::Start;
     };
     std::unordered_map<PhysicalDisplayId, NotifyExpectedPresentData> mNotifyExpectedPresentMap;
-
+    void sendNotifyExpectedPresentHint(PhysicalDisplayId displayId) override
+            REQUIRES(kMainThreadContext);
+    void scheduleNotifyExpectedPresentHint(PhysicalDisplayId displayId);
     void notifyExpectedPresentIfRequired(PhysicalDisplayId, Period vsyncPeriod,
                                          TimePoint expectedPresentTime, Fps frameInterval,
                                          std::optional<Period> timeoutOpt);
@@ -1579,6 +1591,7 @@ public:
                                       const sp<IScreenCaptureListener>&) override;
     binder::Status captureLayers(const LayerCaptureArgs&,
                                  const sp<IScreenCaptureListener>&) override;
+    binder::Status captureLayersSync(const LayerCaptureArgs&, ScreenCaptureResults* results);
 
     // TODO(b/239076119): Remove deprecated AIDL.
     [[deprecated]] binder::Status clearAnimationFrameStats() override {

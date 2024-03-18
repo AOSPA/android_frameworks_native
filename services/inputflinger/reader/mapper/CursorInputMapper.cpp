@@ -23,6 +23,7 @@
 #include <optional>
 
 #include <com_android_input_flags.h>
+#include <ftl/enum.h>
 #include <input/AccelerationCurve.h>
 
 #include "CursorButtonAccumulator.h"
@@ -136,7 +137,7 @@ void CursorInputMapper::dump(std::string& dump) {
     dump += StringPrintf(INDENT3 "VWheelScale: %0.3f\n", mVWheelScale);
     dump += StringPrintf(INDENT3 "HWheelScale: %0.3f\n", mHWheelScale);
     dump += StringPrintf(INDENT3 "DisplayId: %s\n", toString(mDisplayId).c_str());
-    dump += StringPrintf(INDENT3 "Orientation: %d\n", mOrientation);
+    dump += StringPrintf(INDENT3 "Orientation: %s\n", ftl::enum_string(mOrientation).c_str());
     dump += StringPrintf(INDENT3 "ButtonState: 0x%08x\n", mButtonState);
     dump += StringPrintf(INDENT3 "Down: %s\n", toString(isPointerDown(mButtonState)));
     dump += StringPrintf(INDENT3 "DownTime: %" PRId64 "\n", mDownTime);
@@ -159,14 +160,15 @@ std::list<NotifyArgs> CursorInputMapper::reconfigure(nsecs_t when,
         out.push_back(NotifyDeviceResetArgs(getContext()->getNextId(), when, getDeviceId()));
     }
 
-    if (!changes.any() || changes.test(InputReaderConfiguration::Change::POINTER_SPEED) ||
-        configurePointerCapture) {
-        configureOnChangePointerSpeed(readerConfig);
-    }
-
     if (!changes.any() || changes.test(InputReaderConfiguration::Change::DISPLAY_INFO) ||
         configurePointerCapture) {
         configureOnChangeDisplayInfo(readerConfig);
+    }
+
+    // Pointer speed settings depend on display settings.
+    if (!changes.any() || changes.test(InputReaderConfiguration::Change::POINTER_SPEED) ||
+        changes.test(InputReaderConfiguration::Change::DISPLAY_INFO) || configurePointerCapture) {
+        configureOnChangePointerSpeed(readerConfig);
     }
     return out;
 }
@@ -510,11 +512,16 @@ void CursorInputMapper::configureOnChangePointerSpeed(const InputReaderConfigura
     } else {
         if (mEnableNewMousePointerBallistics) {
             mNewPointerVelocityControl.setAccelerationEnabled(
-                    config.mousePointerAccelerationEnabled);
+                    config.displaysWithMousePointerAccelerationDisabled.count(
+                            mDisplayId.value_or(ADISPLAY_ID_NONE)) == 0);
             mNewPointerVelocityControl.setCurve(
                     createAccelerationCurveForPointerSensitivity(config.mousePointerSpeed));
         } else {
-            mOldPointerVelocityControl.setParameters(config.pointerVelocityControlParameters);
+            mOldPointerVelocityControl.setParameters(
+                    (config.displaysWithMousePointerAccelerationDisabled.count(
+                             mDisplayId.value_or(ADISPLAY_ID_NONE)) == 0)
+                            ? config.pointerVelocityControlParameters
+                            : FLAT_VELOCITY_CONTROL_PARAMS);
         }
         mWheelXVelocityControl.setParameters(config.wheelVelocityControlParameters);
         mWheelYVelocityControl.setParameters(config.wheelVelocityControlParameters);

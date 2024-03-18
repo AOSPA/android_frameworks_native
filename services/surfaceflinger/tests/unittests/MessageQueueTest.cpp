@@ -41,6 +41,7 @@ struct NoOpCompositor final : ICompositor {
         return {};
     }
     void sample() override {}
+    void sendNotifyExpectedPresentHint(PhysicalDisplayId) {}
 } gNoOpCompositor;
 
 class TestableMessageQueue : public impl::MessageQueue {
@@ -72,7 +73,8 @@ struct MockTokenManager : frametimeline::TokenManager {
 struct MessageQueueTest : testing::Test {
     void SetUp() override {
         EXPECT_CALL(*mVSyncDispatch, registerCallback(_, "sf")).WillOnce(Return(mCallbackToken));
-        EXPECT_NO_FATAL_FAILURE(mEventQueue.initVsync(mVSyncDispatch, mTokenManager, kDuration));
+        EXPECT_NO_FATAL_FAILURE(
+                mEventQueue.initVsyncInternal(mVSyncDispatch, mTokenManager, kDuration));
         EXPECT_CALL(*mVSyncDispatch, unregisterCallback(mCallbackToken)).Times(1);
     }
 

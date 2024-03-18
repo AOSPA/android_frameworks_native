@@ -16,7 +16,7 @@
 
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -87,11 +87,13 @@
 #include "SurfaceFlinger.h"
 #include "TimeStats/TimeStats.h"
 #include "TunnelModeEnabledReporter.h"
+#include "Utils/FenceUtils.h"
 
 #define DEBUG_RESIZE 0
 #define EARLY_RELEASE_ENABLED false
 
 namespace android {
+using namespace std::chrono_literals;
 namespace {
 constexpr int kDumpTableRowLength = 159;
 
@@ -2952,7 +2954,8 @@ void Layer::callReleaseBufferCallback(const sp<ITransactionCompletedListener>& l
 }
 
 void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult,
-                             ui::LayerStack layerStack) {
+                             ui::LayerStack layerStack,
+                             std::function<FenceResult(FenceResult)>&& continuation) {
     // If we are displayed on multiple displays in a single composition cycle then we would
     // need to do careful tracking to enable the use of the mLastClientCompositionFence.
     //  For example we can only use it if all the displays are client comp, and we need
@@ -2987,11 +2990,41 @@ void Layer::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult,
             break;
         }
     }
+
+    if (!FlagManager::getInstance().screenshot_fence_preservation() && continuation) {
+        futureFenceResult = ftl::Future(futureFenceResult).then(std::move(continuation)).share();
+    }
+
     if (ch != nullptr) {
         ch->previousReleaseCallbackId = mPreviousReleaseCallbackId;
         ch->previousReleaseFences.emplace_back(std::move(futureFenceResult));
         ch->name = mName;
+    } else if (FlagManager::getInstance().screenshot_fence_preservation()) {
+        // If we didn't get a release callback yet, e.g. some scenarios when capturing screenshots
+        // asynchronously, then make sure we don't drop the fence.
+        mAdditionalPreviousReleaseFences.emplace_back(std::move(futureFenceResult),
+                                                      std::move(continuation));
+        std::vector<FenceAndContinuation> mergedFences;
+        sp<Fence> prevFence = nullptr;
+        // For a layer that's frequently screenshotted, try to merge fences to make sure we don't
+        // grow unbounded.
+        for (const auto& futureAndContinution : mAdditionalPreviousReleaseFences) {
+            auto result = futureAndContinution.future.wait_for(0s);
+            if (result != std::future_status::ready) {
+                mergedFences.emplace_back(futureAndContinution);
+                continue;
+            }
+
+            mergeFence(getDebugName(), futureAndContinution.chain().get().value_or(Fence::NO_FENCE),
+                       prevFence);
+        }
+        if (prevFence != nullptr) {
+            mergedFences.emplace_back(ftl::yield(FenceResult(std::move(prevFence))).share());
+        }
+
+        mAdditionalPreviousReleaseFences.swap(mergedFences);
     }
+
     if (mBufferInfo.mBuffer) {
         mPreviouslyPresentedLayerStacks.push_back(layerStack);
     }
@@ -3411,6 +3444,14 @@ bool Layer::setExtendedRangeBrightness(float currentBufferRatio, float desiredRa
     return true;
 }
 
+bool Layer::setDesiredHdrHeadroom(float desiredRatio) {
+    if (mDrawingState.desiredHdrSdrRatio == desiredRatio) return false;
+    mDrawingState.desiredHdrSdrRatio = desiredRatio;
+    mDrawingState.modified = true;
+    setTransactionFlags(eTransactionNeeded);
+    return true;
+}
+
 bool Layer::setCachingHint(gui::CachingHint cachingHint) {
     if (mDrawingState.cachingHint == cachingHint) return false;
     mDrawingState.cachingHint = cachingHint;
@@ -3489,6 +3530,15 @@ bool Layer::setTransactionCompletedListeners(const std::vector<sp<CallbackHandle
             handle->acquireTimeOrFence = mCallbackHandleAcquireTimeOrFence;
             handle->frameNumber = mDrawingState.frameNumber;
             handle->previousFrameNumber = mDrawingState.previousFrameNumber;
+            if (FlagManager::getInstance().screenshot_fence_preservation() &&
+                mPreviousReleaseBufferEndpoint == handle->listener) {
+                // Add fences from previous screenshots now so that they can be dispatched to the
+                // client.
+                for (const auto& futureAndContinution : mAdditionalPreviousReleaseFences) {
+                    handle->previousReleaseFences.emplace_back(futureAndContinution.chain());
+                }
+                mAdditionalPreviousReleaseFences.clear();
+            }
 
             // Store so latched time and release fence can be set
             mDrawingState.callbackHandles.push_back(handle);
@@ -3682,31 +3732,26 @@ void Layer::gatherBufferInfo() {
         {
             ATRACE_NAME("getDataspace");
             err = mapper.getDataspace(mBufferInfo.mBuffer->getBuffer()->handle, &dataspace);
+            /* QTI_BEGIN */
+            if (dataspace == ui::Dataspace::UNKNOWN) {
+              ALOGW("%s: Received unknown dataspace from gralloc", __func__);
+            }
+            /* QTI_END */
         }
-        if (err != OK || dataspace != mBufferInfo.mDataspace) {
+        if ((err != OK || dataspace != mBufferInfo.mDataspace)
+            /* QTI_BEGIN */
+            && dataspace != ui::Dataspace::UNKNOWN) {
+            /* QTI_END */
             {
                 ATRACE_NAME("setDataspace");
                 err = mapper.setDataspace(mBufferInfo.mBuffer->getBuffer()->handle,
                                           static_cast<ui::Dataspace>(mBufferInfo.mDataspace));
             }
-
-            // Some GPU drivers may cache gralloc metadata which means before we composite we need
-            // to upsert RenderEngine's caches. Put in a special workaround to be backwards
-            // compatible with old vendors, with a ticking clock.
-            static const int32_t kVendorVersion =
-                    base::GetIntProperty("ro.board.api_level", __ANDROID_API_FUTURE__);
-            if (const auto format =
-                        static_cast<aidl::android::hardware::graphics::common::PixelFormat>(
-                                mBufferInfo.mBuffer->getPixelFormat());
-                err == OK && kVendorVersion < __ANDROID_API_U__ &&
-                (format ==
-                         aidl::android::hardware::graphics::common::PixelFormat::
-                                 IMPLEMENTATION_DEFINED ||
-                 format == aidl::android::hardware::graphics::common::PixelFormat::YCBCR_420_888 ||
-                 format == aidl::android::hardware::graphics::common::PixelFormat::YV12 ||
-                 format == aidl::android::hardware::graphics::common::PixelFormat::YCBCR_P010)) {
-                mBufferInfo.mBuffer->remapBuffer();
-            }
+            /* QTI_BEGIN */
+            // GPU drivers cache gralloc metadata which means before we composite we need
+            // to upsert RenderEngine's cache.
+            mBufferInfo.mBuffer->remapBuffer();
+            /* QTI_END */
         }
     }
     if (lastDataspace != mBufferInfo.mDataspace) {
@@ -3994,6 +4039,13 @@ bool Layer::isSimpleBufferUpdate(const layer_state_t& s) const {
         if (mDrawingState.currentHdrSdrRatio != s.currentHdrSdrRatio ||
             mDrawingState.desiredHdrSdrRatio != s.desiredHdrSdrRatio) {
             ATRACE_FORMAT_INSTANT("%s: false [eExtendedRangeBrightnessChanged changed]", __func__);
+            return false;
+        }
+    }
+
+    if (s.what & layer_state_t::eDesiredHdrHeadroomChanged) {
+        if (mDrawingState.desiredHdrSdrRatio != s.desiredHdrSdrRatio) {
+            ATRACE_FORMAT_INSTANT("%s: false [eDesiredHdrHeadroomChanged changed]", __func__);
             return false;
         }
     }

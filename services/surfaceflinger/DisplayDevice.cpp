@@ -74,6 +74,7 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
         mActiveModeFpsTrace(concatId("ActiveModeFps")),
         mRenderRateFpsTrace(concatId("RenderRateFps")),
         mPhysicalOrientation(args.physicalOrientation),
+        mPowerMode(ftl::Concat("PowerMode ", getId().value).c_str(), args.initialPowerMode),
         mIsPrimary(args.isPrimary),
         mRequestedRefreshRate(args.requestedRefreshRate),
         mRefreshRateSelector(std::move(args.refreshRateSelector)),
@@ -113,9 +114,7 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
 
     mCompositionDisplay->getRenderSurface()->initialize();
 
-    if (const auto powerModeOpt = args.initialPowerMode) {
-        setPowerMode(*powerModeOpt);
-    }
+    setPowerMode(args.initialPowerMode);
 
     // initialize the display orientation transform.
     setProjection(ui::ROTATION_0, Rect::INVALID_RECT, Rect::INVALID_RECT);
@@ -180,6 +179,7 @@ auto DisplayDevice::getFrontEndInfo() const -> frontend::DisplayInfo {
 }
 
 void DisplayDevice::setPowerMode(hal::PowerMode mode) {
+    // TODO(b/241285876): Skip this for virtual displays.
     if (mode == hal::PowerMode::OFF || mode == hal::PowerMode::ON) {
         if (mStagedBrightness && mBrightness != mStagedBrightness) {
             getCompositionDisplay()->setNextBrightness(*mStagedBrightness);
@@ -189,33 +189,26 @@ void DisplayDevice::setPowerMode(hal::PowerMode mode) {
         getCompositionDisplay()->applyDisplayBrightness(true);
     }
 
-    if (mPowerMode) {
-        *mPowerMode = mode;
-    } else {
-        mPowerMode.emplace("PowerMode -" + to_string(getId()), mode);
-    }
+    mPowerMode = mode;
 
     getCompositionDisplay()->setCompositionEnabled(isPoweredOn());
 }
 
 void DisplayDevice::tracePowerMode() {
-    // assign the same value for tracing
-    if (mPowerMode) {
-        const hal::PowerMode powerMode = *mPowerMode;
-        *mPowerMode = powerMode;
-    }
+    // Assign the same value for tracing.
+    mPowerMode = mPowerMode.get();
 }
 
 void DisplayDevice::enableLayerCaching(bool enable) {
     getCompositionDisplay()->setLayerCachingEnabled(enable);
 }
 
-std::optional<hal::PowerMode> DisplayDevice::getPowerMode() const {
+hal::PowerMode DisplayDevice::getPowerMode() const {
     return mPowerMode;
 }
 
 bool DisplayDevice::isPoweredOn() const {
-    return mPowerMode && *mPowerMode != hal::PowerMode::OFF;
+    return mPowerMode != hal::PowerMode::OFF;
 }
 
 void DisplayDevice::setActiveMode(DisplayModeId modeId, Fps vsyncRate, Fps renderFps) {
@@ -265,10 +258,8 @@ nsecs_t DisplayDevice::getVsyncPeriodFromHWC() const {
         return 0;
     }
 
-    nsecs_t vsyncPeriod;
-    const auto status = mHwComposer.getDisplayVsyncPeriod(physicalId, &vsyncPeriod);
-    if (status == NO_ERROR) {
-        return vsyncPeriod;
+    if (const auto vsyncPeriodOpt = mHwComposer.getDisplayVsyncPeriod(physicalId).value_opt()) {
+        return *vsyncPeriodOpt;
     }
 
     return refreshRateSelector().getActiveMode().modePtr->getVsyncRate().getPeriodNsecs();
@@ -546,16 +537,8 @@ void DisplayDevice::animateOverlay() {
 }
 
 auto DisplayDevice::setDesiredMode(display::DisplayModeRequest&& desiredMode) -> DesiredModeAction {
-    ATRACE_CALL();
-
-    const auto& desiredModePtr = desiredMode.mode.modePtr;
-
-    LOG_ALWAYS_FATAL_IF(getPhysicalId() != desiredModePtr->getPhysicalDisplayId(),
-                        "DisplayId mismatch");
-
-    // TODO (b/318533819): Stringize DisplayModeRequest.
-    ALOGD("%s(%s, force=%s)", __func__, to_string(*desiredModePtr).c_str(),
-          desiredMode.force ? "true" : "false");
+    ATRACE_NAME(concatId(__func__).c_str());
+    ALOGD("%s %s", concatId(__func__).c_str(), to_string(desiredMode).c_str());
 
     std::scoped_lock lock(mDesiredModeLock);
     if (mDesiredModeOpt) {
@@ -572,7 +555,8 @@ auto DisplayDevice::setDesiredMode(display::DisplayModeRequest&& desiredMode) ->
 
     // If the desired mode is already active...
     const auto activeMode = refreshRateSelector().getActiveMode();
-    if (!desiredMode.force && activeMode.modePtr->getId() == desiredModePtr->getId()) {
+    if (const auto& desiredModePtr = desiredMode.mode.modePtr;
+        !desiredMode.force && activeMode.modePtr->getId() == desiredModePtr->getId()) {
         if (activeMode == desiredMode.mode) {
             return DesiredModeAction::None;
         }

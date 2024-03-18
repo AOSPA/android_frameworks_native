@@ -18,10 +18,21 @@
 #include <surfacetexture/ImageConsumer.h>
 #include <surfacetexture/SurfaceTexture.h>
 
+/* QTI_BEGIN */
+#include "../QtiExtension/QtiImageConsumerExtension.h"
+/* QTI_END */
+
+
 // Macro for including the SurfaceTexture name in log messages
 #define IMG_LOGE(x, ...) ALOGE("[%s] " x, st.mName.c_str(), ##__VA_ARGS__)
 
 namespace android {
+
+/* QTI_BEGIN */
+ImageConsumer::ImageConsumer() {
+    mQtiImageConsumerExtn = std::make_shared<android::libnativedisplay::QtiImageConsumerExtension>(this);
+}
+/* QTI_END */
 
 void ImageConsumer::onReleaseBufferLocked(int buf) {
     mImageSlots[buf].eglFence() = EGL_NO_SYNC_KHR;
@@ -108,6 +119,10 @@ sp<GraphicBuffer> ImageConsumer::dequeueBuffer(int* outSlotid, android_dataspace
             // Keep going, with error raised.
         }
     }
+
+    /* QTI_BEGIN */
+    mQtiImageConsumerExtn->updateBufferDataSpace(st.mSlots[slot].mGraphicBuffer, item);
+    /* QTI_END */
 
     // Update the state.
     st.mCurrentTexture = slot;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,19 +14,12 @@
  * limitations under the License.
  */
 
-#pragma once
+package android.graphics.bufferstreams;
 
-#include <gmock/gmock.h>
+import android.os.ParcelFileDescriptor;
 
-#include "Scheduler/VSyncTracker.h"
-
-namespace android::scheduler::mock {
-
-struct VsyncTrackerCallback final : IVsyncTrackerCallback {
-    MOCK_METHOD(void, onVsyncGenerated, (TimePoint, ftl::NonNull<DisplayModePtr>, Fps), (override));
-};
-
-struct NoOpVsyncTrackerCallback final : IVsyncTrackerCallback {
-    void onVsyncGenerated(TimePoint, ftl::NonNull<DisplayModePtr>, Fps) override{};
-};
-} // namespace android::scheduler::mock
+// Interface from a client back to the owner of a buffer.
+interface IBufferOwner {
+    // Called when the buffer is done being processed by the stream to return its owner.
+    oneway void onBufferReleased(in long bufferId, in @nullable ParcelFileDescriptor releaseFence);
+}

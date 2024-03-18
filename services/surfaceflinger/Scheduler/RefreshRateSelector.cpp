@@ -286,7 +286,8 @@ struct RefreshRateSelector::RefreshRateScoreComparator {
 std::string RefreshRateSelector::Policy::toString() const {
     return base::StringPrintf("{defaultModeId=%d, allowGroupSwitching=%s"
                               ", primaryRanges=%s, appRequestRanges=%s}",
-                              defaultMode.value(), allowGroupSwitching ? "true" : "false",
+                              ftl::to_underlying(defaultMode),
+                              allowGroupSwitching ? "true" : "false",
                               to_string(primaryRanges).c_str(),
                               to_string(appRequestRanges).c_str());
 }
@@ -843,14 +844,18 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     const auto touchRefreshRates = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
     using fps_approx_ops::operator<;
 
+    // A method for UI Toolkit to send the touch signal via "HighHint" category vote,
+    // which will touch boost when there are no ExplicitDefault layer votes. This is an
+    // incomplete solution but accounts for cases such as games that use `setFrameRate` with default
+    // compatibility to limit the frame rate, which should not have touch boost.
     const bool hasInteraction = signals.touch || interactiveLayers > 0;
-    if (hasInteraction && explicitDefaultVoteLayers == 0 && explicitCategoryVoteLayers == 0 &&
-        touchBoostForExplicitExact &&
+
+    if (hasInteraction && explicitDefaultVoteLayers == 0 && touchBoostForExplicitExact &&
         scores.front().frameRateMode.fps < touchRefreshRates.front().frameRateMode.fps) {
         ALOGV("Touch Boost");
         ATRACE_FORMAT_INSTANT("%s (Touch Boost [late])",
                               to_string(touchRefreshRates.front().frameRateMode.fps).c_str());
-        return {touchRefreshRates, GlobalSignals{.touch = signals.touch}};
+        return {touchRefreshRates, GlobalSignals{.touch = true}};
     }
 
     // If we never scored any layers, and we don't favor high refresh rates, prefer to stay with the
