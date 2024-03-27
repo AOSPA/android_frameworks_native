@@ -834,12 +834,15 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     const bool touchBoostForExplicitExact = [&] {
         if (supportsAppFrameRateOverrideByContent()) {
             // Enable touch boost if there are other layers besides exact
-            return explicitExact + noVoteLayers != layers.size();
+            return explicitExact + noVoteLayers + explicitGteLayers != layers.size();
         } else {
             // Enable touch boost if there are no exact layers
             return explicitExact == 0;
         }
     }();
+
+    const bool touchBoostForCategory =
+            explicitCategoryVoteLayers + noVoteLayers + explicitGteLayers != layers.size();
 
     const auto touchRefreshRates = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
     using fps_approx_ops::operator<;
@@ -851,6 +854,7 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     const bool hasInteraction = signals.touch || interactiveLayers > 0;
 
     if (hasInteraction && explicitDefaultVoteLayers == 0 && touchBoostForExplicitExact &&
+        touchBoostForCategory &&
         scores.front().frameRateMode.fps < touchRefreshRates.front().frameRateMode.fps) {
         ALOGV("Touch Boost");
         ATRACE_FORMAT_INSTANT("%s (Touch Boost [late])",
@@ -948,14 +952,40 @@ auto RefreshRateSelector::getFrameRateOverrides(const std::vector<LayerRequireme
     const auto layersByUid = groupLayersByUid(layers);
     UidToFrameRateOverride frameRateOverrides;
     for (const auto& [uid, layersWithSameUid] : layersByUid) {
-        // Layers with ExplicitExactOrMultiple expect touch boost
-        const bool hasExplicitExactOrMultiple =
-                std::any_of(layersWithSameUid.cbegin(), layersWithSameUid.cend(),
-                            [](const auto& layer) {
-                                return layer->vote == LayerVoteType::ExplicitExactOrMultiple;
-                            });
+        // Look for cases that should not have frame rate overrides.
+        bool hasExplicitExactOrMultiple = false;
+        bool hasExplicitDefault = false;
+        bool hasHighHint = false;
+        for (const auto& layer : layersWithSameUid) {
+            switch (layer->vote) {
+                case LayerVoteType::ExplicitExactOrMultiple:
+                    hasExplicitExactOrMultiple = true;
+                    break;
+                case LayerVoteType::ExplicitDefault:
+                    hasExplicitDefault = true;
+                    break;
+                case LayerVoteType::ExplicitCategory:
+                    if (layer->frameRateCategory == FrameRateCategory::HighHint) {
+                        hasHighHint = true;
+                    }
+                    break;
+                default:
+                    // No action
+                    break;
+            }
+            if (hasExplicitExactOrMultiple && hasExplicitDefault && hasHighHint) {
+                break;
+            }
+        }
 
+        // Layers with ExplicitExactOrMultiple expect touch boost
         if (globalSignals.touch && hasExplicitExactOrMultiple) {
+            continue;
+        }
+
+        // Mirrors getRankedFrameRates. If there is no ExplicitDefault, expect touch boost and
+        // skip frame rate override.
+        if (hasHighHint && !hasExplicitDefault) {
             continue;
         }
 
@@ -1528,19 +1558,17 @@ FpsRange RefreshRateSelector::getFrameRateCategoryRange(FrameRateCategory catego
         case FrameRateCategory::High:
             return FpsRange{90_Hz, 120_Hz};
         case FrameRateCategory::Normal:
-            return FpsRange{60_Hz, 90_Hz};
+            return FpsRange{60_Hz, 120_Hz};
         case FrameRateCategory::Low:
-            return FpsRange{30_Hz, 30_Hz};
+            return FpsRange{30_Hz, 120_Hz};
         case FrameRateCategory::HighHint:
         case FrameRateCategory::NoPreference:
         case FrameRateCategory::Default:
             LOG_ALWAYS_FATAL("Should not get fps range for frame rate category: %s",
                              ftl::enum_string(category).c_str());
-            return FpsRange{0_Hz, 0_Hz};
         default:
             LOG_ALWAYS_FATAL("Invalid frame rate category for range: %s",
                              ftl::enum_string(category).c_str());
-            return FpsRange{0_Hz, 0_Hz};
     }
 }
 

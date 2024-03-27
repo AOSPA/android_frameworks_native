@@ -68,7 +68,7 @@ public:
 
     void setDisplayModePtr(ftl::NonNull<DisplayModePtr>) final EXCLUDES(mMutex);
 
-    void setRenderRate(Fps) final EXCLUDES(mMutex);
+    void setRenderRate(Fps, bool applyImmediately) final EXCLUDES(mMutex);
 
     void onFrameBegin(TimePoint expectedPresentTime, TimePoint lastConfirmedPresentTime) final
             EXCLUDES(mMutex);
@@ -89,21 +89,23 @@ private:
 
     class VsyncTimeline {
     public:
-        VsyncTimeline(Period idealPeriod, std::optional<Fps> renderRateOpt);
+        VsyncTimeline(TimePoint knownVsync, Period idealPeriod, std::optional<Fps> renderRateOpt);
         std::optional<TimePoint> nextAnticipatedVSyncTimeFrom(
-                Model model, Period minFramePeriod, nsecs_t vsyncTime, MissedVsync lastMissedVsync,
-                std::optional<nsecs_t> lastVsyncOpt = {});
+                Model model, std::optional<Period> minFramePeriodOpt, nsecs_t vsyncTime,
+                MissedVsync lastMissedVsync, std::optional<nsecs_t> lastVsyncOpt = {});
         void freeze(TimePoint lastVsync);
         std::optional<TimePoint> validUntil() const { return mValidUntil; }
         bool isVSyncInPhase(Model, nsecs_t vsync, Fps frameRate);
         void shiftVsyncSequence(Duration phase);
+        void setRenderRate(Fps renderRate) { mRenderRateOpt = renderRate; }
 
     private:
         nsecs_t snapToVsyncAlignedWithRenderRate(Model model, nsecs_t vsync);
         VsyncSequence getVsyncSequenceLocked(Model, nsecs_t vsync);
+        std::optional<VsyncSequence> makeVsyncSequence(TimePoint knownVsync);
 
         const Period mIdealPeriod = Duration::fromNs(0);
-        const std::optional<Fps> mRenderRateOpt;
+        std::optional<Fps> mRenderRateOpt;
         std::optional<TimePoint> mValidUntil;
         std::optional<VsyncSequence> mLastVsyncSequence;
     };
@@ -143,6 +145,7 @@ private:
     std::vector<nsecs_t> mTimestamps GUARDED_BY(mMutex);
 
     ftl::NonNull<DisplayModePtr> mDisplayModePtr GUARDED_BY(mMutex);
+    int mNumVsyncsForFrame GUARDED_BY(mMutex);
 
     std::deque<TimePoint> mPastExpectedPresentTimes GUARDED_BY(mMutex);
 

@@ -164,7 +164,6 @@
 #include "Scheduler/VsyncConfiguration.h"
 #include "Scheduler/VsyncModulator.h"
 #include "ScreenCaptureOutput.h"
-#include "StartPropertySetThread.h"
 #include "SurfaceFlingerProperties.h"
 #include "TimeStats/TimeStats.h"
 #include "TunnelModeEnabledReporter.h"
@@ -584,7 +583,11 @@ void SurfaceFlinger::binderDied(const wp<IBinder>&) {
         initializeDisplays();
     }));
 
-    startBootAnim();
+    mInitBootPropsFuture.callOnce([this] {
+        return std::async(std::launch::async, &SurfaceFlinger::initBootProperties, this);
+    });
+
+    mInitBootPropsFuture.wait();
 }
 
 void SurfaceFlinger::run() {
@@ -740,13 +743,10 @@ void SurfaceFlinger::bootFinished() {
     }
     mBootFinished = true;
     FlagManager::getMutableInstance().markBootCompleted();
-    if (mStartPropertySetThread->join() != NO_ERROR) {
-        ALOGE("Join StartPropertySetThread failed!");
-    }
 
-    if (mRenderEnginePrimeCacheFuture.valid()) {
-        mRenderEnginePrimeCacheFuture.get();
-    }
+    mInitBootPropsFuture.wait();
+    mRenderEnginePrimeCacheFuture.wait();
+
     const nsecs_t now = systemTime();
     const nsecs_t duration = now - mBootTime;
     ALOGI("Boot is finished (%ld ms)", long(ns2ms(duration)) );
@@ -834,8 +834,6 @@ void chooseRenderEngineType(renderengine::RenderEngineCreationArgs::Builder& bui
     }
 }
 
-// Do not call property_set on main thread which will be blocked by init
-// Use StartPropertySetThread instead.
 void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
     ATRACE_CALL();
     ALOGI(  "SurfaceFlinger's main thread ready to run. "
@@ -871,6 +869,9 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
     mCompositionEngine->setHwComposer(getFactory().createHWComposer(mHwcServiceName));
     mCompositionEngine->getHwComposer().setCallback(*this);
     ClientCache::getInstance().setRenderEngine(&getRenderEngine());
+
+    mHasReliablePresentFences =
+            !getHwComposer().hasCapability(Capability::PRESENT_FENCE_IS_NOT_RELIABLE);
 
     enableLatchUnsignaledConfig = getLatchUnsignaledConfig();
 
@@ -930,24 +931,21 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
             ALOGW("Can't set SCHED_OTHER for primeCache");
         }
 
-        bool shouldPrimeUltraHDR =
-                base::GetBoolProperty("ro.surface_flinger.prime_shader_cache.ultrahdr"s, false);
-        mRenderEnginePrimeCacheFuture = getRenderEngine().primeCache(shouldPrimeUltraHDR);
+        mRenderEnginePrimeCacheFuture.callOnce([this] {
+            const bool shouldPrimeUltraHDR =
+                    base::GetBoolProperty("ro.surface_flinger.prime_shader_cache.ultrahdr"s, false);
+            return getRenderEngine().primeCache(shouldPrimeUltraHDR);
+        });
 
         if (setSchedFifo(true) != NO_ERROR) {
             ALOGW("Can't set SCHED_FIFO after primeCache");
         }
     }
 
-    // Inform native graphics APIs whether the present timestamp is supported:
-
-    const bool presentFenceReliable =
-            !getHwComposer().hasCapability(Capability::PRESENT_FENCE_IS_NOT_RELIABLE);
-    mStartPropertySetThread = getFactory().createStartPropertySetThread(presentFenceReliable);
-
-    if (mStartPropertySetThread->Start() != NO_ERROR) {
-        ALOGE("Run StartPropertySetThread failed!");
-    }
+    // Avoid blocking the main thread on `init` to set properties.
+    mInitBootPropsFuture.callOnce([this] {
+        return std::async(std::launch::async, &SurfaceFlinger::initBootProperties, this);
+    });
 
     initTransactionTraceWriter();
     /* QTI_BEGIN */
@@ -967,6 +965,20 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
     /* QTI_END */
 
     ALOGV("Done initializing");
+}
+
+// During boot, offload `initBootProperties` to another thread. `property_set` depends on
+// `property_service`, which may be delayed by slow operations like `mount_all --late` in
+// the `init` process. See b/34499826 and b/63844978.
+void SurfaceFlinger::initBootProperties() {
+    property_set("service.sf.present_timestamp", mHasReliablePresentFences ? "1" : "0");
+
+    if (base::GetBoolProperty("debug.sf.boot_animation"s, true)) {
+        // Reset and (if needed) start BootAnimation.
+        property_set("service.bootanim.exit", "0");
+        property_set("service.bootanim.progress", "0");
+        property_set("ctl.start", "bootanim");
+    }
 }
 
 void SurfaceFlinger::initTransactionTraceWriter() {
@@ -1008,18 +1020,6 @@ void SurfaceFlinger::readPersistentProperties() {
             static_cast<ui::ColorMode>(base::GetIntProperty("persist.sys.sf.color_mode"s, 0));
 }
 
-void SurfaceFlinger::startBootAnim() {
-    // Start boot animation service by setting a property mailbox
-    // if property setting thread is already running, Start() will be just a NOP
-    mStartPropertySetThread->Start();
-    // Wait until property was set
-    if (mStartPropertySetThread->join() != NO_ERROR) {
-        ALOGE("Join StartPropertySetThread failed!");
-    }
-}
-
-// ----------------------------------------------------------------------------
-
 status_t SurfaceFlinger::getSupportedFrameTimestamps(
         std::vector<FrameEvent>* outSupported) const {
     *outSupported = {
@@ -1033,9 +1033,7 @@ status_t SurfaceFlinger::getSupportedFrameTimestamps(
         FrameEvent::RELEASE,
     };
 
-    ConditionalLock lock(mStateLock, std::this_thread::get_id() != mMainThreadId);
-
-    if (!getHwComposer().hasCapability(Capability::PRESENT_FENCE_IS_NOT_RELIABLE)) {
+    if (mHasReliablePresentFences) {
         outSupported->push_back(FrameEvent::DISPLAY_PRESENT);
     }
     return NO_ERROR;
@@ -1275,8 +1273,8 @@ void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode) {
     switch (display->setDesiredMode(std::move(desiredMode))) {
         case DisplayDevice::DesiredModeAction::InitiateDisplayModeSwitch:
             // DisplayDevice::setDesiredMode updated the render rate, so inform Scheduler.
-            mScheduler->setRenderRate(displayId,
-                                      display->refreshRateSelector().getActiveMode().fps);
+            mScheduler->setRenderRate(displayId, display->refreshRateSelector().getActiveMode().fps,
+                                      /*applyImmediately*/ true);
 
             // Schedule a new frame to initiate the display mode switch.
             scheduleComposite(FrameHint::kNone);
@@ -1297,7 +1295,7 @@ void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode) {
             mScheduler->setModeChangePending(true);
             break;
         case DisplayDevice::DesiredModeAction::InitiateRenderRateSwitch:
-            mScheduler->setRenderRate(displayId, mode.fps);
+            mScheduler->setRenderRate(displayId, mode.fps, /*applyImmediately*/ false);
 
             if (displayId == mActiveDisplayId) {
                 mScheduler->updatePhaseConfiguration(mode.fps);
@@ -1423,7 +1421,7 @@ void SurfaceFlinger::applyActiveMode(const sp<DisplayDevice>& display) {
 
     constexpr bool kAllowToEnable = true;
     mScheduler->resyncToHardwareVsync(displayId, kAllowToEnable, std::move(activeModePtr).take());
-    mScheduler->setRenderRate(displayId, renderFps);
+    mScheduler->setRenderRate(displayId, renderFps, /*applyImmediately*/ true);
 
     if (displayId == mActiveDisplayId) {
         mScheduler->updatePhaseConfiguration(renderFps);
@@ -2857,7 +2855,8 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
     refreshArgs.forceOutputColorMode = mForceColorMode;
 
     refreshArgs.updatingOutputGeometryThisFrame = mVisibleRegionsDirty;
-    refreshArgs.updatingGeometryThisFrame = mGeometryDirty.exchange(false) || mVisibleRegionsDirty;
+    refreshArgs.updatingGeometryThisFrame = mGeometryDirty.exchange(false) ||
+            mVisibleRegionsDirty || mDrawingState.colorMatrixChanged;
     refreshArgs.internalDisplayRotationFlags = getActiveDisplayRotationFlags();
 
     if (CC_UNLIKELY(mDrawingState.colorMatrixChanged)) {
@@ -3161,10 +3160,9 @@ void SurfaceFlinger::onCompositionPresented(PhysicalDisplayId pacesetterId,
     // but that should be okay since CompositorTiming has snapping logic.
     const TimePoint compositeTime =
             TimePoint::fromNs(mCompositionEngine->getLastFrameRefreshTimestamp());
-    const Duration presentLatency =
-            getHwComposer().hasCapability(Capability::PRESENT_FENCE_IS_NOT_RELIABLE)
-            ? Duration::zero()
-            : mPresentLatencyTracker.trackPendingFrame(compositeTime, pacesetterPresentFenceTime);
+    const Duration presentLatency = mHasReliablePresentFences
+            ? mPresentLatencyTracker.trackPendingFrame(compositeTime, pacesetterPresentFenceTime)
+            : Duration::zero();
 
     const auto schedule = mScheduler->getVsyncSchedule();
     const TimePoint vsyncDeadline = schedule->vsyncDeadlineAfter(presentTime);
@@ -4597,7 +4595,7 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
         features |= Feature::kTracePredictedVsync;
     }
     if (!base::GetBoolProperty("debug.sf.vsync_reactor_ignore_present_fences"s, false) &&
-        !getHwComposer().hasCapability(Capability::PRESENT_FENCE_IS_NOT_RELIABLE)) {
+        mHasReliablePresentFences) {
         features |= Feature::kPresentFences;
     }
     if (display->refreshRateSelector().kernelIdleTimerController()) {
@@ -4618,7 +4616,8 @@ void SurfaceFlinger::initScheduler(const sp<const DisplayDevice>& display) {
     // The pacesetter must be registered before EventThread creation below.
     mScheduler->registerDisplay(display->getPhysicalId(), display->holdRefreshRateSelector());
     if (FlagManager::getInstance().vrr_config()) {
-        mScheduler->setRenderRate(display->getPhysicalId(), activeMode.fps);
+        mScheduler->setRenderRate(display->getPhysicalId(), activeMode.fps,
+                                  /*applyImmediately*/ true);
     }
 
     const auto configs = mScheduler->getVsyncConfiguration().getCurrentConfigs();
@@ -8488,12 +8487,9 @@ void SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
 bool SurfaceFlinger::layersHasProtectedLayer(
         const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const {
     bool protectedLayerFound = false;
-    for (auto& [layer, layerFe] : layers) {
+    for (auto& [_, layerFe] : layers) {
         protectedLayerFound |=
-                (layerFe->mSnapshot->isVisible && layerFe->mSnapshot->hasProtectedContent &&
-                       /* QTI_BEGIN */ !mQtiSFExtnIntf->qtiIsSecureCamera(layer->getBuffer()) &&
-                                       !mQtiSFExtnIntf->qtiIsSecureDisplay(layer->getBuffer())
-                                                                                 /* QTI_END */);
+                (layerFe->mSnapshot->isVisible && layerFe->mSnapshot->hasProtectedContent);
         if (protectedLayerFound) {
             break;
         }
@@ -8516,9 +8512,6 @@ void SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
         return;
     }
 
-    // Snapshots must be taken from the main thread.
-    auto layers = mScheduler->schedule([=]() { return getLayerSnapshots(); }).get();
-
     // Loop over all visible layers to see whether there's any protected layer. A protected layer is
     // typically a layer with DRM contents, or have the GRALLOC_USAGE_PROTECTED set on the buffer.
     // A protected layer has no implication on whether it's secure, which is explicitly set by
@@ -8526,6 +8519,8 @@ void SurfaceFlinger::captureScreenCommon(RenderAreaFuture renderAreaFuture,
     const bool supportsProtected = getRenderEngine().supportsProtectedContent();
     bool hasProtectedLayer = false;
     if (allowProtected && supportsProtected) {
+        // Snapshots must be taken from the main thread.
+        auto layers = mScheduler->schedule([=]() { return getLayerSnapshots(); }).get();
         hasProtectedLayer = layersHasProtectedLayer(layers);
     }
 

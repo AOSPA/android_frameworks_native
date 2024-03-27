@@ -54,6 +54,14 @@ public:
     virtual std::unique_ptr<EventTrackerInterface> traceInboundEvent(const EventEntry&) = 0;
 
     /**
+     * Create a trace tracker for a synthetic event that does not stem from an inbound input event.
+     * This includes things like generating cancellations or down events for various reasons,
+     * such as ANR, pilfering, transfer touch, etc. Any key or motion events generated for this
+     * synthetic event should be traced as a derived event using {@link #traceDerivedEvent}.
+     */
+    virtual std::unique_ptr<EventTrackerInterface> createTrackerForSyntheticEvent() = 0;
+
+    /**
      * Notify the tracer that the traced event will be sent to the given InputTarget.
      * The tracer may change how the event is logged depending on the target. For example,
      * events targeting certain UIDs may be logged as sensitive events.
@@ -76,12 +84,25 @@ public:
     virtual void eventProcessingComplete(const EventTrackerInterface&) = 0;
 
     /**
-     * Trace an input event being successfully dispatched to a window. The dispatched event may
-     * be a previously traced inbound event, or it may be a synthesized event that has not been
-     * previously traced. For inbound events that were previously traced, the EventTracker cookie
-     * must be provided. For events that were not previously traced, the cookie must be null.
+     * Trace an input event that is derived from another event. This is used in cases where an event
+     * is modified from the original, such as when a touch is split across multiple windows, or
+     * when a HOVER_MOVE event is modified to be a HOVER_EXIT, etc. The original event's tracker
+     * must be provided, and a new EventTracker is returned that should be used to track the event's
+     * lifecycle.
+     *
+     * NOTE: The derived tracker cannot be used to change the targets of the original event, meaning
+     * it cannot be used with {@link #dispatchToTargetHint} or {@link eventProcessingComplete}.
      */
-    virtual void traceEventDispatch(const DispatchEntry&, const EventTrackerInterface*) = 0;
+    virtual std::unique_ptr<EventTrackerInterface> traceDerivedEvent(
+            const EventEntry&, const EventTrackerInterface& originalEventTracker) = 0;
+
+    /**
+     * Trace an input event being successfully dispatched to a window. The dispatched event may
+     * be a previously traced inbound event, or it may be a synthesized event. All dispatched events
+     * must have been previously traced, so the trace tracker associated with the event must be
+     * provided.
+     */
+    virtual void traceEventDispatch(const DispatchEntry&, const EventTrackerInterface&) = 0;
 };
 
 } // namespace android::inputdispatcher::trace

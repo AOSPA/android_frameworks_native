@@ -18,7 +18,9 @@
 #define LOG_TAG "PowerAdvisorTest"
 
 #include <DisplayHardware/PowerAdvisor.h>
+#include <android_os.h>
 #include <binder/Status.h>
+#include <common/test/FlagUtils.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <powermanager/PowerHalWrapper.h>
@@ -26,8 +28,8 @@
 #include <chrono>
 #include <future>
 #include "TestableSurfaceFlinger.h"
-#include "mock/DisplayHardware/MockIPowerHintSession.h"
 #include "mock/DisplayHardware/MockPowerHalController.h"
+#include "mock/DisplayHardware/MockPowerHintSessionWrapper.h"
 
 using namespace android;
 using namespace android::Hwc2::mock;
@@ -54,7 +56,8 @@ protected:
     TestableSurfaceFlinger mFlinger;
     std::unique_ptr<PowerAdvisor> mPowerAdvisor;
     MockPowerHalController* mMockPowerHalController;
-    std::shared_ptr<MockIPowerHintSession> mMockPowerHintSession;
+    std::shared_ptr<MockPowerHintSessionWrapper> mMockPowerHintSession;
+    SET_FLAG_FOR_TEST(android::os::adpf_use_fmq_channel, true);
 };
 
 bool PowerAdvisorTest::sessionExists() {
@@ -68,25 +71,30 @@ void PowerAdvisorTest::SetUp() {
     mMockPowerHalController =
             reinterpret_cast<MockPowerHalController*>(mPowerAdvisor->mPowerHal.get());
     ON_CALL(*mMockPowerHalController, getHintSessionPreferredRate)
-            .WillByDefault(Return(HalResult<int64_t>::fromStatus(binder::Status::ok(), 16000)));
+            .WillByDefault(Return(
+                    ByMove(HalResult<int64_t>::fromStatus(ndk::ScopedAStatus::ok(), 16000))));
 }
 
 void PowerAdvisorTest::startPowerHintSession(bool returnValidSession) {
-    mMockPowerHintSession = ndk::SharedRefBase::make<NiceMock<MockIPowerHintSession>>();
+    mMockPowerHintSession = std::make_shared<NiceMock<MockPowerHintSessionWrapper>>();
     if (returnValidSession) {
-        ON_CALL(*mMockPowerHalController, createHintSession)
-                .WillByDefault(
-                        Return(HalResult<std::shared_ptr<IPowerHintSession>>::
-                                       fromStatus(binder::Status::ok(), mMockPowerHintSession)));
+        ON_CALL(*mMockPowerHalController, createHintSessionWithConfig)
+                .WillByDefault(DoAll(SetArgPointee<5>(aidl::android::hardware::power::SessionConfig{
+                                             .id = 12}),
+                                     Return(HalResult<std::shared_ptr<PowerHintSessionWrapper>>::
+                                                    fromStatus(binder::Status::ok(),
+                                                               mMockPowerHintSession))));
     } else {
-        ON_CALL(*mMockPowerHalController, createHintSession)
-                .WillByDefault(Return(HalResult<std::shared_ptr<IPowerHintSession>>::
-                                              fromStatus(binder::Status::ok(), nullptr)));
+        ON_CALL(*mMockPowerHalController, createHintSessionWithConfig).WillByDefault([] {
+            return HalResult<
+                    std::shared_ptr<PowerHintSessionWrapper>>::fromStatus(ndk::ScopedAStatus::ok(),
+                                                                          nullptr);
+        });
     }
     mPowerAdvisor->enablePowerHintSession(true);
     mPowerAdvisor->startPowerHintSession({1, 2, 3});
     ON_CALL(*mMockPowerHintSession, updateTargetWorkDuration)
-            .WillByDefault(Return(testing::ByMove(ndk::ScopedAStatus::ok())));
+            .WillByDefault(Return(testing::ByMove(HalResult<void>::ok())));
 }
 
 void PowerAdvisorTest::setExpectedTiming(Duration totalFrameTargetDuration,
@@ -148,7 +156,7 @@ TEST_F(PowerAdvisorTest, hintSessionUseHwcDisplay) {
                 reportActualWorkDuration(ElementsAre(
                         Field(&WorkDuration::durationNanos, Eq(expectedDuration.ns())))))
             .Times(1)
-            .WillOnce(Return(testing::ByMove(ndk::ScopedAStatus::ok())));
+            .WillOnce(Return(testing::ByMove(HalResult<void>::ok())));
     fakeBasicFrameTiming(startTime, vsyncPeriod);
     setExpectedTiming(vsyncPeriod, startTime + vsyncPeriod);
     mPowerAdvisor->setDisplays(displayIds);
@@ -188,7 +196,7 @@ TEST_F(PowerAdvisorTest, hintSessionSubtractsHwcFenceTime) {
                 reportActualWorkDuration(ElementsAre(
                         Field(&WorkDuration::durationNanos, Eq(expectedDuration.ns())))))
             .Times(1)
-            .WillOnce(Return(testing::ByMove(ndk::ScopedAStatus::ok())));
+            .WillOnce(Return(testing::ByMove(HalResult<void>::ok())));
 
     fakeBasicFrameTiming(startTime, vsyncPeriod);
     setExpectedTiming(vsyncPeriod, startTime + vsyncPeriod);
@@ -231,7 +239,7 @@ TEST_F(PowerAdvisorTest, hintSessionUsingSecondaryVirtualDisplays) {
                 reportActualWorkDuration(ElementsAre(
                         Field(&WorkDuration::durationNanos, Eq(expectedDuration.ns())))))
             .Times(1)
-            .WillOnce(Return(testing::ByMove(ndk::ScopedAStatus::ok())));
+            .WillOnce(Return(testing::ByMove(HalResult<void>::ok())));
 
     fakeBasicFrameTiming(startTime, vsyncPeriod);
     setExpectedTiming(vsyncPeriod, startTime + vsyncPeriod);
@@ -283,7 +291,7 @@ TEST_F(PowerAdvisorTest, hintSessionValidWhenNullFromPowerHAL) {
 }
 
 TEST_F(PowerAdvisorTest, hintSessionOnlyCreatedOnce) {
-    EXPECT_CALL(*mMockPowerHalController, createHintSession(_, _, _, _)).Times(1);
+    EXPECT_CALL(*mMockPowerHalController, createHintSessionWithConfig(_, _, _, _, _, _)).Times(1);
     mPowerAdvisor->onBootFinished();
     startPowerHintSession();
     mPowerAdvisor->startPowerHintSession({1, 2, 3});
@@ -328,17 +336,17 @@ TEST_F(PowerAdvisorTest, hintSessionTestNotifyReportRace) {
 
     ON_CALL(*mMockPowerHintSession, sendHint).WillByDefault([&letSendHintFinish] {
         letSendHintFinish.get_future().wait();
-        return ndk::ScopedAStatus::fromExceptionCode(-127);
+        return HalResult<void>::fromStatus(ndk::ScopedAStatus::fromExceptionCode(-127));
     });
 
     ON_CALL(*mMockPowerHintSession, reportActualWorkDuration).WillByDefault([] {
-        return ndk::ScopedAStatus::fromExceptionCode(-127);
+        return HalResult<void>::fromStatus(ndk::ScopedAStatus::fromExceptionCode(-127));
     });
 
-    ON_CALL(*mMockPowerHalController, createHintSession)
-            .WillByDefault(Return(
-                    HalResult<std::shared_ptr<IPowerHintSession>>::
-                            fromStatus(ndk::ScopedAStatus::fromExceptionCode(-127), nullptr)));
+    ON_CALL(*mMockPowerHalController, createHintSessionWithConfig).WillByDefault([] {
+        return HalResult<std::shared_ptr<PowerHintSessionWrapper>>::
+                fromStatus(ndk::ScopedAStatus::fromExceptionCode(-127), nullptr);
+    });
 
     // First background call, to notice the session is down
     auto firstHint = std::async(std::launch::async, [this] {
@@ -368,6 +376,18 @@ TEST_F(PowerAdvisorTest, hintSessionTestNotifyReportRace) {
     allowReportActualToAcquireMutex();
     reportActual.wait();
     EXPECT_EQ(sessionExists(), false);
+}
+
+TEST_F(PowerAdvisorTest, legacyHintSessionCreationStillWorks) {
+    SET_FLAG_FOR_TEST(android::os::adpf_use_fmq_channel, false);
+    mPowerAdvisor->onBootFinished();
+    mMockPowerHintSession = std::make_shared<NiceMock<MockPowerHintSessionWrapper>>();
+    EXPECT_CALL(*mMockPowerHalController, createHintSession)
+            .Times(1)
+            .WillOnce(Return(HalResult<std::shared_ptr<PowerHintSessionWrapper>>::
+                                     fromStatus(binder::Status::ok(), mMockPowerHintSession)));
+    mPowerAdvisor->enablePowerHintSession(true);
+    mPowerAdvisor->startPowerHintSession({1, 2, 3});
 }
 
 } // namespace

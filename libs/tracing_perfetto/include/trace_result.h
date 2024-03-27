@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 The Android Open Source Project
+ * Copyright 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,11 +14,17 @@
  * limitations under the License.
  */
 
-#include "mock/DisplayHardware/MockIPowerHintSession.h"
+#ifndef TRACE_RESULT_H
+#define TRACE_RESULT_H
 
-namespace android::Hwc2::mock {
+namespace tracing_perfetto {
 
-// Explicit default instantiation is recommended.
-MockIPowerHintSession::MockIPowerHintSession() = default;
+enum class Result {
+  SUCCESS,
+  NOT_SUPPORTED,
+  INVALID_INPUT,
+};
 
-} // namespace android::Hwc2::mock
+}
+
+#endif  // TRACE_RESULT_H

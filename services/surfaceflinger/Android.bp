@@ -12,7 +12,10 @@ aconfig_declarations {
     name: "surfaceflinger_flags",
     package: "com.android.graphics.surfaceflinger.flags",
     container: "system",
-    srcs: ["surfaceflinger_flags.aconfig"],
+    srcs: [
+        "surfaceflinger_flags.aconfig",
+        "surfaceflinger_flags_new.aconfig",
+    ],
 }
 
 cc_aconfig_library {
@@ -44,6 +47,7 @@ cc_defaults {
         "android.hardware.power-ndk_shared",
         "librenderengine_deps",
         "libtimestats_deps",
+        "libsurfaceflinger_common_deps",
         "surfaceflinger_defaults",
     ],
     cflags: [
@@ -81,12 +85,11 @@ cc_defaults {
         "libprotobuf-cpp-lite",
         "libsync",
         "libui",
-        "libinput",
         "libutils",
         "libSurfaceFlingerProp",
-        "server_configurable_flags",
     ],
     static_libs: [
+        "iinputflinger_aidl_lib_static",
         "libaidlcommonsupport",
         "libcompositionengine",
         "libframetimeline",
@@ -97,10 +100,8 @@ cc_defaults {
         "libscheduler",
         "libserviceutils",
         "libshaders",
-        "libsurfaceflinger_common",
         "libtimestats",
         "libtonemap",
-        "libsurfaceflingerflags",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -211,7 +212,6 @@ filegroup {
         "Scheduler/VsyncModulator.cpp",
         "Scheduler/VsyncSchedule.cpp",
         "ScreenCaptureOutput.cpp",
-        "StartPropertySetThread.cpp",
         "SurfaceFlinger.cpp",
         "SurfaceFlingerDefaultFactory.cpp",
         "Tracing/LayerDataSource.cpp",
