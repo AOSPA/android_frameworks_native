@@ -20,24 +20,16 @@ using qtigralloc::MetadataType_BufferDequeueDuration;
 
 namespace android::libguiextension {
 
-QtiSurfaceExtension::QtiSurfaceExtension(Surface* surface)
-      : mQtiSurface(surface) {
-    if (!mQtiSurface) {
+QtiSurfaceExtension::QtiSurfaceExtension(Surface* surface) {
+    if (!surface) {
         ALOGW("Invalid pointer to Surface passed");
     } else {
-        mMapper = IMapper::getService();
-        if (mMapper == nullptr) {
-            ALOGI("mapper 4.x is not supported");
-        } else if (mMapper->isRemote()) {
-            LOG_ALWAYS_FATAL("gralloc-mapper must be in passthrough mode");
-        }
-
         char value[PROPERTY_VALUE_MAX];
         int int_value = 0;
 
         property_get("vendor.display.enable_optimal_refresh_rate", value, "0");
         int_value = atoi(value);
-        enable_optimal_refresh_rate_ = (int_value == 1) ? true : false;
+        mEnableOptimalRefreshRate = (int_value == 1) ? true : false;
         ALOGV("Successfully created QtiSurfaceExtension");
     }
 }
@@ -45,16 +37,16 @@ QtiSurfaceExtension::QtiSurfaceExtension(Surface* surface)
 void QtiSurfaceExtension::qtiSetBufferDequeueDuration(std::string layerName,
                                                       android_native_buffer_t* buffer,
                                                       nsecs_t dequeue_duration) {
-    if (!mMapper) {
-        return;
-    }
-
     if (!buffer) {
         ALOGW("Pointer to android_native_buffer_t is invalid");
         return;
     }
 
-    if (!enable_optimal_refresh_rate_ || !isGame(layerName)) {
+    if (!mEnableOptimalRefreshRate || !isGame(layerName)) {
+        return;
+    }
+
+    if (!mMapper) {
         return;
     }
 
@@ -86,6 +78,19 @@ void QtiSurfaceExtension::qtiSetBufferDequeueDuration(std::string layerName,
         case Error::UNSUPPORTED:
         case Error::NONE:
             break;
+    }
+}
+
+void QtiSurfaceExtension::InitializeMapper() {
+    if (mMapper) {
+        return;
+    }
+
+    mMapper = IMapper::getService();
+    if (mMapper == nullptr) {
+        ALOGI("mapper 4.x is not supported");
+    } else if (mMapper->isRemote()) {
+        LOG_ALWAYS_FATAL("gralloc-mapper must be in passthrough mode");
     }
 }
 
@@ -127,12 +132,12 @@ bool QtiSurfaceExtension::isGame(std::string layerName) {
         int type = reply.readInt32();
         if (type == GAME_TYPE) {
             mQtiIsGame = true;
+            InitializeMapper();
             return true;
         }
     }
 
     return false;
 }
-
 
 } // namespace android::libguiextension

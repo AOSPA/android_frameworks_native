@@ -21,12 +21,12 @@ public:
 
 private:
     bool isGame(std::string layerName);
+    void InitializeMapper();
 
-    Surface* mQtiSurface = nullptr;
     bool mQtiIsGame = false;
     std::string mQtiLayerName = "";
     sp<android::hardware::graphics::mapper::V4_0::IMapper> mMapper = nullptr;
-    bool enable_optimal_refresh_rate_ = false;
+    bool mEnableOptimalRefreshRate = false;
 };
 
 } // namespace libguiextension
