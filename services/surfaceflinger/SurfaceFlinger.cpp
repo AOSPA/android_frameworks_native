@@ -6255,6 +6255,7 @@ void SurfaceFlinger::dumpWideColorInfo(std::string& result) const {
 }
 
 LayersProto SurfaceFlinger::dumpDrawingStateProto(uint32_t traceFlags) const {
+    Mutex::Autolock _l(mStateLock);
     std::unordered_set<uint64_t> stackIdsToSkip;
 
     // Determine if virtual layers display should be skipped
