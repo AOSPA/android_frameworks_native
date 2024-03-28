@@ -57,6 +57,11 @@ using LayerHierarchy = surfaceflinger::frontend::LayerHierarchy;
 using LayerHierarchyBuilder = surfaceflinger::frontend::LayerHierarchyBuilder;
 using RequestedLayerState = surfaceflinger::frontend::RequestedLayerState;
 
+class ZeroClock : public Clock {
+public:
+    nsecs_t now() const override { return 0; }
+};
+
 class SchedulerTest : public testing::Test {
 protected:
     class MockEventThreadConnection : public android::EventThreadConnection {
@@ -564,7 +569,7 @@ TEST_F(SchedulerTest, nextFrameIntervalTest) {
                                  hal::VrrConfig{.minFrameIntervalNs = static_cast<int32_t>(
                                                         frameRate.getPeriodNsecs())}));
     std::shared_ptr<VSyncPredictor> vrrTracker =
-            std::make_shared<VSyncPredictor>(std::make_unique<SystemClock>(), kMode, kHistorySize,
+            std::make_shared<VSyncPredictor>(std::make_unique<ZeroClock>(), kMode, kHistorySize,
                                              kMinimumSamplesForPrediction,
                                              kOutlierTolerancePercent);
     std::shared_ptr<RefreshRateSelector> vrrSelectorPtr =
@@ -578,7 +583,7 @@ TEST_F(SchedulerTest, nextFrameIntervalTest) {
 
     scheduler.registerDisplay(kMode->getPhysicalDisplayId(), vrrSelectorPtr, vrrTracker);
     vrrSelectorPtr->setActiveMode(kMode->getId(), frameRate);
-    scheduler.setRenderRate(kMode->getPhysicalDisplayId(), frameRate);
+    scheduler.setRenderRate(kMode->getPhysicalDisplayId(), frameRate, /*applyImmediately*/ false);
     vrrTracker->addVsyncTimestamp(0);
     // Set 1000 as vsync seq #0
     vrrTracker->nextAnticipatedVSyncTimeFrom(700);
@@ -591,23 +596,21 @@ TEST_F(SchedulerTest, nextFrameIntervalTest) {
                                              TimePoint::fromNs(2000)));
 
     // Not crossing the min frame period
+    vrrTracker->onFrameBegin(TimePoint::fromNs(2000), TimePoint::fromNs(1500));
     EXPECT_EQ(Fps::fromPeriodNsecs(1000),
               scheduler.getNextFrameInterval(kMode->getPhysicalDisplayId(),
                                              TimePoint::fromNs(2500)));
     // Change render rate
     frameRate = Fps::fromPeriodNsecs(2000);
     vrrSelectorPtr->setActiveMode(kMode->getId(), frameRate);
-    scheduler.setRenderRate(kMode->getPhysicalDisplayId(), frameRate);
-
-    // Set 2000 as vsync seq #0
-    vrrTracker->nextAnticipatedVSyncTimeFrom(1700);
+    scheduler.setRenderRate(kMode->getPhysicalDisplayId(), frameRate, /*applyImmediately*/ false);
 
     EXPECT_EQ(Fps::fromPeriodNsecs(2000),
               scheduler.getNextFrameInterval(kMode->getPhysicalDisplayId(),
-                                             TimePoint::fromNs(2000)));
+                                             TimePoint::fromNs(4500)));
     EXPECT_EQ(Fps::fromPeriodNsecs(2000),
               scheduler.getNextFrameInterval(kMode->getPhysicalDisplayId(),
-                                             TimePoint::fromNs(4000)));
+                                             TimePoint::fromNs(6500)));
 }
 
 TEST_F(SchedulerTest, resyncAllToHardwareVsync) FTL_FAKE_GUARD(kMainThreadContext) {

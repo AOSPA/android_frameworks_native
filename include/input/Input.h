@@ -662,10 +662,6 @@ public:
 
     inline void setActionButton(int32_t button) { mActionButton = button; }
 
-    inline float getXOffset() const { return mTransform.tx(); }
-
-    inline float getYOffset() const { return mTransform.ty(); }
-
     inline const ui::Transform& getTransform() const { return mTransform; }
 
     std::optional<ui::Rotation> getSurfaceRotation() const;
@@ -870,11 +866,31 @@ public:
 
     void copyFrom(const MotionEvent* other, bool keepHistory);
 
+    // Initialize this event by keeping only the pointers from "other" that are in splitPointerIds.
+    void splitFrom(const MotionEvent& other, std::bitset<MAX_POINTER_ID + 1> splitPointerIds,
+                   int32_t newEventId);
+
     void addSample(
             nsecs_t eventTime,
             const PointerCoords* pointerCoords);
 
     void offsetLocation(float xOffset, float yOffset);
+
+    /**
+     * Get the X offset of this motion event relative to the origin of the raw coordinate space.
+     *
+     * In practice, this is the delta that was added to the raw screen coordinates (i.e. in logical
+     * display space) to adjust for the absolute position of the containing windows and views.
+     */
+    float getRawXOffset() const;
+
+    /**
+     * Get the Y offset of this motion event relative to the origin of the raw coordinate space.
+     *
+     * In practice, this is the delta that was added to the raw screen coordinates (i.e. in logical
+     * display space) to adjust for the absolute position of the containing windows and views.
+     */
+    float getRawYOffset() const;
 
     void scale(float globalScaleFactor);
 
@@ -909,6 +925,11 @@ public:
     static std::optional<int> getAxisFromLabel(const char* label);
 
     static std::string actionToString(int32_t action);
+
+    static std::tuple<int32_t /*action*/, std::vector<PointerProperties>,
+                      std::vector<PointerCoords>>
+    split(int32_t action, int32_t flags, int32_t historySize, const std::vector<PointerProperties>&,
+          const std::vector<PointerCoords>&, std::bitset<MAX_POINTER_ID + 1> splitPointerIds);
 
     // MotionEvent will transform various axes in different ways, based on the source. For
     // example, the x and y axes will not have any offsets/translations applied if it comes from a

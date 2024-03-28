@@ -54,6 +54,7 @@ namespace impl {
 using aidl::android::hardware::power::Boost;
 using aidl::android::hardware::power::Mode;
 using aidl::android::hardware::power::SessionHint;
+using aidl::android::hardware::power::SessionTag;
 using aidl::android::hardware::power::WorkDuration;
 
 PowerAdvisor::~PowerAdvisor() = default;
@@ -211,13 +212,36 @@ bool PowerAdvisor::supportsPowerHintSession() {
     return *mSupportsHintSession;
 }
 
+bool PowerAdvisor::shouldCreateSessionWithConfig() {
+    return mSessionConfigSupported && FlagManager::getInstance().adpf_use_fmq_channel();
+}
+
 bool PowerAdvisor::ensurePowerHintSessionRunning() {
     if (mHintSession == nullptr && !mHintSessionThreadIds.empty() && usePowerHintSession()) {
-        auto ret = getPowerHal().createHintSession(getpid(), static_cast<int32_t>(getuid()),
-                                                   mHintSessionThreadIds, mTargetDuration.ns());
-
-        if (ret.isOk()) {
-            mHintSession = ret.value();
+        if (shouldCreateSessionWithConfig()) {
+            auto ret = getPowerHal().createHintSessionWithConfig(getpid(),
+                                                                 static_cast<int32_t>(getuid()),
+                                                                 mHintSessionThreadIds,
+                                                                 mTargetDuration.ns(),
+                                                                 SessionTag::SURFACEFLINGER,
+                                                                 &mSessionConfig);
+            if (ret.isOk()) {
+                mHintSession = ret.value();
+            }
+            // If it fails the first time we try, or ever returns unsupported, assume unsupported
+            else if (mFirstConfigSupportCheck || ret.isUnsupported()) {
+                ALOGI("Hint session with config is unsupported, falling back to a legacy session");
+                mSessionConfigSupported = false;
+            }
+            mFirstConfigSupportCheck = false;
+        }
+        // Immediately try original method after, in case the first way returned unsupported
+        if (mHintSession == nullptr && !shouldCreateSessionWithConfig()) {
+            auto ret = getPowerHal().createHintSession(getpid(), static_cast<int32_t>(getuid()),
+                                                       mHintSessionThreadIds, mTargetDuration.ns());
+            if (ret.isOk()) {
+                mHintSession = ret.value();
+            }
         }
     }
     return mHintSession != nullptr;
@@ -240,7 +264,7 @@ void PowerAdvisor::updateTargetWorkDuration(Duration targetDuration) {
             auto ret = mHintSession->updateTargetWorkDuration(targetDuration.ns());
             if (!ret.isOk()) {
                 ALOGW("Failed to set power hint target work duration with error: %s",
-                      ret.getDescription().c_str());
+                      ret.errorMessage());
                 mHintSession = nullptr;
             }
         }
@@ -300,8 +324,7 @@ void PowerAdvisor::reportActualWorkDuration() {
 
         auto ret = mHintSession->reportActualWorkDuration(mHintSessionQueue);
         if (!ret.isOk()) {
-            ALOGW("Failed to report actual work durations with error: %s",
-                  ret.getDescription().c_str());
+            ALOGW("Failed to report actual work durations with error: %s", ret.errorMessage());
             mHintSession = nullptr;
             return;
         }

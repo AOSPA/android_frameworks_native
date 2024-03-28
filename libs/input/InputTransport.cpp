@@ -26,9 +26,12 @@
 
 #include <com_android_input_flags.h>
 #include <input/InputTransport.h>
+#include <input/PrintTools.h>
 #include <input/TraceTools.h>
 
 namespace input_flags = com::android::input::flags;
+
+namespace android {
 
 namespace {
 
@@ -110,21 +113,76 @@ android::base::unique_fd dupChannelFd(int fd) {
     return newFd;
 }
 
-} // namespace
+void initializeKeyEvent(KeyEvent& event, const InputMessage& msg) {
+    event.initialize(msg.body.key.eventId, msg.body.key.deviceId, msg.body.key.source,
+                     msg.body.key.displayId, msg.body.key.hmac, msg.body.key.action,
+                     msg.body.key.flags, msg.body.key.keyCode, msg.body.key.scanCode,
+                     msg.body.key.metaState, msg.body.key.repeatCount, msg.body.key.downTime,
+                     msg.body.key.eventTime);
+}
 
-using android::base::Result;
-using android::base::StringPrintf;
+void initializeFocusEvent(FocusEvent& event, const InputMessage& msg) {
+    event.initialize(msg.body.focus.eventId, msg.body.focus.hasFocus);
+}
 
-namespace android {
+void initializeCaptureEvent(CaptureEvent& event, const InputMessage& msg) {
+    event.initialize(msg.body.capture.eventId, msg.body.capture.pointerCaptureEnabled);
+}
+
+void initializeDragEvent(DragEvent& event, const InputMessage& msg) {
+    event.initialize(msg.body.drag.eventId, msg.body.drag.x, msg.body.drag.y,
+                     msg.body.drag.isExiting);
+}
+
+void initializeMotionEvent(MotionEvent& event, const InputMessage& msg) {
+    uint32_t pointerCount = msg.body.motion.pointerCount;
+    PointerProperties pointerProperties[pointerCount];
+    PointerCoords pointerCoords[pointerCount];
+    for (uint32_t i = 0; i < pointerCount; i++) {
+        pointerProperties[i] = msg.body.motion.pointers[i].properties;
+        pointerCoords[i] = msg.body.motion.pointers[i].coords;
+    }
+
+    ui::Transform transform;
+    transform.set({msg.body.motion.dsdx, msg.body.motion.dtdx, msg.body.motion.tx,
+                   msg.body.motion.dtdy, msg.body.motion.dsdy, msg.body.motion.ty, 0, 0, 1});
+    ui::Transform displayTransform;
+    displayTransform.set({msg.body.motion.dsdxRaw, msg.body.motion.dtdxRaw, msg.body.motion.txRaw,
+                          msg.body.motion.dtdyRaw, msg.body.motion.dsdyRaw, msg.body.motion.tyRaw,
+                          0, 0, 1});
+    event.initialize(msg.body.motion.eventId, msg.body.motion.deviceId, msg.body.motion.source,
+                     msg.body.motion.displayId, msg.body.motion.hmac, msg.body.motion.action,
+                     msg.body.motion.actionButton, msg.body.motion.flags, msg.body.motion.edgeFlags,
+                     msg.body.motion.metaState, msg.body.motion.buttonState,
+                     msg.body.motion.classification, transform, msg.body.motion.xPrecision,
+                     msg.body.motion.yPrecision, msg.body.motion.xCursorPosition,
+                     msg.body.motion.yCursorPosition, displayTransform, msg.body.motion.downTime,
+                     msg.body.motion.eventTime, pointerCount, pointerProperties, pointerCoords);
+}
+
+void addSample(MotionEvent& event, const InputMessage& msg) {
+    uint32_t pointerCount = msg.body.motion.pointerCount;
+    PointerCoords pointerCoords[pointerCount];
+    for (uint32_t i = 0; i < pointerCount; i++) {
+        pointerCoords[i] = msg.body.motion.pointers[i].coords;
+    }
+
+    event.setMetaState(event.getMetaState() | msg.body.motion.metaState);
+    event.addSample(msg.body.motion.eventTime, pointerCoords);
+}
+
+void initializeTouchModeEvent(TouchModeEvent& event, const InputMessage& msg) {
+    event.initialize(msg.body.touchMode.eventId, msg.body.touchMode.isInTouchMode);
+}
 
 // Socket buffer size.  The default is typically about 128KB, which is much larger than
 // we really need.  So we make it smaller.  It just needs to be big enough to hold
 // a few dozen large multi-finger motion events in the case where an application gets
 // behind processing touches.
-static const size_t SOCKET_BUFFER_SIZE = 32 * 1024;
+static constexpr size_t SOCKET_BUFFER_SIZE = 32 * 1024;
 
 // Nanoseconds per milliseconds.
-static const nsecs_t NANOS_PER_MS = 1000000;
+static constexpr nsecs_t NANOS_PER_MS = 1000000;
 
 // Latency added during resampling.  A few milliseconds doesn't hurt much but
 // reduces the impact of mispredicted touch positions.
@@ -157,31 +215,27 @@ static const char* PROPERTY_RESAMPLING_ENABLED = "ro.input.resampling";
  * Crash if the events that are getting sent to the InputPublisher are inconsistent.
  * Enable this via "adb shell setprop log.tag.InputTransportVerifyEvents DEBUG"
  */
-static bool verifyEvents() {
+bool verifyEvents() {
     return input_flags::enable_outbound_event_verification() ||
             __android_log_is_loggable(ANDROID_LOG_DEBUG, LOG_TAG "VerifyEvents", ANDROID_LOG_INFO);
 }
 
-template<typename T>
-inline static T min(const T& a, const T& b) {
-    return a < b ? a : b;
-}
-
-inline static float lerp(float a, float b, float alpha) {
+inline float lerp(float a, float b, float alpha) {
     return a + alpha * (b - a);
 }
 
-inline static bool isPointerEvent(int32_t source) {
+inline bool isPointerEvent(int32_t source) {
     return (source & AINPUT_SOURCE_CLASS_POINTER) == AINPUT_SOURCE_CLASS_POINTER;
 }
 
-inline static const char* toString(bool value) {
-    return value ? "true" : "false";
-}
-
-static bool shouldResampleTool(ToolType toolType) {
+bool shouldResampleTool(ToolType toolType) {
     return toolType == ToolType::FINGER || toolType == ToolType::UNKNOWN;
 }
+
+} // namespace
+
+using android::base::Result;
+using android::base::StringPrintf;
 
 // --- InputMessage ---
 
@@ -902,7 +956,7 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                 KeyEvent* keyEvent = factory->createKeyEvent();
                 if (!keyEvent) return NO_MEMORY;
 
-                initializeKeyEvent(keyEvent, &mMsg);
+                initializeKeyEvent(*keyEvent, mMsg);
                 *outSeq = mMsg.header.seq;
                 *outEvent = keyEvent;
                 ALOGD_IF(DEBUG_TRANSPORT_CONSUMER,
@@ -965,7 +1019,7 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                 if (!motionEvent) return NO_MEMORY;
 
                 updateTouchState(mMsg);
-                initializeMotionEvent(motionEvent, &mMsg);
+                initializeMotionEvent(*motionEvent, mMsg);
                 *outSeq = mMsg.header.seq;
                 *outEvent = motionEvent;
 
@@ -987,7 +1041,7 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                 FocusEvent* focusEvent = factory->createFocusEvent();
                 if (!focusEvent) return NO_MEMORY;
 
-                initializeFocusEvent(focusEvent, &mMsg);
+                initializeFocusEvent(*focusEvent, mMsg);
                 *outSeq = mMsg.header.seq;
                 *outEvent = focusEvent;
                 break;
@@ -997,7 +1051,7 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                 CaptureEvent* captureEvent = factory->createCaptureEvent();
                 if (!captureEvent) return NO_MEMORY;
 
-                initializeCaptureEvent(captureEvent, &mMsg);
+                initializeCaptureEvent(*captureEvent, mMsg);
                 *outSeq = mMsg.header.seq;
                 *outEvent = captureEvent;
                 break;
@@ -1007,7 +1061,7 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                 DragEvent* dragEvent = factory->createDragEvent();
                 if (!dragEvent) return NO_MEMORY;
 
-                initializeDragEvent(dragEvent, &mMsg);
+                initializeDragEvent(*dragEvent, mMsg);
                 *outSeq = mMsg.header.seq;
                 *outEvent = dragEvent;
                 break;
@@ -1017,7 +1071,7 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                 TouchModeEvent* touchModeEvent = factory->createTouchModeEvent();
                 if (!touchModeEvent) return NO_MEMORY;
 
-                initializeTouchModeEvent(touchModeEvent, &mMsg);
+                initializeTouchModeEvent(*touchModeEvent, mMsg);
                 *outSeq = mMsg.header.seq;
                 *outEvent = touchModeEvent;
                 break;
@@ -1079,9 +1133,9 @@ status_t InputConsumer::consumeSamples(InputEventFactoryInterface* factory,
             seqChain.seq = msg.header.seq;
             seqChain.chain = chain;
             mSeqChains.push_back(seqChain);
-            addSample(motionEvent, &msg);
+            addSample(*motionEvent, msg);
         } else {
-            initializeMotionEvent(motionEvent, &msg);
+            initializeMotionEvent(*motionEvent, msg);
         }
         chain = msg.header.seq;
     }
@@ -1262,7 +1316,7 @@ void InputConsumer::resampleTouchState(nsecs_t sampleTime, MotionEvent* event,
                      delta);
             return;
         }
-        nsecs_t maxPredict = current->eventTime + min(delta / 2, RESAMPLE_MAX_PREDICTION);
+        nsecs_t maxPredict = current->eventTime + std::min(delta / 2, RESAMPLE_MAX_PREDICTION);
         if (sampleTime > maxPredict) {
             ALOGD_IF(debugResampling(),
                      "Sample time is too far in the future, adjusting prediction "
@@ -1463,69 +1517,6 @@ ssize_t InputConsumer::findTouchState(int32_t deviceId, int32_t source) const {
         }
     }
     return -1;
-}
-
-void InputConsumer::initializeKeyEvent(KeyEvent* event, const InputMessage* msg) {
-    event->initialize(msg->body.key.eventId, msg->body.key.deviceId, msg->body.key.source,
-                      msg->body.key.displayId, msg->body.key.hmac, msg->body.key.action,
-                      msg->body.key.flags, msg->body.key.keyCode, msg->body.key.scanCode,
-                      msg->body.key.metaState, msg->body.key.repeatCount, msg->body.key.downTime,
-                      msg->body.key.eventTime);
-}
-
-void InputConsumer::initializeFocusEvent(FocusEvent* event, const InputMessage* msg) {
-    event->initialize(msg->body.focus.eventId, msg->body.focus.hasFocus);
-}
-
-void InputConsumer::initializeCaptureEvent(CaptureEvent* event, const InputMessage* msg) {
-    event->initialize(msg->body.capture.eventId, msg->body.capture.pointerCaptureEnabled);
-}
-
-void InputConsumer::initializeDragEvent(DragEvent* event, const InputMessage* msg) {
-    event->initialize(msg->body.drag.eventId, msg->body.drag.x, msg->body.drag.y,
-                      msg->body.drag.isExiting);
-}
-
-void InputConsumer::initializeMotionEvent(MotionEvent* event, const InputMessage* msg) {
-    uint32_t pointerCount = msg->body.motion.pointerCount;
-    PointerProperties pointerProperties[pointerCount];
-    PointerCoords pointerCoords[pointerCount];
-    for (uint32_t i = 0; i < pointerCount; i++) {
-        pointerProperties[i] = msg->body.motion.pointers[i].properties;
-        pointerCoords[i] = msg->body.motion.pointers[i].coords;
-    }
-
-    ui::Transform transform;
-    transform.set({msg->body.motion.dsdx, msg->body.motion.dtdx, msg->body.motion.tx,
-                   msg->body.motion.dtdy, msg->body.motion.dsdy, msg->body.motion.ty, 0, 0, 1});
-    ui::Transform displayTransform;
-    displayTransform.set({msg->body.motion.dsdxRaw, msg->body.motion.dtdxRaw,
-                          msg->body.motion.txRaw, msg->body.motion.dtdyRaw,
-                          msg->body.motion.dsdyRaw, msg->body.motion.tyRaw, 0, 0, 1});
-    event->initialize(msg->body.motion.eventId, msg->body.motion.deviceId, msg->body.motion.source,
-                      msg->body.motion.displayId, msg->body.motion.hmac, msg->body.motion.action,
-                      msg->body.motion.actionButton, msg->body.motion.flags,
-                      msg->body.motion.edgeFlags, msg->body.motion.metaState,
-                      msg->body.motion.buttonState, msg->body.motion.classification, transform,
-                      msg->body.motion.xPrecision, msg->body.motion.yPrecision,
-                      msg->body.motion.xCursorPosition, msg->body.motion.yCursorPosition,
-                      displayTransform, msg->body.motion.downTime, msg->body.motion.eventTime,
-                      pointerCount, pointerProperties, pointerCoords);
-}
-
-void InputConsumer::initializeTouchModeEvent(TouchModeEvent* event, const InputMessage* msg) {
-    event->initialize(msg->body.touchMode.eventId, msg->body.touchMode.isInTouchMode);
-}
-
-void InputConsumer::addSample(MotionEvent* event, const InputMessage* msg) {
-    uint32_t pointerCount = msg->body.motion.pointerCount;
-    PointerCoords pointerCoords[pointerCount];
-    for (uint32_t i = 0; i < pointerCount; i++) {
-        pointerCoords[i] = msg->body.motion.pointers[i].coords;
-    }
-
-    event->setMetaState(event->getMetaState() | msg->body.motion.metaState);
-    event->addSample(msg->body.motion.eventTime, pointerCoords);
 }
 
 bool InputConsumer::canAddSample(const Batch& batch, const InputMessage *msg) {

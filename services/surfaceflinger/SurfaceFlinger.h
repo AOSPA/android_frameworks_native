@@ -95,6 +95,7 @@
 #include "Tracing/TransactionTracing.h"
 #include "TransactionCallbackInvoker.h"
 #include "TransactionState.h"
+#include "Utils/OnceFuture.h"
 
 #include <atomic>
 #include <cstdint>
@@ -574,7 +575,7 @@ private:
             bool hasListenerCallbacks, const std::vector<ListenerCallbacks>& listenerCallbacks,
             uint64_t transactionId, const std::vector<uint64_t>& mergedTransactionIds) override;
     void bootFinished();
-    virtual status_t getSupportedFrameTimestamps(std::vector<FrameEvent>* outSupported) const;
+    status_t getSupportedFrameTimestamps(std::vector<FrameEvent>* outSupported) const;
     sp<IDisplayEventConnection> createDisplayEventConnection(
             gui::ISurfaceComposer::VsyncSource vsyncSource =
                     gui::ISurfaceComposer::VsyncSource::eVsyncSourceApp,
@@ -897,9 +898,6 @@ private:
     // Traverse through all the layers and compute and cache its bounds.
     void computeLayerBounds();
 
-    // Boot animation, on/off animations and screen capture
-    void startBootAnim();
-
     bool layersHasProtectedLayer(const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const;
 
     void captureScreenCommon(RenderAreaFuture, GetLayerSnapshotsFunction, ui::Size bufferSize,
@@ -1212,11 +1210,17 @@ private:
     ui::Rotation getPhysicalDisplayOrientation(DisplayId, bool isPrimary) const
             REQUIRES(mStateLock);
     void traverseLegacyLayers(const LayerVector::Visitor& visitor) const;
+
+    void initBootProperties();
     void initTransactionTraceWriter();
-    sp<StartPropertySetThread> mStartPropertySetThread;
+
     surfaceflinger::Factory& mFactory;
     pid_t mPid;
-    std::future<void> mRenderEnginePrimeCacheFuture;
+
+    // TODO: b/328459745 - Encapsulate in a SystemProperties object.
+    utils::OnceFuture mInitBootPropsFuture;
+
+    utils::OnceFuture mRenderEnginePrimeCacheFuture;
 
     // mStateLock has conventions related to the current thread, because only
     // the main thread should modify variables protected by mStateLock.
@@ -1252,6 +1256,7 @@ private:
     // constant members (no synchronization needed for access)
     const nsecs_t mBootTime = systemTime();
     bool mIsUserBuild = true;
+    bool mHasReliablePresentFences = false;
 
     // Can only accessed from the main thread, these members
     // don't need synchronization
