@@ -381,11 +381,6 @@ enum {
      * actual intent.
      */
     AMOTION_EVENT_FLAG_WINDOW_IS_OBSCURED = 0x1,
-
-    /**
-     * Device Integration: This flag indicates the motion event is from Device Integration Service
-     */
-    AMOTION_EVENT_FLAG_FROM_DEVICE_INTEGRATION_SERVICE = 0x1000,
 };
 
 /**

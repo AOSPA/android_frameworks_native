@@ -51,9 +51,6 @@
 
 #include <renderengine/DisplaySettings.h>
 #include <renderengine/RenderEngine.h>
-#ifndef DISABLE_DEVICE_INTEGRATION
-#include <compositionengine/impl/Display.h>
-#endif
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion"
 
@@ -565,13 +562,6 @@ void Output::collectVisibleLayers(const compositionengine::CompositionRefreshArg
     finalizePendingOutputLayers();
 }
 
-#ifndef DISABLE_DEVICE_INTEGRATION
-// Device Integration: if input window type is black screen
-bool Output::isBlackScreenLayer(int windowType) const {
-    return static_cast<gui::WindowInfo::Type>(windowType) == gui::WindowInfo::Type::SYSTEM_BLACKSCREEN_OVERLAY;
-}
-#endif
-
 void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
                                         compositionengine::Output::CoverageState& coverage) {
     // Ensure we have a snapshot of the basic geometry layer state. Limit the
@@ -585,18 +575,6 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
     if (!includesLayer(layerFE)) {
         return;
     }
-
-#ifndef DISABLE_DEVICE_INTEGRATION
-    // Device Integration: make black screen invisible in phone screen also in VD
-    if (isDisplayForDIS()) {
-        Display* display = static_cast<Display*>(this);
-        if (display->isVirtual()) {
-            if (isBlackScreenLayer(layerFE->getWindowTypeForDIS())) {
-                return;
-            }
-        }
-    }
-#endif
 
     // Obtain a read-only pointer to the front-end layer state
     const auto* layerFEState = layerFE->getCompositionState();

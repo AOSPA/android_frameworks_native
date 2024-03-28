@@ -36,10 +36,6 @@
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
 
-#ifndef DISABLE_DEVICE_INTEGRATION
-#include <gui/WindowInfo.h>
-#endif
-
 namespace android {
 
 class Fence;
@@ -156,16 +152,6 @@ public:
     // Whether the layer should be rendered with rounded corners.
     virtual bool hasRoundedCorners() const = 0;
     virtual void setWasClientComposed(const sp<Fence>&) {}
-
-#ifndef DISABLE_DEVICE_INTEGRATION
-     // Device Integration: Gets windows type
-     virtual int getWindowTypeForDIS() { return static_cast<int>(mWindowTypeForDIS); }
-     virtual void setWindowTypeForDIS(gui::WindowInfo::Type windowType) { mWindowTypeForDIS = windowType; }
-
-protected:
-     // Window types from WindowManager.LayoutParams
-     gui::WindowInfo::Type mWindowTypeForDIS;
-#endif
     virtual const gui::LayerMetadata* getMetadata() const = 0;
     virtual const gui::LayerMetadata* getRelativeMetadata() const = 0;
 };

@@ -169,11 +169,6 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
         mLegacyLayerFE(args.flinger->getFactory().createLayerFE(mName)) {
     ALOGV("Creating Layer %s", getDebugName());
 
-#ifndef DISABLE_DEVICE_INTEGRATION
-    // Device Integration: set window type to LayerFE
-    mLegacyLayerFE->setWindowTypeForDIS(mWindowType);
-#endif
-
     uint32_t layerFlags = 0;
     if (args.flags & ISurfaceComposerClient::eHidden) layerFlags |= layer_state_t::eLayerHidden;
     if (args.flags & ISurfaceComposerClient::eOpaque) layerFlags |= layer_state_t::eLayerOpaque;
