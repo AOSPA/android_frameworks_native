@@ -236,6 +236,10 @@ void ASurfaceTransactionStats_releaseASurfaceControls(ASurfaceControl** surface_
  * it is acquired. If no acquire_fence_fd was provided, this timestamp will be set to -1.
  *
  * Available since API level 29.
+ *
+ * @deprecated This may return SIGNAL_PENDING because the stats can arrive before the acquire
+ * fence has signaled, depending on internal timing differences. Therefore the caller should
+ * use the acquire fence passed in to setBuffer and query the signal time.
  */
 int64_t ASurfaceTransactionStats_getAcquireTime(ASurfaceTransactionStats* surface_transaction_stats,
                                                 ASurfaceControl* surface_control)
@@ -346,7 +350,7 @@ void ASurfaceTransaction_setZOrder(ASurfaceTransaction* transaction,
  */
 void ASurfaceTransaction_setBuffer(ASurfaceTransaction* transaction,
                                    ASurfaceControl* surface_control, AHardwareBuffer* buffer,
-                                   int acquire_fence_fd = -1) __INTRODUCED_IN(29);
+                                   int acquire_fence_fd) __INTRODUCED_IN(29);
 
 /**
  * Updates the color for \a surface_control.  This will make the background color for the

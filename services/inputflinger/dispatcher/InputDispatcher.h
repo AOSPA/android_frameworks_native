@@ -421,7 +421,8 @@ private:
     void disablePointerCaptureForcedLocked() REQUIRES(mLock);
 
     // Set the Pointer Capture state in the Policy.
-    void setPointerCaptureLocked(bool enable) REQUIRES(mLock);
+    // The window is not nullptr for requests to enable, otherwise it is nullptr.
+    void setPointerCaptureLocked(const sp<IBinder>& window) REQUIRES(mLock);
 
     // Dispatcher state at time of last ANR.
     std::string mLastAnrState GUARDED_BY(mLock);
@@ -566,11 +567,11 @@ private:
     };
 
     TouchOcclusionInfo computeTouchOcclusionInfoLocked(
-            const sp<android::gui::WindowInfoHandle>& windowHandle, int32_t x, int32_t y) const
+            const sp<android::gui::WindowInfoHandle>& windowHandle, float x, float y) const
             REQUIRES(mLock);
     bool isTouchTrustedLocked(const TouchOcclusionInfo& occlusionInfo) const REQUIRES(mLock);
     bool isWindowObscuredAtPointLocked(const sp<android::gui::WindowInfoHandle>& windowHandle,
-                                       int32_t x, int32_t y) const REQUIRES(mLock);
+                                       float x, float y) const REQUIRES(mLock);
     bool isWindowObscuredLocked(const sp<android::gui::WindowInfoHandle>& windowHandle) const
             REQUIRES(mLock);
     std::string dumpWindowForTouchOcclusion(const android::gui::WindowInfo* info,

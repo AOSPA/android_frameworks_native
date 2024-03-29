@@ -419,6 +419,11 @@ private:
         DisplayModeChoice(FrameRateMode mode, GlobalSignals consideredSignals)
               : mode(std::move(mode)), consideredSignals(consideredSignals) {}
 
+        static DisplayModeChoice from(RefreshRateSelector::RankedFrameRates rankedFrameRates) {
+            return {rankedFrameRates.ranking.front().frameRateMode,
+                    rankedFrameRates.consideredSignals};
+        }
+
         FrameRateMode mode;
         GlobalSignals consideredSignals;
 
@@ -454,6 +459,7 @@ private:
 
     // IEventThreadCallback overrides
     bool throttleVsync(TimePoint, uid_t) override;
+    // Get frame interval
     Period getVsyncPeriod(uid_t) override EXCLUDES(mDisplayLock);
     void resync() override EXCLUDES(mDisplayLock);
     void onExpectedPresentTimePosted(TimePoint expectedPresentTime) override EXCLUDES(mDisplayLock);

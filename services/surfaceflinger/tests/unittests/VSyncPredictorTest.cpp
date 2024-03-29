@@ -704,14 +704,17 @@ TEST_F(VSyncPredictorTest, setRenderRateHighIsAppliedImmediately) {
     EXPECT_EQ(21500, vrrTracker.nextAnticipatedVSyncTimeFrom(19000, 19000));
 
     vrrTracker.setRenderRate(Fps::fromPeriodNsecs(1000), /*applyImmediately*/ false);
-    EXPECT_EQ(5000, vrrTracker.nextAnticipatedVSyncTimeFrom(4000, 4000));
-    EXPECT_EQ(6000, vrrTracker.nextAnticipatedVSyncTimeFrom(5000, 5000));
-    EXPECT_EQ(7000, vrrTracker.nextAnticipatedVSyncTimeFrom(6000, 6000));
-    EXPECT_EQ(9000, vrrTracker.nextAnticipatedVSyncTimeFrom(8000, 8000));
-    EXPECT_EQ(11000, vrrTracker.nextAnticipatedVSyncTimeFrom(10000, 10000));
-    EXPECT_EQ(13000, vrrTracker.nextAnticipatedVSyncTimeFrom(12000, 12000));
-    EXPECT_EQ(17000, vrrTracker.nextAnticipatedVSyncTimeFrom(15500, 15500));
-    EXPECT_EQ(20000, vrrTracker.nextAnticipatedVSyncTimeFrom(19000, 19000));
+    EXPECT_EQ(5500, vrrTracker.nextAnticipatedVSyncTimeFrom(4000, 4000));
+    EXPECT_EQ(6500, vrrTracker.nextAnticipatedVSyncTimeFrom(5000, 5000));
+    EXPECT_EQ(7500, vrrTracker.nextAnticipatedVSyncTimeFrom(6000, 6000));
+    EXPECT_EQ(9500, vrrTracker.nextAnticipatedVSyncTimeFrom(8000, 8000));
+    EXPECT_EQ(11500, vrrTracker.nextAnticipatedVSyncTimeFrom(10000, 10000));
+    EXPECT_EQ(13500, vrrTracker.nextAnticipatedVSyncTimeFrom(12000, 12000));
+    EXPECT_EQ(16500, vrrTracker.nextAnticipatedVSyncTimeFrom(15500, 15500));
+    EXPECT_EQ(20500, vrrTracker.nextAnticipatedVSyncTimeFrom(19000, 19000));
+
+    // matches the previous cadence
+    EXPECT_EQ(21500, vrrTracker.nextAnticipatedVSyncTimeFrom(20500, 20500));
 }
 
 TEST_F(VSyncPredictorTest, minFramePeriodDoesntApplyWhenSameWithRefreshRate) {
@@ -820,7 +823,7 @@ TEST_F(VSyncPredictorTest, returnsCorrectVsyncWhenLastIsNot) {
 
     vrrTracker.setRenderRate(Fps::fromPeriodNsecs(1000), /*applyImmediately*/ false);
     vrrTracker.addVsyncTimestamp(0);
-    EXPECT_EQ(2000, vrrTracker.nextAnticipatedVSyncTimeFrom(1234, 1234));
+    EXPECT_EQ(2500, vrrTracker.nextAnticipatedVSyncTimeFrom(1234, 1234));
 }
 
 TEST_F(VSyncPredictorTest, adjustsVrrTimeline) {
@@ -942,6 +945,27 @@ TEST_F(VSyncPredictorTest, renderRateIsPreservedForCommittedVsyncs) {
     EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(1), Eq(2000));
     EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(5001), Eq(8000));
     EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(6001), Eq(8000));
+}
+
+// b/329310308
+TEST_F(VSyncPredictorTest, renderRateChangeAfterAppliedImmediately) {
+    tracker.addVsyncTimestamp(1000);
+
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(1), Eq(1000));
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(1001), Eq(2000));
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(2001), Eq(3000));
+
+    tracker.setRenderRate(Fps::fromPeriodNsecs(2000), /*applyImmediately*/ true);
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(1), Eq(1000));
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(1001), Eq(3000));
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(3001), Eq(5000));
+
+    tracker.setRenderRate(Fps::fromPeriodNsecs(4000), /*applyImmediately*/ false);
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(1), Eq(1000));
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(1001), Eq(3000));
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(3001), Eq(5000));
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(5001), Eq(9000));
+    EXPECT_THAT(tracker.nextAnticipatedVSyncTimeFrom(9001), Eq(13000));
 }
 
 } // namespace android::scheduler

@@ -19,6 +19,7 @@
 #include "InputTracer.h"
 
 #include <android-base/logging.h>
+#include <private/android_filesystem_config.h>
 
 namespace android::inputdispatcher::trace::impl {
 
@@ -30,7 +31,7 @@ struct Visitor : V... {
     using V::operator()...;
 };
 
-TracedEvent createTracedEvent(const MotionEntry& e) {
+TracedEvent createTracedEvent(const MotionEntry& e, EventType type) {
     return TracedMotionEvent{e.id,
                              e.eventTime,
                              e.policyFlags,
@@ -50,23 +51,43 @@ TracedEvent createTracedEvent(const MotionEntry& e) {
                              e.yCursorPosition,
                              e.downTime,
                              e.pointerProperties,
-                             e.pointerCoords};
+                             e.pointerCoords,
+                             type};
 }
 
-TracedEvent createTracedEvent(const KeyEntry& e) {
+TracedEvent createTracedEvent(const KeyEntry& e, EventType type) {
     return TracedKeyEvent{e.id,        e.eventTime, e.policyFlags, e.deviceId, e.source,
                           e.displayId, e.action,    e.keyCode,     e.scanCode, e.metaState,
-                          e.downTime,  e.flags,     e.repeatCount};
+                          e.downTime,  e.flags,     e.repeatCount, type};
 }
 
-void writeEventToBackend(const TracedEvent& event, InputTracingBackendInterface& backend) {
-    std::visit(Visitor{[&](const TracedMotionEvent& e) { backend.traceMotionEvent(e); },
-                       [&](const TracedKeyEvent& e) { backend.traceKeyEvent(e); }},
+void writeEventToBackend(const TracedEvent& event, const TracedEventArgs args,
+                         InputTracingBackendInterface& backend) {
+    std::visit(Visitor{[&](const TracedMotionEvent& e) { backend.traceMotionEvent(e, args); },
+                       [&](const TracedKeyEvent& e) { backend.traceKeyEvent(e, args); }},
                event);
 }
 
 inline auto getId(const trace::TracedEvent& v) {
     return std::visit([](const auto& event) { return event.id; }, v);
+}
+
+// Helper class to extract relevant information from InputTarget.
+struct InputTargetInfo {
+    gui::Uid uid;
+    bool isSecureWindow;
+};
+
+InputTargetInfo getTargetInfo(const InputTarget& target) {
+    if (target.windowHandle == nullptr) {
+        if (!target.connection->monitor) {
+            LOG(FATAL) << __func__ << ": Window is not set for non-monitor target";
+        }
+        // This is a global monitor, assume its target is the system.
+        return {.uid = gui::Uid{AID_SYSTEM}, .isSecureWindow = false};
+    }
+    return {target.windowHandle->getInfo()->ownerUid,
+            target.windowHandle->getInfo()->layoutParamsFlags.test(gui::WindowInfo::Flag::SECURE)};
 }
 
 } // namespace
@@ -82,10 +103,10 @@ std::unique_ptr<EventTrackerInterface> InputTracer::traceInboundEvent(const Even
 
     if (entry.type == EventEntry::Type::MOTION) {
         const auto& motion = static_cast<const MotionEntry&>(entry);
-        eventState->events.emplace_back(createTracedEvent(motion));
+        eventState->events.emplace_back(createTracedEvent(motion, EventType::INBOUND));
     } else if (entry.type == EventEntry::Type::KEY) {
         const auto& key = static_cast<const KeyEntry&>(entry);
-        eventState->events.emplace_back(createTracedEvent(key));
+        eventState->events.emplace_back(createTracedEvent(key, EventType::INBOUND));
     } else {
         LOG(FATAL) << "Cannot trace EventEntry of type: " << ftl::enum_string(entry.type);
     }
@@ -101,15 +122,26 @@ std::unique_ptr<EventTrackerInterface> InputTracer::createTrackerForSyntheticEve
 
 void InputTracer::dispatchToTargetHint(const EventTrackerInterface& cookie,
                                        const InputTarget& target) {
-    if (isDerivedCookie(cookie)) {
-        LOG(FATAL) << "Event target cannot be updated from a derived cookie.";
-    }
     auto& eventState = getState(cookie);
+    const InputTargetInfo& targetInfo = getTargetInfo(target);
     if (eventState->isEventProcessingComplete) {
-        // TODO(b/210460522): Disallow adding new targets after eventProcessingComplete() is called.
+        // Disallow adding new targets after eventProcessingComplete() is called.
+        if (eventState->targets.find(targetInfo.uid) == eventState->targets.end()) {
+            LOG(FATAL) << __func__ << ": Cannot add new target after eventProcessingComplete";
+        }
         return;
     }
-    // TODO(b/210460522): Determine if the event is sensitive based on the target.
+    if (isDerivedCookie(cookie)) {
+        // Disallow adding new targets from a derived cookie.
+        if (eventState->targets.find(targetInfo.uid) == eventState->targets.end()) {
+            LOG(FATAL) << __func__ << ": Cannot add new target from a derived cookie";
+        }
+        return;
+    }
+
+    eventState->targets.emplace(targetInfo.uid);
+    eventState->isSecure |= targetInfo.isSecureWindow;
+    // TODO(b/210460522): Set events as sensitive when the IME connection is active.
 }
 
 void InputTracer::eventProcessingComplete(const EventTrackerInterface& cookie) {
@@ -132,10 +164,10 @@ std::unique_ptr<EventTrackerInterface> InputTracer::traceDerivedEvent(
 
     if (entry.type == EventEntry::Type::MOTION) {
         const auto& motion = static_cast<const MotionEntry&>(entry);
-        eventState->events.emplace_back(createTracedEvent(motion));
+        eventState->events.emplace_back(createTracedEvent(motion, EventType::SYNTHESIZED));
     } else if (entry.type == EventEntry::Type::KEY) {
         const auto& key = static_cast<const KeyEntry&>(entry);
-        eventState->events.emplace_back(createTracedEvent(key));
+        eventState->events.emplace_back(createTracedEvent(key, EventType::SYNTHESIZED));
     } else {
         LOG(FATAL) << "Cannot trace EventEntry of type: " << ftl::enum_string(entry.type);
     }
@@ -144,7 +176,10 @@ std::unique_ptr<EventTrackerInterface> InputTracer::traceDerivedEvent(
         // It is possible for a derived event to be dispatched some time after the original event
         // is dispatched, such as in the case of key fallback events. To account for these cases,
         // derived events can be traced after the processing is complete for the original event.
-        writeEventToBackend(eventState->events.back(), *mBackend);
+        const auto& event = eventState->events.back();
+        const TracedEventArgs traceArgs{.isSecure = eventState->isSecure,
+                                        .targets = eventState->targets};
+        writeEventToBackend(event, std::move(traceArgs), *mBackend);
     }
     return std::make_unique<EventTrackerImpl>(std::move(eventState), /*isDerived=*/true);
 }
@@ -153,37 +188,34 @@ void InputTracer::traceEventDispatch(const DispatchEntry& dispatchEntry,
                                      const EventTrackerInterface& cookie) {
     auto& eventState = getState(cookie);
     const EventEntry& entry = *dispatchEntry.eventEntry;
+    const int32_t eventId = entry.id;
     // TODO(b/328618922): Remove resolved key repeats after making repeatCount non-mutable.
     // The KeyEntry's repeatCount is mutable and can be modified after an event is initially traced,
     // so we need to find the repeatCount at the time of dispatching to trace it accurately.
     int32_t resolvedKeyRepeatCount = 0;
-
-    TracedEvent traced;
-    if (entry.type == EventEntry::Type::MOTION) {
-        const auto& motion = static_cast<const MotionEntry&>(entry);
-        traced = createTracedEvent(motion);
-    } else if (entry.type == EventEntry::Type::KEY) {
-        const auto& key = static_cast<const KeyEntry&>(entry);
-        resolvedKeyRepeatCount = key.repeatCount;
-        traced = createTracedEvent(key);
-    } else {
-        LOG(FATAL) << "Cannot trace EventEntry of type: " << ftl::enum_string(entry.type);
+    if (entry.type == EventEntry::Type::KEY) {
+        resolvedKeyRepeatCount = static_cast<const KeyEntry&>(entry).repeatCount;
     }
 
     auto tracedEventIt =
             std::find_if(eventState->events.begin(), eventState->events.end(),
-                         [&traced](const auto& event) { return getId(traced) == getId(event); });
+                         [eventId](const auto& event) { return eventId == getId(event); });
     if (tracedEventIt == eventState->events.end()) {
         LOG(FATAL)
                 << __func__
                 << ": Failed to find a previously traced event that matches the dispatched event";
     }
 
+    if (eventState->targets.count(dispatchEntry.targetUid) == 0) {
+        LOG(FATAL) << __func__ << ": Event is being dispatched to UID that it is not targeting";
+    }
+
     // The vsyncId only has meaning if the event is targeting a window.
     const int32_t windowId = dispatchEntry.windowId.value_or(0);
     const int32_t vsyncId = dispatchEntry.windowId.has_value() ? dispatchEntry.vsyncId : 0;
 
-    const WindowDispatchArgs windowDispatchArgs{std::move(traced),
+    // TODO(b/210460522): Pass HMAC into traceEventDispatch.
+    const WindowDispatchArgs windowDispatchArgs{*tracedEventIt,
                                                 dispatchEntry.deliveryTime,
                                                 dispatchEntry.resolvedFlags,
                                                 dispatchEntry.targetUid,
@@ -194,7 +226,9 @@ void InputTracer::traceEventDispatch(const DispatchEntry& dispatchEntry,
                                                 /*hmac=*/{},
                                                 resolvedKeyRepeatCount};
     if (eventState->isEventProcessingComplete) {
-        mBackend->traceWindowDispatch(std::move(windowDispatchArgs));
+        const TracedEventArgs traceArgs{.isSecure = eventState->isSecure,
+                                        .targets = eventState->targets};
+        mBackend->traceWindowDispatch(std::move(windowDispatchArgs), std::move(traceArgs));
     } else {
         eventState->pendingDispatchArgs.emplace_back(std::move(windowDispatchArgs));
     }
@@ -214,11 +248,23 @@ bool InputTracer::isDerivedCookie(const EventTrackerInterface& cookie) {
 void InputTracer::EventState::onEventProcessingComplete() {
     // Write all of the events known so far to the trace.
     for (const auto& event : events) {
-        writeEventToBackend(event, *tracer.mBackend);
+        const TracedEventArgs traceArgs{.isSecure = isSecure, .targets = targets};
+        writeEventToBackend(event, traceArgs, *tracer.mBackend);
     }
     // Write all pending dispatch args to the trace.
     for (const auto& windowDispatchArgs : pendingDispatchArgs) {
-        tracer.mBackend->traceWindowDispatch(windowDispatchArgs);
+        auto tracedEventIt =
+                std::find_if(events.begin(), events.end(),
+                             [id = getId(windowDispatchArgs.eventEntry)](const auto& event) {
+                                 return id == getId(event);
+                             });
+        if (tracedEventIt == events.end()) {
+            LOG(FATAL) << __func__
+                       << ": Failed to find a previously traced event that matches the dispatched "
+                          "event";
+        }
+        const TracedEventArgs traceArgs{.isSecure = isSecure, .targets = targets};
+        tracer.mBackend->traceWindowDispatch(windowDispatchArgs, std::move(traceArgs));
     }
     pendingDispatchArgs.clear();
 

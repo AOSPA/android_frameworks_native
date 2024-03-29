@@ -204,6 +204,8 @@ cc_library {
     srcs: [
         "AccelerationCurve.cpp",
         "Input.cpp",
+        "InputConsumer.cpp",
+        "InputConsumerNoResampling.cpp",
         "InputDevice.cpp",
         "InputEventLabels.cpp",
         "InputTransport.cpp",
