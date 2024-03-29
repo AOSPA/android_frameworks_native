@@ -46,11 +46,6 @@ public:
     // True if the display is virtual
     virtual bool isVirtual() const = 0;
 
-#ifndef DISABLE_DEVICE_INTEGRATION
-    // Device Integration: for Blackscreen 
-    virtual bool isDisplayForDIS() { return true; }
-#endif
-
     // Releases the use of the HWC display, if any
     virtual void disconnect() = 0;
 

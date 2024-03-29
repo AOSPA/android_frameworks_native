@@ -1277,16 +1277,8 @@ bool InputDispatcher::shouldPruneInboundQueueLocked(const MotionEntry& motionEnt
         const int32_t displayId = motionEntry.displayId;
         const auto [x, y] = resolveTouchedPosition(motionEntry);
         const bool isStylus = isPointerFromStylus(motionEntry, /*pointerIndex=*/0);
-#ifdef DISABLE_DEVICE_INTEGRATION
         sp<WindowInfoHandle> touchedWindowHandle =
                 findTouchedWindowAtLocked(displayId, x, y, isStylus);
-#else
-        const bool isFromCrossDevice = motionEntry.flags & AMOTION_EVENT_FLAG_FROM_DEVICE_INTEGRATION_SERVICE;
-        auto [touchedWindowHandle, _] = findTouchedWindowAtLocked(displayId, x, y, isStylus, 
-        sp<WindowInfoHandle> touchedWindowHandle =
-                findTouchedWindowAtLocked(displayId, x, y, isStylus,
-		false /*ignoreDragWindow*/, isFromCrossDevice);
-#endif
         if (touchedWindowHandle != nullptr &&
             touchedWindowHandle->getApplicationToken() !=
                     mAwaitedFocusedApplication->getApplicationToken()) {
@@ -1406,29 +1398,14 @@ void InputDispatcher::addRecentEventLocked(std::shared_ptr<const EventEntry> ent
     }
 }
 
-sp<WindowInfoHandle> InputDispatcher::findTouchedWindowAtLocked(int32_t displayId, float x, float y,
-                                                                bool isStylus,
-#ifdef DISABLE_DEVICE_INTEGRATION
-                                           bool ignoreDragWindow) const {
-#else
-                                           bool ignoreDragWindow,
-                                           bool isFromCrossDevice) const {
-#endif
+sp<WindowInfoHandle> InputDispatcher::findTouchedWindowAtLocked(int32_t displayId, float x, float y, bool isStylus,
+                                                                bool ignoreDragWindow) const {
     // Traverse windows from front to back to find touched window.
     const auto& windowHandles = getWindowHandlesLocked(displayId);
     for (const sp<WindowInfoHandle>& windowHandle : windowHandles) {
         if (ignoreDragWindow && haveSameToken(windowHandle, mDragState->dragWindow)) {
             continue;
         }
-#ifndef DISABLE_DEVICE_INTEGRATION
-        const WindowInfo* windowInfo = windowHandle->getInfo();
-        // Device Integration: bypass the event in black screen if it coming from DIS
-        bool bypassBlackScreen = (windowInfo->layoutParamsType == WindowInfo::Type::SYSTEM_BLACKSCREEN_OVERLAY)
-                                            && isFromCrossDevice;
-        if (bypassBlackScreen) {
-            continue;
-        }
-#endif
 
         const WindowInfo& info = *windowHandle->getInfo();
         if (!info.isSpy() &&
@@ -2449,14 +2426,8 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
         // Outside targets should be added upon first dispatched DOWN event. That means, this should
         // be a pointer that would generate ACTION_DOWN, *and* touch should not already be down.
         const bool isStylus = isPointerFromStylus(entry, pointerIndex);
-#ifdef DISABLE_DEVICE_INTEGRATION
         sp<WindowInfoHandle> newTouchedWindowHandle =
                 findTouchedWindowAtLocked(displayId, x, y, isStylus);
-#else
-        const bool isFromCrossDevice = entry.flags & AMOTION_EVENT_FLAG_FROM_DEVICE_INTEGRATION_SERVICE;
-        auto [newTouchedWindowHandle, outsideTargets] =
-                findTouchedWindowAtLocked(displayId, x, y, isStylus, false /*ignoreDragWindow*/, isFromCrossDevice);
-#endif
         if (isDown) {
             targets += findOutsideTargetsLocked(displayId, newTouchedWindowHandle, pointer.id);
         }
@@ -2626,17 +2597,9 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
             sp<WindowInfoHandle> oldTouchedWindowHandle =
                     tempTouchState.getFirstForegroundWindowHandle();
             LOG_ALWAYS_FATAL_IF(oldTouchedWindowHandle == nullptr);
-#ifdef DISABLE_DEVICE_INTEGRATION
             sp<WindowInfoHandle> newTouchedWindowHandle =
                     findTouchedWindowAtLocked(displayId, x, y, isStylus);
 
-#else
-            const bool isFromCrossDevice = entry.flags & AMOTION_EVENT_FLAG_FROM_DEVICE_INTEGRATION_SERVICE;
-            sp<WindowInfoHandle> newTouchedWindowHandle =
-                    findTouchedWindowAtLocked(displayId, x, y, isStylus,
-                                                  false /*ignoreDragWindow*/, isFromCrossDevice);
-
-#endif
             // Verify targeted injection.
             if (const auto err = verifyTargetedInjection(newTouchedWindowHandle, entry); err) {
                 ALOGW("Dropping injected event: %s", (*err).c_str());
@@ -2854,22 +2817,13 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
     return targets;
 }
 
-#ifdef DISABLE_DEVICE_INTEGRATION
 void InputDispatcher::finishDragAndDrop(int32_t displayId, float x, float y) {
-#else
-void InputDispatcher::finishDragAndDrop(int32_t displayId, float x, float y, bool isFromCrossDevice) {
-#endif
     // Prevent stylus interceptor windows from affecting drag and drop behavior for now, until we
     // have an explicit reason to support it.
     constexpr bool isStylus = false;
 
     sp<WindowInfoHandle> dropWindow =
-            findTouchedWindowAtLocked(displayId, x, y, isStylus,
-#ifdef DISABLE_DEVICE_INTEGRATION
-            /*ignoreDragWindow=*/true);
-#else
-            /*ignoreDragWindow=*/true, isFromCrossDevice);
-#endif
+            findTouchedWindowAtLocked(displayId, x, y, isStylus, /*ignoreDragWindow=*/true);
     if (dropWindow) {
         vec2 local = dropWindow->getInfo()->transform.transform(x, y);
         sendDropWindowCommandLocked(dropWindow->getToken(), local.x, local.y);
@@ -2907,20 +2861,13 @@ void InputDispatcher::addDragEventLocked(const MotionEntry& entry) {
     const int32_t maskedAction = entry.action & AMOTION_EVENT_ACTION_MASK;
     const int32_t x = entry.pointerCoords[pointerIndex].getX();
     const int32_t y = entry.pointerCoords[pointerIndex].getY();
-#ifndef DISABLE_DEVICE_INTEGRATION
-    const bool isFromCrossDevice = entry.flags & AMOTION_EVENT_FLAG_FROM_DEVICE_INTEGRATION_SERVICE;
-#endif
     switch (maskedAction) {
         case AMOTION_EVENT_ACTION_MOVE: {
             // Handle the special case : stylus button no longer pressed.
             bool isStylusButtonDown =
                     (entry.buttonState & AMOTION_EVENT_BUTTON_STYLUS_PRIMARY) != 0;
             if (mDragState->isStylusButtonDownAtStart && !isStylusButtonDown) {
-#ifdef DISABLE_DEVICE_INTEGRATION
                 finishDragAndDrop(entry.displayId, x, y);
-#else
-                finishDragAndDrop(entry.displayId, x, y, isFromCrossDevice);
-#endif
                 return;
             }
 
@@ -2930,11 +2877,7 @@ void InputDispatcher::addDragEventLocked(const MotionEntry& entry) {
 
             sp<WindowInfoHandle> hoverWindowHandle =
                     findTouchedWindowAtLocked(entry.displayId, x, y, isStylus,
-#ifdef DISABLE_DEVICE_INTEGRATION
-                                                                     /*ignoreDragWindow=*/true);
-#else
-                                                                    /*ignoreDragWindow=*/true, isFromCrossDevice);
-#endif
+                                              /*ignoreDragWindow=*/true);
             // enqueue drag exit if needed.
             if (hoverWindowHandle != mDragState->dragHoverWindowHandle &&
                 !haveSameToken(hoverWindowHandle, mDragState->dragHoverWindowHandle)) {
@@ -2958,11 +2901,7 @@ void InputDispatcher::addDragEventLocked(const MotionEntry& entry) {
             // The drag pointer is up.
             [[fallthrough]];
         case AMOTION_EVENT_ACTION_UP:
-#ifdef DISABLE_DEVICE_INTEGRATION
             finishDragAndDrop(entry.displayId, x, y);
-#else
-            finishDragAndDrop(entry.displayId, x, y, isFromCrossDevice);
-#endif
             break;
         case AMOTION_EVENT_ACTION_CANCEL: {
             ALOGD("Receiving cancel when drag and drop.");
@@ -3252,18 +3191,10 @@ bool InputDispatcher::isWindowObscuredAtPointLocked(const sp<WindowInfoHandle>& 
             break; // All future windows are below us. Exit early.
         }
         const WindowInfo* otherInfo = otherHandle->getInfo();
-#ifdef DISABLE_DEVICE_INTEGRATION
         if (canBeObscuredBy(windowHandle, otherHandle) &&
             otherInfo->frameContainsPoint(x, y)) {
             return true;
         }
-#else
-        bool isBlackScreen = (otherInfo->layoutParamsType == WindowInfo::Type::SYSTEM_BLACKSCREEN_OVERLAY);
-        if (canBeObscuredBy(windowHandle, otherHandle) &&
-            otherInfo->frameContainsPoint(x, y) && !isBlackScreen) {
-            return true;
-        }
-#endif
     }
     return false;
 }
@@ -3277,18 +3208,10 @@ bool InputDispatcher::isWindowObscuredLocked(const sp<WindowInfoHandle>& windowH
             break; // All future windows are below us. Exit early.
         }
         const WindowInfo* otherInfo = otherHandle->getInfo();
-#ifdef DISABLE_DEVICE_INTEGRATION
         if (canBeObscuredBy(windowHandle, otherHandle) &&
             otherInfo->overlaps(windowInfo)) {
             return true;
         }
-#else
-        bool isBlackScreen = (otherInfo->layoutParamsType == WindowInfo::Type::SYSTEM_BLACKSCREEN_OVERLAY);
-        if (canBeObscuredBy(windowHandle, otherHandle) &&
-            otherInfo->overlaps(windowInfo) && !isBlackScreen) {
-            return true;
-        }
-#endif
     }
     return false;
 }
@@ -5151,15 +5074,6 @@ void InputDispatcher::transformMotionEntryForInjectionLocked(
                 MotionEvent::calculateTransformedCoords(entry.source, transformToDisplay,
                                                         entry.pointerCoords[i]);
     }
-
-#ifndef DISABLE_DEVICE_INTEGRATION
-    // This is a workaround for now A13 has issue to handle the input from mouse to a wrong position
-    // After A13 has fixed this issue, we can remove this part.
-    if (entry.source == AINPUT_SOURCE_MOUSE && fabs(it -> second.transform[0][0] - 1.0) > 0.01) {
-        entry.xCursorPosition = entry.pointerCoords[0].getX();
-        entry.yCursorPosition = entry.pointerCoords[0].getY();
-    }
-#endif
 }
 
 void InputDispatcher::incrementPendingForegroundDispatches(const EventEntry& entry) {
