@@ -21,10 +21,25 @@
 #include <ui/Transform.h>
 
 #include <array>
+#include <set>
 #include <variant>
 #include <vector>
 
 namespace android::inputdispatcher::trace {
+
+/**
+ * Describes the type of this event being traced, with respect to InputDispatcher.
+ */
+enum class EventType {
+    // This is an event that was reported through the InputListener interface or was injected.
+    INBOUND,
+    // This is an event that was synthesized within InputDispatcher; either being derived
+    // from an inbound event (e.g. a split motion event), or synthesized completely
+    // (e.g. a CANCEL event generated when the inbound stream is not canceled).
+    SYNTHESIZED,
+
+    ftl_last = SYNTHESIZED,
+};
 
 /**
  * A representation of an Android KeyEvent used by the tracing backend.
@@ -43,6 +58,7 @@ struct TracedKeyEvent {
     nsecs_t downTime;
     int32_t flags;
     int32_t repeatCount;
+    EventType eventType;
 };
 
 /**
@@ -69,10 +85,33 @@ struct TracedMotionEvent {
     nsecs_t downTime;
     std::vector<PointerProperties> pointerProperties;
     std::vector<PointerCoords> pointerCoords;
+    EventType eventType;
 };
 
 /** A representation of a traced input event. */
 using TracedEvent = std::variant<TracedKeyEvent, TracedMotionEvent>;
+
+/** Additional information about an input event being traced. */
+struct TracedEventArgs {
+    // True if the event is targeting at least one secure window.
+    bool isSecure;
+    // The list of possible UIDs that this event could be targeting.
+    std::set<gui::Uid> targets;
+};
+
+/** Additional information about an input event being dispatched to a window. */
+struct WindowDispatchArgs {
+    TracedEvent eventEntry;
+    nsecs_t deliveryTime;
+    int32_t resolvedFlags;
+    gui::Uid targetUid;
+    int64_t vsyncId;
+    int32_t windowId;
+    ui::Transform transform;
+    ui::Transform rawTransform;
+    std::array<uint8_t, 32> hmac;
+    int32_t resolvedKeyRepeatCount;
+};
 
 /**
  * An interface for the tracing backend, used for setting a custom backend for testing.
@@ -82,25 +121,13 @@ public:
     virtual ~InputTracingBackendInterface() = default;
 
     /** Trace a KeyEvent. */
-    virtual void traceKeyEvent(const TracedKeyEvent&) = 0;
+    virtual void traceKeyEvent(const TracedKeyEvent&, const TracedEventArgs&) = 0;
 
     /** Trace a MotionEvent. */
-    virtual void traceMotionEvent(const TracedMotionEvent&) = 0;
+    virtual void traceMotionEvent(const TracedMotionEvent&, const TracedEventArgs&) = 0;
 
     /** Trace an event being sent to a window. */
-    struct WindowDispatchArgs {
-        TracedEvent eventEntry;
-        nsecs_t deliveryTime;
-        int32_t resolvedFlags;
-        gui::Uid targetUid;
-        int64_t vsyncId;
-        int32_t windowId;
-        ui::Transform transform;
-        ui::Transform rawTransform;
-        std::array<uint8_t, 32> hmac;
-        int32_t resolvedKeyRepeatCount;
-    };
-    virtual void traceWindowDispatch(const WindowDispatchArgs&) = 0;
+    virtual void traceWindowDispatch(const WindowDispatchArgs&, const TracedEventArgs&) = 0;
 };
 
 } // namespace android::inputdispatcher::trace

@@ -38,10 +38,10 @@ cc_test {
         "DereferenceSurfaceControl_test.cpp",
         "DisplayConfigs_test.cpp",
         "DisplayEventReceiver_test.cpp",
+        "Dumpsys_test.cpp",
         "EffectLayer_test.cpp",
         "HdrSdrRatioOverlay_test.cpp",
         "InvalidHandles_test.cpp",
-        "LayerBorder_test.cpp",
         "LayerCallback_test.cpp",
         "LayerRenderTypeTransaction_test.cpp",
         "LayerState_test.cpp",
@@ -67,6 +67,7 @@ cc_test {
     static_libs: [
         "liblayers_proto",
         "android.hardware.graphics.composer@2.1",
+        "libsurfaceflinger_common",
     ],
     shared_libs: [
         "android.hardware.graphics.common@1.2",
@@ -82,6 +83,7 @@ cc_test {
         "libprotobuf-cpp-full",
         "libui",
         "libutils",
+        "server_configurable_flags",
     ],
     header_libs: [
         "libnativewindow_headers",

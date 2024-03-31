@@ -33,6 +33,7 @@
 #include <gtest/gtest.h>
 #include <input/BlockingQueue.h>
 #include <input/Input.h>
+#include <input/InputConsumer.h>
 #include <input/PrintTools.h>
 #include <linux/input.h>
 #include <sys/epoll.h>
@@ -308,17 +309,22 @@ public:
                    "signal";
     }
 
-    PointerCaptureRequest assertSetPointerCaptureCalled(bool enabled) {
+    PointerCaptureRequest assertSetPointerCaptureCalled(const sp<WindowInfoHandle>& window,
+                                                        bool enabled) {
         std::unique_lock lock(mLock);
         base::ScopedLockAssertion assumeLocked(mLock);
 
-        if (!mPointerCaptureChangedCondition.wait_for(lock, 100ms,
-                                                      [this, enabled]() REQUIRES(mLock) {
-                                                          return mPointerCaptureRequest->enable ==
-                                                                  enabled;
-                                                      })) {
-            ADD_FAILURE() << "Timed out waiting for setPointerCapture(" << enabled
-                          << ") to be called.";
+        if (!mPointerCaptureChangedCondition
+                     .wait_for(lock, 100ms, [this, enabled, window]() REQUIRES(mLock) {
+                         if (enabled) {
+                             return mPointerCaptureRequest->isEnable() &&
+                                     mPointerCaptureRequest->window == window->getToken();
+                         } else {
+                             return !mPointerCaptureRequest->isEnable();
+                         }
+                     })) {
+            ADD_FAILURE() << "Timed out waiting for setPointerCapture(" << window->getName() << ", "
+                          << enabled << ") to be called.";
             return {};
         }
         auto request = *mPointerCaptureRequest;
@@ -333,7 +339,7 @@ public:
         if (mPointerCaptureChangedCondition.wait_for(lock, 100ms) != std::cv_status::timeout) {
             FAIL() << "Expected setPointerCapture(request) to not be called, but was called. "
                       "enabled = "
-                   << std::to_string(mPointerCaptureRequest->enable);
+                   << std::to_string(mPointerCaptureRequest->isEnable());
         }
         mPointerCaptureRequest.reset();
     }
@@ -654,6 +660,8 @@ private:
         verify(*mFilteredEvent);
         mFilteredEvent = nullptr;
     }
+
+    gui::Uid getPackageUid(std::string) override { return gui::Uid::INVALID; }
 };
 } // namespace
 
@@ -5361,6 +5369,94 @@ TEST_P(InputDispatcherDisplayOrientationFixture, HitTestInDifferentOrientations)
     window->assertNoEvents();
 }
 
+// This test verifies the occlusion detection for all rotations of the display by tapping
+// in different locations on the display, specifically points close to the four corners of a
+// window.
+TEST_P(InputDispatcherDisplayOrientationFixture, BlockUntrustClickInDifferentOrientations) {
+    constexpr static int32_t displayWidth = 400;
+    constexpr static int32_t displayHeight = 800;
+
+    std::shared_ptr<FakeApplicationHandle> untrustedWindowApplication =
+            std::make_shared<FakeApplicationHandle>();
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+
+    const auto rotation = GetParam();
+
+    // Set up the display with the specified rotation.
+    const bool isRotated = rotation == ui::ROTATION_90 || rotation == ui::ROTATION_270;
+    const int32_t logicalDisplayWidth = isRotated ? displayHeight : displayWidth;
+    const int32_t logicalDisplayHeight = isRotated ? displayWidth : displayHeight;
+    const ui::Transform displayTransform(ui::Transform::toRotationFlags(rotation),
+                                         logicalDisplayWidth, logicalDisplayHeight);
+    addDisplayInfo(ADISPLAY_ID_DEFAULT, displayTransform);
+
+    // Create a window that not trusted.
+    const Rect untrustedWindowFrameInLogicalDisplay(100, 100, 200, 300);
+
+    const Rect untrustedWindowFrameInDisplay =
+            displayTransform.inverse().transform(untrustedWindowFrameInLogicalDisplay);
+
+    sp<FakeWindowHandle> untrustedWindow =
+            sp<FakeWindowHandle>::make(untrustedWindowApplication, mDispatcher, "UntrustedWindow",
+                                       ADISPLAY_ID_DEFAULT);
+    untrustedWindow->setFrame(untrustedWindowFrameInDisplay, displayTransform);
+    untrustedWindow->setTrustedOverlay(false);
+    untrustedWindow->setTouchOcclusionMode(TouchOcclusionMode::BLOCK_UNTRUSTED);
+    untrustedWindow->setTouchable(false);
+    untrustedWindow->setAlpha(1.0f);
+    untrustedWindow->setOwnerInfo(gui::Pid{1}, gui::Uid{101});
+    addWindow(untrustedWindow);
+
+    // Create a simple app window below the untrusted window.
+    const Rect simpleAppWindowFrameInLogicalDisplay(0, 0, 300, 600);
+    const Rect simpleAppWindowFrameInDisplay =
+            displayTransform.inverse().transform(simpleAppWindowFrameInLogicalDisplay);
+
+    sp<FakeWindowHandle> simpleAppWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "SimpleAppWindow",
+                                       ADISPLAY_ID_DEFAULT);
+    simpleAppWindow->setFrame(simpleAppWindowFrameInDisplay, displayTransform);
+    simpleAppWindow->setOwnerInfo(gui::Pid{2}, gui::Uid{202});
+    addWindow(simpleAppWindow);
+
+    // The following points in logical display space should be inside the untrusted window, so
+    // the simple window could not receive events that coordinate is these point.
+    static const std::array<vec2, 4> untrustedPoints{
+            {{100, 100}, {199.99, 100}, {100, 299.99}, {199.99, 299.99}}};
+
+    for (const auto untrustedPoint : untrustedPoints) {
+        const vec2 p = displayTransform.inverse().transform(untrustedPoint);
+        const PointF pointInDisplaySpace{p.x, p.y};
+        mDispatcher->notifyMotion(generateMotionArgs(AMOTION_EVENT_ACTION_DOWN,
+                                                     AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                                                     {pointInDisplaySpace}));
+        mDispatcher->notifyMotion(generateMotionArgs(AMOTION_EVENT_ACTION_UP,
+                                                     AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                                                     {pointInDisplaySpace}));
+    }
+    untrustedWindow->assertNoEvents();
+    simpleAppWindow->assertNoEvents();
+    // The following points in logical display space should be outside the untrusted window, so
+    // the simple window should receive events that coordinate is these point.
+    static const std::array<vec2, 5> trustedPoints{
+            {{200, 100}, {100, 300}, {200, 300}, {100, 99.99}, {99.99, 100}}};
+    for (const auto trustedPoint : trustedPoints) {
+        const vec2 p = displayTransform.inverse().transform(trustedPoint);
+        const PointF pointInDisplaySpace{p.x, p.y};
+        mDispatcher->notifyMotion(generateMotionArgs(AMOTION_EVENT_ACTION_DOWN,
+                                                     AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                                                     {pointInDisplaySpace}));
+        simpleAppWindow->consumeMotionDown(ADISPLAY_ID_DEFAULT,
+                                           AMOTION_EVENT_FLAG_WINDOW_IS_PARTIALLY_OBSCURED);
+        mDispatcher->notifyMotion(generateMotionArgs(AMOTION_EVENT_ACTION_UP,
+                                                     AINPUT_SOURCE_TOUCHSCREEN, ADISPLAY_ID_DEFAULT,
+                                                     {pointInDisplaySpace}));
+        simpleAppWindow->consumeMotionUp(ADISPLAY_ID_DEFAULT,
+                                         AMOTION_EVENT_FLAG_WINDOW_IS_PARTIALLY_OBSCURED);
+    }
+    untrustedWindow->assertNoEvents();
+}
+
 // Run the precision tests for all rotations.
 INSTANTIATE_TEST_SUITE_P(InputDispatcherDisplayOrientationTests,
                          InputDispatcherDisplayOrientationFixture,
@@ -9888,7 +9984,7 @@ protected:
     PointerCaptureRequest requestAndVerifyPointerCapture(const sp<FakeWindowHandle>& window,
                                                          bool enabled) {
         mDispatcher->requestPointerCapture(window->getToken(), enabled);
-        auto request = mFakePolicy->assertSetPointerCaptureCalled(enabled);
+        auto request = mFakePolicy->assertSetPointerCaptureCalled(window, enabled);
         notifyPointerCaptureChanged(request);
         window->consumeCaptureEvent(enabled);
         return request;
@@ -9921,7 +10017,7 @@ TEST_F(InputDispatcherPointerCaptureTests, DisablesPointerCaptureAfterWindowLose
     mWindow->consumeCaptureEvent(false);
     mWindow->consumeFocusEvent(false);
     mSecondWindow->consumeFocusEvent(true);
-    mFakePolicy->assertSetPointerCaptureCalled(false);
+    mFakePolicy->assertSetPointerCaptureCalled(mWindow, false);
 
     // Ensure that additional state changes from InputReader are not sent to the window.
     notifyPointerCaptureChanged({});
@@ -9940,7 +10036,7 @@ TEST_F(InputDispatcherPointerCaptureTests, UnexpectedStateChangeDisablesPointerC
     notifyPointerCaptureChanged(request);
 
     // Ensure that Pointer Capture is disabled.
-    mFakePolicy->assertSetPointerCaptureCalled(false);
+    mFakePolicy->assertSetPointerCaptureCalled(mWindow, false);
     mWindow->consumeCaptureEvent(false);
     mWindow->assertNoEvents();
 }
@@ -9950,13 +10046,13 @@ TEST_F(InputDispatcherPointerCaptureTests, OutOfOrderRequests) {
 
     // The first window loses focus.
     setFocusedWindow(mSecondWindow);
-    mFakePolicy->assertSetPointerCaptureCalled(false);
+    mFakePolicy->assertSetPointerCaptureCalled(mWindow, false);
     mWindow->consumeCaptureEvent(false);
 
     // Request Pointer Capture from the second window before the notification from InputReader
     // arrives.
     mDispatcher->requestPointerCapture(mSecondWindow->getToken(), true);
-    auto request = mFakePolicy->assertSetPointerCaptureCalled(true);
+    auto request = mFakePolicy->assertSetPointerCaptureCalled(mSecondWindow, true);
 
     // InputReader notifies Pointer Capture was disabled (because of the focus change).
     notifyPointerCaptureChanged({});
@@ -9971,11 +10067,11 @@ TEST_F(InputDispatcherPointerCaptureTests, OutOfOrderRequests) {
 TEST_F(InputDispatcherPointerCaptureTests, EnableRequestFollowsSequenceNumbers) {
     // App repeatedly enables and disables capture.
     mDispatcher->requestPointerCapture(mWindow->getToken(), true);
-    auto firstRequest = mFakePolicy->assertSetPointerCaptureCalled(true);
+    auto firstRequest = mFakePolicy->assertSetPointerCaptureCalled(mWindow, true);
     mDispatcher->requestPointerCapture(mWindow->getToken(), false);
-    mFakePolicy->assertSetPointerCaptureCalled(false);
+    mFakePolicy->assertSetPointerCaptureCalled(mWindow, false);
     mDispatcher->requestPointerCapture(mWindow->getToken(), true);
-    auto secondRequest = mFakePolicy->assertSetPointerCaptureCalled(true);
+    auto secondRequest = mFakePolicy->assertSetPointerCaptureCalled(mWindow, true);
 
     // InputReader notifies that PointerCapture has been enabled for the first request. Since the
     // first request is now stale, this should do nothing.
@@ -9992,10 +10088,10 @@ TEST_F(InputDispatcherPointerCaptureTests, RapidToggleRequests) {
 
     // App toggles pointer capture off and on.
     mDispatcher->requestPointerCapture(mWindow->getToken(), false);
-    mFakePolicy->assertSetPointerCaptureCalled(false);
+    mFakePolicy->assertSetPointerCaptureCalled(mWindow, false);
 
     mDispatcher->requestPointerCapture(mWindow->getToken(), true);
-    auto enableRequest = mFakePolicy->assertSetPointerCaptureCalled(true);
+    auto enableRequest = mFakePolicy->assertSetPointerCaptureCalled(mWindow, true);
 
     // InputReader notifies that the latest "enable" request was processed, while skipping over the
     // preceding "disable" request.
@@ -10045,6 +10141,26 @@ TEST_F(InputDispatcherPointerCaptureTests, MouseHoverAndPointerCapture) {
             AllOf(WithMotionAction(ACTION_HOVER_MOVE), WithSource(AINPUT_SOURCE_MOUSE)));
 
     mWindow->assertNoEvents();
+}
+
+using InputDispatcherPointerCaptureDeathTest = InputDispatcherPointerCaptureTests;
+
+TEST_F(InputDispatcherPointerCaptureDeathTest,
+       NotifyPointerCaptureChangedWithWrongTokenAbortsDispatcher) {
+    testing::GTEST_FLAG(death_test_style) = "threadsafe";
+    ScopedSilentDeath _silentDeath;
+
+    mDispatcher->requestPointerCapture(mWindow->getToken(), true);
+    auto request = mFakePolicy->assertSetPointerCaptureCalled(mWindow, true);
+
+    // Dispatch a pointer changed event with a wrong token.
+    request.window = mSecondWindow->getToken();
+    ASSERT_DEATH(
+            {
+                notifyPointerCaptureChanged(request);
+                mSecondWindow->consumeCaptureEvent(true);
+            },
+            "Unexpected requested window for Pointer Capture.");
 }
 
 class InputDispatcherUntrustedTouchesTest : public InputDispatcherTest {

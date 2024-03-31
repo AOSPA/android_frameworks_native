@@ -110,11 +110,13 @@ void FlagManager::dump(std::string& result) const {
 
     /// Trunk stable server flags ///
     DUMP_SERVER_FLAG(refresh_rate_overlay_on_external_display);
+    DUMP_SERVER_FLAG(adpf_gpu_sf);
     DUMP_SERVER_FLAG(adpf_use_fmq_channel);
 
     /// Trunk stable readonly flags ///
     DUMP_READ_ONLY_FLAG(connected_display);
     DUMP_READ_ONLY_FLAG(enable_small_area_detection);
+    DUMP_READ_ONLY_FLAG(frame_rate_category_mrr);
     DUMP_READ_ONLY_FLAG(misc1);
     DUMP_READ_ONLY_FLAG(vrr_config);
     DUMP_READ_ONLY_FLAG(hotplug2);
@@ -134,6 +136,7 @@ void FlagManager::dump(std::string& result) const {
     DUMP_READ_ONLY_FLAG(restore_blur_step);
     DUMP_READ_ONLY_FLAG(dont_skip_on_early_ro);
     DUMP_READ_ONLY_FLAG(protected_if_client);
+    DUMP_READ_ONLY_FLAG(ce_fence_promise);
 #undef DUMP_READ_ONLY_FLAG
 #undef DUMP_SERVER_FLAG
 #undef DUMP_FLAG_INTERVAL
@@ -197,6 +200,7 @@ FLAG_MANAGER_LEGACY_SERVER_FLAG(use_skia_tracing, PROPERTY_SKIA_ATRACE_ENABLED,
 /// Trunk stable readonly flags ///
 FLAG_MANAGER_READ_ONLY_FLAG(connected_display, "")
 FLAG_MANAGER_READ_ONLY_FLAG(enable_small_area_detection, "")
+FLAG_MANAGER_READ_ONLY_FLAG(frame_rate_category_mrr, "debug.sf.frame_rate_category_mrr")
 FLAG_MANAGER_READ_ONLY_FLAG(misc1, "")
 FLAG_MANAGER_READ_ONLY_FLAG(vrr_config, "debug.sf.enable_vrr_config")
 FLAG_MANAGER_READ_ONLY_FLAG(hotplug2, "")
@@ -210,16 +214,18 @@ FLAG_MANAGER_READ_ONLY_FLAG(enable_fro_dependent_features, "")
 FLAG_MANAGER_READ_ONLY_FLAG(display_protected, "")
 FLAG_MANAGER_READ_ONLY_FLAG(fp16_client_target, "debug.sf.fp16_client_target")
 FLAG_MANAGER_READ_ONLY_FLAG(game_default_frame_rate, "")
-FLAG_MANAGER_READ_ONLY_FLAG(enable_layer_command_batching, "")
+FLAG_MANAGER_READ_ONLY_FLAG(enable_layer_command_batching, "debug.sf.enable_layer_command_batching")
 FLAG_MANAGER_READ_ONLY_FLAG(screenshot_fence_preservation, "debug.sf.screenshot_fence_preservation")
 FLAG_MANAGER_READ_ONLY_FLAG(vulkan_renderengine, "debug.renderengine.vulkan")
 FLAG_MANAGER_READ_ONLY_FLAG(renderable_buffer_usage, "")
 FLAG_MANAGER_READ_ONLY_FLAG(restore_blur_step, "debug.renderengine.restore_blur_step")
 FLAG_MANAGER_READ_ONLY_FLAG(dont_skip_on_early_ro, "")
 FLAG_MANAGER_READ_ONLY_FLAG(protected_if_client, "")
+FLAG_MANAGER_READ_ONLY_FLAG(ce_fence_promise, "");
 
 /// Trunk stable server flags ///
 FLAG_MANAGER_SERVER_FLAG(refresh_rate_overlay_on_external_display, "")
+FLAG_MANAGER_SERVER_FLAG(adpf_gpu_sf, "")
 
 /// Trunk stable server flags from outside SurfaceFlinger ///
 FLAG_MANAGER_SERVER_FLAG_IMPORTED(adpf_use_fmq_channel, "", android::os)

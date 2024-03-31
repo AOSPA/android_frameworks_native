@@ -87,6 +87,7 @@ flag {
 
 flag {
   name: "override_key_behavior_permission_apis"
+  is_exported: true
   namespace: "input"
   description: "enable override key behavior permission APIs"
   bug: "309018874"
@@ -115,6 +116,7 @@ flag {
 
 flag {
   name: "input_device_view_behavior_api"
+  is_exported: true
   namespace: "input"
   description: "Controls the API to provide InputDevice view behavior."
   bug: "246946631"
@@ -125,4 +127,11 @@ flag {
   namespace: "input"
   description: "Enable fling scrolling to be stopped by putting a finger on the touchpad again"
   bug: "281106755"
+}
+
+flag {
+  name: "enable_jerk_prediction_pruning"
+  namespace: "input"
+  description: "Enable prediction pruning based on jerk thresholds."
+  bug: "266747654"
 }

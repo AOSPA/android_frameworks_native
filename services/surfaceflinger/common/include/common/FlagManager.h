@@ -49,10 +49,12 @@ public:
 
     /// Trunk stable server flags ///
     bool refresh_rate_overlay_on_external_display() const;
+    bool adpf_gpu_sf() const;
     bool adpf_use_fmq_channel() const;
 
     /// Trunk stable readonly flags ///
     bool connected_display() const;
+    bool frame_rate_category_mrr() const;
     bool enable_small_area_detection() const;
     bool misc1() const;
     bool vrr_config() const;
@@ -73,6 +75,7 @@ public:
     bool restore_blur_step() const;
     bool dont_skip_on_early_ro() const;
     bool protected_if_client() const;
+    bool ce_fence_promise() const;
 
 protected:
     // overridden for unit tests

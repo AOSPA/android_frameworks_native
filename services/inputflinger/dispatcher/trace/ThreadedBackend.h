@@ -38,20 +38,24 @@ public:
     ThreadedBackend(Backend&& innerBackend);
     ~ThreadedBackend() override;
 
-    void traceKeyEvent(const TracedKeyEvent&) override;
-    void traceMotionEvent(const TracedMotionEvent&) override;
-    void traceWindowDispatch(const WindowDispatchArgs&) override;
+    void traceKeyEvent(const TracedKeyEvent&, const TracedEventArgs&) override;
+    void traceMotionEvent(const TracedMotionEvent&, const TracedEventArgs&) override;
+    void traceWindowDispatch(const WindowDispatchArgs&, const TracedEventArgs&) override;
 
 private:
     std::mutex mLock;
-    InputThread mTracerThread;
     bool mThreadExit GUARDED_BY(mLock){false};
     std::condition_variable mThreadWakeCondition;
     Backend mBackend;
-    using TraceEntry = std::variant<TracedKeyEvent, TracedMotionEvent, WindowDispatchArgs>;
+    using TraceEntry =
+            std::pair<std::variant<TracedKeyEvent, TracedMotionEvent, WindowDispatchArgs>,
+                      TracedEventArgs>;
     std::vector<TraceEntry> mQueue GUARDED_BY(mLock);
 
-    using WindowDispatchArgs = InputTracingBackendInterface::WindowDispatchArgs;
+    // InputThread stops when its destructor is called. Initialize it last so that it is the
+    // first thing to be destructed. This will guarantee the thread will not access other
+    // members that have already been destructed.
+    InputThread mTracerThread;
 
     void threadLoop();
 };

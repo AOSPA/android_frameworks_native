@@ -533,10 +533,7 @@ private:
         return lockedDumper(std::bind(dump, this, _1, _2, _3));
     }
 
-    template <typename F, std::enable_if_t<std::is_member_function_pointer_v<F>>* = nullptr>
-    Dumper mainThreadDumper(F dump) {
-        using namespace std::placeholders;
-        Dumper dumper = std::bind(dump, this, _3);
+    Dumper mainThreadDumperImpl(Dumper dumper) {
         return [this, dumper](const DumpArgs& args, bool asProto, std::string& result) -> void {
             mScheduler
                     ->schedule(
@@ -544,6 +541,18 @@ private:
                                     FTL_FAKE_GUARD(mStateLock) { dumper(args, asProto, result); })
                     .get();
         };
+    }
+
+    template <typename F, std::enable_if_t<std::is_member_function_pointer_v<F>>* = nullptr>
+    Dumper mainThreadDumper(F dump) {
+        using namespace std::placeholders;
+        return mainThreadDumperImpl(std::bind(dump, this, _3));
+    }
+
+    template <typename F, std::enable_if_t<std::is_member_function_pointer_v<F>>* = nullptr>
+    Dumper argsMainThreadDumper(F dump) {
+        using namespace std::placeholders;
+        return mainThreadDumperImpl(std::bind(dump, this, _1, _3));
     }
 
     // Maximum allowed number of display frames that can be set through backdoor
@@ -898,6 +907,11 @@ private:
     // Traverse through all the layers and compute and cache its bounds.
     void computeLayerBounds();
 
+    // Creates a promise for a future release fence for a layer. This allows for
+    // the layer to keep track of when its buffer can be released.
+    void attachReleaseFenceFutureToLayer(Layer* layer, LayerFE* layerFE, ui::LayerStack layerStack);
+
+    // Checks if a protected layer exists in a list of layers.
     bool layersHasProtectedLayer(const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const;
 
     void captureScreenCommon(RenderAreaFuture, GetLayerSnapshotsFunction, ui::Size bufferSize,
@@ -909,10 +923,20 @@ private:
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, const sp<IScreenCaptureListener>&);
 
+    // Overloaded version of renderScreenImpl that is used when layer snapshots have
+    // not yet been captured, and thus cannot yet be passed in as a parameter.
+    // Needed for TestableSurfaceFlinger.
     ftl::SharedFuture<FenceResult> renderScreenImpl(
             std::shared_ptr<const RenderArea>, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, ScreenCaptureResults&) EXCLUDES(mStateLock)
+            REQUIRES(kMainThreadContext);
+
+    ftl::SharedFuture<FenceResult> renderScreenImpl(
+            std::shared_ptr<const RenderArea>,
+            const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
+            bool grayscale, bool isProtected, ScreenCaptureResults&,
+            std::vector<std::pair<Layer*, sp<android::LayerFE>>>& layers) EXCLUDES(mStateLock)
             REQUIRES(kMainThreadContext);
 
     // If the uid provided is not UNSET_UID, the traverse will skip any layers that don't have a
@@ -1141,9 +1165,9 @@ private:
     void dumpHwcLayersMinidumpLockedLegacy(std::string& result) const REQUIRES(mStateLock);
 
     void appendSfConfigString(std::string& result) const;
-    void listLayersLocked(std::string& result) const;
-    void dumpStatsLocked(const DumpArgs& args, std::string& result) const REQUIRES(mStateLock);
-    void clearStatsLocked(const DumpArgs& args, std::string& result);
+    void listLayers(std::string& result) const;
+    void dumpStats(const DumpArgs& args, std::string& result) const REQUIRES(mStateLock);
+    void clearStats(const DumpArgs& args, std::string& result);
     void dumpTimeStats(const DumpArgs& args, bool asProto, std::string& result) const;
     void dumpFrameTimeline(const DumpArgs& args, std::string& result) const;
     void logFrameStats(TimePoint now) REQUIRES(kMainThreadContext);
