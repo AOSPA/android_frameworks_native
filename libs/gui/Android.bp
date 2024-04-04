@@ -536,8 +536,10 @@ qtidisplayextension_cc_defaults {
     },
     header_libs: [
         "display_intf_headers",
+        "libimapper_stablec",
     ],
     shared_libs: [
+        "libvndksupport",
         "libgralloctypes",
         "libhidlbase",
         "android.hardware.graphics.mapper@4.0",
