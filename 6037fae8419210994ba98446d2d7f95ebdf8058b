@@ -16,6 +16,23 @@
       "message": "compiles fine.",
       "revId": "6037fae8419210994ba98446d2d7f95ebdf8058b",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "beb07121_7d109bcc",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 2
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000429
+      },
+      "writtenOn": "2024-04-06T06:48:05Z",
+      "side": 1,
+      "message": "verified and no more logspam",
+      "revId": "6037fae8419210994ba98446d2d7f95ebdf8058b",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
