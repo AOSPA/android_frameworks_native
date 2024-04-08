@@ -3,6 +3,8 @@
  */
 #pragma once
 
+#include <android/hardware/graphics/mapper/4.0/IMapper.h>
+
 #include "../include/gui/Surface.h"
 
 namespace android {
@@ -19,11 +21,13 @@ public:
 
 private:
     bool isGame(std::string layerName);
+    void InitializeMapper();
+    void LoadQtiMapper5();
 
-    Surface* mQtiSurface = nullptr;
     bool mQtiIsGame = false;
     std::string mQtiLayerName = "";
     bool mEnableOptimalRefreshRate = false;
+    sp<android::hardware::graphics::mapper::V4_0::IMapper> mMapper4 = nullptr;
 };
 
 } // namespace libguiextension
