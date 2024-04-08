@@ -246,19 +246,12 @@ private:
     // to transfer focus to a new application.
     std::shared_ptr<const EventEntry> mNextUnblockedEvent GUARDED_BY(mLock);
 
-#ifdef DISABLE_DEVICE_INTEGRATION
     sp<android::gui::WindowInfoHandle> findTouchedWindowAtLocked(
             int32_t displayId, float x, float y, bool isStylus = false,
             bool ignoreDragWindow = false) const REQUIRES(mLock);
     std::vector<InputTarget> findOutsideTargetsLocked(
             int32_t displayId, const sp<android::gui::WindowInfoHandle>& touchedWindow,
             int32_t pointerId) const REQUIRES(mLock);
-#else
-    // Device Integration: add a new param into this method
-    std::pair<sp<android::gui::WindowInfoHandle>, std::vector<InputTarget>>
-    findTouchedWindowAtLocked(int32_t displayId, float x, float y, bool isStylus = false,
-                              bool ignoreDragWindow = false, bool isFromCrossDevice = false) const REQUIRES(mLock);
-#endif
 
     std::vector<sp<android::gui::WindowInfoHandle>> findTouchedSpyWindowsAtLocked(
             int32_t displayId, float x, float y, bool isStylus) const REQUIRES(mLock);
@@ -428,7 +421,8 @@ private:
     void disablePointerCaptureForcedLocked() REQUIRES(mLock);
 
     // Set the Pointer Capture state in the Policy.
-    void setPointerCaptureLocked(bool enable) REQUIRES(mLock);
+    // The window is not nullptr for requests to enable, otherwise it is nullptr.
+    void setPointerCaptureLocked(const sp<IBinder>& window) REQUIRES(mLock);
 
     // Dispatcher state at time of last ANR.
     std::string mLastAnrState GUARDED_BY(mLock);
@@ -562,12 +556,7 @@ private:
     // Uses findTouchedWindowTargetsLocked to make the decision
     void addDragEventLocked(const MotionEntry& entry) REQUIRES(mLock);
 
-#ifdef DISABLE_DEVICE_INTEGRATION
     void finishDragAndDrop(int32_t displayId, float x, float y) REQUIRES(mLock);
-#else
-    // Device Integration: add a new param into this method
-    void finishDragAndDrop(int32_t displayId, float x, float y, bool isFromCrossDevice = false) REQUIRES(mLock);
-#endif
 
     struct TouchOcclusionInfo {
         bool hasBlockingOcclusion;
@@ -578,11 +567,11 @@ private:
     };
 
     TouchOcclusionInfo computeTouchOcclusionInfoLocked(
-            const sp<android::gui::WindowInfoHandle>& windowHandle, int32_t x, int32_t y) const
+            const sp<android::gui::WindowInfoHandle>& windowHandle, float x, float y) const
             REQUIRES(mLock);
     bool isTouchTrustedLocked(const TouchOcclusionInfo& occlusionInfo) const REQUIRES(mLock);
     bool isWindowObscuredAtPointLocked(const sp<android::gui::WindowInfoHandle>& windowHandle,
-                                       int32_t x, int32_t y) const REQUIRES(mLock);
+                                       float x, float y) const REQUIRES(mLock);
     bool isWindowObscuredLocked(const sp<android::gui::WindowInfoHandle>& windowHandle) const
             REQUIRES(mLock);
     std::string dumpWindowForTouchOcclusion(const android::gui::WindowInfo* info,
@@ -641,7 +630,8 @@ private:
 
     void synthesizePointerDownEventsForConnectionLocked(
             const nsecs_t downTime, const std::shared_ptr<Connection>& connection,
-            ftl::Flags<InputTarget::Flags> targetFlags) REQUIRES(mLock);
+            ftl::Flags<InputTarget::Flags> targetFlags,
+            const std::unique_ptr<trace::EventTrackerInterface>& traceTracker) REQUIRES(mLock);
 
     // Splitting motion events across windows. When splitting motion event for a target,
     // splitDownTime refers to the time of first 'down' event on that particular target
@@ -670,6 +660,7 @@ private:
     void doInterceptKeyBeforeDispatchingCommand(const sp<IBinder>& focusedWindowToken,
                                                 const KeyEntry& entry) REQUIRES(mLock);
     void onFocusChangedLocked(const FocusResolver::FocusChanges& changes,
+                              const std::unique_ptr<trace::EventTrackerInterface>& traceTracker,
                               const sp<gui::WindowInfoHandle> removedFocusedWindowHandle = nullptr)
             REQUIRES(mLock);
     void sendFocusChangedCommandLocked(const sp<IBinder>& oldToken, const sp<IBinder>& newToken)
@@ -717,7 +708,9 @@ private:
                                 const sp<android::gui::WindowInfoHandle> fromWindowHandle,
                                 const sp<android::gui::WindowInfoHandle> toWindowHandle,
                                 TouchState& state, int32_t deviceId,
-                                const std::vector<PointerProperties>& pointers) REQUIRES(mLock);
+                                const std::vector<PointerProperties>& pointers,
+                                const std::unique_ptr<trace::EventTrackerInterface>& traceTracker)
+            REQUIRES(mLock);
 
     sp<android::gui::WindowInfoHandle> findWallpaperWindowBelow(
             const sp<android::gui::WindowInfoHandle>& windowHandle) const REQUIRES(mLock);

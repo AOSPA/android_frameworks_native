@@ -38,9 +38,6 @@
 #include <utility>
 #include <vector>
 
-#ifndef DISABLE_DEVICE_INTEGRATION
-#include <gui/WindowInfo.h>
-#endif
 namespace android::compositionengine::impl {
 
 // The implementation class contains the common implementation, but does not
@@ -120,10 +117,6 @@ public:
     void setPredictCompositionStrategy(bool) override;
     void setTreat170mAsSrgb(bool) override;
 
-#ifndef DISABLE_DEVICE_INTEGRATION
-    // Device Integration: for Blackscreen
-    virtual bool isDisplayForDIS() { return false; }
-#endif
     // Testing
     const ReleasedLayers& getReleasedLayersForTest() const;
     void setDisplayColorProfileForTest(std::unique_ptr<compositionengine::DisplayColorProfile>);
@@ -175,11 +168,6 @@ protected:
 
 private:
     void dirtyEntireOutput();
-#ifndef DISABLE_DEVICE_INTEGRATION
-    // Device Integration: is black screen layer 
-    bool isBlackScreenLayer(int) const;
-#endif
-    void updateCompositionStateForBorder(const compositionengine::CompositionRefreshArgs&);
     compositionengine::OutputLayer* findLayerRequestingBackgroundComposition() const;
     void finishPrepareFrame();
     ui::Dataspace getBestDataspace(ui::Dataspace*, bool*) const;
@@ -268,17 +256,6 @@ std::shared_ptr<BaseOutput> createOutputTemplated(const CompositionEngine& compo
             // get the back-to-front ordered list of layers.
             std::reverse(mPendingOutputLayersOrderedByZ.begin(),
                          mPendingOutputLayersOrderedByZ.end());
-#ifndef DISABLE_DEVICE_INTEGRATION
-            // Device Integration: We should make sure Black screen is always at the top of layers
-            if (mPendingOutputLayersOrderedByZ.size() > 0) {
-                auto blackScreenLayer = std::find_if(mPendingOutputLayersOrderedByZ.begin(), mPendingOutputLayersOrderedByZ.end(), [] (const std::unique_ptr<OutputLayer>& layer) {
-                    return static_cast<gui::WindowInfo::Type>(layer->getLayerFE().getWindowTypeForDIS()) == gui::WindowInfo::Type::SYSTEM_BLACKSCREEN_OVERLAY;
-                });
-                if (blackScreenLayer != mPendingOutputLayersOrderedByZ.end()) {
-                    std::rotate(blackScreenLayer, blackScreenLayer + 1 , mPendingOutputLayersOrderedByZ.end());
-                }
-            }
-#endif
 
             mCurrentOutputLayersOrderedByZ = std::move(mPendingOutputLayersOrderedByZ);
         }

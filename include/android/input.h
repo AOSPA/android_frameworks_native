@@ -381,11 +381,6 @@ enum {
      * actual intent.
      */
     AMOTION_EVENT_FLAG_WINDOW_IS_OBSCURED = 0x1,
-
-    /**
-     * Device Integration: This flag indicates the motion event is from Device Integration Service
-     */
-    AMOTION_EVENT_FLAG_FROM_DEVICE_INTEGRATION_SERVICE = 0x1000,
 };
 
 /**
@@ -1497,7 +1492,10 @@ const AInputEvent* AMotionEvent_fromJava(JNIEnv* env, jobject motionEvent) __INT
 
 /**
  * Creates a java android.view.InputEvent object that is a copy of the specified native
- * {@link AInputEvent}. Returns null on error
+ * {@link AInputEvent}.
+ *
+ * Specified {@link AInputEvent} is require to be a valid {@link MotionEvent} or {@link KeyEvent}
+ * object.
  *
  *  Available since API level 35.
  */

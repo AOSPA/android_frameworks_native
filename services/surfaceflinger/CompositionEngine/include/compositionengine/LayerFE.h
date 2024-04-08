@@ -36,10 +36,6 @@
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
 
-#ifndef DISABLE_DEVICE_INTEGRATION
-#include <gui/WindowInfo.h>
-#endif
-
 namespace android {
 
 class Fence;
@@ -62,8 +58,7 @@ public:
     // Called before composition starts. Should return true if this layer has
     // pending updates which would require an extra display refresh cycle to
     // process.
-    virtual bool onPreComposition(nsecs_t refreshStartTime,
-                                  bool updatingOutputGeometryThisFrame) = 0;
+    virtual bool onPreComposition(bool updatingOutputGeometryThisFrame) = 0;
 
     struct ClientCompositionTargetSettings {
         enum class BlurSetting {
@@ -138,6 +133,15 @@ public:
         uint64_t frameNumber = 0;
     };
 
+    // Describes the states of the release fence. Checking the states allows checks
+    // to ensure that set_value() is not called on the same promise multiple times,
+    // and can indicate if the promise has been fulfilled.
+    enum class ReleaseFencePromiseStatus {
+        UNINITIALIZED, // Promise not created
+        INITIALIZED,   // Promise created, fence has not been set
+        FULFILLED      // Promise fulfilled, fence is set
+    };
+
     // Returns the LayerSettings to pass to RenderEngine::drawLayers. The state may contain shadows
     // casted by the layer or the content of the layer itself. If the layer does not render then an
     // empty optional will be returned.
@@ -146,6 +150,19 @@ public:
 
     // Called after the layer is displayed to update the presentation fence
     virtual void onLayerDisplayed(ftl::SharedFuture<FenceResult>, ui::LayerStack layerStack) = 0;
+
+    // Initializes a promise for a buffer release fence and provides the future for that
+    // fence. This should only be called when a promise has not yet been created, or
+    // after the previous promise has already been fulfilled. Attempting to call this
+    // when an existing promise is INITIALIZED will fail because the promise has not
+    // yet been fulfilled.
+    virtual ftl::Future<FenceResult> createReleaseFenceFuture() = 0;
+
+    // Sets promise with its buffer's release fence
+    virtual void setReleaseFence(const FenceResult& releaseFence) = 0;
+
+    // Checks if the buffer's release fence has been set
+    virtual LayerFE::ReleaseFencePromiseStatus getReleaseFencePromiseStatus() = 0;
 
     // Gets some kind of identifier for the layer for debug purposes.
     virtual const char* getDebugName() const = 0;
@@ -156,16 +173,6 @@ public:
     // Whether the layer should be rendered with rounded corners.
     virtual bool hasRoundedCorners() const = 0;
     virtual void setWasClientComposed(const sp<Fence>&) {}
-
-#ifndef DISABLE_DEVICE_INTEGRATION
-     // Device Integration: Gets windows type
-     virtual int getWindowTypeForDIS() { return static_cast<int>(mWindowTypeForDIS); }
-     virtual void setWindowTypeForDIS(gui::WindowInfo::Type windowType) { mWindowTypeForDIS = windowType; }
-
-protected:
-     // Window types from WindowManager.LayoutParams
-     gui::WindowInfo::Type mWindowTypeForDIS;
-#endif
     virtual const gui::LayerMetadata* getMetadata() const = 0;
     virtual const gui::LayerMetadata* getRelativeMetadata() const = 0;
 };

@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
@@ -150,8 +150,8 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
         }
     }
 
-    // Initialize IDC HIDL only if AIDL is not present
-    if (mQtiDisplayConfigAidl == nullptr) {
+    // Initialize IDC HIDL only if AIDL is not present or on older target
+    if (mQtiDisplayConfigAidl == nullptr || (mQtiFirstApiLevel < __ANDROID_API_U__)) {
         int ret = ::DisplayConfig::ClientInterface::Create("SurfaceFlinger" + std::to_string(0),
                                                            nullptr, &mQtiDisplayConfigHidl);
         if (ret || !mQtiDisplayConfigHidl) {
@@ -177,12 +177,15 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
     mQtiHWComposerExtnIntf = qtiCreateHWComposerExtension(hwc, composerHal);
     mQtiPowerAdvisorExtn = new QtiPowerAdvisorExtension(powerAdvisor);
 
+    if (composerHal) {
+        qtiAllowIdleFallback();
+    }
+
     qtiSetVsyncConfiguration(vsyncConfig);
     qtiSetupDisplayExtnFeatures();
     qtiUpdateVsyncConfiguration();
     mQtiSFExtnBootComplete = true;
 
-#ifdef FPS_MITIGATION_ENABLED
     ConditionalLock lock(mQtiFlinger->mStateLock,
                          std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
     const auto displayDevice = mQtiFlinger->getDefaultDisplayDeviceLocked();
@@ -203,6 +206,11 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
         }
     }
 
+    if (mQtiDisplayExtnIntf) {
+        mQtiDisplayExtnIntf->SetSupportedRefreshRates(fps_list);
+    }
+
+#ifdef FPS_MITIGATION_ENABLED
     if (mQtiDisplayExtnIntf) {
         mQtiDisplayExtnIntf->SetFpsMitigationCallback(
                 [this](float newLevelFps) { qtiSetDesiredModeByThermalLevel(newLevelFps); },
@@ -309,8 +317,9 @@ void QtiSurfaceFlingerExtension::qtiHandlePresentationDisplaysEarlyWakeup(size_t
     mQtiWakeUpPresentationDisplays = false;
 }
 
-void QtiSurfaceFlingerExtension::qtiResetEarlyWakeUp() {
+void QtiSurfaceFlingerExtension::qtiResetSFExtn() {
     mQtiSendEarlyWakeUp = false;
+    mQtiRequestedContentFps = false;
 }
 
 void QtiSurfaceFlingerExtension::qtiSetDisplayExtnActiveConfig(uint32_t displayId,
@@ -458,6 +467,10 @@ void QtiSurfaceFlingerExtension::qtiUpdateBufferData(bool qtiLatchMediaContent,
     }
 }
 
+void QtiSurfaceFlingerExtension::qtiOnComposerHalRefresh() {
+  mComposerRefreshNotified = true;
+}
+
 /*
  * Methods that call the FeatureManager APIs.
  */
@@ -540,6 +553,11 @@ void QtiSurfaceFlingerExtension::qtiSendInitialFps(uint32_t fps) {
 }
 
 void QtiSurfaceFlingerExtension::qtiNotifyDisplayUpdateImminent() {
+    if(mQtiDisplayExtnIntf && !mComposerRefreshNotified) {
+        mQtiDisplayExtnIntf->NotifyDisplayUpdateImminent();
+    }
+    mComposerRefreshNotified = false;
+
     if (!mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kEarlyWakeUp)) {
         mQtiFlinger->mPowerAdvisor->notifyDisplayUpdateImminentAndCpuReset();
         return;
@@ -576,12 +594,30 @@ void QtiSurfaceFlingerExtension::qtiNotifyDisplayUpdateImminent() {
 }
 
 void QtiSurfaceFlingerExtension::qtiSetContentFps(uint32_t contentFps) {
-    if (mQtiFlinger->mBootFinished && mQtiDisplayExtnIntf &&
+    if (mQtiFlinger->mBootFinished && mQtiDisplayExtnIntf && !mQtiRequestedContentFps &&
         contentFps != mQtiCurrentFps) {
+        mQtiRequestedContentFps = true;
+        if (mQtiFailedAttempts % (int) ceil(contentFps/10) != 0) {
+            mQtiFailedAttempts += 1;
+            return;
+        }
+
+        auto perf_hal_status = base::GetProperty("init.svc.perf2-hal-1-0", "");
+        if (perf_hal_status == "stopped") {
+            ALOGV("Perf-Hal service is stopped number of attempts %d", mQtiFailedAttempts);
+            mQtiFailedAttempts += 1;
+            if (mQtiFailedAttempts > (int) contentFps / 2) {
+                mQtiFailedAttempts = 0;
+                mQtiCurrentFps = contentFps;
+            }
+            return;
+        }
+
         mQtiSentInitialFps = mQtiDisplayExtnIntf->SetContentFps(contentFps) == 0;
 
         if (mQtiSentInitialFps) {
             mQtiCurrentFps = contentFps;
+            mQtiFailedAttempts = 0;
             ALOGV("Successfully sent content fps %d", contentFps);
         } else {
             // This floods the log with warning. Changed it to verbose
@@ -729,7 +765,8 @@ status_t QtiSurfaceFlingerExtension::qtiIsSupportedConfigSwitch(const sp<IBinder
         return NAME_NOT_FOUND;
     }
 
-    if (mQtiDisplayConfigAidl != nullptr) {
+    // Prioritize IDisplayConfig AIDL on Android U ++
+    if (mQtiDisplayConfigAidl != nullptr && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
         const auto displayId = PhysicalDisplayId::tryCast(display->getId());
         const auto hwcDisplayId = mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*displayId);
         bool supported = false;
@@ -965,7 +1002,8 @@ void QtiSurfaceFlingerExtension::qtiSetPowerModeOverrideConfig(sp<DisplayDevice>
         const auto hwcDisplayId =
                 mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
 
-        if (mQtiDisplayConfigAidl) {
+        // Prioritize IDisplayConfig AIDL on Android U ++
+        if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
             mQtiDisplayConfigAidl->isPowerModeOverrideSupported(static_cast<int32_t>(*hwcDisplayId),
                                                                 &supported);
             goto end;
@@ -987,7 +1025,8 @@ end:
 
 
 void QtiSurfaceFlingerExtension::qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64_t layerId) {
-    if (mQtiDisplayConfigAidl) {
+    // Prioritize IDisplayConfig AIDL on Android U ++
+    if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
         ALOGV("IDisplayConfig AIDL: Set layer %lu as mask for display %d", layerId, hwcDisplayId);
         mQtiDisplayConfigAidl->setLayerAsMask(static_cast<int32_t>(hwcDisplayId),
                                               static_cast<int32_t>(layerId));
@@ -1157,8 +1196,8 @@ void QtiSurfaceFlingerExtension::qtiCreateVirtualDisplay(int width, int height, 
         return;
     }
 
-    // Use either IDisplayConfig AIDL or HIDL
-    if (mQtiDisplayConfigAidl) {
+    // Prioritize IDisplayConfig AIDL on Android U ++
+    if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
         mQtiDisplayConfigAidl->createVirtualDisplay(width, height, format);
         return;
     }
@@ -1372,10 +1411,15 @@ void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() {
     */
 }
 
+bool QtiSurfaceFlingerExtension::qtiIsSmomoOptimalRefreshActive() {
+  return mQtiSmomoOptimalRefreshActive;
+}
+
 void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     ATRACE_NAME("SmoMoUpdateState");
     Mutex::Autolock lock(mQtiFlinger->mStateLock);
 
+    mQtiSmomoOptimalRefreshActive = false;
     // Check if smomo instances exist.
     if (!mQtiSmomoInstances.size()) {
         return;
@@ -1453,6 +1497,23 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
                                               : static_cast<uint32_t>(fps));
     }
 
+    if (numActiveDisplays == 1) {
+        std::map<int, int> refresh_rate_votes;
+        for (auto& instance : mQtiSmomoInstances) {
+            if (!instance.active) {
+                continue;
+            }
+            instance.smoMo->GetRefreshRateVote(refresh_rate_votes);
+            mQtiFlinger->mScheduler->qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
+            for (auto it = refresh_rate_votes.begin(); it != refresh_rate_votes.end(); it++) {
+              if (it->second != -1) {
+                mQtiSmomoOptimalRefreshActive = true;
+                break;
+              }
+            }
+        }
+    }
+
     // Disable DRC if active displays is more than 1.
     for (auto& instance : mQtiSmomoInstances) {
         instance.smoMo->SetRefreshRateChangeStatus((numActiveDisplays == 1));
@@ -1485,11 +1546,26 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(
         smoMo->CollectLayerStats(bufferStats);
 
         const auto &schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
-        auto vsyncTime =
-                schedule->getTracker().nextAnticipatedVSyncTimeFrom(SYSTEM_TIME_MONOTONIC);
+        nsecs_t sfOffset =
+            mQtiFlinger->mScheduler->getVsyncConfiguration().getCurrentConfigs().late.sfOffset;
+        const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
+        auto vsyncTime = schedule->getTracker().nextAnticipatedVSyncTimeFrom(now);
+        nsecs_t sfVsyncTime = vsyncTime + sfOffset;
+        auto vsyncPeriod = schedule->getTracker().currentPeriod();
+        if (now >= sfVsyncTime) {
+            sfVsyncTime += vsyncPeriod;
+        } else if (now <= sfVsyncTime - vsyncPeriod) {
+            sfVsyncTime -= vsyncPeriod;
+        }
 
-        if (smoMo->FrameIsLate(bufferStats.id, vsyncTime)) {
-            qtiScheduleCompositeImmed();
+        if (mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kSmomoOptimalRefreshRate)) {
+            if (smoMo->FrameIsLate(bufferStats.id, sfVsyncTime)) {
+                qtiScheduleCompositeImmed();
+            }
+        } else {
+            if (smoMo->FrameIsLate(bufferStats.id, vsyncTime)) {
+                qtiScheduleCompositeImmed();
+            }
         }
     }
 }
@@ -1901,6 +1977,18 @@ void QtiSurfaceFlingerExtension::qtiNotifyResolutionSwitch(int displayId, int32_
             mQtiFlinger->setActiveModeFromBackdoor(displayToken, DisplayModeId{newModeId}, Fps(), Fps());
     if (result != NO_ERROR) {
         return;
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiAllowIdleFallback() {
+    bool allowIdleFallback =
+            mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kIdleFallback);
+    if (allowIdleFallback) {
+        if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
+            mQtiDisplayConfigAidl->allowIdleFallback();
+        } else if (mQtiDisplayConfigHidl) {
+            mQtiDisplayConfigHidl->AllowIdleFallback();
+        }
     }
 }
 

@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #define LOG_TAG "Surface"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
@@ -52,6 +58,10 @@
 #include <private/gui/ComposerServiceAIDL.h>
 
 #include <com_android_graphics_libgui_flags.h>
+
+/* QTI_BEGIN */
+#include <cutils/properties.h>
+/* QTI_END */
 
 namespace android {
 
@@ -128,6 +138,18 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
     mSwapIntervalZero = false;
     mMaxBufferCount = NUM_BUFFER_SLOTS;
     mSurfaceControlHandle = surfaceControlHandle;
+
+    /* QTI_BEGIN */
+    char value[PROPERTY_VALUE_MAX];
+    int int_value = 0;
+    property_get("vendor.display.enable_optimal_refresh_rate", value, "0");
+    int_value = atoi(value);
+    mEnableOptimalRefreshRate = (int_value == 1) ? true : false;
+
+    if (!mQtiSurfaceExtn && mEnableOptimalRefreshRate) {
+        mQtiSurfaceExtn = std::make_shared<libguiextension::QtiSurfaceExtension>(this);
+    }
+    /* QTI_END */
 }
 
 Surface::~Surface() {
@@ -1060,6 +1082,13 @@ void Surface::applyGrallocMetadataLocked(
         android_native_buffer_t* buffer,
         const IGraphicBufferProducer::QueueBufferInput& queueBufferInput) {
     ATRACE_CALL();
+
+    /* QTI_BEGIN */
+    if (mQtiSurfaceExtn && mEnableOptimalRefreshRate) {
+        mQtiSurfaceExtn->qtiSetBufferDequeueDuration(getDebugName(), buffer, mLastDequeueDuration);
+    }
+    /* QTI_END */
+
     auto& mapper = GraphicBufferMapper::get();
     mapper.setDataspace(buffer->handle, static_cast<ui::Dataspace>(queueBufferInput.dataSpace));
     if (mHdrMetadataIsSet & HdrMetadata::SMPTE2086)

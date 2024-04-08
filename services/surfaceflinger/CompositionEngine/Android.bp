@@ -38,7 +38,6 @@ cc_defaults {
         "libSurfaceFlingerProp",
         "libui",
         "libutils",
-        "server_configurable_flags",
     ],
     static_libs: [
         "liblayers_proto",
@@ -93,11 +92,10 @@ cc_library {
     name: "libcompositionengine",
     defaults: [
         "libcompositionengine_defaults",
+        "libsurfaceflinger_common_deps",
         "libqtisurfaceflingerextension_defaults",
     ],
     static_libs: [
-        "libsurfaceflinger_common",
-        "libsurfaceflingerflags",
         "libqticompositionengineextension",
     ],
     srcs: [
@@ -105,14 +103,14 @@ cc_library {
     ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],
-    shared_libs: [
-        "server_configurable_flags",
-    ],
 }
 
 cc_library {
     name: "libcompositionengine_mocks",
-    defaults: ["libcompositionengine_defaults"],
+    defaults: [
+        "libcompositionengine_defaults",
+        "libsurfaceflinger_common_test_deps",
+    ],
     srcs: [
         "mock/CompositionEngine.cpp",
         "mock/Display.cpp",
@@ -129,8 +127,6 @@ cc_library {
         "libgmock",
         "libcompositionengine",
         "libqticompositionengineextension",
-        "libsurfaceflinger_common_test",
-        "libsurfaceflingerflags_test",
     ],
     shared_libs: [
         "server_configurable_flags",
@@ -146,7 +142,10 @@ cc_test {
         "frameworks/native/services/surfaceflinger/common/include",
         "frameworks/native/services/surfaceflinger/tests/unittests",
     ],
-    defaults: ["libcompositionengine_defaults"],
+    defaults: [
+        "libcompositionengine_defaults",
+        "libsurfaceflinger_common_test_deps",
+    ],
     srcs: [
         "tests/planner/CachedSetTest.cpp",
         "tests/planner/FlattenerTest.cpp",
@@ -173,14 +172,11 @@ cc_test {
         "libgmock",
         "libgtest",
         "libqticompositionengineextension",
-        "libsurfaceflinger_common_test",
-        "libsurfaceflingerflags_test",
     ],
     shared_libs: [
         // For some reason, libvulkan isn't picked up from librenderengine
         // Probably ASAN related?
         "libvulkan",
-        "server_configurable_flags",
     ],
     sanitize: {
         hwaddress: true,

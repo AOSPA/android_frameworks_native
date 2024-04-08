@@ -15,7 +15,7 @@
 
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -95,6 +95,7 @@
 #include "Tracing/TransactionTracing.h"
 #include "TransactionCallbackInvoker.h"
 #include "TransactionState.h"
+#include "Utils/OnceFuture.h"
 
 #include <atomic>
 #include <cstdint>
@@ -532,10 +533,7 @@ private:
         return lockedDumper(std::bind(dump, this, _1, _2, _3));
     }
 
-    template <typename F, std::enable_if_t<std::is_member_function_pointer_v<F>>* = nullptr>
-    Dumper mainThreadDumper(F dump) {
-        using namespace std::placeholders;
-        Dumper dumper = std::bind(dump, this, _3);
+    Dumper mainThreadDumperImpl(Dumper dumper) {
         return [this, dumper](const DumpArgs& args, bool asProto, std::string& result) -> void {
             mScheduler
                     ->schedule(
@@ -543,6 +541,18 @@ private:
                                     FTL_FAKE_GUARD(mStateLock) { dumper(args, asProto, result); })
                     .get();
         };
+    }
+
+    template <typename F, std::enable_if_t<std::is_member_function_pointer_v<F>>* = nullptr>
+    Dumper mainThreadDumper(F dump) {
+        using namespace std::placeholders;
+        return mainThreadDumperImpl(std::bind(dump, this, _3));
+    }
+
+    template <typename F, std::enable_if_t<std::is_member_function_pointer_v<F>>* = nullptr>
+    Dumper argsMainThreadDumper(F dump) {
+        using namespace std::placeholders;
+        return mainThreadDumperImpl(std::bind(dump, this, _1, _3));
     }
 
     // Maximum allowed number of display frames that can be set through backdoor
@@ -574,7 +584,7 @@ private:
             bool hasListenerCallbacks, const std::vector<ListenerCallbacks>& listenerCallbacks,
             uint64_t transactionId, const std::vector<uint64_t>& mergedTransactionIds) override;
     void bootFinished();
-    virtual status_t getSupportedFrameTimestamps(std::vector<FrameEvent>* outSupported) const;
+    status_t getSupportedFrameTimestamps(std::vector<FrameEvent>* outSupported) const;
     sp<IDisplayEventConnection> createDisplayEventConnection(
             gui::ISurfaceComposer::VsyncSource vsyncSource =
                     gui::ISurfaceComposer::VsyncSource::eVsyncSourceApp,
@@ -897,20 +907,36 @@ private:
     // Traverse through all the layers and compute and cache its bounds.
     void computeLayerBounds();
 
-    // Boot animation, on/off animations and screen capture
-    void startBootAnim();
+    // Creates a promise for a future release fence for a layer. This allows for
+    // the layer to keep track of when its buffer can be released.
+    void attachReleaseFenceFutureToLayer(Layer* layer, LayerFE* layerFE, ui::LayerStack layerStack);
+
+    // Checks if a protected layer exists in a list of layers.
+    bool layersHasProtectedLayer(const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const;
 
     void captureScreenCommon(RenderAreaFuture, GetLayerSnapshotsFunction, ui::Size bufferSize,
                              ui::PixelFormat, bool allowProtected, bool grayscale,
                              const sp<IScreenCaptureListener>&);
-    ftl::SharedFuture<FenceResult> captureScreenCommon(
+
+    ftl::SharedFuture<FenceResult> captureScreenshot(
             RenderAreaFuture, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, const sp<IScreenCaptureListener>&);
+
+    // Overloaded version of renderScreenImpl that is used when layer snapshots have
+    // not yet been captured, and thus cannot yet be passed in as a parameter.
+    // Needed for TestableSurfaceFlinger.
     ftl::SharedFuture<FenceResult> renderScreenImpl(
             std::shared_ptr<const RenderArea>, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, ScreenCaptureResults&) EXCLUDES(mStateLock)
+            REQUIRES(kMainThreadContext);
+
+    ftl::SharedFuture<FenceResult> renderScreenImpl(
+            std::shared_ptr<const RenderArea>,
+            const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
+            bool grayscale, bool isProtected, ScreenCaptureResults&,
+            std::vector<std::pair<Layer*, sp<android::LayerFE>>>& layers) EXCLUDES(mStateLock)
             REQUIRES(kMainThreadContext);
 
     // If the uid provided is not UNSET_UID, the traverse will skip any layers that don't have a
@@ -1078,7 +1104,6 @@ private:
                                const DisplayDeviceState& drawingState)
             REQUIRES(mStateLock, kMainThreadContext);
 
-    void dispatchDisplayHotplugEvent(PhysicalDisplayId, bool connected);
     void dispatchDisplayModeChangeEvent(PhysicalDisplayId, const scheduler::FrameRateMode&)
             REQUIRES(mStateLock);
 
@@ -1140,9 +1165,9 @@ private:
     void dumpHwcLayersMinidumpLockedLegacy(std::string& result) const REQUIRES(mStateLock);
 
     void appendSfConfigString(std::string& result) const;
-    void listLayersLocked(std::string& result) const;
-    void dumpStatsLocked(const DumpArgs& args, std::string& result) const REQUIRES(mStateLock);
-    void clearStatsLocked(const DumpArgs& args, std::string& result);
+    void listLayers(std::string& result) const;
+    void dumpStats(const DumpArgs& args, std::string& result) const REQUIRES(mStateLock);
+    void clearStats(const DumpArgs& args, std::string& result);
     void dumpTimeStats(const DumpArgs& args, bool asProto, std::string& result) const;
     void dumpFrameTimeline(const DumpArgs& args, std::string& result) const;
     void logFrameStats(TimePoint now) REQUIRES(kMainThreadContext);
@@ -1209,11 +1234,17 @@ private:
     ui::Rotation getPhysicalDisplayOrientation(DisplayId, bool isPrimary) const
             REQUIRES(mStateLock);
     void traverseLegacyLayers(const LayerVector::Visitor& visitor) const;
+
+    void initBootProperties();
     void initTransactionTraceWriter();
-    sp<StartPropertySetThread> mStartPropertySetThread;
+
     surfaceflinger::Factory& mFactory;
     pid_t mPid;
-    std::future<void> mRenderEnginePrimeCacheFuture;
+
+    // TODO: b/328459745 - Encapsulate in a SystemProperties object.
+    utils::OnceFuture mInitBootPropsFuture;
+
+    utils::OnceFuture mRenderEnginePrimeCacheFuture;
 
     // mStateLock has conventions related to the current thread, because only
     // the main thread should modify variables protected by mStateLock.
@@ -1249,6 +1280,7 @@ private:
     // constant members (no synchronization needed for access)
     const nsecs_t mBootTime = systemTime();
     bool mIsUserBuild = true;
+    bool mHasReliablePresentFences = false;
 
     // Can only accessed from the main thread, these members
     // don't need synchronization
@@ -1384,12 +1416,7 @@ private:
 
     const std::string mHwcServiceName;
 
-    /*
-     * Scheduler
-     */
     std::unique_ptr<scheduler::Scheduler> mScheduler;
-    scheduler::ConnectionHandle mAppConnectionHandle;
-    scheduler::ConnectionHandle mSfConnectionHandle;
 
     scheduler::PresentLatencyTracker mPresentLatencyTracker GUARDED_BY(kMainThreadContext);
 
@@ -1497,6 +1524,7 @@ private:
 
     /* QTI_BEGIN */
     surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* mQtiSFExtnIntf = nullptr;
+    std::mutex mSmomoMutex;
     /* QTI_END */
 
     TransactionHandler mTransactionHandler;
@@ -1532,7 +1560,9 @@ private:
     std::unordered_map<PhysicalDisplayId, NotifyExpectedPresentData> mNotifyExpectedPresentMap;
     void sendNotifyExpectedPresentHint(PhysicalDisplayId displayId) override
             REQUIRES(kMainThreadContext);
-    void scheduleNotifyExpectedPresentHint(PhysicalDisplayId displayId);
+    void scheduleNotifyExpectedPresentHint(PhysicalDisplayId displayId,
+                                           VsyncId vsyncId = VsyncId{
+                                                   FrameTimelineInfo::INVALID_VSYNC_ID});
     void notifyExpectedPresentIfRequired(PhysicalDisplayId, Period vsyncPeriod,
                                          TimePoint expectedPresentTime, Fps frameInterval,
                                          std::optional<Period> timeoutOpt);

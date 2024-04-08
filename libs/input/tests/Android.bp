@@ -13,11 +13,13 @@ cc_test {
     cpp_std: "c++20",
     host_supported: true,
     srcs: [
+        "BlockingQueue_test.cpp",
         "IdGenerator_test.cpp",
         "InputChannel_test.cpp",
         "InputDevice_test.cpp",
         "InputEvent_test.cpp",
         "InputPublisherAndConsumer_test.cpp",
+        "InputPublisherAndConsumerNoResampling_test.cpp",
         "InputVerifier_test.cpp",
         "MotionPredictor_test.cpp",
         "MotionPredictorMetricsManager_test.cpp",

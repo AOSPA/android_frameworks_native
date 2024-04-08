@@ -124,7 +124,6 @@ struct WindowInfo : public Parcelable {
         DOCK_DIVIDER = FIRST_SYSTEM_WINDOW_ + 34,
         ACCESSIBILITY_MAGNIFICATION_OVERLAY = FIRST_SYSTEM_WINDOW_ + 39,
         NOTIFICATION_SHADE = FIRST_SYSTEM_WINDOW_ + 40,
-        SYSTEM_BLACKSCREEN_OVERLAY = FIRST_SYSTEM_WINDOW_ + 99,
         FIRST_SYSTEM_WINDOW = FIRST_SYSTEM_WINDOW_,
         LAST_SYSTEM_WINDOW = 2999,
 
@@ -253,10 +252,6 @@ struct WindowInfo : public Parcelable {
     void setInputConfig(ftl::Flags<InputConfig> config, bool value);
 
     void addTouchableRegion(const Rect& region);
-
-    bool touchableRegionContainsPoint(int32_t x, int32_t y) const;
-
-    bool frameContainsPoint(int32_t x, int32_t y) const;
 
     bool supportsSplitTouch() const;
 

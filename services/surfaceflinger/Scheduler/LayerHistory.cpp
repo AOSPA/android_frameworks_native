@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 #undef LOG_TAG
 #define LOG_TAG "LayerHistory"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
@@ -40,14 +46,15 @@ namespace android::scheduler {
 
 namespace {
 
-bool isLayerActive(const LayerInfo& info, nsecs_t threshold) {
+bool isLayerActive(const LayerInfo& info, nsecs_t threshold, bool isVrrDevice) {
     if (FlagManager::getInstance().misc1() && !info.isVisible()) {
         return false;
     }
 
     // Layers with an explicit frame rate or frame rate category are kept active,
     // but ignore NoVote.
-    if (info.getSetFrameRateVote().isValid() && !info.getSetFrameRateVote().isNoVote()) {
+    const auto frameRate = info.getSetFrameRateVote();
+    if (frameRate.isValid() && !frameRate.isNoVote() && frameRate.isVoteValidForMrr(isVrrDevice)) {
         return true;
     }
 
@@ -194,7 +201,7 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
 
     std::lock_guard lock(mLock);
 
-    partitionLayers(now);
+    partitionLayers(now, selector.isVrrDevice());
 
     for (const auto& [key, value] : mActiveLayerInfos) {
         auto& info = value.second;
@@ -209,6 +216,14 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
             if (vote.isNoVote()) {
                 continue;
             }
+
+            /* QTI_BEGIN */
+            if (refresh_rate_votes_.find(key) != refresh_rate_votes_.end() &&
+                refresh_rate_votes_[key] != -1) {
+              vote.fps = Fps::fromValue(refresh_rate_votes_[key]);
+              vote.type = LayerHistory::LayerVoteType::ExplicitExact;
+            }
+            /* QTI_END */
 
             // Compute the layer's position on the screen
             const Rect bounds = Rect(info->getBounds());
@@ -242,7 +257,7 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
     return summary;
 }
 
-void LayerHistory::partitionLayers(nsecs_t now) {
+void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
     ATRACE_CALL();
     const nsecs_t threshold = getActiveLayerThreshold(now);
 
@@ -250,7 +265,7 @@ void LayerHistory::partitionLayers(nsecs_t now) {
     LayerInfos::iterator it = mInactiveLayerInfos.begin();
     while (it != mInactiveLayerInfos.end()) {
         auto& [layerUnsafe, info] = it->second;
-        if (isLayerActive(*info, threshold)) {
+        if (isLayerActive(*info, threshold, isVrrDevice)) {
             // move this to the active map
 
             mActiveLayerInfos.insert({it->first, std::move(it->second)});
@@ -268,7 +283,7 @@ void LayerHistory::partitionLayers(nsecs_t now) {
     it = mActiveLayerInfos.begin();
     while (it != mActiveLayerInfos.end()) {
         auto& [layerUnsafe, info] = it->second;
-        if (isLayerActive(*info, threshold)) {
+        if (isLayerActive(*info, threshold, isVrrDevice)) {
             // Set layer vote if set
             const auto frameRate = info->getSetFrameRateVote();
 
@@ -306,21 +321,51 @@ void LayerHistory::partitionLayers(nsecs_t now) {
 
                 if (gameModeFrameRateOverride.isValid()) {
                     info->setLayerVote({gameFrameRateOverrideVoteType, gameModeFrameRateOverride});
-                } else if (frameRate.isValid()) {
+                    ATRACE_FORMAT_INSTANT("GameModeFrameRateOverride");
+                    if (CC_UNLIKELY(mTraceEnabled)) {
+                        trace(*info, gameFrameRateOverrideVoteType,
+                              gameModeFrameRateOverride.getIntValue());
+                    }
+                } else if (frameRate.isValid() && frameRate.isVoteValidForMrr(isVrrDevice)) {
                     info->setLayerVote({setFrameRateVoteType, frameRate.vote.rate,
                                         frameRate.vote.seamlessness, frameRate.category});
+                    if (CC_UNLIKELY(mTraceEnabled)) {
+                        trace(*info, gameFrameRateOverrideVoteType,
+                              frameRate.vote.rate.getIntValue());
+                    }
                 } else if (gameDefaultFrameRateOverride.isValid()) {
                     info->setLayerVote(
                             {gameFrameRateOverrideVoteType, gameDefaultFrameRateOverride});
+                    ATRACE_FORMAT_INSTANT("GameDefaultFrameRateOverride");
+                    if (CC_UNLIKELY(mTraceEnabled)) {
+                        trace(*info, gameFrameRateOverrideVoteType,
+                              gameDefaultFrameRateOverride.getIntValue());
+                    }
                 } else {
+                    if (frameRate.isValid() && !frameRate.isVoteValidForMrr(isVrrDevice)) {
+                        ATRACE_FORMAT_INSTANT("Reset layer to ignore explicit vote on MRR %s: %s "
+                                              "%s %s",
+                                              info->getName().c_str(),
+                                              ftl::enum_string(frameRate.vote.type).c_str(),
+                                              to_string(frameRate.vote.rate).c_str(),
+                                              ftl::enum_string(frameRate.category).c_str());
+                    }
                     info->resetLayerVote();
                 }
             } else {
-                if (frameRate.isValid()) {
+                if (frameRate.isValid() && frameRate.isVoteValidForMrr(isVrrDevice)) {
                     const auto type = info->isVisible() ? voteType : LayerVoteType::NoVote;
                     info->setLayerVote({type, frameRate.vote.rate, frameRate.vote.seamlessness,
                                         frameRate.category});
                 } else {
+                    if (!frameRate.isVoteValidForMrr(isVrrDevice)) {
+                        ATRACE_FORMAT_INSTANT("Reset layer to ignore explicit vote on MRR %s: %s "
+                                              "%s %s",
+                                              info->getName().c_str(),
+                                              ftl::enum_string(frameRate.vote.type).c_str(),
+                                              to_string(frameRate.vote.rate).c_str(),
+                                              ftl::enum_string(frameRate.category).c_str());
+                    }
                     info->resetLayerVote();
                 }
             }
@@ -347,9 +392,18 @@ void LayerHistory::clear() {
 
 std::string LayerHistory::dump() const {
     std::lock_guard lock(mLock);
-    return base::StringPrintf("{size=%zu, active=%zu}",
+    return base::StringPrintf("{size=%zu, active=%zu}\n\tGameFrameRateOverrides=\n\t\t%s",
                               mActiveLayerInfos.size() + mInactiveLayerInfos.size(),
-                              mActiveLayerInfos.size());
+                              mActiveLayerInfos.size(), dumpGameFrameRateOverridesLocked().c_str());
+}
+
+std::string LayerHistory::dumpGameFrameRateOverridesLocked() const {
+    std::string overridesString = "(uid, gameModeOverride, gameDefaultOverride)=";
+    for (auto it = mGameFrameRateOverride.begin(); it != mGameFrameRateOverride.end(); ++it) {
+        base::StringAppendF(&overridesString, "{%u, %d %d} ", it->first,
+                            it->second.first.getIntValue(), it->second.second.getIntValue());
+    }
+    return overridesString;
 }
 
 float LayerHistory::getLayerFramerate(nsecs_t now, int32_t id) const {

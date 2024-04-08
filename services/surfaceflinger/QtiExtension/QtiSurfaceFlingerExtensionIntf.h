@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -35,6 +35,8 @@ enum QtiFeature {
     kSplitLayerExtension,
     kVsyncSourceReliableOnDoze,
     kWorkDurations,
+    kSmomoOptimalRefreshRate,
+    kIdleFallback,
 };
 
 class QtiSurfaceFlingerExtensionIntf {
@@ -53,7 +55,7 @@ public:
                                                           uint32_t layerStackId) = 0;
     virtual bool qtiIsInternalPresentationDisplays() = 0;
     virtual bool qtiIsWakeUpPresentationDisplays() = 0;
-    virtual void qtiResetEarlyWakeUp() = 0;
+    virtual void qtiResetSFExtn() = 0;
     virtual void qtiSetDisplayExtnActiveConfig(uint32_t displayId, uint32_t activeConfigId) = 0;
     virtual void qtiUpdateDisplayExtension(uint32_t displayId, uint32_t configId,
                                            bool connected) = 0;
@@ -68,6 +70,7 @@ public:
     virtual composer::DisplayExtnIntf* qtiGetDisplayExtn() = 0;
     virtual bool qtiLatchMediaContent(sp<Layer> layer) = 0;
     virtual void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) = 0;
+    virtual void qtiOnComposerHalRefresh() = 0;
 
     /*
      * Methods that call the FeatureManager APIs.
@@ -148,6 +151,7 @@ public:
     virtual uint32_t qtiGetLayerClass(std::string mName) = 0;
     virtual void qtiSetVisibleLayerInfo(DisplayId displayId,
                                  const char* name, int32_t sequence) = 0;
+    virtual bool qtiIsSmomoOptimalRefreshActive() = 0;
 
     /*
      * Methods for Dolphin APIs

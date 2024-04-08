@@ -22,6 +22,7 @@
 
 #include <SurfaceFlingerProperties.sysprop.h>
 #include <android-base/stringprintf.h>
+#include <common/FlagManager.h>
 #include <compositionengine/CompositionEngine.h>
 #include <compositionengine/CompositionRefreshArgs.h>
 #include <compositionengine/DisplayColorProfile.h>
@@ -51,9 +52,6 @@
 
 #include <renderengine/DisplaySettings.h>
 #include <renderengine/RenderEngine.h>
-#ifndef DISABLE_DEVICE_INTEGRATION
-#include <compositionengine/impl/Display.h>
-#endif
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion"
 
@@ -565,13 +563,6 @@ void Output::collectVisibleLayers(const compositionengine::CompositionRefreshArg
     finalizePendingOutputLayers();
 }
 
-#ifndef DISABLE_DEVICE_INTEGRATION
-// Device Integration: if input window type is black screen
-bool Output::isBlackScreenLayer(int windowType) const {
-    return static_cast<gui::WindowInfo::Type>(windowType) == gui::WindowInfo::Type::SYSTEM_BLACKSCREEN_OVERLAY;
-}
-#endif
-
 void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
                                         compositionengine::Output::CoverageState& coverage) {
     // Ensure we have a snapshot of the basic geometry layer state. Limit the
@@ -585,18 +576,6 @@ void Output::ensureOutputLayerIfVisible(sp<compositionengine::LayerFE>& layerFE,
     if (!includesLayer(layerFE)) {
         return;
     }
-
-#ifndef DISABLE_DEVICE_INTEGRATION
-    // Device Integration: make black screen invisible in phone screen also in VD
-    if (isDisplayForDIS()) {
-        Display* display = static_cast<Display*>(this);
-        if (display->isVirtual()) {
-            if (isBlackScreenLayer(layerFE->getWindowTypeForDIS())) {
-                return;
-            }
-        }
-    }
-#endif
 
     // Obtain a read-only pointer to the front-end layer state
     const auto* layerFEState = layerFE->getCompositionState();
@@ -852,44 +831,6 @@ void Output::updateCompositionState(const compositionengine::CompositionRefreshA
         if (mLayerRequestingBackgroundBlur == layer) {
             forceClientComposition = false;
         }
-    }
-
-    updateCompositionStateForBorder(refreshArgs);
-}
-
-void Output::updateCompositionStateForBorder(
-        const compositionengine::CompositionRefreshArgs& refreshArgs) {
-    std::unordered_map<int32_t, const Region*> layerVisibleRegionMap;
-    // Store a map of layerId to their computed visible region.
-    for (auto* layer : getOutputLayersOrderedByZ()) {
-        int layerId = (layer->getLayerFE()).getSequence();
-        layerVisibleRegionMap[layerId] = &((layer->getState()).visibleRegion);
-    }
-    OutputCompositionState& outputCompositionState = editState();
-    outputCompositionState.borderInfoList.clear();
-    bool clientComposeTopLayer = false;
-    for (const auto& borderInfo : refreshArgs.borderInfoList) {
-        renderengine::BorderRenderInfo info;
-        for (const auto& id : borderInfo.layerIds) {
-            info.combinedRegion.orSelf(*(layerVisibleRegionMap[id]));
-        }
-
-        if (!info.combinedRegion.isEmpty()) {
-            info.width = borderInfo.width;
-            info.color = borderInfo.color;
-            outputCompositionState.borderInfoList.emplace_back(std::move(info));
-            clientComposeTopLayer = true;
-        }
-    }
-
-    // In this situation we must client compose the top layer instead of using hwc
-    // because we want to draw the border above all else.
-    // This could potentially cause a bit of a performance regression if the top
-    // layer would have been rendered using hwc originally.
-    // TODO(b/227656283): Measure system's performance before enabling the border feature
-    if (clientComposeTopLayer) {
-        auto topLayer = getOutputLayerOrderedByZByIndex(getOutputLayerCount() - 1);
-        (topLayer->editState()).forceClientComposition = true;
     }
 }
 
@@ -1327,7 +1268,9 @@ void Output::updateProtectedContentState() {
     if (isProtected && supportsProtectedContent) {
         auto layers = getOutputLayersOrderedByZ();
         bool needsProtected = std::any_of(layers.begin(), layers.end(), [](auto* layer) {
-            return layer->getLayerFE().getCompositionState()->hasProtectedContent;
+            return layer->getLayerFE().getCompositionState()->hasProtectedContent &&
+                    (!FlagManager::getInstance().protected_if_client() ||
+                     layer->requiresClientComposition());
         });
 
         /* QTI_BEGIN */
@@ -1502,13 +1445,6 @@ renderengine::DisplaySettings Output::generateClientCompositionDisplaySettings(
 
     // Compute the global color transform matrix.
     clientCompositionDisplay.colorTransform = outputState.colorTransformMatrix;
-    for (auto& info : outputState.borderInfoList) {
-        renderengine::BorderRenderInfo borderInfo;
-        borderInfo.width = info.width;
-        borderInfo.color = info.color;
-        borderInfo.combinedRegion = info.combinedRegion;
-        clientCompositionDisplay.borderInfoList.emplace_back(std::move(borderInfo));
-    }
     clientCompositionDisplay.deviceHandlesColorTransform =
             outputState.usesDeviceComposition || getSkipColorTransform();
     return clientCompositionDisplay;
@@ -1680,9 +1616,13 @@ void Output::presentFrameAndReleaseLayers() {
             releaseFence =
                     Fence::merge("LayerRelease", releaseFence, frame.clientTargetAcquireFence);
         }
-        layer->getLayerFE()
-                .onLayerDisplayed(ftl::yield<FenceResult>(std::move(releaseFence)).share(),
-                                  outputState.layerFilter.layerStack);
+        if (FlagManager::getInstance().ce_fence_promise()) {
+            layer->getLayerFE().setReleaseFence(releaseFence);
+        } else {
+            layer->getLayerFE()
+                    .onLayerDisplayed(ftl::yield<FenceResult>(std::move(releaseFence)).share(),
+                                      outputState.layerFilter.layerStack);
+        }
     }
 
     // We've got a list of layers needing fences, that are disjoint with
@@ -1690,8 +1630,12 @@ void Output::presentFrameAndReleaseLayers() {
     // supply them with the present fence.
     for (auto& weakLayer : mReleasedLayers) {
         if (const auto layer = weakLayer.promote()) {
-            layer->onLayerDisplayed(ftl::yield<FenceResult>(frame.presentFence).share(),
-                                    outputState.layerFilter.layerStack);
+            if (FlagManager::getInstance().ce_fence_promise()) {
+                layer->setReleaseFence(frame.presentFence);
+            } else {
+                layer->onLayerDisplayed(ftl::yield<FenceResult>(frame.presentFence).share(),
+                                        outputState.layerFilter.layerStack);
+            }
         }
     }
 

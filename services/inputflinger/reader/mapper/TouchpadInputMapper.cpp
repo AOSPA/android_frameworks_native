@@ -47,6 +47,8 @@ namespace android {
 
 namespace {
 
+static const bool ENABLE_POINTER_CHOREOGRAPHER = input_flags::enable_pointer_choreographer();
+
 /**
  * Log details of each gesture output by the gestures library.
  * Enable this via "adb shell setprop log.tag.TouchpadInputMapperGestures DEBUG" (requires
@@ -232,6 +234,11 @@ private:
 
 TouchpadInputMapper::TouchpadInputMapper(InputDeviceContext& deviceContext,
                                          const InputReaderConfiguration& readerConfig)
+      : TouchpadInputMapper(deviceContext, readerConfig, ENABLE_POINTER_CHOREOGRAPHER) {}
+
+TouchpadInputMapper::TouchpadInputMapper(InputDeviceContext& deviceContext,
+                                         const InputReaderConfiguration& readerConfig,
+                                         bool enablePointerChoreographer)
       : InputMapper(deviceContext, readerConfig),
         mGestureInterpreter(NewGestureInterpreter(), DeleteGestureInterpreter),
         mPointerController(getContext()->getPointerController(getDeviceId())),
@@ -240,7 +247,7 @@ TouchpadInputMapper::TouchpadInputMapper(InputDeviceContext& deviceContext,
         mGestureConverter(*getContext(), deviceContext, getDeviceId()),
         mCapturedEventConverter(*getContext(), deviceContext, mMotionAccumulator, getDeviceId()),
         mMetricsId(metricsIdFromInputDeviceIdentifier(deviceContext.getDeviceIdentifier())),
-        mEnablePointerChoreographer(input_flags::enable_pointer_choreographer()) {
+        mEnablePointerChoreographer(enablePointerChoreographer) {
     RawAbsoluteAxisInfo slotAxisInfo;
     deviceContext.getAbsoluteAxisInfo(ABS_MT_SLOT, &slotAxisInfo);
     if (!slotAxisInfo.valid || slotAxisInfo.maxValue <= 0) {
@@ -403,9 +410,9 @@ std::list<NotifyArgs> TouchpadInputMapper::reconfigure(nsecs_t when,
                 .setBoolValues({config.touchpadRightClickZoneEnabled});
     }
     std::list<NotifyArgs> out;
-    if ((!changes.any() && config.pointerCaptureRequest.enable) ||
+    if ((!changes.any() && config.pointerCaptureRequest.isEnable()) ||
         changes.test(InputReaderConfiguration::Change::POINTER_CAPTURE)) {
-        mPointerCaptured = config.pointerCaptureRequest.enable;
+        mPointerCaptured = config.pointerCaptureRequest.isEnable();
         // The motion ranges are going to change, so bump the generation to clear the cached ones.
         bumpGeneration();
         if (mPointerCaptured) {

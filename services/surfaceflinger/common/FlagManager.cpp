@@ -26,6 +26,7 @@
 #include <server_configurable_flags/get_flags.h>
 #include <cinttypes>
 
+#include <android_os.h>
 #include <com_android_graphics_surfaceflinger_flags.h>
 
 namespace android {
@@ -109,10 +110,13 @@ void FlagManager::dump(std::string& result) const {
 
     /// Trunk stable server flags ///
     DUMP_SERVER_FLAG(refresh_rate_overlay_on_external_display);
+    DUMP_SERVER_FLAG(adpf_gpu_sf);
+    DUMP_SERVER_FLAG(adpf_use_fmq_channel);
 
     /// Trunk stable readonly flags ///
     DUMP_READ_ONLY_FLAG(connected_display);
     DUMP_READ_ONLY_FLAG(enable_small_area_detection);
+    DUMP_READ_ONLY_FLAG(frame_rate_category_mrr);
     DUMP_READ_ONLY_FLAG(misc1);
     DUMP_READ_ONLY_FLAG(vrr_config);
     DUMP_READ_ONLY_FLAG(hotplug2);
@@ -131,6 +135,8 @@ void FlagManager::dump(std::string& result) const {
     DUMP_READ_ONLY_FLAG(renderable_buffer_usage);
     DUMP_READ_ONLY_FLAG(restore_blur_step);
     DUMP_READ_ONLY_FLAG(dont_skip_on_early_ro);
+    DUMP_READ_ONLY_FLAG(protected_if_client);
+    DUMP_READ_ONLY_FLAG(ce_fence_promise);
 #undef DUMP_READ_ONLY_FLAG
 #undef DUMP_SERVER_FLAG
 #undef DUMP_FLAG_INTERVAL
@@ -157,7 +163,7 @@ bool FlagManager::getServerConfigurableFlag(const char* experimentFlagName) cons
         return getServerConfigurableFlag(serverFlagName);                                   \
     }
 
-#define FLAG_MANAGER_FLAG_INTERNAL(name, syspropOverride, checkForBootCompleted)                \
+#define FLAG_MANAGER_FLAG_INTERNAL(name, syspropOverride, checkForBootCompleted, owner)         \
     bool FlagManager::name() const {                                                            \
         if (checkForBootCompleted) {                                                            \
             LOG_ALWAYS_FATAL_IF(!mBootCompleted,                                                \
@@ -165,21 +171,24 @@ bool FlagManager::getServerConfigurableFlag(const char* experimentFlagName) cons
                                 __func__);                                                      \
         }                                                                                       \
         static const std::optional<bool> debugOverride = getBoolProperty(syspropOverride);      \
-        static const bool value = getFlagValue([] { return flags::name(); }, debugOverride);    \
+        static const bool value = getFlagValue([] { return owner ::name(); }, debugOverride);   \
         if (mUnitTestMode) {                                                                    \
             /*                                                                                  \
              * When testing, we don't want to rely on the cached `value` or the debugOverride.  \
              */                                                                                 \
-            return flags::name();                                                               \
+            return owner ::name();                                                              \
         }                                                                                       \
         return value;                                                                           \
     }
 
 #define FLAG_MANAGER_SERVER_FLAG(name, syspropOverride) \
-    FLAG_MANAGER_FLAG_INTERNAL(name, syspropOverride, true)
+    FLAG_MANAGER_FLAG_INTERNAL(name, syspropOverride, true, flags)
 
 #define FLAG_MANAGER_READ_ONLY_FLAG(name, syspropOverride) \
-    FLAG_MANAGER_FLAG_INTERNAL(name, syspropOverride, false)
+    FLAG_MANAGER_FLAG_INTERNAL(name, syspropOverride, false, flags)
+
+#define FLAG_MANAGER_SERVER_FLAG_IMPORTED(name, syspropOverride, owner) \
+    FLAG_MANAGER_FLAG_INTERNAL(name, syspropOverride, true, owner)
 
 /// Legacy server flags ///
 FLAG_MANAGER_LEGACY_SERVER_FLAG(test_flag, "", "")
@@ -191,6 +200,7 @@ FLAG_MANAGER_LEGACY_SERVER_FLAG(use_skia_tracing, PROPERTY_SKIA_ATRACE_ENABLED,
 /// Trunk stable readonly flags ///
 FLAG_MANAGER_READ_ONLY_FLAG(connected_display, "")
 FLAG_MANAGER_READ_ONLY_FLAG(enable_small_area_detection, "")
+FLAG_MANAGER_READ_ONLY_FLAG(frame_rate_category_mrr, "debug.sf.frame_rate_category_mrr")
 FLAG_MANAGER_READ_ONLY_FLAG(misc1, "")
 FLAG_MANAGER_READ_ONLY_FLAG(vrr_config, "debug.sf.enable_vrr_config")
 FLAG_MANAGER_READ_ONLY_FLAG(hotplug2, "")
@@ -204,14 +214,20 @@ FLAG_MANAGER_READ_ONLY_FLAG(enable_fro_dependent_features, "")
 FLAG_MANAGER_READ_ONLY_FLAG(display_protected, "")
 FLAG_MANAGER_READ_ONLY_FLAG(fp16_client_target, "debug.sf.fp16_client_target")
 FLAG_MANAGER_READ_ONLY_FLAG(game_default_frame_rate, "")
-FLAG_MANAGER_READ_ONLY_FLAG(enable_layer_command_batching, "")
+FLAG_MANAGER_READ_ONLY_FLAG(enable_layer_command_batching, "debug.sf.enable_layer_command_batching")
 FLAG_MANAGER_READ_ONLY_FLAG(screenshot_fence_preservation, "debug.sf.screenshot_fence_preservation")
 FLAG_MANAGER_READ_ONLY_FLAG(vulkan_renderengine, "debug.renderengine.vulkan")
 FLAG_MANAGER_READ_ONLY_FLAG(renderable_buffer_usage, "")
 FLAG_MANAGER_READ_ONLY_FLAG(restore_blur_step, "debug.renderengine.restore_blur_step")
 FLAG_MANAGER_READ_ONLY_FLAG(dont_skip_on_early_ro, "")
+FLAG_MANAGER_READ_ONLY_FLAG(protected_if_client, "")
+FLAG_MANAGER_READ_ONLY_FLAG(ce_fence_promise, "");
 
 /// Trunk stable server flags ///
 FLAG_MANAGER_SERVER_FLAG(refresh_rate_overlay_on_external_display, "")
+FLAG_MANAGER_SERVER_FLAG(adpf_gpu_sf, "")
+
+/// Trunk stable server flags from outside SurfaceFlinger ///
+FLAG_MANAGER_SERVER_FLAG_IMPORTED(adpf_use_fmq_channel, "", android::os)
 
 } // namespace android

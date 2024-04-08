@@ -20,6 +20,7 @@
 #include <compositionengine/LayerFECompositionState.h>
 #include <gmock/gmock.h>
 #include <ui/Fence.h>
+#include "ui/FenceResult.h"
 
 namespace android::compositionengine::mock {
 
@@ -43,7 +44,7 @@ public:
 
     MOCK_CONST_METHOD0(getCompositionState, const LayerFECompositionState*());
 
-    MOCK_METHOD2(onPreComposition, bool(nsecs_t, bool));
+    MOCK_METHOD1(onPreComposition, bool(bool));
 
     MOCK_CONST_METHOD1(prepareClientComposition,
                        std::optional<compositionengine::LayerFE::LayerSettings>(
@@ -52,6 +53,9 @@ public:
     MOCK_METHOD(void, onLayerDisplayed, (ftl::SharedFuture<FenceResult>, ui::LayerStack),
                 (override));
 
+    MOCK_METHOD0(createReleaseFenceFuture, ftl::Future<FenceResult>());
+    MOCK_METHOD1(setReleaseFence, void(const FenceResult&));
+    MOCK_METHOD0(getReleaseFencePromiseStatus, LayerFE::ReleaseFencePromiseStatus());
     MOCK_CONST_METHOD0(getDebugName, const char*());
     MOCK_CONST_METHOD0(getSequence, int32_t());
     MOCK_CONST_METHOD0(hasRoundedCorners, bool());

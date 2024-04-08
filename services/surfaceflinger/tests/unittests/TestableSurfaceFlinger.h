@@ -43,7 +43,6 @@
 #include "RenderArea.h"
 #include "Scheduler/MessageQueue.h"
 #include "Scheduler/RefreshRateSelector.h"
-#include "StartPropertySetThread.h"
 #include "SurfaceFlinger.h"
 #include "TestableScheduler.h"
 #include "mock/DisplayHardware/MockComposer.h"
@@ -92,10 +91,6 @@ public:
     std::unique_ptr<scheduler::VsyncConfiguration> createVsyncConfiguration(
             Fps /*currentRefreshRate*/) override {
         return std::make_unique<scheduler::FakePhaseOffsets>();
-    }
-
-    sp<StartPropertySetThread> createStartPropertySetThread(bool timestampPropertyValue) override {
-        return sp<StartPropertySetThread>::make(timestampPropertyValue);
     }
 
     sp<DisplayDevice> createDisplayDevice(DisplayDeviceCreationArgs& creationArgs) override {
@@ -258,11 +253,9 @@ public:
 
         mScheduler->initVsync(*mTokenManager, 0ms);
 
-        mScheduler->mutableAppConnectionHandle() =
-                mScheduler->createConnection(std::move(appEventThread));
+        mScheduler->setEventThread(scheduler::Cycle::Render, std::move(appEventThread));
+        mScheduler->setEventThread(scheduler::Cycle::LastComposite, std::move(sfEventThread));
 
-        mFlinger->mAppConnectionHandle = mScheduler->mutableAppConnectionHandle();
-        mFlinger->mSfConnectionHandle = mScheduler->createConnection(std::move(sfEventThread));
         resetScheduler(mScheduler);
     }
 

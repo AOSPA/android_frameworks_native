@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -26,7 +26,7 @@ public:
                                                   uint32_t layerStackId) override;
     bool qtiIsInternalPresentationDisplays() override;
     bool qtiIsWakeUpPresentationDisplays() override;
-    void qtiResetEarlyWakeUp() override;
+    void qtiResetSFExtn() override;
     void qtiSetDisplayExtnActiveConfig(uint32_t displayId, uint32_t activeConfigId) override;
     void qtiUpdateDisplayExtension(uint32_t displayId, uint32_t configId, bool connected) override;
     void qtiUpdateDisplaysList(sp<DisplayDevice> display, bool addDisplay) override;
@@ -39,6 +39,7 @@ public:
     composer::DisplayExtnIntf* qtiGetDisplayExtn() { return nullptr; }
     bool qtiLatchMediaContent(sp<Layer> layer) override;
     void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) override;
+    void qtiOnComposerHalRefresh() override;
 
     /*
      * Methods that call the FeatureManager APIs.
@@ -117,6 +118,7 @@ public:
     uint32_t qtiGetLayerClass(std::string mName) override;
     void qtiSetVisibleLayerInfo(DisplayId displayId,
                                     const char* name, int32_t sequence) override;
+    bool qtiIsSmomoOptimalRefreshActive() override;
 
     /*
      * Methods for speculative fence

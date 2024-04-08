@@ -474,27 +474,47 @@ float RefreshRateSelector::calculateLayerScoreLocked(const LayerRequirement& lay
 }
 
 auto RefreshRateSelector::getRankedFrameRates(const std::vector<LayerRequirement>& layers,
-                                              GlobalSignals signals) const -> RankedFrameRates {
+                                              GlobalSignals signals, Fps pacesetterFps) const
+        -> RankedFrameRates {
+    GetRankedFrameRatesCache cache{layers, signals, pacesetterFps};
+
     std::lock_guard lock(mLock);
 
-    if (mGetRankedFrameRatesCache &&
-        mGetRankedFrameRatesCache->arguments == std::make_pair(layers, signals)) {
+    if (mGetRankedFrameRatesCache && mGetRankedFrameRatesCache->matches(cache)) {
         return mGetRankedFrameRatesCache->result;
     }
 
-    const auto result = getRankedFrameRatesLocked(layers, signals);
-    mGetRankedFrameRatesCache = GetRankedFrameRatesCache{{layers, signals}, result};
-    return result;
+    cache.result = getRankedFrameRatesLocked(layers, signals, pacesetterFps);
+    mGetRankedFrameRatesCache = std::move(cache);
+    return mGetRankedFrameRatesCache->result;
 }
 
 auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequirement>& layers,
-                                                    GlobalSignals signals) const
+                                                    GlobalSignals signals, Fps pacesetterFps) const
         -> RankedFrameRates {
     using namespace fps_approx_ops;
     ATRACE_CALL();
     ALOGV("%s: %zu layers", __func__, layers.size());
 
     const auto& activeMode = *getActiveModeLocked().modePtr;
+
+    if (pacesetterFps.isValid()) {
+        ALOGV("Follower display");
+
+        const auto ranking = rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Descending,
+                                            std::nullopt, [&](FrameRateMode mode) {
+                                                return mode.modePtr->getPeakFps() == pacesetterFps;
+                                            });
+
+        if (!ranking.empty()) {
+            ATRACE_FORMAT_INSTANT("%s (Follower display)",
+                                  to_string(ranking.front().frameRateMode.fps).c_str());
+
+            return {ranking, kNoSignals, pacesetterFps};
+        }
+
+        ALOGW("Follower display cannot follow the pacesetter");
+    }
 
     // Keep the display at max frame rate for the duration of powering on the display.
     if (signals.powerOnImminent) {
@@ -506,6 +526,8 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     }
 
     int noVoteLayers = 0;
+    // Layers that prefer the same mode ("no-op").
+    int noPreferenceLayers = 0;
     int minVoteLayers = 0;
     int maxVoteLayers = 0;
     int explicitDefaultVoteLayers = 0;
@@ -549,10 +571,7 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
                     explicitCategoryVoteLayers++;
                 }
                 if (layer.frameRateCategory == FrameRateCategory::NoPreference) {
-                    // Count this layer for Min vote as well. The explicit vote avoids
-                    // touch boost and idle for choosing a category, while Min vote is for correct
-                    // behavior when all layers are Min or no vote.
-                    minVoteLayers++;
+                    noPreferenceLayers++;
                 }
                 break;
             case LayerVoteType::Heuristic:
@@ -612,6 +631,16 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
         return {ranking, kNoSignals};
     }
 
+    // If all layers are category NoPreference, use the current config.
+    if (noPreferenceLayers + noVoteLayers == layers.size()) {
+        ALOGV("All layers NoPreference");
+        const auto ascendingWithPreferred =
+                rankFrameRates(anchorGroup, RefreshRateOrder::Ascending, activeMode.getId());
+        ATRACE_FORMAT_INSTANT("%s (All layers NoPreference)",
+                              to_string(ascendingWithPreferred.front().frameRateMode.fps).c_str());
+        return {ascendingWithPreferred, kNoSignals};
+    }
+
     const bool smoothSwitchOnly = categorySmoothSwitchOnlyLayers > 0;
     const DisplayModeId activeModeId = activeMode.getId();
 
@@ -643,6 +672,7 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
               ftl::enum_string(layer.frameRateCategory).c_str());
         if (layer.isNoVote() || layer.frameRateCategory == FrameRateCategory::NoPreference ||
             layer.vote == LayerVoteType::Min) {
+            ALOGV("%s scoring skipped due to vote", formatLayerInfo(layer, layer.weight).c_str());
             continue;
         }
 
@@ -834,12 +864,15 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     const bool touchBoostForExplicitExact = [&] {
         if (supportsAppFrameRateOverrideByContent()) {
             // Enable touch boost if there are other layers besides exact
-            return explicitExact + noVoteLayers != layers.size();
+            return explicitExact + noVoteLayers + explicitGteLayers != layers.size();
         } else {
             // Enable touch boost if there are no exact layers
             return explicitExact == 0;
         }
     }();
+
+    const bool touchBoostForCategory =
+            explicitCategoryVoteLayers + noVoteLayers + explicitGteLayers != layers.size();
 
     const auto touchRefreshRates = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
     using fps_approx_ops::operator<;
@@ -851,6 +884,7 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     const bool hasInteraction = signals.touch || interactiveLayers > 0;
 
     if (hasInteraction && explicitDefaultVoteLayers == 0 && touchBoostForExplicitExact &&
+        touchBoostForCategory &&
         scores.front().frameRateMode.fps < touchRefreshRates.front().frameRateMode.fps) {
         ALOGV("Touch Boost");
         ATRACE_FORMAT_INSTANT("%s (Touch Boost [late])",
@@ -948,14 +982,40 @@ auto RefreshRateSelector::getFrameRateOverrides(const std::vector<LayerRequireme
     const auto layersByUid = groupLayersByUid(layers);
     UidToFrameRateOverride frameRateOverrides;
     for (const auto& [uid, layersWithSameUid] : layersByUid) {
-        // Layers with ExplicitExactOrMultiple expect touch boost
-        const bool hasExplicitExactOrMultiple =
-                std::any_of(layersWithSameUid.cbegin(), layersWithSameUid.cend(),
-                            [](const auto& layer) {
-                                return layer->vote == LayerVoteType::ExplicitExactOrMultiple;
-                            });
+        // Look for cases that should not have frame rate overrides.
+        bool hasExplicitExactOrMultiple = false;
+        bool hasExplicitDefault = false;
+        bool hasHighHint = false;
+        for (const auto& layer : layersWithSameUid) {
+            switch (layer->vote) {
+                case LayerVoteType::ExplicitExactOrMultiple:
+                    hasExplicitExactOrMultiple = true;
+                    break;
+                case LayerVoteType::ExplicitDefault:
+                    hasExplicitDefault = true;
+                    break;
+                case LayerVoteType::ExplicitCategory:
+                    if (layer->frameRateCategory == FrameRateCategory::HighHint) {
+                        hasHighHint = true;
+                    }
+                    break;
+                default:
+                    // No action
+                    break;
+            }
+            if (hasExplicitExactOrMultiple && hasExplicitDefault && hasHighHint) {
+                break;
+            }
+        }
 
+        // Layers with ExplicitExactOrMultiple expect touch boost
         if (globalSignals.touch && hasExplicitExactOrMultiple) {
+            continue;
+        }
+
+        // Mirrors getRankedFrameRates. If there is no ExplicitDefault, expect touch boost and
+        // skip frame rate override.
+        if (hasHighHint && !hasExplicitDefault) {
             continue;
         }
 
@@ -972,6 +1032,7 @@ auto RefreshRateSelector::getFrameRateOverrides(const std::vector<LayerRequireme
             LOG_ALWAYS_FATAL_IF(layer->vote != LayerVoteType::ExplicitDefault &&
                                         layer->vote != LayerVoteType::ExplicitExactOrMultiple &&
                                         layer->vote != LayerVoteType::ExplicitExact &&
+                                        layer->vote != LayerVoteType::ExplicitGte &&
                                         layer->vote != LayerVoteType::ExplicitCategory,
                                 "Invalid layer vote type for frame rate overrides");
             for (auto& [fps, score] : scoredFrameRates) {
@@ -1185,6 +1246,8 @@ void RefreshRateSelector::setActiveMode(DisplayModeId modeId, Fps renderFrameRat
     LOG_ALWAYS_FATAL_IF(!activeModeOpt);
 
     mActiveModeOpt.emplace(FrameRateMode{renderFrameRate, ftl::as_non_null(activeModeOpt->get())});
+    mIsVrrDevice = FlagManager::getInstance().vrr_config() &&
+            activeModeOpt->get()->getVrrConfig().has_value();
 }
 
 RefreshRateSelector::RefreshRateSelector(DisplayModes modes, DisplayModeId activeModeId,
@@ -1398,13 +1461,19 @@ void RefreshRateSelector::constructAvailableRefreshRates() {
             }
             return str;
         };
-        ALOGV("%s render rates: %s", rangeName, stringifyModes().c_str());
+        ALOGV("%s render rates: %s, isVrrDevice? %d", rangeName, stringifyModes().c_str(),
+              mIsVrrDevice);
 
         return frameRateModes;
     };
 
     mPrimaryFrameRates = filterRefreshRates(policy->primaryRanges, "primary");
     mAppRequestFrameRates = filterRefreshRates(policy->appRequestRanges, "app request");
+}
+
+bool RefreshRateSelector::isVrrDevice() const {
+    std::lock_guard lock(mLock);
+    return mIsVrrDevice;
 }
 
 Fps RefreshRateSelector::findClosestKnownFrameRate(Fps frameRate) const {
@@ -1527,19 +1596,17 @@ FpsRange RefreshRateSelector::getFrameRateCategoryRange(FrameRateCategory catego
         case FrameRateCategory::High:
             return FpsRange{90_Hz, 120_Hz};
         case FrameRateCategory::Normal:
-            return FpsRange{60_Hz, 90_Hz};
+            return FpsRange{60_Hz, 120_Hz};
         case FrameRateCategory::Low:
-            return FpsRange{30_Hz, 30_Hz};
+            return FpsRange{30_Hz, 120_Hz};
         case FrameRateCategory::HighHint:
         case FrameRateCategory::NoPreference:
         case FrameRateCategory::Default:
             LOG_ALWAYS_FATAL("Should not get fps range for frame rate category: %s",
                              ftl::enum_string(category).c_str());
-            return FpsRange{0_Hz, 0_Hz};
         default:
             LOG_ALWAYS_FATAL("Invalid frame rate category for range: %s",
                              ftl::enum_string(category).c_str());
-            return FpsRange{0_Hz, 0_Hz};
     }
 }
 

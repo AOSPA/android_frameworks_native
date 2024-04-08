@@ -19,6 +19,7 @@
 #include <chrono>
 #include <optional>
 #include <vector>
+#include "utils/Timers.h"
 
 #include <compositionengine/Display.h>
 #include <compositionengine/LayerFE.h>
@@ -32,12 +33,6 @@ namespace android::compositionengine {
 
 using Layers = std::vector<sp<compositionengine::LayerFE>>;
 using Outputs = std::vector<std::shared_ptr<compositionengine::Output>>;
-
-struct BorderRenderInfo {
-    float width = 0;
-    half4 color;
-    std::vector<int32_t> layerIds;
-};
 
 // Interface of composition engine power hint callback.
 struct ICEPowerCallback {
@@ -100,11 +95,12 @@ struct CompositionRefreshArgs {
     // TODO (b/255601557): Calculate per display.
     std::optional<std::chrono::steady_clock::time_point> scheduledFrameTime;
 
-    std::vector<BorderRenderInfo> borderInfoList;
-
     bool hasTrustedPresentationListener = false;
 
     ICEPowerCallback* powerCallback = nullptr;
+
+    // System time for when frame refresh starts. Used for stats.
+    nsecs_t refreshStartTime = 0;
 };
 
 } // namespace android::compositionengine

@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
-#include "TestHelpers.h"
-
 #include <chrono>
 #include <vector>
 
 #include <attestation/HmacKeyManager.h>
 #include <gtest/gtest.h>
+#include <input/InputConsumer.h>
 #include <input/InputTransport.h>
 
 using namespace std::chrono_literals;

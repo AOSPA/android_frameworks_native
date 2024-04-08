@@ -73,14 +73,6 @@ void WindowInfo::addTouchableRegion(const Rect& region) {
     touchableRegion.orSelf(region);
 }
 
-bool WindowInfo::touchableRegionContainsPoint(int32_t x, int32_t y) const {
-    return touchableRegion.contains(x, y);
-}
-
-bool WindowInfo::frameContainsPoint(int32_t x, int32_t y) const {
-    return x >= frame.left && x < frame.right && y >= frame.top && y < frame.bottom;
-}
-
 bool WindowInfo::supportsSplitTouch() const {
     return !inputConfig.test(InputConfig::PREVENT_SPLITTING);
 }
@@ -262,8 +254,6 @@ void WindowInfoHandle::updateFrom(sp<WindowInfoHandle> handle) {
 }
 
 std::ostream& operator<<(std::ostream& out, const WindowInfo& info) {
-    std::string transform;
-    info.transform.dump(transform, "transform", "    ");
     out << "name=" << info.name << ", id=" << info.id << ", displayId=" << info.displayId
         << ", inputConfig=" << info.inputConfig.string() << ", alpha=" << info.alpha << ", frame=["
         << info.frame.left << "," << info.frame.top << "][" << info.frame.right << ","
@@ -274,9 +264,11 @@ std::ostream& operator<<(std::ostream& out, const WindowInfo& info) {
         << ", ownerUid=" << info.ownerUid.toString() << ", dispatchingTimeout="
         << std::chrono::duration_cast<std::chrono::milliseconds>(info.dispatchingTimeout).count()
         << "ms, token=" << info.token.get()
-        << ", touchOcclusionMode=" << ftl::enum_string(info.touchOcclusionMode) << "\n"
-        << transform;
-    if (info.canOccludePresentation) out << " canOccludePresentation";
+        << ", touchOcclusionMode=" << ftl::enum_string(info.touchOcclusionMode);
+    if (info.canOccludePresentation) out << ", canOccludePresentation";
+    std::string transform;
+    info.transform.dump(transform, "transform", "    ");
+    out << "\n" << transform;
     return out;
 }
 
