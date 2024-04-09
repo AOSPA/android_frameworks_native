@@ -141,18 +141,24 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
 
     /* QTI_BEGIN */
     char value[PROPERTY_VALUE_MAX];
-    int int_value = 0;
+    int intValue = 0;
     property_get("vendor.display.enable_optimal_refresh_rate", value, "0");
-    int_value = atoi(value);
-    mEnableOptimalRefreshRate = (int_value == 1) ? true : false;
+    intValue = atoi(value);
+    bool enableOptimalRefreshRate = (intValue == 1) ? true : false;
 
-    if (!mQtiSurfaceExtn && mEnableOptimalRefreshRate) {
-        mQtiSurfaceExtn = std::make_shared<libguiextension::QtiSurfaceExtension>(this);
+    if (!mQtiSurfaceExtn && enableOptimalRefreshRate) {
+        mQtiSurfaceExtn = new libguiextension::QtiSurfaceExtension(this);
     }
     /* QTI_END */
 }
 
 Surface::~Surface() {
+    /* QTI_BEGIN */
+    if (mQtiSurfaceExtn) {
+        delete mQtiSurfaceExtn;
+    }
+    /* QTI_END */
+
     if (mConnectedToCpu) {
         Surface::disconnect(NATIVE_WINDOW_API_CPU);
     }
@@ -1084,7 +1090,7 @@ void Surface::applyGrallocMetadataLocked(
     ATRACE_CALL();
 
     /* QTI_BEGIN */
-    if (mQtiSurfaceExtn && mEnableOptimalRefreshRate) {
+    if (mQtiSurfaceExtn) {
         mQtiSurfaceExtn->qtiSetBufferDequeueDuration(getDebugName(), buffer, mLastDequeueDuration);
     }
     /* QTI_END */

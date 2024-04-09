@@ -9,10 +9,15 @@
 #include <log/log.h>
 #include <gralloctypes/Gralloc4.h>
 #include <hidl/HidlSupport.h>
-#include <android/hardware/graphics/mapper/4.0/IMapper.h>
+
+#include <dlfcn.h>
+#include <vndksupport/linker.h>
+#include <android/hardware/graphics/mapper/IMapper.h>
 
 #include "QtiGralloc.h"
 #include "QtiSurfaceExtension.h"
+
+#define SNAP_TYPE_BUFFER_DEQUEUE_DURATION 10045
 
 using android::hardware::graphics::mapper::V4_0::IMapper;
 using android::hardware::graphics::mapper::V4_0::Error;
@@ -21,24 +26,44 @@ using qtigralloc::MetadataType_BufferDequeueDuration;
 
 namespace android::libguiextension {
 
-sp<IMapper> mMapper = nullptr;
+typedef AIMapper_Error (*AIMapper_loadIMapperFn)(AIMapper *_Nullable *_Nonnull outImplementation);
+constexpr const char *_Nonnull VENDOR_QTI_METADATA_NAME = "QTI";
+static AIMapper *sMapper5 = nullptr;
 
-static void InitializeMapper() {
-    if (mMapper) {
-        return;
-    }
+void QtiSurfaceExtension::LoadQtiMapper5() {
+    if (!sMapper5) {
+        std::string lib_name = "mapper.qti.so";
+        void *so = android_load_sphal_library(lib_name.c_str(), RTLD_LOCAL | RTLD_NOW);
+        if (!so) {
+            ALOGW("Failed to load %s", lib_name.c_str());
+            return;
+        }
 
-    mMapper = IMapper::getService();
-    if (mMapper == nullptr) {
-        ALOGI("mapper 4.x is not supported");
-    } else if (mMapper->isRemote()) {
-        LOG_ALWAYS_FATAL("gralloc-mapper must be in passthrough mode");
+        auto loadIMapper = (AIMapper_loadIMapperFn)dlsym(so, "AIMapper_loadIMapper");
+        AIMapper_Error error = loadIMapper(&sMapper5);
+        if (error != AIMAPPER_ERROR_NONE) {
+            ALOGW("AIMapper_loadIMapper failed %d", error);
+        }
     }
 }
 
-QtiSurfaceExtension::QtiSurfaceExtension(Surface* surface)
-      : mQtiSurface(surface) {
-    if (!mQtiSurface) {
+void QtiSurfaceExtension::InitializeMapper() {
+    if (!sMapper5) {
+        LoadQtiMapper5();
+    }
+
+    if(!sMapper5 && !mMapper4) {
+        mMapper4 = IMapper::getService();
+        if (mMapper4 == nullptr) {
+            ALOGI("mapper 4.x is not supported");
+        } else if (mMapper4->isRemote()) {
+            LOG_ALWAYS_FATAL("gralloc-mapper must be in passthrough mode");
+        }
+    }
+}
+
+QtiSurfaceExtension::QtiSurfaceExtension(Surface* surface) {
+    if (!surface) {
         ALOGW("Invalid pointer to Surface passed");
     } else {
         char value[PROPERTY_VALUE_MAX];
@@ -63,38 +88,46 @@ void QtiSurfaceExtension::qtiSetBufferDequeueDuration(std::string layerName,
         return;
     }
 
-    if (!mMapper) {
-        return;
-    }
+    if (sMapper5) {
+        auto error = sMapper5->v5.setMetadata(
+            buffer->handle,
+            {VENDOR_QTI_METADATA_NAME, (int64_t)SNAP_TYPE_BUFFER_DEQUEUE_DURATION},
+            static_cast<void *>(&dequeue_duration), sizeof(dequeue_duration));
+        if (error != AIMAPPER_ERROR_NONE) {
+            ALOGW("setMetadata (%d) failed, buffer size %zd error:%d",
+                  static_cast<int64_t>(SNAP_TYPE_BUFFER_DEQUEUE_DURATION),
+                  sizeof(dequeue_duration), error);
+        }
+    } else if (mMapper4) {
+        hidl_vec<uint8_t> encodedMetadata;
+        const status_t status =
+            gralloc4::encodeInt64(MetadataType_BufferDequeueDuration,
+                                  dequeue_duration, &encodedMetadata);
+        if (status != OK) {
+            ALOGE("Encoding metadata(%s) failed with %d",
+                  MetadataType_BufferDequeueDuration.name.c_str(), status);
+            return;
+        }
 
-    hidl_vec<uint8_t> encodedMetadata;
-    const status_t status =
-        gralloc4::encodeInt64(MetadataType_BufferDequeueDuration,
-                              dequeue_duration, &encodedMetadata);
-    if (status != OK) {
-        ALOGE("Encoding metadata(%s) failed with %d",
-              MetadataType_BufferDequeueDuration.name.c_str(), status);
-        return;
-    }
-
-    auto ret =
-        mMapper->set(const_cast<native_handle_t*>(buffer->handle),
-                     MetadataType_BufferDequeueDuration, encodedMetadata);
-    const Error error = ret.withDefault(Error::NO_RESOURCES);
-    switch (error) {
-        case Error::BAD_DESCRIPTOR:
-        case Error::BAD_BUFFER:
-        case Error::BAD_VALUE:
-        case Error::NO_RESOURCES:
-            ALOGE("set(%s, %" PRIu64 ", ...) failed with %d",
-                  MetadataType_BufferDequeueDuration.name.c_str(),
-                  MetadataType_BufferDequeueDuration.value, error);
-            break;
-        // It is not an error to attempt to set metadata that a particular gralloc implementation
-        // happens to not support.
-        case Error::UNSUPPORTED:
-        case Error::NONE:
-            break;
+        auto ret =
+            mMapper4->set(const_cast<native_handle_t*>(buffer->handle),
+                          MetadataType_BufferDequeueDuration, encodedMetadata);
+        const Error error = ret.withDefault(Error::NO_RESOURCES);
+        switch (error) {
+            case Error::BAD_DESCRIPTOR:
+            case Error::BAD_BUFFER:
+            case Error::BAD_VALUE:
+            case Error::NO_RESOURCES:
+                ALOGE("set(%s, %" PRIu64 ", ...) failed with %d",
+                      MetadataType_BufferDequeueDuration.name.c_str(),
+                      MetadataType_BufferDequeueDuration.value, error);
+                break;
+            // It is not an error to attempt to set metadata that a particular
+            // gralloc implementation happens to not support.
+            case Error::UNSUPPORTED:
+            case Error::NONE:
+                break;
+        }
     }
 }
 
