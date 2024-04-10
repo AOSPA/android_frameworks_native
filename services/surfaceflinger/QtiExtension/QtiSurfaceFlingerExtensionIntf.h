@@ -135,6 +135,7 @@ public:
     virtual void qtiSetRefreshRateTo(int32_t refreshRate) = 0;
     virtual void qtiSyncToDisplayHardware() = 0;
     virtual void qtiUpdateSmomoState() = 0;
+    virtual void qtiSetDisplayAnimating() = 0;
     virtual void qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime,
                                          bool isAutoTimestamp,
                                          std::shared_ptr<renderengine::ExternalTexture> buffer,

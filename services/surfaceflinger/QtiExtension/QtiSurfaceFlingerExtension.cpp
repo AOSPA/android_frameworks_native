@@ -21,9 +21,9 @@
 #include <config/client_interface.h>
 #include <ftl/non_null.h>
 
-#include <compositionengine/impl/Display.h>
 #include <Scheduler/VSyncPredictor.h>
 #include <Scheduler/VsyncConfiguration.h>
+#include <compositionengine/impl/Display.h>
 #include <ui/DisplayStatInfo.h>
 #include <vector>
 
@@ -709,7 +709,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateFrameScheduler() {
     if (mQtiFrameSchedulerExtnIntf == nullptr) {
         return;
     }
-    auto &scheduler = mQtiFlinger->mScheduler;
+    auto& scheduler = mQtiFlinger->mScheduler;
     const sp<Fence>& fence = scheduler->vsyncModulator().getVsyncConfig().sfOffset > 0
             ? mQtiFlinger->mPreviousPresentFences[0].fence
             : mQtiFlinger->mPreviousPresentFences[1].fence;
@@ -1023,7 +1023,6 @@ end:
     }
 }
 
-
 void QtiSurfaceFlingerExtension::qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64_t layerId) {
     // Prioritize IDisplayConfig AIDL on Android U ++
     if (mQtiDisplayConfigAidl && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
@@ -1035,7 +1034,6 @@ void QtiSurfaceFlingerExtension::qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64
         mQtiDisplayConfigHidl->SetLayerAsMask(hwcDisplayId, layerId);
     }
 }
-
 
 /*
  * Methods for Virtual, WiFi, and Secure Displays
@@ -1228,6 +1226,12 @@ bool QtiSurfaceFlingerExtension::qtiIsSecureCamera(sp<const GraphicBuffer> buffe
     return protected_buffer && camera_output;
 }
 
+bool QtiSurfaceFlingerExtension::qtiIsScreenshot(const std::string& layer_name) {
+    return ((layer_name.find("ScreenshotSurface") != std::string::npos) ||
+            (layer_name.find("RotationLayer") != std::string::npos) ||
+            (layer_name.find("BackColorSurface") != std::string::npos));
+}
+
 /*
  * Methods for SmoMo Interface
  */
@@ -1401,7 +1405,7 @@ void QtiSurfaceFlingerExtension::qtiSyncToDisplayHardware() {
     if (SmomoIntf* smoMo = qtiGetSmomoInstance(layerStackId)) {
         nsecs_t timestamp = 0;
         // Get the previous frame fence since AOSP deprecated the previousFrameFence() API
-        auto &scheduler = mQtiFlinger->mScheduler;
+        auto& scheduler = mQtiFlinger->mScheduler;
         auto prevFrameFence = scheduler->vsyncModulator().getVsyncConfig().sfOffset >= 0
                 ? mQtiFlinger->mPreviousPresentFences[0]
                 : mQtiFlinger->mPreviousPresentFences[1];
@@ -1520,6 +1524,57 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     }
 }
 
+void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
+    bool hasScreenshot = false;
+    uint32_t hwcDisplayId;
+    for (const auto& pair : FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
+        const auto& displayDevice = pair.second;
+        if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
+            qtiIsInternalDisplay(displayDevice)) {
+            continue;
+        }
+
+        mQtiFlinger->mDrawingState.traverse([&](Layer* layer) {
+            if (layer->getLayerStack() == displayDevice->getLayerStack()) {
+                hasScreenshot |= qtiIsScreenshot(layer->getName());
+            }
+        });
+    }
+
+    for (auto& layer : mQtiFlinger->mLayersPendingRefresh) {
+        for (const auto& [token, displayDevice] :
+             FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
+            auto display = displayDevice->getCompositionDisplay();
+            if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
+                qtiIsInternalDisplay(displayDevice)) {
+                continue;
+            }
+            if (display->includesLayer(layer->getOutputFilter())) {
+                hasScreenshot |= qtiIsScreenshot(layer->getName());
+            }
+        }
+    }
+
+    for (const auto& [token, displayDevice] :
+         FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
+        if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
+            qtiIsInternalDisplay(displayDevice)) {
+            continue;
+        }
+
+        qtiGetHwcDisplayId(displayDevice, &hwcDisplayId);
+        if (hasScreenshot != mQtiHasScreenshot) {
+            if (mQtiDisplayConfigAidl) {
+                mQtiDisplayConfigAidl->setDisplayAnimating(hwcDisplayId, hasScreenshot);
+            } else if (mQtiDisplayConfigHidl) {
+                mQtiDisplayConfigHidl->SetDisplayAnimating(hwcDisplayId, hasScreenshot);
+            }
+
+            mQtiHasScreenshot = hasScreenshot;
+        }
+    }
+}
+
 void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(
         sp<Layer> layer, int64_t desiredPresentTime, bool isAutoTimestamp,
         std::shared_ptr<renderengine::ExternalTexture> buffer, BufferData& bufferData) {
@@ -1545,7 +1600,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(
 #endif
         smoMo->CollectLayerStats(bufferStats);
 
-        const auto &schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
+        const auto& schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
         nsecs_t sfOffset =
             mQtiFlinger->mScheduler->getVsyncConfiguration().getCurrentConfigs().late.sfOffset;
         const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
@@ -1606,8 +1661,8 @@ bool QtiSurfaceFlingerExtension::qtiIsFrameEarly(uint32_t layerStackId, int sequ
     return isEarly;
 }
 
-void QtiSurfaceFlingerExtension::qtiSetVisibleLayerInfo(DisplayId displayId,
-        const char* name, int32_t sequence) {
+void QtiSurfaceFlingerExtension::qtiSetVisibleLayerInfo(DisplayId displayId, const char* name,
+                                                        int32_t sequence) {
     auto& visibleLayerInfo = mQtiVisibleLayerInfoMap[displayId];
     visibleLayerInfo.layerName.push_back(name);
     visibleLayerInfo.layerSequence.push_back(sequence);
@@ -1617,7 +1672,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateLayerState(int numLayers) {
     bool mSplitLayerExt = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(kSplitLayerExtension);
 
     ConditionalLock lock(mQtiFlinger->mStateLock,
-                             std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
+                         std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
     for (const auto& [token, displayDevice] : mQtiFlinger->mDisplays) {
         auto& VisibleLayerInfo = mQtiVisibleLayerInfoMap[displayDevice->getId()];
 
@@ -1703,13 +1758,13 @@ void QtiSurfaceFlingerExtension::qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod) {
     }
 }
 
-void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferIncrement(const char *name) {
+void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferIncrement(const char* name) {
     if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinTrackBufferIncrement) {
         mQtiDolphinWrapper->qtiDolphinTrackBufferIncrement(name);
     }
 }
 
-void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferDecrement(const char *name, int count) {
+void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferDecrement(const char* name, int count) {
     if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinTrackBufferDecrement) {
         mQtiDolphinWrapper->qtiDolphinTrackBufferDecrement(name, count);
     }

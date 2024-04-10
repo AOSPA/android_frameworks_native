@@ -104,6 +104,7 @@ public:
     void qtiSetRefreshRateTo(int32_t refreshRate) override;
     void qtiSyncToDisplayHardware() override;
     void qtiUpdateSmomoState() override;
+    void qtiSetDisplayAnimating() override;
     void qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime, bool isAutoTimestamp,
                                  std::shared_ptr<renderengine::ExternalTexture> buffer,
                                  BufferData& bufferData) override;
