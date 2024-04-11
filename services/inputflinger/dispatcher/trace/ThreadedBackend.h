@@ -38,9 +38,12 @@ public:
     ThreadedBackend(Backend&& innerBackend);
     ~ThreadedBackend() override;
 
-    void traceKeyEvent(const TracedKeyEvent&, const TracedEventArgs&) override;
-    void traceMotionEvent(const TracedMotionEvent&, const TracedEventArgs&) override;
-    void traceWindowDispatch(const WindowDispatchArgs&, const TracedEventArgs&) override;
+    void traceKeyEvent(const TracedKeyEvent&, const TracedEventMetadata&) override;
+    void traceMotionEvent(const TracedMotionEvent&, const TracedEventMetadata&) override;
+    void traceWindowDispatch(const WindowDispatchArgs&, const TracedEventMetadata&) override;
+
+    /** Returns a function that, when called, will block until the tracing thread is idle. */
+    std::function<void()> getIdleWaiterForTesting();
 
 private:
     std::mutex mLock;
@@ -49,8 +52,16 @@ private:
     Backend mBackend;
     using TraceEntry =
             std::pair<std::variant<TracedKeyEvent, TracedMotionEvent, WindowDispatchArgs>,
-                      TracedEventArgs>;
+                      TracedEventMetadata>;
     std::vector<TraceEntry> mQueue GUARDED_BY(mLock);
+
+    struct IdleWaiter {
+        std::mutex idleLock;
+        std::condition_variable threadIdleCondition;
+        bool isIdle GUARDED_BY(idleLock){false};
+    };
+    // The lazy-initialized object used to wait for the tracing thread to idle.
+    std::shared_ptr<IdleWaiter> mIdleWaiter GUARDED_BY(mLock);
 
     // InputThread stops when its destructor is called. Initialize it last so that it is the
     // first thing to be destructed. This will guarantee the thread will not access other
@@ -58,6 +69,7 @@ private:
     InputThread mTracerThread;
 
     void threadLoop();
+    void setIdleStatus(bool isIdle) REQUIRES(mLock);
 };
 
 } // namespace android::inputdispatcher::trace::impl

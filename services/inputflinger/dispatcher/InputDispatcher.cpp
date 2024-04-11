@@ -2529,11 +2529,19 @@ std::vector<InputTarget> InputDispatcher::findTouchedWindowTargetsLocked(
             if (!isHoverAction) {
                 const bool isDownOrPointerDown = maskedAction == AMOTION_EVENT_ACTION_DOWN ||
                         maskedAction == AMOTION_EVENT_ACTION_POINTER_DOWN;
-                tempTouchState.addOrUpdateWindow(windowHandle, InputTarget::DispatchMode::AS_IS,
-                                                 targetFlags, entry.deviceId, {pointer},
-                                                 isDownOrPointerDown
-                                                         ? std::make_optional(entry.eventTime)
-                                                         : std::nullopt);
+                Result<void> addResult =
+                        tempTouchState.addOrUpdateWindow(windowHandle,
+                                                         InputTarget::DispatchMode::AS_IS,
+                                                         targetFlags, entry.deviceId, {pointer},
+                                                         isDownOrPointerDown
+                                                                 ? std::make_optional(
+                                                                           entry.eventTime)
+                                                                 : std::nullopt);
+                if (!addResult.ok()) {
+                    LOG(ERROR) << "Error while processing " << entry << " for "
+                               << windowHandle->getName();
+                    logDispatchStateLocked();
+                }
                 // If this is the pointer going down and the touched window has a wallpaper
                 // then also add the touched wallpaper windows so they are locked in for the
                 // duration of the touch gesture. We do not collect wallpapers during HOVER_MOVE or
@@ -3042,7 +3050,11 @@ void InputDispatcher::addPointerWindowTargetLocked(
                    << ", windowInfo->globalScaleFactor=" << windowInfo->globalScaleFactor;
     }
 
-    it->addPointers(pointerIds, windowInfo->transform);
+    Result<void> result = it->addPointers(pointerIds, windowInfo->transform);
+    if (!result.ok()) {
+        logDispatchStateLocked();
+        LOG(FATAL) << result.error().message();
+    }
 }
 
 void InputDispatcher::addGlobalMonitoringTargetsLocked(std::vector<InputTarget>& inputTargets,
@@ -4379,7 +4391,7 @@ std::unique_ptr<MotionEntry> InputDispatcher::splitMotionEvent(
         // different pointer ids than we expected based on the previous ACTION_DOWN
         // or ACTION_POINTER_DOWN events that caused us to decide to split the pointers
         // in this way.
-        ALOGW("Dropping split motion event because the pointer count is %d but "
+        ALOGW("Dropping split motion event because the pointer count is %zu but "
               "we expected there to be %zu pointers.  This probably means we received "
               "a broken sequence of pointer ids from the input device: %s",
               pointerCoords.size(), pointerIds.count(),
@@ -4844,7 +4856,7 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
             const bool isPointerEvent =
                     isFromSource(event->getSource(), AINPUT_SOURCE_CLASS_POINTER);
             // If a pointer event has no displayId specified, inject it to the default display.
-            const uint32_t displayId = isPointerEvent && (event->getDisplayId() == ADISPLAY_ID_NONE)
+            const int32_t displayId = isPointerEvent && (event->getDisplayId() == ADISPLAY_ID_NONE)
                     ? ADISPLAY_ID_DEFAULT
                     : event->getDisplayId();
             int32_t flags = motionEvent.getFlags();
@@ -7151,6 +7163,13 @@ bool InputDispatcher::isPointerInWindow(const sp<android::IBinder>& token, int32
         }
     }
     return false;
+}
+
+void InputDispatcher::setInputMethodConnectionIsActive(bool isActive) {
+    std::scoped_lock _l(mLock);
+    if (mTracer) {
+        mTracer->setInputMethodConnectionIsActive(isActive);
+    }
 }
 
 } // namespace android::inputdispatcher

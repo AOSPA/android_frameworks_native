@@ -22,6 +22,15 @@ package {
     default_applicable_licenses: ["frameworks_native_license"],
 }
 
+// Source files shared with InputDispatcher's benchmarks and fuzzers
+filegroup {
+    name: "inputdispatcher_common_test_sources",
+    srcs: [
+        "FakeInputDispatcherPolicy.cpp",
+        "FakeWindows.cpp",
+    ],
+}
+
 cc_test {
     name: "inputflinger_tests",
     host_supported: true,
@@ -38,6 +47,7 @@ cc_test {
         "libinputflinger_defaults",
     ],
     srcs: [
+        ":inputdispatcher_common_test_sources",
         "AnrTracker_test.cpp",
         "CapturedTouchpadEventConverter_test.cpp",
         "CursorInputMapper_test.cpp",
@@ -57,6 +67,8 @@ cc_test {
         "InputProcessorConverter_test.cpp",
         "InputDispatcher_test.cpp",
         "InputReader_test.cpp",
+        "InputTraceSession.cpp",
+        "InputTracingTest.cpp",
         "InstrumentedInputReader.cpp",
         "LatencyTracker_test.cpp",
         "MultiTouchMotionAccumulator_test.cpp",
