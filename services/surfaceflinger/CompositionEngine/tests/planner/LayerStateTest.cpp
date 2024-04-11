@@ -18,6 +18,7 @@
 #define LOG_TAG "LayerStateTest"
 
 #include <aidl/android/hardware/graphics/common/BufferUsage.h>
+#include <common/include/common/test/FlagUtils.h>
 #include <compositionengine/impl/OutputLayer.h>
 #include <compositionengine/impl/planner/LayerState.h>
 #include <compositionengine/mock/LayerFE.h>
@@ -26,6 +27,7 @@
 #include <log/log.h>
 
 #include "android/hardware_buffer.h"
+#include "com_android_graphics_surfaceflinger_flags.h"
 #include "compositionengine/LayerFECompositionState.h"
 
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
@@ -304,6 +306,16 @@ TEST_F(LayerStateTest, getCompositionType_forcedClient) {
     EXPECT_EQ(Composition::CLIENT, mLayerState->getCompositionType());
 }
 
+TEST_F(LayerStateTest, getHdrSdrRatio) {
+    OutputLayerCompositionState outputLayerCompositionState;
+    LayerFECompositionState layerFECompositionState;
+    layerFECompositionState.currentHdrSdrRatio = 2.f;
+    setupMocksForLayer(mOutputLayer, *mLayerFE, outputLayerCompositionState,
+                       layerFECompositionState);
+    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
+    EXPECT_EQ(2.f, mLayerState->getHdrSdrRatio());
+}
+
 TEST_F(LayerStateTest, updateCompositionType) {
     OutputLayerCompositionState outputLayerCompositionState;
     LayerFECompositionState layerFECompositionState;
@@ -454,6 +466,9 @@ TEST_F(LayerStateTest, updateSourceCrop) {
 }
 
 TEST_F(LayerStateTest, compareSourceCrop) {
+    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::
+                              cache_when_source_crop_layer_only_moved,
+                      false);
     OutputLayerCompositionState outputLayerCompositionState;
     outputLayerCompositionState.sourceCrop = sFloatRectOne;
     LayerFECompositionState layerFECompositionState;
@@ -1028,6 +1043,47 @@ TEST_F(LayerStateTest, compareCachingHint) {
     auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
 
     verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::CachingHint);
+
+    EXPECT_TRUE(mLayerState->compare(*otherLayerState));
+    EXPECT_TRUE(otherLayerState->compare(*mLayerState));
+}
+
+TEST_F(LayerStateTest, updateDimmingEnabled) {
+    OutputLayerCompositionState outputLayerCompositionState;
+    LayerFECompositionState layerFECompositionState;
+    layerFECompositionState.dimmingEnabled = true;
+    setupMocksForLayer(mOutputLayer, *mLayerFE, outputLayerCompositionState,
+                       layerFECompositionState);
+    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
+    EXPECT_TRUE(mLayerState->isDimmingEnabled());
+
+    mock::OutputLayer newOutputLayer;
+    sp<mock::LayerFE> newLayerFE = sp<mock::LayerFE>::make();
+    LayerFECompositionState layerFECompositionStateTwo;
+    layerFECompositionStateTwo.dimmingEnabled = false;
+    setupMocksForLayer(newOutputLayer, *newLayerFE, outputLayerCompositionState,
+                       layerFECompositionStateTwo);
+    ftl::Flags<LayerStateField> updates = mLayerState->update(&newOutputLayer);
+    EXPECT_EQ(ftl::Flags<LayerStateField>(LayerStateField::DimmingEnabled), updates);
+    EXPECT_FALSE(mLayerState->isDimmingEnabled());
+}
+
+TEST_F(LayerStateTest, compareDimmingEnabled) {
+    OutputLayerCompositionState outputLayerCompositionState;
+    LayerFECompositionState layerFECompositionState;
+    layerFECompositionState.dimmingEnabled = true;
+    setupMocksForLayer(mOutputLayer, *mLayerFE, outputLayerCompositionState,
+                       layerFECompositionState);
+    mLayerState = std::make_unique<LayerState>(&mOutputLayer);
+    mock::OutputLayer newOutputLayer;
+    sp<mock::LayerFE> newLayerFE = sp<mock::LayerFE>::make();
+    LayerFECompositionState layerFECompositionStateTwo;
+    layerFECompositionStateTwo.dimmingEnabled = false;
+    setupMocksForLayer(newOutputLayer, *newLayerFE, outputLayerCompositionState,
+                       layerFECompositionStateTwo);
+    auto otherLayerState = std::make_unique<LayerState>(&newOutputLayer);
+
+    verifyNonUniqueDifferingFields(*mLayerState, *otherLayerState, LayerStateField::DimmingEnabled);
 
     EXPECT_TRUE(mLayerState->compare(*otherLayerState));
     EXPECT_TRUE(otherLayerState->compare(*mLayerState));
