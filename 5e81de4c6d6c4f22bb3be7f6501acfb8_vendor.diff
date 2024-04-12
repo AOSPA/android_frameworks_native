@@ -1,0 +1,21 @@
+diff --git a/tmp/conflict_ancestor1545599446 b/tmp/conflict_vendor2079984924
+index eda467d..688983e 100644
+--- a/tmp/conflict_ancestor1545599446
++++ b/tmp/conflict_vendor2079984924
+@@ -8,6 +8,16 @@
+             return TraverseBuffersReturnValues::STOP_TRAVERSAL;
+         }
+ 
++        /* QTI_BEGIN */
++        sp<Layer> layerHandle = LayerHandle::getLayer(s.surface);
++        TimePoint desiredPresentTime = TimePoint::fromNs(transaction.desiredPresentTime);
++        if (mQtiSFExtnIntf->qtiIsFrameEarly(layerHandle->qtiGetSmomoLayerStackId(),
++                                            layerHandle->getSequence(), desiredPresentTime.ns())) {
++            ready = TransactionReadiness::NotReady;
++            return TraverseBuffersReturnValues::STOP_TRAVERSAL;
++        }
++        /* QTI_END */
++
+         const bool acquireFenceAvailable = s.bufferData &&
+                 s.bufferData->flags.test(BufferData::BufferDataChange::fenceChanged) &&
+                 s.bufferData->acquireFence;

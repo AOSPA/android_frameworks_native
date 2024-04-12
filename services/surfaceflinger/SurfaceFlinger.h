@@ -44,7 +44,6 @@
 #include <gui/FrameTimestamps.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/ITransactionCompletedListener.h>
-#include <gui/LayerDebugInfo.h>
 #include <gui/LayerState.h>
 #include <layerproto/LayerProtoHeader.h>
 #include <math/mat4.h>
@@ -623,7 +622,6 @@ private:
     status_t overrideHdrTypes(const sp<IBinder>& displayToken,
                               const std::vector<ui::Hdr>& hdrTypes);
     status_t onPullAtom(const int32_t atomId, std::vector<uint8_t>* pulledData, bool* success);
-    status_t getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* outLayers);
     status_t getCompositionPreference(ui::Dataspace* outDataspace, ui::PixelFormat* outPixelFormat,
                                       ui::Dataspace* outWideColorGamutDataspace,
                                       ui::PixelFormat* outWideColorGamutPixelFormat) const;
@@ -784,7 +782,8 @@ private:
                                             bool force = false)
             REQUIRES(mStateLock, kMainThreadContext);
 
-    void commitTransactions() EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
+    void commitTransactionsLegacy() EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
+    void commitTransactions() REQUIRES(kMainThreadContext, mStateLock);
     void commitTransactionsLocked(uint32_t transactionFlags)
             REQUIRES(mStateLock, kMainThreadContext);
     void doCommitTransactions() REQUIRES(mStateLock);
@@ -795,24 +794,27 @@ private:
     void updateLayerGeometry();
     void updateLayerMetadataSnapshot();
     std::vector<std::pair<Layer*, LayerFE*>> moveSnapshotsToCompositionArgs(
-            compositionengine::CompositionRefreshArgs& refreshArgs, bool cursorOnly);
+            compositionengine::CompositionRefreshArgs& refreshArgs, bool cursorOnly)
+            REQUIRES(kMainThreadContext);
     void moveSnapshotsFromCompositionArgs(compositionengine::CompositionRefreshArgs& refreshArgs,
-                                          const std::vector<std::pair<Layer*, LayerFE*>>& layers);
+                                          const std::vector<std::pair<Layer*, LayerFE*>>& layers)
+            REQUIRES(kMainThreadContext);
     // Return true if we must composite this frame
     bool updateLayerSnapshotsLegacy(VsyncId vsyncId, nsecs_t frameTimeNs, bool transactionsFlushed,
                                     bool& out) REQUIRES(kMainThreadContext);
     // Return true if we must composite this frame
     bool updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs, bool transactionsFlushed,
                               bool& out) REQUIRES(kMainThreadContext);
-    void updateLayerHistory(nsecs_t now);
+    void updateLayerHistory(nsecs_t now) REQUIRES(kMainThreadContext);
     frontend::Update flushLifecycleUpdates() REQUIRES(kMainThreadContext);
 
-    void updateInputFlinger(VsyncId vsyncId, TimePoint frameTime);
+    void updateInputFlinger(VsyncId vsyncId, TimePoint frameTime) REQUIRES(kMainThreadContext);
     void persistDisplayBrightness(bool needsComposite) REQUIRES(kMainThreadContext);
     void buildWindowInfos(std::vector<gui::WindowInfo>& outWindowInfos,
-                          std::vector<gui::DisplayInfo>& outDisplayInfos);
+                          std::vector<gui::DisplayInfo>& outDisplayInfos)
+            REQUIRES(kMainThreadContext);
     void commitInputWindowCommands() REQUIRES(mStateLock);
-    void updateCursorAsync();
+    void updateCursorAsync() REQUIRES(kMainThreadContext);
 
     void initScheduler(const sp<const DisplayDevice>&) REQUIRES(kMainThreadContext, mStateLock);
 
@@ -830,18 +832,18 @@ private:
                                const int64_t postTime, bool hasListenerCallbacks,
                                const std::vector<ListenerCallbacks>& listenerCallbacks,
                                int originPid, int originUid, uint64_t transactionId)
-            REQUIRES(mStateLock);
+            REQUIRES(mStateLock, kMainThreadContext);
     // Flush pending transactions that were presented after desiredPresentTime.
     // For test only
     bool flushTransactionQueues(VsyncId) REQUIRES(kMainThreadContext);
 
     bool applyTransactions(std::vector<TransactionState>&, VsyncId) REQUIRES(kMainThreadContext);
-    bool applyAndCommitDisplayTransactionStates(std::vector<TransactionState>& transactions)
-            REQUIRES(kMainThreadContext);
+    bool applyAndCommitDisplayTransactionStatesLocked(std::vector<TransactionState>& transactions)
+            REQUIRES(kMainThreadContext, mStateLock);
 
     // Returns true if there is at least one transaction that needs to be flushed
-    bool transactionFlushNeeded();
-    void addTransactionReadyFilters();
+    bool transactionFlushNeeded() REQUIRES(kMainThreadContext);
+    void addTransactionReadyFilters() REQUIRES(kMainThreadContext);
     TransactionHandler::TransactionReadiness transactionReadyTimelineCheck(
             const TransactionHandler::TransactionFlushState& flushState)
             REQUIRES(kMainThreadContext);
@@ -858,7 +860,7 @@ private:
     uint32_t updateLayerCallbacksAndStats(const FrameTimelineInfo&, ResolvedComposerState&,
                                           int64_t desiredPresentTime, bool isAutoTimestamp,
                                           int64_t postTime, uint64_t transactionId)
-            REQUIRES(mStateLock);
+            REQUIRES(mStateLock, kMainThreadContext);
     uint32_t getTransactionFlags() const;
 
     // Sets the masked bits, and schedules a commit if needed.
@@ -874,7 +876,7 @@ private:
     static LatchUnsignaledConfig getLatchUnsignaledConfig();
     bool shouldLatchUnsignaled(const layer_state_t&, size_t numStates, bool firstTransaction) const;
     bool applyTransactionsLocked(std::vector<TransactionState>& transactions, VsyncId)
-            REQUIRES(mStateLock);
+            REQUIRES(mStateLock, kMainThreadContext);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
     uint32_t addInputWindowCommands(const InputWindowCommands& inputWindowCommands)
             REQUIRES(mStateLock);
@@ -1165,9 +1167,10 @@ private:
     void dumpHwcLayersMinidumpLockedLegacy(std::string& result) const REQUIRES(mStateLock);
 
     void appendSfConfigString(std::string& result) const;
-    void listLayers(std::string& result) const;
-    void dumpStats(const DumpArgs& args, std::string& result) const REQUIRES(mStateLock);
-    void clearStats(const DumpArgs& args, std::string& result);
+    void listLayers(std::string& result) const REQUIRES(kMainThreadContext);
+    void dumpStats(const DumpArgs& args, std::string& result) const
+            REQUIRES(mStateLock, kMainThreadContext);
+    void clearStats(const DumpArgs& args, std::string& result) REQUIRES(kMainThreadContext);
     void dumpTimeStats(const DumpArgs& args, bool asProto, std::string& result) const;
     void dumpFrameTimeline(const DumpArgs& args, std::string& result) const;
     void logFrameStats(TimePoint now) REQUIRES(kMainThreadContext);
@@ -1185,7 +1188,8 @@ private:
     void dumpFrontEnd(std::string& result) REQUIRES(kMainThreadContext);
     void dumpVisibleFrontEnd(std::string& result) REQUIRES(mStateLock, kMainThreadContext);
 
-    perfetto::protos::LayersProto dumpDrawingStateProto(uint32_t traceFlags) const;
+    perfetto::protos::LayersProto dumpDrawingStateProto(uint32_t traceFlags) const
+            REQUIRES(kMainThreadContext);
     void dumpOffscreenLayersProto(perfetto::protos::LayersProto& layersProto,
                                   uint32_t traceFlags = LayerTracing::TRACE_ALL) const;
     google::protobuf::RepeatedPtrField<perfetto::protos::DisplayProto> dumpDisplayProto() const;
@@ -1233,7 +1237,8 @@ private:
 
     ui::Rotation getPhysicalDisplayOrientation(DisplayId, bool isPrimary) const
             REQUIRES(mStateLock);
-    void traverseLegacyLayers(const LayerVector::Visitor& visitor) const;
+    void traverseLegacyLayers(const LayerVector::Visitor& visitor) const
+            REQUIRES(kMainThreadContext);
 
     void initBootProperties();
     void initTransactionTraceWriter();
@@ -1511,28 +1516,30 @@ private:
     bool mLayerLifecycleManagerEnabled = false;
     bool mLegacyFrontEndEnabled = true;
 
-    frontend::LayerLifecycleManager mLayerLifecycleManager;
-    frontend::LayerHierarchyBuilder mLayerHierarchyBuilder;
-    frontend::LayerSnapshotBuilder mLayerSnapshotBuilder;
+    frontend::LayerLifecycleManager mLayerLifecycleManager GUARDED_BY(kMainThreadContext);
+    frontend::LayerHierarchyBuilder mLayerHierarchyBuilder GUARDED_BY(kMainThreadContext);
+    frontend::LayerSnapshotBuilder mLayerSnapshotBuilder GUARDED_BY(kMainThreadContext);
 
-    std::vector<std::pair<uint32_t, std::string>> mDestroyedHandles;
-    std::vector<std::unique_ptr<frontend::RequestedLayerState>> mNewLayers;
-    std::vector<LayerCreationArgs> mNewLayerArgs;
+    std::vector<std::pair<uint32_t, std::string>> mDestroyedHandles GUARDED_BY(mCreatedLayersLock);
+    std::vector<std::unique_ptr<frontend::RequestedLayerState>> mNewLayers
+            GUARDED_BY(mCreatedLayersLock);
+    std::vector<LayerCreationArgs> mNewLayerArgs GUARDED_BY(mCreatedLayersLock);
     // These classes do not store any client state but help with managing transaction callbacks
     // and stats.
-    std::unordered_map<uint32_t, sp<Layer>> mLegacyLayers;
+    std::unordered_map<uint32_t, sp<Layer>> mLegacyLayers GUARDED_BY(kMainThreadContext);
 
     /* QTI_BEGIN */
     surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* mQtiSFExtnIntf = nullptr;
     std::mutex mSmomoMutex;
     /* QTI_END */
 
-    TransactionHandler mTransactionHandler;
-    ui::DisplayMap<ui::LayerStack, frontend::DisplayInfo> mFrontEndDisplayInfos;
-    bool mFrontEndDisplayInfosChanged = false;
+    TransactionHandler mTransactionHandler GUARDED_BY(kMainThreadContext);
+    ui::DisplayMap<ui::LayerStack, frontend::DisplayInfo> mFrontEndDisplayInfos
+            GUARDED_BY(kMainThreadContext);
+    bool mFrontEndDisplayInfosChanged GUARDED_BY(kMainThreadContext) = false;
 
     // WindowInfo ids visible during the last commit.
-    std::unordered_set<int32_t> mVisibleWindowIds;
+    std::unordered_set<int32_t> mVisibleWindowIds GUARDED_BY(kMainThreadContext);
 
     // Mirroring
     // Map of displayid to mirrorRoot
@@ -1634,7 +1641,6 @@ public:
     binder::Status overrideHdrTypes(const sp<IBinder>& display,
                                     const std::vector<int32_t>& hdrTypes) override;
     binder::Status onPullAtom(int32_t atomId, gui::PullAtomData* outPullData) override;
-    binder::Status getLayerDebugInfo(std::vector<gui::LayerDebugInfo>* outLayers) override;
     binder::Status getCompositionPreference(gui::CompositionPreference* outPref) override;
     binder::Status getDisplayedContentSamplingAttributes(
             const sp<IBinder>& display, gui::ContentSamplingAttributes* outAttrs) override;

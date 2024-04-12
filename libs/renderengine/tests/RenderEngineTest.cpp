@@ -107,6 +107,7 @@ public:
 
     virtual std::string name() = 0;
     virtual renderengine::RenderEngine::GraphicsApi graphicsApi() = 0;
+    virtual renderengine::RenderEngine::SkiaBackend skiaBackend() = 0;
     bool apiSupported() { return renderengine::RenderEngine::canSupport(graphicsApi()); }
     std::unique_ptr<renderengine::RenderEngine> createRenderEngine() {
         renderengine::RenderEngineCreationArgs reCreationArgs =
@@ -119,17 +120,9 @@ public:
                         .setContextPriority(renderengine::RenderEngine::ContextPriority::MEDIUM)
                         .setThreaded(renderengine::RenderEngine::Threaded::NO)
                         .setGraphicsApi(graphicsApi())
+                        .setSkiaBackend(skiaBackend())
                         .build();
         return renderengine::RenderEngine::create(reCreationArgs);
-    }
-};
-
-class SkiaVkRenderEngineFactory : public RenderEngineFactory {
-public:
-    std::string name() override { return "SkiaVkRenderEngineFactory"; }
-
-    renderengine::RenderEngine::GraphicsApi graphicsApi() override {
-        return renderengine::RenderEngine::GraphicsApi::VK;
     }
 };
 
@@ -139,6 +132,36 @@ public:
 
     renderengine::RenderEngine::GraphicsApi graphicsApi() {
         return renderengine::RenderEngine::GraphicsApi::GL;
+    }
+
+    renderengine::RenderEngine::SkiaBackend skiaBackend() override {
+        return renderengine::RenderEngine::SkiaBackend::GANESH;
+    }
+};
+
+class GaneshVkRenderEngineFactory : public RenderEngineFactory {
+public:
+    std::string name() override { return "GaneshVkRenderEngineFactory"; }
+
+    renderengine::RenderEngine::GraphicsApi graphicsApi() override {
+        return renderengine::RenderEngine::GraphicsApi::VK;
+    }
+
+    renderengine::RenderEngine::SkiaBackend skiaBackend() override {
+        return renderengine::RenderEngine::SkiaBackend::GANESH;
+    }
+};
+
+class GraphiteVkRenderEngineFactory : public RenderEngineFactory {
+public:
+    std::string name() override { return "GraphiteVkRenderEngineFactory"; }
+
+    renderengine::RenderEngine::GraphicsApi graphicsApi() override {
+        return renderengine::RenderEngine::GraphicsApi::VK;
+    }
+
+    renderengine::RenderEngine::SkiaBackend skiaBackend() override {
+        return renderengine::RenderEngine::SkiaBackend::GRAPHITE;
     }
 };
 
@@ -1242,7 +1265,12 @@ void RenderEngineTest::fillRedBufferWithPremultiplyAlpha() {
 
 void RenderEngineTest::fillBufferWithPremultiplyAlpha() {
     fillRedBufferWithPremultiplyAlpha();
-    expectBufferColor(fullscreenRect(), 128, 0, 0, 128);
+    // Different backends and GPUs may round 255 * 0.5 = 127.5 differently, but
+    // either 127 or 128 are acceptable. Checking both 127 and 128 with a
+    // tolerance of 1 allows either 127 or 128 to pass, while preventing 126 or
+    // 129 from erroneously passing.
+    expectBufferColor(fullscreenRect(), 127, 0, 0, 127, 1);
+    expectBufferColor(fullscreenRect(), 128, 0, 0, 128, 1);
 }
 
 void RenderEngineTest::fillRedBufferWithoutPremultiplyAlpha() {
@@ -1471,7 +1499,8 @@ void RenderEngineTest::tonemap(ui::Dataspace sourceDataspace, std::function<vec3
 
 INSTANTIATE_TEST_SUITE_P(PerRenderEngineType, RenderEngineTest,
                          testing::Values(std::make_shared<SkiaGLESRenderEngineFactory>(),
-                                         std::make_shared<SkiaVkRenderEngineFactory>()));
+                                         std::make_shared<GaneshVkRenderEngineFactory>(),
+                                         std::make_shared<GraphiteVkRenderEngineFactory>()));
 
 TEST_P(RenderEngineTest, drawLayers_noLayersToDraw) {
     if (!GetParam()->apiSupported()) {
@@ -3102,6 +3131,11 @@ TEST_P(RenderEngineTest, r8_respects_color_transform_when_device_handles) {
 }
 
 TEST_P(RenderEngineTest, primeShaderCache) {
+    // TODO: b/331447071 - Fix in Graphite and re-enable.
+    if (GetParam()->skiaBackend() == renderengine::RenderEngine::SkiaBackend::GRAPHITE) {
+        GTEST_SKIP();
+    }
+
     if (!GetParam()->apiSupported()) {
         GTEST_SKIP();
     }

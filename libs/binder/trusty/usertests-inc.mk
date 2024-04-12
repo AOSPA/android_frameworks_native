@@ -17,3 +17,6 @@ TRUSTY_USER_TESTS += \
 	frameworks/native/libs/binder/trusty/binderRpcTest \
 	frameworks/native/libs/binder/trusty/binderRpcTest/service \
 
+TRUSTY_RUST_USER_TESTS += \
+	frameworks/native/libs/binder/trusty/rust/binder_rpc_test \
+

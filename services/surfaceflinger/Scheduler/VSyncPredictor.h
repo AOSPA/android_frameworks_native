@@ -68,6 +68,13 @@ public:
 
     void setDisplayModePtr(ftl::NonNull<DisplayModePtr>) final EXCLUDES(mMutex);
 
+    bool isCurrentMode(const ftl::NonNull<DisplayModePtr>& modePtr) const EXCLUDES(mMutex) {
+        std::lock_guard lock(mMutex);
+        return mDisplayModePtr->getId() == modePtr->getId() &&
+                mDisplayModePtr->getVsyncRate().getPeriodNsecs() ==
+                mRateMap.find(idealPeriod())->second.slope;
+    }
+
     void setRenderRate(Fps, bool applyImmediately) final EXCLUDES(mMutex);
 
     void onFrameBegin(TimePoint expectedPresentTime, TimePoint lastConfirmedPresentTime) final
@@ -83,7 +90,7 @@ private:
     };
 
     struct MissedVsync {
-        TimePoint vsync;
+        TimePoint vsync = TimePoint::fromNs(0);
         Duration fixup = Duration::fromNs(0);
     };
 
@@ -97,7 +104,7 @@ private:
         std::optional<TimePoint> validUntil() const { return mValidUntil; }
         bool isVSyncInPhase(Model, nsecs_t vsync, Fps frameRate);
         void shiftVsyncSequence(Duration phase);
-        void setRenderRate(Fps renderRate) { mRenderRateOpt = renderRate; }
+        void setRenderRate(std::optional<Fps> renderRateOpt) { mRenderRateOpt = renderRateOpt; }
 
     private:
         nsecs_t snapToVsyncAlignedWithRenderRate(Model model, nsecs_t vsync);
