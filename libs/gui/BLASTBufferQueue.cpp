@@ -703,17 +703,8 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
 
     mergePendingTransactions(t, bufferItem.mFrameNumber);
     if (applyTransaction) {
-        /* QTI_BEGIN */
-        if (mQtiBBQExtn && mQtiBBQExtn->qtiIsGame()) {
-            t->setApplyToken(mApplyToken).apply(false, false);
-        } else {
-        /* QTI_END */
-            // All transactions on our apply token are one-way.
-            // See comment on mAppliedLastTransaction
-            t->setApplyToken(mApplyToken).apply(false, true);
-        /* QTI_BEGIN */
-        }
-        /* QTI_END */
+        // All transactions on our apply token are one-way. See comment on mAppliedLastTransaction
+        t->setApplyToken(mApplyToken).apply(false, true);
         mAppliedLastTransaction = true;
         mLastAppliedFrameNumber = bufferItem.mFrameNumber;
     } else {
