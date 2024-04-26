@@ -271,5 +271,6 @@ phony {
         "FrameworksServicesTests",
         "CtsSecurityTestCases",
         "CtsSecurityBulletinHostTestCases",
+        "monkey_test",
     ],
 }
