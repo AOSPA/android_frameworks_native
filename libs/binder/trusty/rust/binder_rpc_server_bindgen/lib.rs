@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,11 @@
  * limitations under the License.
  */
 
-package android.gui;
+//! Generated Rust bindings to binder_rpc_server
 
-parcelable LayerDebugInfo cpp_header "gui/LayerDebugInfo.h";
+#[allow(bad_style)]
+mod sys {
+    include!(env!("BINDGEN_INC_FILE"));
+}
+
+pub use sys::*;

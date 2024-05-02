@@ -31,5 +31,11 @@
        the UX issue mentioned above.
   -->
   <distance-noise-floor>0.2</distance-noise-floor>
+  <!-- The low and high jerk thresholds for prediction pruning.
+
+    The jerk thresholds are based on normalized dt = 1 calculations.
+  -->
+  <low-jerk>1.0</low-jerk>
+  <high-jerk>1.1</high-jerk>
 </motion-predictor>
 

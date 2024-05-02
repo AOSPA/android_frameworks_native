@@ -196,6 +196,7 @@ public:
     void qtiHasProtectedLayer(bool* hasProtectedLayer) override;
     bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) override;
     bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) override;
+    bool qtiIsScreenshot(const std::string& layer_name);
 
     /*
      * Methods for SmoMo Interface
@@ -206,6 +207,7 @@ public:
     void qtiSetRefreshRateTo(int32_t refreshRate) override;
     void qtiSyncToDisplayHardware() override;
     void qtiUpdateSmomoState() override;
+    void qtiSetDisplayAnimating() override;
     void qtiUpdateSmomoLayerInfo(sp<Layer> layer, int64_t desiredPresentTime, bool isAutoTimestamp,
                                  std::shared_ptr<renderengine::ExternalTexture> buffer,
                                  BufferData& bufferData) override;
@@ -281,6 +283,7 @@ private:
     bool mQtiAllowThermalFpsChange = false;
     bool mQtiRequestedContentFps = false;
     int mQtiFailedAttempts = 0;
+    bool mQtiHasScreenshot = false;
 
     std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
     std::shared_ptr<DisplayConfigAidlCallbackHandler> mQtiAidlCallbackHandler = nullptr;

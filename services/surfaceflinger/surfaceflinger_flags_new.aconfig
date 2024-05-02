@@ -19,14 +19,18 @@ flag {
   metadata {
     purpose: PURPOSE_BUGFIX
   }
-}
+ } # ce_fence_promise
 
-flag {
-  name: "dont_skip_on_early_ro2"
+ flag {
+  name: "deprecate_vsync_sf"
   namespace: "core_graphics"
-  description: "This flag is guarding the behaviour where SurfaceFlinger is trying to opportunistically present a frame when the configuration change from late to early"
-  bug: "273702768"
-} # dont_skip_on_early_ro2
+  description: "Depracate eVsyncSourceSurfaceFlinger and use vsync_app everywhere"
+  bug: "162235855"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+} # deprecate_vsync_sf
 
 flag {
   name: "frame_rate_category_mrr"
@@ -38,5 +42,16 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 } # frame_rate_category_mrr
+
+flag {
+  name: "latch_unsignaled_with_auto_refresh_changed"
+  namespace: "core_graphics"
+  description: "Ignore eAutoRefreshChanged with latch unsignaled"
+  bug: "331513837"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+} # latch_unsignaled_with_auto_refresh_changed
 
 # IMPORTANT - please keep alphabetize to reduce merge conflicts

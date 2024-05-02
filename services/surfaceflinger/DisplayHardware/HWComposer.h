@@ -281,6 +281,8 @@ public:
 
     virtual void dump(std::string& out) const = 0;
 
+    virtual void dumpOverlayProperties(std::string& out) const = 0;
+
     virtual Hwc2::Composer* getComposer() const = 0;
 
     // Returns the first display connected at boot. Its connection via HWComposer::onHotplug,
@@ -480,6 +482,7 @@ public:
 
     // for debugging ----------------------------------------------------------
     void dump(std::string& out) const override;
+    void dumpOverlayProperties(std::string& out) const override;
 
     Hwc2::Composer* getComposer() const override { return mComposer.get(); }
 

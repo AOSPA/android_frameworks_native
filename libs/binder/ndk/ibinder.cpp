@@ -24,6 +24,7 @@
 #include <private/android_filesystem_config.h>
 #endif
 
+#include "../BuildFlags.h"
 #include "ibinder_internal.h"
 #include "parcel_internal.h"
 #include "status_internal.h"
@@ -44,7 +45,9 @@ namespace ABBinderTag {
 
 static const void* kId = "ABBinder";
 static void* kValue = static_cast<void*>(new bool{true});
-void clean(const void* /*id*/, void* /*obj*/, void* /*cookie*/){/* do nothing */};
+void clean(const void* /*id*/, void* /*obj*/, void* /*cookie*/) {
+    /* do nothing */
+}
 
 static void attach(const sp<IBinder>& binder) {
     auto alreadyAttached = binder->attachObject(kId, kValue, nullptr /*cookie*/, clean);
@@ -69,7 +72,7 @@ void clean(const void* id, void* obj, void* cookie) {
     LOG_ALWAYS_FATAL_IF(id != kId, "%p %p %p", id, obj, cookie);
 
     delete static_cast<Value*>(obj);
-};
+}
 
 }  // namespace ABpBinderTag
 
@@ -211,6 +214,12 @@ status_t ABBinder::onTransact(transaction_code_t code, const Parcel& data, Parce
         binder_status_t status = getClass()->onTransact(this, code, &in, &out);
         return PruneStatusT(status);
     } else if (code == SHELL_COMMAND_TRANSACTION && getClass()->handleShellCommand != nullptr) {
+        if constexpr (!android::kEnableKernelIpc) {
+            // Non-IPC builds do not have getCallingUid(),
+            // so we have no way of authenticating the caller
+            return STATUS_PERMISSION_DENIED;
+        }
+
         int in = data.readFileDescriptor();
         int out = data.readFileDescriptor();
         int err = data.readFileDescriptor();
@@ -602,6 +611,7 @@ binder_status_t AIBinder_unlinkToDeath(AIBinder* binder, AIBinder_DeathRecipient
     return recipient->unlinkToDeath(binder->getBinder(), cookie);
 }
 
+#ifdef BINDER_WITH_KERNEL_IPC
 uid_t AIBinder_getCallingUid() {
     return ::android::IPCThreadState::self()->getCallingUid();
 }
@@ -613,6 +623,7 @@ pid_t AIBinder_getCallingPid() {
 bool AIBinder_isHandlingTransaction() {
     return ::android::IPCThreadState::self()->getServingStackPointer() != nullptr;
 }
+#endif
 
 void AIBinder_incStrong(AIBinder* binder) {
     if (binder == nullptr) {
@@ -830,9 +841,11 @@ void AIBinder_setRequestingSid(AIBinder* binder, bool requestingSid) {
     localBinder->setRequestingSid(requestingSid);
 }
 
+#ifdef BINDER_WITH_KERNEL_IPC
 const char* AIBinder_getCallingSid() {
     return ::android::IPCThreadState::self()->getCallingSid();
 }
+#endif
 
 void AIBinder_setMinSchedulerPolicy(AIBinder* binder, int policy, int priority) {
     binder->asABBinder()->setMinSchedulerPolicy(policy, priority);

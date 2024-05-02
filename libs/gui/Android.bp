@@ -155,9 +155,9 @@ cc_library_static {
     },
 }
 
-aidl_library {
-    name: "libgui_aidl_hdrs",
-    hdrs: [
+filegroup {
+    name: "libgui_extra_aidl_files",
+    srcs: [
         "android/gui/DisplayInfo.aidl",
         "android/gui/FocusRequest.aidl",
         "android/gui/InputApplicationInfo.aidl",
@@ -170,11 +170,34 @@ aidl_library {
     ],
 }
 
+filegroup {
+    name: "libgui_extra_unstructured_aidl_files",
+    srcs: [
+        "android/gui/DisplayInfo.aidl",
+        "android/gui/InputApplicationInfo.aidl",
+        "android/gui/WindowInfo.aidl",
+        "android/gui/WindowInfosUpdate.aidl",
+    ],
+}
+
+aidl_library {
+    name: "libgui_aidl_hdrs",
+    hdrs: [":libgui_extra_aidl_files"],
+}
+
+aidl_library {
+    name: "libgui_extra_unstructured_aidl_hdrs",
+    hdrs: [":libgui_extra_unstructured_aidl_files"],
+}
+
 aidl_library {
     name: "libgui_aidl",
     srcs: ["aidl/**/*.aidl"],
     strip_import_prefix: "aidl",
-    deps: ["libgui_aidl_hdrs"],
+    deps: [
+        "libgui_aidl_hdrs",
+        "libgui_extra_unstructured_aidl_hdrs",
+    ],
 }
 
 filegroup {
@@ -241,7 +264,6 @@ filegroup {
         "IProducerListener.cpp",
         "ISurfaceComposer.cpp",
         "ITransactionCompletedListener.cpp",
-        "LayerDebugInfo.cpp",
         "LayerMetadata.cpp",
         "LayerStatePermissions.cpp",
         "LayerState.cpp",
@@ -287,10 +309,6 @@ cc_defaults {
 cc_library_shared {
     name: "libgui",
     vendor_available: true,
-    vndk: {
-        enabled: true,
-        private: true,
-    },
     double_loadable: true,
 
     defaults: [
@@ -536,8 +554,10 @@ qtidisplayextension_cc_defaults {
     },
     header_libs: [
         "display_intf_headers",
+        "libimapper_stablec",
     ],
     shared_libs: [
+        "libvndksupport",
         "libgralloctypes",
         "libhidlbase",
         "android.hardware.graphics.mapper@4.0",

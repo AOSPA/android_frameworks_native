@@ -100,7 +100,9 @@ mod error;
 mod native;
 mod parcel;
 mod proxy;
-#[cfg(not(target_os = "trusty"))]
+#[cfg(not(trusty))]
+mod service;
+#[cfg(not(trusty))]
 mod state;
 
 use binder_ndk_sys as sys;
@@ -108,16 +110,15 @@ use binder_ndk_sys as sys;
 pub use crate::binder_async::{BinderAsyncPool, BoxFuture};
 pub use binder::{BinderFeatures, FromIBinder, IBinder, Interface, Strong, Weak};
 pub use error::{ExceptionCode, IntoBinderResult, Status, StatusCode};
-pub use native::{
-    add_service, force_lazy_services_persist, is_handling_transaction, register_lazy_service,
-    LazyServiceGuard,
-};
 pub use parcel::{ParcelFileDescriptor, Parcelable, ParcelableHolder};
-pub use proxy::{
-    get_declared_instances, get_interface, get_service, is_declared, wait_for_interface,
-    wait_for_service, DeathRecipient, SpIBinder, WpIBinder,
+pub use proxy::{DeathRecipient, SpIBinder, WpIBinder};
+#[cfg(not(trusty))]
+pub use service::{
+    add_service, force_lazy_services_persist, get_declared_instances, get_interface, get_service,
+    is_declared, is_handling_transaction, register_lazy_service, wait_for_interface,
+    wait_for_service, LazyServiceGuard,
 };
-#[cfg(not(target_os = "trusty"))]
+#[cfg(not(trusty))]
 pub use state::{ProcessState, ThreadState};
 
 /// Binder result containing a [`Status`] on error.
