@@ -238,11 +238,6 @@ private:
     Surface& operator = (const Surface& rhs);
     Surface(const Surface& rhs);
 
-    /* QTI_BEGIN */
-    friend class libguiextension::QtiSurfaceExtension;
-    libguiextension::QtiSurfaceExtension* mQtiSurfaceExtn = nullptr;
-    /* QTI_END */
-
     // ANativeWindow hooks
     static int hook_cancelBuffer(ANativeWindow* window,
             ANativeWindowBuffer* buffer, int fenceFd);
@@ -456,6 +451,11 @@ protected:
         sp<GraphicBuffer> buffer;
         Region dirtyRegion;
     };
+
+    /* QTI_BEGIN */
+    friend class libguiextension::QtiSurfaceExtension;
+    libguiextension::QtiSurfaceExtension* mQtiSurfaceExtn = nullptr;
+    /* QTI_END */
 
     // mSurfaceTexture is the interface to the surface texture server. All
     // operations on the surface texture client ultimately translate into
