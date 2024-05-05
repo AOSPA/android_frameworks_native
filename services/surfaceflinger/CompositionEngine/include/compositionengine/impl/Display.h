@@ -98,6 +98,7 @@ public:
 
 private:
     bool isPowerHintSessionEnabled() override;
+    bool isPowerHintSessionGpuReportingEnabled() override;
     void setHintSessionGpuStart(TimePoint startTime) override;
     void setHintSessionGpuFence(std::unique_ptr<FenceTime>&& gpuFence) override;
     void setHintSessionRequiresRenderEngine(bool requiresRenderEngine) override;
