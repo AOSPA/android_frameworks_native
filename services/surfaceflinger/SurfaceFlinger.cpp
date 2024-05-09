@@ -804,6 +804,9 @@ void SurfaceFlinger::bootFinished() {
             ftl::FakeGuard guard(mStateLock);
             enableRefreshRateOverlay(true);
         }
+        /* QTI_BEGIN */
+        mQtiSFExtnIntf->qtiFbScalingOnBoot();
+        /* QTI_END */
     }));
 }
 
@@ -4109,6 +4112,10 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
     }
 
     if (const auto display = getDisplayDeviceLocked(displayToken)) {
+        /* QTI_BEGIN */
+        bool qtiDisplaySizeChanged = false;
+        /* QTI_END */
+
         if (currentState.layerStack != drawingState.layerStack) {
             display->setLayerFilter(
                     makeLayerFilterForDisplay(display->getId(), currentState.layerStack));
@@ -4124,8 +4131,17 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         if ((currentState.orientation != drawingState.orientation) ||
             (currentState.layerStackSpaceRect != drawingState.layerStackSpaceRect) ||
             (currentState.orientedDisplaySpaceRect != drawingState.orientedDisplaySpaceRect)) {
-            display->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
-                                   currentState.orientedDisplaySpaceRect);
+            /* QTI_BEGIN */
+            if (mQtiSFExtnIntf->qtiFbScalingOnDisplayChange(displayToken, display, drawingState)) {
+                qtiDisplaySizeChanged = true;
+            } else {
+                /* QTI_END */
+                display->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                       currentState.orientedDisplaySpaceRect);
+                /* QTI_BEGIN */
+            }
+            /* QTI_END */
+
             if (display->getId() == mActiveDisplayId) {
                 mActiveDisplayTransformHint = display->getTransformHint();
                 sActiveDisplayRotationFlags =
@@ -4134,11 +4150,17 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         }
         if (currentState.width != drawingState.width ||
             currentState.height != drawingState.height) {
-            display->setDisplaySize(currentState.width, currentState.height);
+            /* QTI_BEGIN */
+            if (!qtiDisplaySizeChanged) {
+                /* QTI_END */
+                display->setDisplaySize(currentState.width, currentState.height);
 
-            if (display->getId() == mActiveDisplayId) {
-                onActiveDisplaySizeChanged(*display);
+                if (display->getId() == mActiveDisplayId) {
+                    onActiveDisplaySizeChanged(*display);
+                }
+                /* QTI_BEGIN */
             }
+            /* QTI_END */
         }
     }
 }
@@ -6601,6 +6623,12 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
         ALOGE("Attempting to set unknown power mode: %d\n", mode);
         getHwComposer().setPowerMode(displayId, mode);
     }
+
+    /* QTI_BEGIN */
+    if (display->isPrimary()) {
+        mQtiSFExtnIntf->qtiFbScalingOnPowerChange(display);
+    }
+    /* QTI_END */
 
     if (displayId == mActiveDisplayId) {
         mTimeStats->setPowerMode(mode);

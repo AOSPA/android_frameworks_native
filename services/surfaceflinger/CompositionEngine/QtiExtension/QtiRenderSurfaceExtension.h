@@ -17,9 +17,11 @@ public:
     QtiRenderSurfaceExtension(RenderSurface* renderSurface);
 
     int32_t qtiGetClientTargetFormat();
+    void qtiSetViewportAndProjection();
 
 private:
     bool mQtiEnableExtn = false;
+
     RenderSurface* mQtiRenderSurface = nullptr;
 };
 

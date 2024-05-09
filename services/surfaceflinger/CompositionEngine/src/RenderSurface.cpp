@@ -70,9 +70,11 @@ RenderSurface::RenderSurface(const CompositionEngine& compositionEngine, Display
         mDisplaySurface(args.displaySurface),
         mSize(args.displayWidth, args.displayHeight),
         mMaxTextureCacheSize(args.maxTextureCacheSize) {
+    /* QTI_BEGIN */
     mQtiDSExtnIntf = args.mQtiDSExtnIntf;
     mQtiRSExtnIntf =
             std::make_shared<android::compositionengineextension::QtiRenderSurfaceExtension>(this);
+    /* QTI_END */
 
     LOG_ALWAYS_FATAL_IF(!mNativeWindow);
 }
