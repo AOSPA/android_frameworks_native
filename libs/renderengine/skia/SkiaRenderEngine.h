@@ -78,6 +78,10 @@ public:
     }
     void ensureContextsCreated();
 
+    /* QTI_BEGIN */
+    void setViewportAndProjection(Rect /*viewPort*/, Rect /*sourceCrop*/) override {}
+    /* QTI_END */
+
 protected:
     // This is so backends can stop the generic rendering state first before cleaning up
     // backend-specific state. SkiaGpuContexts are invalid after invocation.

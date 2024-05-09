@@ -138,6 +138,13 @@ public:
     bool qtiIsFpsDeferNeeded(float newFpsRequest) override;
     void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
                                    int32_t vsyncPeriod) override;
+    void qtiSetFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,
+                                         DisplayDeviceState& currentState,
+                                         const DisplayDeviceState& drawingState) override;
+    void qtiFbScalingOnBoot() override;
+    bool qtiFbScalingOnDisplayChange(const wp<IBinder>& displayToken, sp<DisplayDevice> display,
+                                     const DisplayDeviceState& drawingState) override;
+    void qtiFbScalingOnPowerChange(sp<DisplayDevice> display) override;
 
 private:
     SurfaceFlinger* mQtiFlinger = nullptr;

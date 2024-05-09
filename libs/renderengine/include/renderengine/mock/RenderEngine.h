@@ -54,6 +54,10 @@ public:
     MOCK_METHOD0(supportsBackgroundBlur, bool());
     MOCK_METHOD1(onActiveDisplaySizeChanged, void(ui::Size));
 
+    /* QTI_BEGIN */
+    MOCK_METHOD2(setViewportAndProjection, void(Rect, Rect));
+    /* QTI_END */
+
 protected:
     // mock renderengine still needs to implement these, but callers should never need to call them.
     void mapExternalTextureBuffer(const sp<GraphicBuffer>&, bool) {}
