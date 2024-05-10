@@ -71,6 +71,7 @@
 #include <ui/FenceResult.h>
 
 #include <common/FlagManager.h>
+#include "Display/DisplayModeController.h"
 #include "Display/PhysicalDisplay.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWC2.h"
@@ -731,7 +732,7 @@ private:
     // Get the controller and timeout that will help decide how the kernel idle timer will be
     // configured and what value to use as the timeout.
     std::pair<std::optional<KernelIdleTimerController>, std::chrono::milliseconds>
-            getKernelIdleTimerProperties(DisplayId) REQUIRES(mStateLock);
+            getKernelIdleTimerProperties(PhysicalDisplayId) REQUIRES(mStateLock);
     // Updates the kernel idle timer either through HWC or through sysprop
     // depending on which controller is provided
     void updateKernelIdleTimer(std::chrono::milliseconds timeoutMs, KernelIdleTimerController,
@@ -1015,8 +1016,7 @@ private:
         return getDefaultDisplayDeviceLocked();
     }
 
-    using DisplayDeviceAndSnapshot =
-            std::pair<sp<DisplayDevice>, display::PhysicalDisplay::SnapshotRef>;
+    using DisplayDeviceAndSnapshot = std::pair<sp<DisplayDevice>, display::DisplaySnapshotRef>;
 
     // Combinator for ftl::Optional<PhysicalDisplay>::and_then.
     auto getDisplayDeviceAndSnapshot() REQUIRES(mStateLock) {
@@ -1085,10 +1085,13 @@ private:
     bool configureLocked() REQUIRES(mStateLock) REQUIRES(kMainThreadContext)
             EXCLUDES(mHotplugMutex);
 
-    // Returns a string describing the hotplug, or nullptr if it was rejected.
-    const char* processHotplug(PhysicalDisplayId, hal::HWDisplayId, bool connected,
-                               DisplayIdentificationInfo&&) REQUIRES(mStateLock)
-            REQUIRES(kMainThreadContext);
+    // Returns the active mode ID, or nullopt on hotplug failure.
+    std::optional<DisplayModeId> processHotplugConnect(PhysicalDisplayId, hal::HWDisplayId,
+                                                       DisplayIdentificationInfo&&,
+                                                       const char* displayString)
+            REQUIRES(mStateLock, kMainThreadContext);
+    void processHotplugDisconnect(PhysicalDisplayId, const char* displayString)
+            REQUIRES(mStateLock, kMainThreadContext);
 
     sp<DisplayDevice> setupNewDisplayDeviceInternal(
             const wp<IBinder>& displayToken,
@@ -1351,6 +1354,8 @@ private:
     // reads from ISchedulerCallback::requestDisplayModes may happen concurrently.
     std::atomic<PhysicalDisplayId> mActiveDisplayId GUARDED_BY(mStateLock);
 
+    display::DisplayModeController mDisplayModeController;
+
     struct {
         DisplayIdGenerator<GpuVirtualDisplayId> gpu;
         std::optional<DisplayIdGenerator<HalVirtualDisplayId>> hal;
@@ -1514,7 +1519,6 @@ private:
     bool mPowerHintSessionEnabled;
 
     bool mLayerLifecycleManagerEnabled = false;
-    bool mLegacyFrontEndEnabled = true;
 
     frontend::LayerLifecycleManager mLayerLifecycleManager GUARDED_BY(kMainThreadContext);
     frontend::LayerHierarchyBuilder mLayerHierarchyBuilder GUARDED_BY(kMainThreadContext);

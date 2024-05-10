@@ -46,6 +46,7 @@ namespace android::scheduler {
 using MockLayer = android::mock::MockLayer;
 
 using android::mock::createDisplayMode;
+using android::mock::createVrrDisplayMode;
 
 // WARNING: LEGACY TESTS FOR LEGACY FRONT END
 // Update LayerHistoryIntegrationTest instead
@@ -138,12 +139,14 @@ protected:
         ASSERT_EQ(desiredRefreshRate, summary[0].desiredRefreshRate);
     }
 
-    std::shared_ptr<RefreshRateSelector> mSelector =
-            std::make_shared<RefreshRateSelector>(makeModes(createDisplayMode(DisplayModeId(0),
-                                                                              LO_FPS),
-                                                            createDisplayMode(DisplayModeId(1),
-                                                                              HI_FPS)),
-                                                  DisplayModeId(0));
+    static constexpr auto kVrrModeId = DisplayModeId(2);
+    std::shared_ptr<RefreshRateSelector> mSelector = std::make_shared<RefreshRateSelector>(
+            makeModes(createDisplayMode(DisplayModeId(0), LO_FPS),
+                      createDisplayMode(DisplayModeId(1), HI_FPS),
+                      createVrrDisplayMode(kVrrModeId, HI_FPS,
+                                           hal::VrrConfig{.minFrameIntervalNs =
+                                                                  HI_FPS.getPeriodNsecs()})),
+            DisplayModeId(0));
 
     mock::SchedulerCallback mSchedulerCallback;
     TestableSurfaceFlinger mFlinger;
@@ -503,7 +506,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitVote) {
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(1, frequentLayerCount(time));
 
-    // layer became inactive, but the vote stays
+    // layer became infrequent, but the vote stays
     setDefaultLayerVote(layer.get(), LayerHistory::LayerVoteType::Heuristic);
     time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
     ASSERT_EQ(1, summarizeLayerHistory(time).size());
@@ -537,7 +540,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitExactVote) {
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(1, frequentLayerCount(time));
 
-    // layer became inactive, but the vote stays
+    // layer became infrequent, but the vote stays
     setDefaultLayerVote(layer.get(), LayerHistory::LayerVoteType::Heuristic);
     time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
     ASSERT_EQ(1, summarizeLayerHistory(time).size());
@@ -546,6 +549,87 @@ TEST_F(LayerHistoryTest, oneLayerExplicitExactVote) {
     EXPECT_EQ(73.4_Hz, summarizeLayerHistory(time)[0].desiredRefreshRate);
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(0, frequentLayerCount(time));
+}
+
+TEST_F(LayerHistoryTest, oneLayerExplicitGte_vrr) {
+    // Set the test to be on a vrr mode.
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
+    mSelector->setActiveMode(kVrrModeId, HI_FPS);
+
+    auto layer = createLayer();
+    EXPECT_CALL(*layer, isVisible()).WillRepeatedly(Return(true));
+    EXPECT_CALL(*layer, getFrameRateForLayerTree())
+            .WillRepeatedly(Return(Layer::FrameRate(33_Hz, Layer::FrameRateCompatibility::Gte,
+                                                    Seamlessness::OnlySeamless,
+                                                    FrameRateCategory::Default)));
+
+    EXPECT_EQ(1, layerCount());
+    EXPECT_EQ(0, activeLayerCount());
+
+    nsecs_t time = systemTime();
+    for (int i = 0; i < PRESENT_TIME_HISTORY_SIZE; i++) {
+        history().record(layer->getSequence(), layer->getLayerProps(), time, time,
+                         LayerHistory::LayerUpdateType::Buffer);
+        time += HI_FPS_PERIOD;
+    }
+
+    ASSERT_EQ(1, summarizeLayerHistory(time).size());
+    EXPECT_EQ(1, activeLayerCount());
+    EXPECT_EQ(1, frequentLayerCount(time));
+    EXPECT_EQ(LayerHistory::LayerVoteType::ExplicitGte, summarizeLayerHistory(time)[0].vote);
+    EXPECT_EQ(33_Hz, summarizeLayerHistory(time)[0].desiredRefreshRate);
+    EXPECT_EQ(FrameRateCategory::Default, summarizeLayerHistory(time)[0].frameRateCategory);
+
+    // layer became inactive, but the vote stays
+    setDefaultLayerVote(layer.get(), LayerHistory::LayerVoteType::Heuristic);
+    time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
+    ASSERT_EQ(1, summarizeLayerHistory(time).size());
+    EXPECT_EQ(1, activeLayerCount());
+    EXPECT_EQ(0, frequentLayerCount(time));
+    EXPECT_EQ(LayerHistory::LayerVoteType::ExplicitGte, summarizeLayerHistory(time)[0].vote);
+    EXPECT_EQ(33_Hz, summarizeLayerHistory(time)[0].desiredRefreshRate);
+    EXPECT_EQ(FrameRateCategory::Default, summarizeLayerHistory(time)[0].frameRateCategory);
+}
+
+// Test for MRR device with VRR features enabled.
+TEST_F(LayerHistoryTest, oneLayerExplicitGte_nonVrr) {
+    SET_FLAG_FOR_TEST(flags::frame_rate_category_mrr, true);
+    // The vrr_config flag is explicitly not set false because this test for an MRR device
+    // should still work in a VRR-capable world.
+
+    auto layer = createLayer();
+    EXPECT_CALL(*layer, isVisible()).WillRepeatedly(Return(true));
+    EXPECT_CALL(*layer, getFrameRateForLayerTree())
+            .WillRepeatedly(Return(Layer::FrameRate(33_Hz, Layer::FrameRateCompatibility::Gte,
+                                                    Seamlessness::OnlySeamless,
+                                                    FrameRateCategory::Default)));
+
+    EXPECT_EQ(1, layerCount());
+    EXPECT_EQ(0, activeLayerCount());
+
+    nsecs_t time = systemTime();
+    for (int i = 0; i < PRESENT_TIME_HISTORY_SIZE; i++) {
+        history().record(layer->getSequence(), layer->getLayerProps(), time, time,
+                         LayerHistory::LayerUpdateType::Buffer);
+        time += HI_FPS_PERIOD;
+    }
+
+    ASSERT_EQ(1, summarizeLayerHistory(time).size());
+    EXPECT_EQ(1, activeLayerCount());
+    EXPECT_EQ(1, frequentLayerCount(time));
+    EXPECT_EQ(LayerHistory::LayerVoteType::Max, summarizeLayerHistory(time)[0].vote);
+    EXPECT_EQ(0_Hz, summarizeLayerHistory(time)[0].desiredRefreshRate);
+    EXPECT_EQ(FrameRateCategory::Default, summarizeLayerHistory(time)[0].frameRateCategory);
+
+    // layer became infrequent, but the vote stays
+    setDefaultLayerVote(layer.get(), LayerHistory::LayerVoteType::Heuristic);
+    time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
+    ASSERT_EQ(1, summarizeLayerHistory(time).size());
+    EXPECT_EQ(1, activeLayerCount());
+    EXPECT_EQ(0, frequentLayerCount(time));
+    EXPECT_EQ(LayerHistory::LayerVoteType::Max, summarizeLayerHistory(time)[0].vote);
+    EXPECT_EQ(0_Hz, summarizeLayerHistory(time)[0].desiredRefreshRate);
+    EXPECT_EQ(FrameRateCategory::Default, summarizeLayerHistory(time)[0].frameRateCategory);
 }
 
 TEST_F(LayerHistoryTest, oneLayerExplicitVoteWithCategory_vrrFeatureOff) {
@@ -608,7 +692,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitCategory) {
     EXPECT_EQ(0_Hz, summarizeLayerHistory(time)[0].desiredRefreshRate);
     EXPECT_EQ(FrameRateCategory::High, summarizeLayerHistory(time)[0].frameRateCategory);
 
-    // layer became inactive, but the vote stays
+    // layer became infrequent, but the vote stays
     setDefaultLayerVote(layer.get(), LayerHistory::LayerVoteType::Heuristic);
     time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
     ASSERT_EQ(1, summarizeLayerHistory(time).size());
@@ -645,7 +729,7 @@ TEST_F(LayerHistoryTest, oneLayerCategoryNoPreference) {
     EXPECT_EQ(1, activeLayerCount());
     EXPECT_EQ(1, frequentLayerCount(time));
 
-    // layer became inactive
+    // layer became infrequent
     time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
     EXPECT_EQ(1, summarizeLayerHistory(time).size());
     EXPECT_EQ(1, activeLayerCount());
@@ -686,7 +770,7 @@ TEST_F(LayerHistoryTest, oneLayerExplicitVoteWithCategory) {
     EXPECT_EQ(73.4_Hz, summarizeLayerHistory(time)[1].desiredRefreshRate);
     EXPECT_EQ(FrameRateCategory::Default, summarizeLayerHistory(time)[1].frameRateCategory);
 
-    // layer became inactive, but the vote stays
+    // layer became infrequent, but the vote stays
     setDefaultLayerVote(layer.get(), LayerHistory::LayerVoteType::Heuristic);
     time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
     ASSERT_EQ(2, summarizeLayerHistory(time).size());
@@ -1095,7 +1179,7 @@ TEST_F(LayerHistoryTest, frontBufferedLayerVotesMax) {
     EXPECT_EQ(0, frequentLayerCount(time));
     EXPECT_EQ(0, animatingLayerCount(time));
 
-    // layer became inactive
+    // Layer still active due to front buffering, but it's infrequent.
     time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
     ASSERT_EQ(1, summarizeLayerHistory(time).size());
     EXPECT_EQ(LayerHistory::LayerVoteType::Max, summarizeLayerHistory(time)[0].vote);
