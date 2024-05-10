@@ -2114,11 +2114,13 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
         }
         qtiRSExtnIntf->qtiSetViewportAndProjection();
         if (displayDevice->isPoweredOn()) {
+            qtiRSExtnIntf->qtiSetFlipClientTarget(true);
             // queue a scratch buffer to flip Client Target with updated size
             // TODO: Get the correct HDR/SDR ratio for the buffer. Hardcoding this to the default
             // value for now since SFExtensions doesn't have an access to the buffer object.
             display->getRenderSurface()->queueBuffer(std::move(fd), 1.0);
             // releases the FrameBuffer that was acquired as part of queueBuffer()
+            qtiRSExtnIntf->qtiSetFlipClientTarget(false);
             display->getRenderSurface()->onPresentDisplayCompleted();
         } else {
             mQtiDisplaySizeChanged = true;
@@ -2175,10 +2177,12 @@ void QtiSurfaceFlingerExtension::qtiFbScalingOnPowerChange(sp<DisplayDevice> dis
         ALOGV("%s: QtiRenderSurfaceExtension is invalid", __func__);
         return;
     }
+    qtiRSExtnIntf->qtiSetFlipClientTarget(true);
     // qtueue a scratch buffer to flip client target with updated size
     // TODO: Get the correct HDR/SDR ratio for the buffer. Hardcoding this to the default value for
     //now since SFExtensions doesn't have an access to the buffer object.
     compositionDisplay->getRenderSurface()->queueBuffer(std::move(fd), 1.0);
+    qtiRSExtnIntf->qtiSetFlipClientTarget(false);
     // releases the FrameBuffer that was acquired as part of queueBuffer()
     compositionDisplay->getRenderSurface()->onPresentDisplayCompleted();
     mQtiDisplaySizeChanged = false;
