@@ -3991,7 +3991,6 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         mQtiSFExtnIntf->qtiSetPowerModeOverrideConfig(display);
         mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ true);
         mQtiSFExtnIntf->qtiTryDrawMethod(display);
-
         /* QTI_END */
 
         if (mScheduler) {
@@ -4038,6 +4037,10 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
 void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
     auto display = getDisplayDeviceLocked(displayToken);
     if (display) {
+        /* QTI_BEGIN */
+        mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ false);
+        /* QTI_END */
+
         display->disconnect();
 
         if (display->isVirtual()) {
