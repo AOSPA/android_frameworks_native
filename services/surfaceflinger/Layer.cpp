@@ -165,7 +165,7 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
         mWindowType(static_cast<WindowInfo::Type>(
                 args.metadata.getInt32(gui::METADATA_WINDOW_TYPE, 0))),
         mLayerCreationFlags(args.flags),
-        mLegacyLayerFE(args.flinger->getFactory().createLayerFE(mName)) {
+        mLegacyLayerFE(args.flinger->getFactory().createLayerFE(mName, this)) {
     ALOGV("Creating Layer %s", getDebugName());
 
     uint32_t layerFlags = 0;
@@ -3262,10 +3262,6 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     mFlinger->mTimeStats->setPostTime(layerId, mDrawingState.frameNumber, getName().c_str(),
                                       mOwnerUid, postTime, getGameMode());
 
-    if (mFlinger->mLegacyFrontEndEnabled) {
-        recordLayerHistoryBufferUpdate(getLayerProps(), systemTime());
-    }
-
     setFrameTimelineVsyncForBufferTransaction(info, postTime);
 
     if (dequeueTime && *dequeueTime != 0) {
@@ -4021,7 +4017,7 @@ const compositionengine::LayerFECompositionState* Layer::getCompositionState() c
 }
 
 sp<LayerFE> Layer::copyCompositionEngineLayerFE() const {
-    auto result = mFlinger->getFactory().createLayerFE(mName);
+    auto result = mFlinger->getFactory().createLayerFE(mName, this);
     result->mSnapshot = std::make_unique<LayerSnapshot>(*mSnapshot);
     return result;
 }
@@ -4033,7 +4029,7 @@ sp<LayerFE> Layer::getCompositionEngineLayerFE(
             return layerFE;
         }
     }
-    auto layerFE = mFlinger->getFactory().createLayerFE(mName);
+    auto layerFE = mFlinger->getFactory().createLayerFE(mName, this);
     mLayerFEs.emplace_back(path, layerFE);
     return layerFE;
 }

@@ -72,6 +72,9 @@ GpuService::GpuService()
 };
 
 GpuService::~GpuService() {
+    mGpuMem->stop();
+    mGpuWork->stop();
+
     mGpuWorkAsyncInitThread->join();
     mGpuMemAsyncInitThread->join();
 }
@@ -95,6 +98,12 @@ void GpuService::setTargetStatsArray(const std::string& appPackageName,
                                 const uint64_t driverVersionCode, const GpuStatsInfo::Stats stats,
                                 const uint64_t* values, const uint32_t valueCount) {
     mGpuStats->insertTargetStatsArray(appPackageName, driverVersionCode, stats, values, valueCount);
+}
+
+void GpuService::addVulkanEngineName(const std::string& appPackageName,
+                                     const uint64_t driverVersionCode,
+                                     const char* engineName) {
+    mGpuStats->addVulkanEngineName(appPackageName, driverVersionCode, engineName);
 }
 
 void GpuService::toggleAngleAsSystemDriver(bool enabled) {

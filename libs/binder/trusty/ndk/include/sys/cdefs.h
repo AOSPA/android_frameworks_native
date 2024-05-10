@@ -27,4 +27,3 @@
 #endif
 
 #define __INTRODUCED_IN(x) /* nothing on Trusty */
-#define __INTRODUCED_IN_LLNDK(x) /* nothing on Trusty */
