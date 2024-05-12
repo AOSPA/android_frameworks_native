@@ -58,7 +58,7 @@
 #define __INTRODUCED_IN(__api_level) /* nothing */
 #endif
 #if !defined(__DEPRECATED_IN)
-#define __DEPRECATED_IN(__api_level) __attribute__((__deprecated__))
+#define __DEPRECATED_IN(__api_level, ...) __attribute__((__deprecated__))
 #endif
 
 __BEGIN_DECLS
@@ -133,7 +133,7 @@ AChoreographer* AChoreographer_getInstance() __INTRODUCED_IN(24);
  */
 void AChoreographer_postFrameCallback(AChoreographer* choreographer,
                                       AChoreographer_frameCallback callback, void* data)
-        __INTRODUCED_IN(24) __DEPRECATED_IN(29);
+        __INTRODUCED_IN(24) __DEPRECATED_IN(29, "Use AChoreographer_postFrameCallback64 instead");
 
 /**
  * Deprecated: Use AChoreographer_postFrameCallbackDelayed64 instead.
@@ -141,7 +141,7 @@ void AChoreographer_postFrameCallback(AChoreographer* choreographer,
 void AChoreographer_postFrameCallbackDelayed(AChoreographer* choreographer,
                                              AChoreographer_frameCallback callback, void* data,
                                              long delayMillis) __INTRODUCED_IN(24)
-        __DEPRECATED_IN(29);
+        __DEPRECATED_IN(29, "Use AChoreographer_postFrameCallbackDelayed64 instead");
 
 /**
  * Post a callback to be run on the next frame.  The data pointer provided will
