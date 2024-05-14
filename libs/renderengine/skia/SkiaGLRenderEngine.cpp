@@ -271,7 +271,7 @@ SkiaGLRenderEngine::SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGL
                                        EGLContext ctxt, EGLSurface placeholder,
                                        EGLContext protectedContext, EGLSurface protectedPlaceholder)
       : SkiaRenderEngine(args.threaded, static_cast<PixelFormat>(args.pixelFormat),
-                         args.supportsBackgroundBlur),
+                         args.blurAlgorithm),
         mEGLDisplay(display),
         mEGLContext(ctxt),
         mPlaceholderSurface(placeholder),
@@ -279,7 +279,7 @@ SkiaGLRenderEngine::SkiaGLRenderEngine(const RenderEngineCreationArgs& args, EGL
         mProtectedPlaceholderSurface(protectedPlaceholder) {}
 
 SkiaGLRenderEngine::~SkiaGLRenderEngine() {
-    finishRenderingAndAbandonContext();
+    finishRenderingAndAbandonContexts();
     if (mPlaceholderSurface != EGL_NO_SURFACE) {
         eglDestroySurface(mEGLDisplay, mPlaceholderSurface);
     }

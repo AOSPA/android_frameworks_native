@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -106,7 +106,8 @@ private:
     }
 
     QtiDisplayCommand* qtiGetDisplayCommand(int64_t display) {
-        if (!mQtiDisplayCommand.has_value() || mQtiDisplayCommand->display != display) {
+        if (!mQtiDisplayCommand.has_value() ||
+            (mQtiDisplayCommand.has_value() && mQtiDisplayCommand->display != display)) {
             if (display != mDisplay) {
                 ALOGW("Incorrect display id, skipping QTI command");
                 return nullptr;
@@ -123,7 +124,8 @@ private:
         auto qtiDisplayCommand = qtiGetDisplayCommand(display);
         if (!qtiDisplayCommand) return nullptr;
 
-        if (!mQtiLayerCommand.has_value() || mQtiLayerCommand->layer != layer) {
+        if (!mQtiLayerCommand.has_value() ||
+            (mQtiLayerCommand.has_value() && mQtiLayerCommand->layer != layer)) {
             qtiFlushLayerCommand();
             mQtiLayerCommand.emplace();
             mQtiLayerCommand->layer = layer;

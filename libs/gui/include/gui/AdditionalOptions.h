@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,19 @@
  * limitations under the License.
  */
 
-#ifndef _BINDER_MODULE_H_
-#define _BINDER_MODULE_H_
+#pragma once
 
-/* obtain structures and constants from the kernel header */
+#include <string>
 
-// TODO(b/31559095): bionic on host
-#ifndef __ANDROID__
-#define __packed __attribute__((__packed__))
-#endif
+namespace android::gui {
+// Additional options to pass to AHardwareBuffer_allocateWithOptions.
+// See also allocator-v2's BufferDescriptorInfo.aidl
+struct AdditionalOptions {
+    std::string name;
+    int64_t value;
 
-// TODO(b/31559095): bionic on host
-#if defined(B_PACK_CHARS) && !defined(_UAPI_LINUX_BINDER_H)
-#undef B_PACK_CHARS
-#endif
-
-#include <linux/android/binder.h>
-#include <sys/ioctl.h>
-
-#endif // _BINDER_MODULE_H_
+    bool operator==(const AdditionalOptions& other) const {
+        return value == other.value && name == other.name;
+    }
+};
+} // namespace android::gui
