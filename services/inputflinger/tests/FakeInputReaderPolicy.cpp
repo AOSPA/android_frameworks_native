@@ -82,9 +82,9 @@ void FakeInputReaderPolicy::addDisplayViewport(DisplayViewport viewport) {
     mConfig.setDisplayViewports(mViewports);
 }
 
-void FakeInputReaderPolicy::addDisplayViewport(int32_t displayId, int32_t width, int32_t height,
-                                               ui::Rotation orientation, bool isActive,
-                                               const std::string& uniqueId,
+void FakeInputReaderPolicy::addDisplayViewport(ui::LogicalDisplayId displayId, int32_t width,
+                                               int32_t height, ui::Rotation orientation,
+                                               bool isActive, const std::string& uniqueId,
                                                std::optional<uint8_t> physicalPort,
                                                ViewportType type) {
     const bool isRotated = orientation == ui::ROTATION_90 || orientation == ui::ROTATION_270;
@@ -155,11 +155,6 @@ void FakeInputReaderPolicy::removeDisabledDevice(int32_t deviceId) {
     mConfig.disabledDevices.erase(deviceId);
 }
 
-void FakeInputReaderPolicy::setPointerController(
-        std::shared_ptr<FakePointerController> controller) {
-    mPointerController = std::move(controller);
-}
-
 const InputReaderConfiguration& FakeInputReaderPolicy::getReaderConfiguration() const {
     return mConfig;
 }
@@ -183,11 +178,7 @@ PointerCaptureRequest FakeInputReaderPolicy::setPointerCapture(const sp<IBinder>
     return mConfig.pointerCaptureRequest;
 }
 
-void FakeInputReaderPolicy::setShowTouches(bool enabled) {
-    mConfig.showTouches = enabled;
-}
-
-void FakeInputReaderPolicy::setDefaultPointerDisplayId(int32_t pointerDisplayId) {
+void FakeInputReaderPolicy::setDefaultPointerDisplayId(ui::LogicalDisplayId pointerDisplayId) {
     mConfig.defaultPointerDisplayId = pointerDisplayId;
 }
 
@@ -228,11 +219,6 @@ void FakeInputReaderPolicy::getReaderConfiguration(InputReaderConfiguration* out
     *outConfig = mConfig;
 }
 
-std::shared_ptr<PointerControllerInterface> FakeInputReaderPolicy::obtainPointerController(
-        int32_t /*deviceId*/) {
-    return mPointerController;
-}
-
 void FakeInputReaderPolicy::notifyInputDevicesChanged(
         const std::vector<InputDeviceInfo>& inputDevices) {
     std::scoped_lock lock(mLock);
@@ -269,8 +255,8 @@ void FakeInputReaderPolicy::notifyStylusGestureStarted(int32_t deviceId, nsecs_t
 }
 
 std::optional<DisplayViewport> FakeInputReaderPolicy::getPointerViewportForAssociatedDisplay(
-        int32_t associatedDisplayId) {
-    if (associatedDisplayId == ADISPLAY_ID_NONE) {
+        ui::LogicalDisplayId associatedDisplayId) {
+    if (!associatedDisplayId.isValid()) {
         associatedDisplayId = mConfig.defaultPointerDisplayId;
     }
     for (auto& viewport : mViewports) {

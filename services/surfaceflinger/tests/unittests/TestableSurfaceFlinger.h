@@ -420,8 +420,15 @@ public:
         commit(kComposite);
     }
 
-    auto createDisplay(const String8& displayName, bool secure, float requestedRefreshRate = 0.0f) {
-        return mFlinger->createDisplay(displayName, secure, requestedRefreshRate);
+    auto createDisplay(const String8& displayName, bool isSecure,
+                       float requestedRefreshRate = 0.0f) {
+        const std::string testId = "virtual:libsurfaceflinger_unittest:TestableSurfaceFlinger";
+        return mFlinger->createDisplay(displayName, isSecure, testId, requestedRefreshRate);
+    }
+
+    auto createDisplay(const String8& displayName, bool isSecure, const std::string& uniqueId,
+                       float requestedRefreshRate = 0.0f) {
+        return mFlinger->createDisplay(displayName, isSecure, uniqueId, requestedRefreshRate);
     }
 
     auto destroyDisplay(const sp<IBinder>& displayToken) {
@@ -448,6 +455,7 @@ public:
     void commitTransactionsLocked(uint32_t transactionFlags) {
         Mutex::Autolock lock(mFlinger->mStateLock);
         ftl::FakeGuard guard(kMainThreadContext);
+        mFlinger->processDisplayChangesLocked();
         mFlinger->commitTransactionsLocked(transactionFlags);
     }
 
@@ -475,7 +483,7 @@ public:
         return mFlinger->setPowerModeInternal(display, mode);
     }
 
-    auto renderScreenImpl(std::shared_ptr<const RenderArea> renderArea,
+    auto renderScreenImpl(std::unique_ptr<const RenderArea> renderArea,
                           SurfaceFlinger::GetLayerSnapshotsFunction traverseLayers,
                           const std::shared_ptr<renderengine::ExternalTexture>& buffer,
                           bool regionSampling) {

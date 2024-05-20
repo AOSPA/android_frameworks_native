@@ -23,7 +23,7 @@
 #include <ftl/flags.h>
 #include <ftl/mixins.h>
 #include <gui/PidUid.h>
-#include <gui/constants.h>
+#include <ui/LogicalDisplayId.h>
 #include <ui/Rect.h>
 #include <ui/Region.h>
 #include <ui/Size.h>
@@ -233,7 +233,7 @@ struct WindowInfo : public Parcelable {
     Uid ownerUid = Uid::INVALID;
     std::string packageName;
     ftl::Flags<InputConfig> inputConfig;
-    int32_t displayId = ADISPLAY_ID_NONE;
+    ui::LogicalDisplayId displayId = ui::LogicalDisplayId::INVALID;
     InputApplicationInfo applicationInfo;
     bool replaceTouchableRegionWithCrop = false;
     wp<IBinder> touchableRegionCropHandle;
