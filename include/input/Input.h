@@ -29,6 +29,7 @@
 #include <android/os/PointerIconType.h>
 #include <math.h>
 #include <stdint.h>
+#include <ui/LogicalDisplayId.h>
 #include <ui/Transform.h>
 #include <utils/BitSet.h>
 #include <utils/Timers.h>
@@ -40,13 +41,11 @@
  * Additional private constants not defined in ndk/ui/input.h.
  */
 enum {
-#ifdef __linux__
+
     /* This event was generated or modified by accessibility service. */
     AKEY_EVENT_FLAG_IS_ACCESSIBILITY_EVENT =
             android::os::IInputConstants::INPUT_EVENT_FLAG_IS_ACCESSIBILITY_EVENT,
-#else
-    AKEY_EVENT_FLAG_IS_ACCESSIBILITY_EVENT = 0x800,
-#endif
+
     /* Signifies that the key is being predispatched */
     AKEY_EVENT_FLAG_PREDISPATCH = 0x20000000,
 
@@ -89,15 +88,11 @@ enum {
     AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE =
             android::os::IInputConstants::MOTION_EVENT_FLAG_NO_FOCUS_CHANGE,
 
-#if defined(__linux__)
     /**
      * This event was generated or modified by accessibility service.
      */
     AMOTION_EVENT_FLAG_IS_ACCESSIBILITY_EVENT =
             android::os::IInputConstants::INPUT_EVENT_FLAG_IS_ACCESSIBILITY_EVENT,
-#else
-    AMOTION_EVENT_FLAG_IS_ACCESSIBILITY_EVENT = 0x800,
-#endif
 
     AMOTION_EVENT_FLAG_TARGET_ACCESSIBILITY_FOCUS =
             android::os::IInputConstants::MOTION_EVENT_FLAG_TARGET_ACCESSIBILITY_FOCUS,
@@ -203,9 +198,7 @@ struct AInputDevice {
 
 namespace android {
 
-#ifdef __linux__
 class Parcel;
-#endif
 
 /*
  * Apply the given transform to the point without applying any translation/offset.
@@ -311,12 +304,8 @@ enum {
 
     POLICY_FLAG_RAW_MASK = 0x0000ffff,
 
-#ifdef __linux__
     POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY =
             android::os::IInputConstants::POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY,
-#else
-    POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY = 0x20000,
-#endif
 
     /* These flags are set by the input dispatcher. */
 
@@ -485,10 +474,8 @@ struct PointerCoords {
 
     vec2 getXYValue() const { return vec2(getX(), getY()); }
 
-#ifdef __linux__
     status_t readFromParcel(Parcel* parcel);
     status_t writeToParcel(Parcel* parcel) const;
-#endif
 
     bool operator==(const PointerCoords& other) const;
     inline bool operator!=(const PointerCoords& other) const {
@@ -547,9 +534,9 @@ public:
 
     inline void setSource(uint32_t source) { mSource = source; }
 
-    inline int32_t getDisplayId() const { return mDisplayId; }
+    inline ui::LogicalDisplayId getDisplayId() const { return mDisplayId; }
 
-    inline void setDisplayId(int32_t displayId) { mDisplayId = displayId; }
+    inline void setDisplayId(ui::LogicalDisplayId displayId) { mDisplayId = displayId; }
 
     inline std::array<uint8_t, 32> getHmac() const { return mHmac; }
 
@@ -558,7 +545,7 @@ public:
     bool operator==(const InputEvent&) const = default;
 
 protected:
-    void initialize(int32_t id, DeviceId deviceId, uint32_t source, int32_t displayId,
+    void initialize(int32_t id, DeviceId deviceId, uint32_t source, ui::LogicalDisplayId displayId,
                     std::array<uint8_t, 32> hmac);
 
     void initialize(const InputEvent& from);
@@ -566,7 +553,7 @@ protected:
     int32_t mId;
     DeviceId mDeviceId;
     uint32_t mSource;
-    int32_t mDisplayId;
+    ui::LogicalDisplayId mDisplayId{ui::LogicalDisplayId::INVALID};
     std::array<uint8_t, 32> mHmac;
 };
 
@@ -602,7 +589,7 @@ public:
     static const char* getLabel(int32_t keyCode);
     static std::optional<int> getKeyCodeFromLabel(const char* label);
 
-    void initialize(int32_t id, DeviceId deviceId, uint32_t source, int32_t displayId,
+    void initialize(int32_t id, DeviceId deviceId, uint32_t source, ui::LogicalDisplayId displayId,
                     std::array<uint8_t, 32> hmac, int32_t action, int32_t flags, int32_t keyCode,
                     int32_t scanCode, int32_t metaState, int32_t repeatCount, nsecs_t downTime,
                     nsecs_t eventTime);
@@ -864,7 +851,7 @@ public:
 
     ssize_t findPointerIndex(int32_t pointerId) const;
 
-    void initialize(int32_t id, DeviceId deviceId, uint32_t source, int32_t displayId,
+    void initialize(int32_t id, DeviceId deviceId, uint32_t source, ui::LogicalDisplayId displayId,
                     std::array<uint8_t, 32> hmac, int32_t action, int32_t actionButton,
                     int32_t flags, int32_t edgeFlags, int32_t metaState, int32_t buttonState,
                     MotionClassification classification, const ui::Transform& transform,
@@ -911,10 +898,8 @@ public:
     // Matrix is in row-major form and compatible with SkMatrix.
     void applyTransform(const std::array<float, 9>& matrix);
 
-#ifdef __linux__
     status_t readFromParcel(Parcel* parcel);
     status_t writeToParcel(Parcel* parcel) const;
-#endif
 
     static bool isTouchEvent(uint32_t source, int32_t action);
     inline bool isTouchEvent() const {
@@ -1073,7 +1058,7 @@ struct __attribute__((__packed__)) VerifiedInputEvent {
     DeviceId deviceId;
     nsecs_t eventTimeNanos;
     uint32_t source;
-    int32_t displayId;
+    ui::LogicalDisplayId displayId;
 };
 
 /**

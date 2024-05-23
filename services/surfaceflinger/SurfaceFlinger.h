@@ -206,6 +206,9 @@ enum class LatchUnsignaledConfig {
     Always,
 };
 
+struct DisplayRenderAreaBuilder;
+struct LayerRenderAreaBuilder;
+
 using DisplayColorSetting = compositionengine::OutputColorSetting;
 
 class SurfaceFlinger : public BnSurfaceComposer,
@@ -407,7 +410,7 @@ private:
 
     using TransactionSchedule = scheduler::TransactionSchedule;
     using GetLayerSnapshotsFunction = std::function<std::vector<std::pair<Layer*, sp<LayerFE>>>()>;
-    using RenderAreaFuture = ftl::Future<std::unique_ptr<RenderArea>>;
+    using RenderAreaBuilderVariant = std::variant<DisplayRenderAreaBuilder, LayerRenderAreaBuilder>;
     using DumpArgs = Vector<String16>;
     using Dumper = std::function<void(const DumpArgs&, bool asProto, std::string&)>;
 
@@ -560,15 +563,16 @@ private:
 
     static const size_t MAX_LAYERS = 4096;
 
-    // Implements IBinder.
-    status_t onTransact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) override;
-    status_t dump(int fd, const Vector<String16>& args) override { return priorityDump(fd, args); }
-    bool callingThreadHasUnscopedSurfaceFlingerAccess(bool usePermissionCache = true)
+    static bool callingThreadHasUnscopedSurfaceFlingerAccess(bool usePermissionCache = true)
             EXCLUDES(mStateLock);
 
-    // Implements ISurfaceComposer
-    sp<IBinder> createDisplay(const String8& displayName, bool secure,
-                              float requestedRefreshRate = 0.0f);
+    // IBinder overrides:
+    status_t onTransact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) override;
+    status_t dump(int fd, const Vector<String16>& args) override { return priorityDump(fd, args); }
+
+    // ISurfaceComposer implementation:
+    sp<IBinder> createDisplay(const String8& displayName, bool isSecure,
+                              const std::string& uniqueId, float requestedRefreshRate = 0.0f);
     void destroyDisplay(const sp<IBinder>& displayToken);
     std::vector<PhysicalDisplayId> getPhysicalDisplayIds() const EXCLUDES(mStateLock) {
         Mutex::Autolock lock(mStateLock);
@@ -688,7 +692,7 @@ private:
 
     void updateHdcpLevels(hal::HWDisplayId hwcDisplayId, int32_t connectedLevel, int32_t maxLevel);
 
-    // Implements IBinder::DeathRecipient.
+    // IBinder::DeathRecipient overrides:
     void binderDied(const wp<IBinder>& who) override;
 
     // HWC2::ComposerCallback overrides:
@@ -917,12 +921,12 @@ private:
     // Checks if a protected layer exists in a list of layers.
     bool layersHasProtectedLayer(const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const;
 
-    void captureScreenCommon(RenderAreaFuture, GetLayerSnapshotsFunction, ui::Size bufferSize,
-                             ui::PixelFormat, bool allowProtected, bool grayscale,
-                             const sp<IScreenCaptureListener>&);
+    void captureScreenCommon(RenderAreaBuilderVariant, GetLayerSnapshotsFunction,
+                             ui::Size bufferSize, ui::PixelFormat, bool allowProtected,
+                             bool grayscale, const sp<IScreenCaptureListener>&);
 
     ftl::SharedFuture<FenceResult> captureScreenshot(
-            RenderAreaFuture, GetLayerSnapshotsFunction,
+            RenderAreaBuilderVariant, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, const sp<IScreenCaptureListener>&);
 
@@ -930,13 +934,13 @@ private:
     // not yet been captured, and thus cannot yet be passed in as a parameter.
     // Needed for TestableSurfaceFlinger.
     ftl::SharedFuture<FenceResult> renderScreenImpl(
-            std::shared_ptr<const RenderArea>, GetLayerSnapshotsFunction,
+            std::unique_ptr<const RenderArea>, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, ScreenCaptureResults&) EXCLUDES(mStateLock)
             REQUIRES(kMainThreadContext);
 
     ftl::SharedFuture<FenceResult> renderScreenImpl(
-            std::shared_ptr<const RenderArea>,
+            std::unique_ptr<const RenderArea>,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, ScreenCaptureResults&,
             std::vector<std::pair<Layer*, sp<android::LayerFE>>>& layers) EXCLUDES(mStateLock)
@@ -1519,6 +1523,8 @@ private:
     bool mPowerHintSessionEnabled;
 
     bool mLayerLifecycleManagerEnabled = false;
+    // Whether a display should be turned on when initialized
+    bool mSkipPowerOnForQuiescent;
 
     frontend::LayerLifecycleManager mLayerLifecycleManager GUARDED_BY(kMainThreadContext);
     frontend::LayerHierarchyBuilder mLayerHierarchyBuilder GUARDED_BY(kMainThreadContext);
@@ -1587,7 +1593,7 @@ private:
 
 class SurfaceComposerAIDL : public gui::BnSurfaceComposer {
 public:
-    SurfaceComposerAIDL(sp<SurfaceFlinger> sf) : mFlinger(std::move(sf)) {}
+    explicit SurfaceComposerAIDL(sp<SurfaceFlinger> sf) : mFlinger(std::move(sf)) {}
 
     binder::Status bootFinished() override;
     binder::Status createDisplayEventConnection(
@@ -1595,8 +1601,9 @@ public:
             const sp<IBinder>& layerHandle,
             sp<gui::IDisplayEventConnection>* outConnection) override;
     binder::Status createConnection(sp<gui::ISurfaceComposerClient>* outClient) override;
-    binder::Status createDisplay(const std::string& displayName, bool secure,
-                                 float requestedRefreshRate, sp<IBinder>* outDisplay) override;
+    binder::Status createDisplay(const std::string& displayName, bool isSecure,
+                                 const std::string& uniqueId, float requestedRefreshRate,
+                                 sp<IBinder>* outDisplay) override;
     binder::Status destroyDisplay(const sp<IBinder>& display) override;
     binder::Status getPhysicalDisplayIds(std::vector<int64_t>* outDisplayIds) override;
     binder::Status getPhysicalDisplayToken(int64_t displayId, sp<IBinder>* outDisplay) override;
@@ -1718,7 +1725,7 @@ private:
                                               gui::DynamicDisplayInfo*& outInfo);
 
 private:
-    sp<SurfaceFlinger> mFlinger;
+    const sp<SurfaceFlinger> mFlinger;
 };
 
 } // namespace android

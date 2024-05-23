@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include <PointerControllerInterface.h>
 #include <android-base/thread_annotations.h>
 #include <utils/Condition.h>
 #include <utils/Mutex.h>
@@ -87,7 +86,7 @@ public:
 
     std::vector<int32_t> getVibratorIds(int32_t deviceId) override;
 
-    bool canDispatchToDisplay(int32_t deviceId, int32_t displayId) override;
+    bool canDispatchToDisplay(int32_t deviceId, ui::LogicalDisplayId displayId) override;
 
     bool enableSensor(int32_t deviceId, InputDeviceSensorType sensorType,
                       std::chrono::microseconds samplingPeriod,
@@ -140,9 +139,6 @@ protected:
         int32_t getGlobalMetaState() NO_THREAD_SAFETY_ANALYSIS override;
         void disableVirtualKeysUntil(nsecs_t time) REQUIRES(mReader->mLock) override;
         bool shouldDropVirtualKey(nsecs_t now, int32_t keyCode, int32_t scanCode)
-                REQUIRES(mReader->mLock) override;
-        void fadePointer() REQUIRES(mReader->mLock) override;
-        std::shared_ptr<PointerControllerInterface> getPointerController(int32_t deviceId)
                 REQUIRES(mReader->mLock) override;
         void requestTimeoutAtTime(nsecs_t when) REQUIRES(mReader->mLock) override;
         int32_t bumpGeneration() NO_THREAD_SAFETY_ANALYSIS override;
@@ -229,13 +225,6 @@ private:
     void getExternalStylusDevicesLocked(std::vector<InputDeviceInfo>& outDevices) REQUIRES(mLock);
     [[nodiscard]] std::list<NotifyArgs> dispatchExternalStylusStateLocked(const StylusState& state)
             REQUIRES(mLock);
-
-    // The PointerController that is shared among all the input devices that need it.
-    std::weak_ptr<PointerControllerInterface> mPointerController;
-    std::shared_ptr<PointerControllerInterface> getPointerControllerLocked(int32_t deviceId)
-            REQUIRES(mLock);
-    void updatePointerDisplayLocked() REQUIRES(mLock);
-    void fadePointerLocked() REQUIRES(mLock);
 
     int32_t mGeneration GUARDED_BY(mLock);
     int32_t bumpGenerationLocked() REQUIRES(mLock);
