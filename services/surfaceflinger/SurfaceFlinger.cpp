@@ -7523,6 +7523,7 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 Mutex::Autolock _l(mStateLock);
                 // daltonize
                 n = data.readInt32();
+                mDaltonizer.setLevel(data.readInt32());
                 switch (n % 10) {
                     case 1:
                         mDaltonizer.setType(ColorBlindnessType::Protanomaly);
@@ -8676,7 +8677,7 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
                 ALOGW("Couldn't find layer snapshot for %d",
                       layerRenderAreaBuilder->layer->getSequence());
             } else {
-                layerRenderAreaBuilder->setLayerInfo(snapshot);
+                layerRenderAreaBuilder->setLayerSnapshot(*snapshot);
             }
         }
 
@@ -8771,9 +8772,8 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
         Mutex::Autolock lock(mStateLock);
         const DisplayDevice* display = nullptr;
         if (parent) {
-            const frontend::LayerSnapshot* snapshot = mLayerLifecycleManagerEnabled
-                    ? mLayerSnapshotBuilder.getSnapshot(parent->sequence)
-                    : parent->getLayerSnapshot();
+            const frontend::LayerSnapshot* snapshot =
+                    mLayerSnapshotBuilder.getSnapshot(parent->sequence);
             if (snapshot) {
                 display = findDisplay([layerStack = snapshot->outputFilter.layerStack](
                                               const auto& display) {
