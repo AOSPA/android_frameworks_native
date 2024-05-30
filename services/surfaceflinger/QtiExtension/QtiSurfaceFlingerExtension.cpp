@@ -1427,9 +1427,9 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     ATRACE_NAME("SmoMoUpdateState");
     Mutex::Autolock lock(mQtiFlinger->mStateLock);
 
-    mQtiSmomoOptimalRefreshActive = false;
     // Check if smomo instances exist.
     if (!mQtiSmomoInstances.size()) {
+        mQtiSmomoOptimalRefreshActive = false;
         return;
     }
 
@@ -1505,6 +1505,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
                                               : static_cast<uint32_t>(fps));
     }
 
+    bool smomo_optimal_refresh = false;
     if (numActiveDisplays == 1) {
         std::map<int, int> refresh_rate_votes;
         for (auto& instance : mQtiSmomoInstances) {
@@ -1515,12 +1516,14 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
             mQtiFlinger->mScheduler->qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
             for (auto it = refresh_rate_votes.begin(); it != refresh_rate_votes.end(); it++) {
               if (it->second != -1) {
-                mQtiSmomoOptimalRefreshActive = true;
+                smomo_optimal_refresh = true;
                 break;
               }
             }
         }
     }
+
+    mQtiSmomoOptimalRefreshActive = smomo_optimal_refresh;
 
     // Disable DRC if active displays is more than 1.
     for (auto& instance : mQtiSmomoInstances) {
