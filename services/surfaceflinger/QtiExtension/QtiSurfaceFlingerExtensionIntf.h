@@ -3,6 +3,8 @@
  */
 #pragma once
 
+#define DOLPHIN_TOUCH_ID 110
+
 #include <string>
 
 #include "../SurfaceFlinger.h"
@@ -158,9 +160,11 @@ public:
      * Methods for Dolphin APIs
      */
     virtual void qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod);
-    virtual void qtiDolphinTrackBufferIncrement(const char *name);
+    virtual void qtiDolphinTrackBufferIncrement(const char *name, bool isAutoTimestamp,
+                                                nsecs_t desiredPresentTime);
     virtual void qtiDolphinTrackBufferDecrement(const char *name, int count);
     virtual void qtiDolphinTrackVsyncSignal();
+    virtual void qtiDolphinUnblockPendingBuffer();
 
     /*
      * Methods for speculative fence
