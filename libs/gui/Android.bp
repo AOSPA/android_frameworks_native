@@ -537,6 +537,7 @@ qtidisplayextension_cc_library_static {
     },
     srcs: [
         "QtiExtension/QtiBLASTBufferQueueExtension.cpp",
+        "QtiExtension/QtiDolphinWrapper.cpp",
         "QtiExtension/QtiSurfaceExtension.cpp",
     ],
     local_include_dirs: ["QtiExtension"],

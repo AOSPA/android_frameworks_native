@@ -2112,6 +2112,12 @@ status_t SurfaceFlinger::removeHdrLayerInfoListener(
 }
 
 status_t SurfaceFlinger::notifyPowerBoost(int32_t boostId) {
+    /* QTI_BEGIN */
+    if (boostId == DOLPHIN_TOUCH_ID) {
+        mQtiSFExtnIntf->qtiDolphinUnblockPendingBuffer();
+        return NO_ERROR;
+    }
+    /* QTI_END */
     using aidl::android::hardware::power::Boost;
     Boost powerBoost = static_cast<Boost>(boostId);
 
@@ -5524,7 +5530,8 @@ status_t SurfaceFlinger::setTransactionState(
 
             /* QTI_BEGIN */
             if (!(flags & eOneWay)) {
-                mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str());
+                mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str(), isAutoTimestamp,
+                                                               desiredPresentTime);
             }
 
             mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(layer, desiredPresentTime, isAutoTimestamp,
@@ -10633,6 +10640,12 @@ binder::Status SurfaceComposerAIDL::removeHdrLayerInfoListener(
 }
 
 binder::Status SurfaceComposerAIDL::notifyPowerBoost(int boostId) {
+    /* QTI_BEGIN */
+    if (boostId == DOLPHIN_TOUCH_ID) {
+        mFlinger->notifyPowerBoost(boostId);
+        return binderStatusFromStatusT(OK);
+    }
+    /* QTI_END */
     status_t status = checkAccessPermission();
     if (status == OK) {
         status = mFlinger->notifyPowerBoost(boostId);

@@ -1,8 +1,9 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
 #include "QtiBLASTBufferQueueExtension.h"
+#include "QtiDolphinWrapper.h"
 
 #include <pthread.h>
 #include <regex>
@@ -12,6 +13,8 @@
 namespace android::libguiextension {
 
 static bool sQtiIsGame = false;
+static QtiDolphinWrapper* sQtiDolphinWrapper = nullptr;
+static bool sQtiSmartTouchActive = false;
 static std::string sQtiLayerName = "";
 static pthread_once_t sQtiCheckAppTypeOnce = PTHREAD_ONCE_INIT;
 static void qtiInitAppType() {
@@ -46,6 +49,11 @@ static void qtiInitAppType() {
         int type = reply.readInt32();
         if (type == GAME_TYPE) {
             sQtiIsGame = true;
+
+            sQtiDolphinWrapper = QtiDolphinWrapper::qtiGetInstanceForGame();
+            if (sQtiDolphinWrapper && sQtiDolphinWrapper->qtiDolphinSmartTouchActive) {
+                sQtiSmartTouchActive = sQtiDolphinWrapper->qtiDolphinSmartTouchActive();
+            }
         }
     }
 }

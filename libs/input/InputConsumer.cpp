@@ -41,6 +41,10 @@
 #include <input/PrintTools.h>
 #include <input/TraceTools.h>
 
+/* QTI_BEGIN */
+#include "QtiExtension/QtiInputDolphinWrapper.h"
+/* QTI_END */
+
 namespace input_flags = com::android::input::flags;
 
 namespace android {
@@ -218,6 +222,12 @@ bool InputConsumer::isTouchResamplingEnabled() {
 
 status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consumeBatches,
                                 nsecs_t frameTime, uint32_t* outSeq, InputEvent** outEvent) {
+    /* QTI_BEGIN */
+    QtiInputDolphinWrapper* qtiDolphinWrapper = QtiInputDolphinWrapper::qtiGetDolphinWrapper();
+    if (qtiDolphinWrapper && qtiDolphinWrapper->qtiDolphinConsumeInputNow) {
+        qtiDolphinWrapper->qtiDolphinConsumeInputNow(consumeBatches);
+    }
+    /* QTI_END */
     ALOGD_IF(DEBUG_TRANSPORT_CONSUMER,
              "channel '%s' consumer ~ consume: consumeBatches=%s, frameTime=%" PRId64,
              mChannel->getName().c_str(), toString(consumeBatches), frameTime);
@@ -274,6 +284,14 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
             }
 
             case InputMessage::Type::MOTION: {
+                /* QTI_BEGIN */
+                if (qtiDolphinWrapper == nullptr) {
+                    qtiDolphinWrapper = QtiInputDolphinWrapper::qtiGetInstance();
+                }
+                if (qtiDolphinWrapper && qtiDolphinWrapper->qtiDolphinSetTouchEvent) {
+                    qtiDolphinWrapper->qtiDolphinSetTouchEvent(mMsg.body.motion.action);
+                }
+                /* QTI_END */
                 ssize_t batchIndex = findBatch(mMsg.body.motion.deviceId, mMsg.body.motion.source);
                 if (batchIndex >= 0) {
                     Batch& batch = mBatches[batchIndex];

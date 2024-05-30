@@ -184,8 +184,10 @@ void QtiNullExtension::qtiTryDrawMethod(sp<DisplayDevice> display) {}
  * Methods for Dolphin Interface
  */
 void QtiNullExtension::qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod) {}
-void QtiNullExtension::qtiDolphinTrackBufferIncrement(const char *name) {}
+void QtiNullExtension::qtiDolphinTrackBufferIncrement(const char *name, bool isAutoTimestamp,
+                                                      nsecs_t desiredPresentTime) {}
 void QtiNullExtension::qtiDolphinTrackBufferDecrement(const char *name, int count) {}
+void QtiNullExtension::qtiDolphinUnblockPendingBuffer() {}
 void QtiNullExtension::qtiDolphinTrackVsyncSignal() {}
 
 bool QtiNullExtension::qtiIsFpsDeferNeeded(float newFpsRequest) {
