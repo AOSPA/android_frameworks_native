@@ -16,6 +16,8 @@ public:
 
     void qtiSetConsumerUsageBitsForRC(std::string name, sp<SurfaceControl> sc);
     bool qtiIsGame();
+    void qtiTrackTransaction(uint64_t frameNumber, int64_t timestamp);
+    void qtiSendGfxTid();
 
 private:
     BLASTBufferQueue* mQtiBlastBufferQueue = nullptr;

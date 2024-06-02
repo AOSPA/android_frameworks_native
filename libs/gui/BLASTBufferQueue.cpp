@@ -707,6 +707,11 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
         t->setApplyToken(mApplyToken).apply(false, true);
         mAppliedLastTransaction = true;
         mLastAppliedFrameNumber = bufferItem.mFrameNumber;
+        /* QTI_BEGIN */
+        if (mQtiBBQExtn) {
+            mQtiBBQExtn->qtiTrackTransaction(bufferItem.mFrameNumber, bufferItem.mTimestamp);
+        }
+        /* QTI_END */
     } else {
         t->setBufferHasBarrier(mSurfaceControl, mLastAppliedFrameNumber);
         mAppliedLastTransaction = false;

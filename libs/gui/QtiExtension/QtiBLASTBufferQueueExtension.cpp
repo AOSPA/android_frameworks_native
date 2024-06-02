@@ -10,21 +10,27 @@
 #include <binder/IServiceManager.h>
 #include <log/log.h>
 
+#define TID_CHECK_WINDOW 200
+#define SWITCH_CHECK_TIME ms2ns(1000)
+
 namespace android::libguiextension {
 
+static sp<IBinder> sPerfService = nullptr;
 static bool sQtiIsGame = false;
+static pid_t sGameGfxTid = -1;
+static int64_t sTimestamp = 0;
 static QtiDolphinWrapper* sQtiDolphinWrapper = nullptr;
 static bool sQtiSmartTouchActive = false;
 static std::string sQtiLayerName = "";
 static pthread_once_t sQtiCheckAppTypeOnce = PTHREAD_ONCE_INIT;
 static void qtiInitAppType() {
     sp<IServiceManager> sm = defaultServiceManager();
-    sp<IBinder> perfservice = sm->checkService(String16("vendor.perfservice"));
-    if (perfservice == nullptr) {
+    sPerfService = sm->checkService(String16("vendor.perfservice"));
+    if (sPerfService == nullptr) {
         ALOGE("Cannot find perfservice");
         return;
     }
-    String16 ifName = perfservice->getInterfaceDescriptor();
+    String16 ifName = sPerfService->getInterfaceDescriptor();
     if (ifName.size() > 0) {
         const std::regex re("(?:SurfaceView\\[)([^/]+).*");
         std::smatch match;
@@ -38,13 +44,13 @@ static void qtiInitAppType() {
         int VENDOR_FEEDBACK_WORKLOAD_TYPE = 0x00001601;
         int PERF_GET_FEEDBACK = IBinder::FIRST_CALL_TRANSACTION + 7;
         int array[0];
-        data.markForBinder(perfservice);
+        data.markForBinder(sPerfService);
         data.writeInterfaceToken(ifName);
         data.writeInt32(VENDOR_FEEDBACK_WORKLOAD_TYPE);
         data.writeString16(pkgName);
         data.writeInt32(getpid());
         data.writeInt32Array(0, array);
-        perfservice->transact(PERF_GET_FEEDBACK, data, &reply);
+        sPerfService->transact(PERF_GET_FEEDBACK, data, &reply);
         reply.readExceptionCode();
         int type = reply.readInt32();
         if (type == GAME_TYPE) {
@@ -102,6 +108,43 @@ void QtiBLASTBufferQueueExtension::qtiSetConsumerUsageBitsForRC(std::string name
 
 bool QtiBLASTBufferQueueExtension::qtiIsGame() {
     return sQtiIsGame;
+}
+
+void QtiBLASTBufferQueueExtension::qtiSendGfxTid() {
+    if (sPerfService == nullptr) return;
+    String16 ifName = sPerfService->getInterfaceDescriptor();
+    if (ifName.size() > 0) {
+        int PERF_HINT = IBinder::FIRST_CALL_TRANSACTION + 2;
+        int VENDOR_HINT_PASS_PID = 0x0000109C;
+        int HINT_TYPE_FOR_GAME_GFX_TID = 6;
+        Parcel data, reply;
+        data.markForBinder(sPerfService);
+        data.writeInterfaceToken(ifName);
+        data.writeInt32(VENDOR_HINT_PASS_PID);
+        data.writeString16(String16(""));
+        data.writeInt32(sGameGfxTid);
+        data.writeInt32(HINT_TYPE_FOR_GAME_GFX_TID);
+        data.writeInt32(sGameGfxTid);
+        sPerfService->transact(PERF_HINT, data, &reply);
+        reply.readExceptionCode();
+    }
+}
+
+void QtiBLASTBufferQueueExtension::qtiTrackTransaction(uint64_t frameNumber, int64_t timestamp) {
+    if (!sQtiIsGame) return;
+    if (sGameGfxTid < 0 || (timestamp - sTimestamp) > SWITCH_CHECK_TIME) {
+        // send tid when games launch or resume
+        sGameGfxTid = gettid();
+        qtiSendGfxTid();
+    } else if (frameNumber % TID_CHECK_WINDOW == 0) {
+        // sned tid if game gfx tid changes
+        pid_t gfxTid = gettid();
+        if (gfxTid != sGameGfxTid) {
+            sGameGfxTid = gfxTid;
+            qtiSendGfxTid();
+        }
+    }
+    sTimestamp = timestamp;
 }
 
 } // namespace android::libguiextension
