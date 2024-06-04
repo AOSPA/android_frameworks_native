@@ -181,19 +181,19 @@ bool LayerInfo::isAnimating(nsecs_t now) const {
 bool LayerInfo::hasEnoughDataForHeuristic() const {
     // The layer had to publish at least HISTORY_SIZE or HISTORY_DURATION of updates
     if (mFrameTimes.size() < 2) {
-        ALOGV("fewer than 2 frames recorded: %zu", mFrameTimes.size());
+        ALOGV("%s fewer than 2 frames recorded: %zu", mName.c_str(), mFrameTimes.size());
         return false;
     }
 
     if (!isFrameTimeValid(mFrameTimes.front())) {
-        ALOGV("stale frames still captured");
+        ALOGV("%s stale frames still captured", mName.c_str());
         return false;
     }
 
     const auto totalDuration = mFrameTimes.back().queueTime - mFrameTimes.front().queueTime;
     if (mFrameTimes.size() < HISTORY_SIZE && totalDuration < HISTORY_DURATION.count()) {
-        ALOGV("not enough frames captured: %zu | %.2f seconds", mFrameTimes.size(),
-              totalDuration / 1e9f);
+        ALOGV("%s not enough frames captured: %zu | %.2f seconds", mName.c_str(),
+              mFrameTimes.size(), totalDuration / 1e9f);
         return false;
     }
 
@@ -365,6 +365,8 @@ LayerInfo::RefreshRateVotes LayerInfo::getRefreshRateVote(const RefreshRateSelec
     }
 
     if (frequent.clearHistory) {
+        ATRACE_FORMAT_INSTANT("frequent.clearHistory");
+        ALOGV("%s frequent.clearHistory", mName.c_str());
         clearHistory(now);
     }
 
@@ -563,8 +565,25 @@ bool LayerInfo::FrameRate::isNoVote() const {
     return vote.type == FrameRateCompatibility::NoVote;
 }
 
+bool LayerInfo::FrameRate::isValuelessType() const {
+    // For a valueless frame rate compatibility (type), the frame rate should be unspecified (0 Hz).
+    if (!isApproxEqual(vote.rate, 0_Hz)) {
+        return false;
+    }
+    switch (vote.type) {
+        case FrameRateCompatibility::Min:
+        case FrameRateCompatibility::NoVote:
+            return true;
+        case FrameRateCompatibility::Default:
+        case FrameRateCompatibility::ExactOrMultiple:
+        case FrameRateCompatibility::Exact:
+        case FrameRateCompatibility::Gte:
+            return false;
+    }
+}
+
 bool LayerInfo::FrameRate::isValid() const {
-    return isNoVote() || vote.rate.isValid() || category != FrameRateCategory::Default;
+    return isValuelessType() || vote.rate.isValid() || category != FrameRateCategory::Default;
 }
 
 bool LayerInfo::FrameRate::isVoteValidForMrr(bool isVrrDevice) const {
@@ -572,7 +591,7 @@ bool LayerInfo::FrameRate::isVoteValidForMrr(bool isVrrDevice) const {
         return true;
     }
 
-    if (category == FrameRateCategory::Default && vote.type != FrameRateCompatibility::Gte) {
+    if (category == FrameRateCategory::Default) {
         return true;
     }
 

@@ -362,6 +362,7 @@ LayerSnapshot LayerSnapshotBuilder::getRootSnapshot() {
     snapshot.gameMode = gui::GameMode::Unsupported;
     snapshot.frameRate = {};
     snapshot.fixedTransformHint = ui::Transform::ROT_INVALID;
+    snapshot.ignoreLocalTransform = false;
     return snapshot;
 }
 
@@ -575,9 +576,11 @@ LayerSnapshot* LayerSnapshotBuilder::createSnapshot(const LayerHierarchy::Traver
     mSnapshots.emplace_back(std::make_unique<LayerSnapshot>(layer, path));
     LayerSnapshot* snapshot = mSnapshots.back().get();
     snapshot->globalZ = static_cast<size_t>(mSnapshots.size()) - 1;
-    if (path.isClone() && path.variant != LayerHierarchy::Variant::Mirror) {
+    if (path.isClone() && !LayerHierarchy::isMirror(path.variant)) {
         snapshot->mirrorRootPath = parentSnapshot.mirrorRootPath;
     }
+    snapshot->ignoreLocalTransform =
+            path.isClone() && path.variant == LayerHierarchy::Variant::Detached_Mirror;
     mPathToSnapshot[path] = snapshot;
 
     mIdToSnapshots.emplace(path.id, snapshot);
@@ -1042,7 +1045,8 @@ void LayerSnapshotBuilder::updateInput(LayerSnapshot& snapshot,
     snapshot.touchCropId = requested.touchCropId;
 
     snapshot.inputInfo.id = static_cast<int32_t>(snapshot.uniqueSequence);
-    snapshot.inputInfo.displayId = static_cast<int32_t>(snapshot.outputFilter.layerStack.id);
+    snapshot.inputInfo.displayId =
+            ui::LogicalDisplayId{static_cast<int32_t>(snapshot.outputFilter.layerStack.id)};
     snapshot.inputInfo.touchOcclusionMode = requested.hasInputInfo()
             ? requested.windowInfoHandle->getInfo()->touchOcclusionMode
             : parentSnapshot.inputInfo.touchOcclusionMode;
@@ -1059,8 +1063,8 @@ void LayerSnapshotBuilder::updateInput(LayerSnapshot& snapshot,
     }
 
     if (snapshot.isSecure ||
-        parentSnapshot.inputInfo.inputConfig.test(InputConfig::SENSITIVE_FOR_TRACING)) {
-        snapshot.inputInfo.inputConfig |= InputConfig::SENSITIVE_FOR_TRACING;
+        parentSnapshot.inputInfo.inputConfig.test(InputConfig::SENSITIVE_FOR_PRIVACY)) {
+        snapshot.inputInfo.inputConfig |= InputConfig::SENSITIVE_FOR_PRIVACY;
     }
 
     updateVisibility(snapshot, snapshot.isVisible);

@@ -99,6 +99,10 @@ constexpr int kDumpTableRowLength = 159;
 
 const ui::Transform kIdentityTransform;
 
+ui::LogicalDisplayId toLogicalDisplayId(const ui::LayerStack& layerStack) {
+    return ui::LogicalDisplayId{static_cast<int32_t>(layerStack.id)};
+}
+
 bool assignTransform(ui::Transform* dst, ui::Transform& from) {
     if (*dst == from) {
         return false;
@@ -165,7 +169,7 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
         mWindowType(static_cast<WindowInfo::Type>(
                 args.metadata.getInt32(gui::METADATA_WINDOW_TYPE, 0))),
         mLayerCreationFlags(args.flags),
-        mLegacyLayerFE(args.flinger->getFactory().createLayerFE(mName)) {
+        mLegacyLayerFE(args.flinger->getFactory().createLayerFE(mName, this)) {
     ALOGV("Creating Layer %s", getDebugName());
 
     uint32_t layerFlags = 0;
@@ -2501,7 +2505,7 @@ WindowInfo Layer::fillInputInfo(const InputDisplayArgs& displayArgs) {
         mDrawingState.inputInfo.ownerUid = gui::Uid{mOwnerUid};
         mDrawingState.inputInfo.ownerPid = gui::Pid{mOwnerPid};
         mDrawingState.inputInfo.inputConfig |= WindowInfo::InputConfig::NO_INPUT_CHANNEL;
-        mDrawingState.inputInfo.displayId = getLayerStack().id;
+        mDrawingState.inputInfo.displayId = toLogicalDisplayId(getLayerStack());
     }
 
     const ui::Transform& displayTransform =
@@ -2509,7 +2513,7 @@ WindowInfo Layer::fillInputInfo(const InputDisplayArgs& displayArgs) {
 
     WindowInfo info = mDrawingState.inputInfo;
     info.id = sequence;
-    info.displayId = getLayerStack().id;
+    info.displayId = toLogicalDisplayId(getLayerStack());
 
     fillInputFrameInfo(info, displayTransform);
 
@@ -3261,10 +3265,6 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     const int32_t layerId = getSequence();
     mFlinger->mTimeStats->setPostTime(layerId, mDrawingState.frameNumber, getName().c_str(),
                                       mOwnerUid, postTime, getGameMode());
-
-    if (mFlinger->mLegacyFrontEndEnabled) {
-        recordLayerHistoryBufferUpdate(getLayerProps(), systemTime());
-    }
 
     setFrameTimelineVsyncForBufferTransaction(info, postTime);
 
@@ -4021,7 +4021,7 @@ const compositionengine::LayerFECompositionState* Layer::getCompositionState() c
 }
 
 sp<LayerFE> Layer::copyCompositionEngineLayerFE() const {
-    auto result = mFlinger->getFactory().createLayerFE(mName);
+    auto result = mFlinger->getFactory().createLayerFE(mName, this);
     result->mSnapshot = std::make_unique<LayerSnapshot>(*mSnapshot);
     return result;
 }
@@ -4033,7 +4033,7 @@ sp<LayerFE> Layer::getCompositionEngineLayerFE(
             return layerFE;
         }
     }
-    auto layerFE = mFlinger->getFactory().createLayerFE(mName);
+    auto layerFE = mFlinger->getFactory().createLayerFE(mName, this);
     mLayerFEs.emplace_back(path, layerFE);
     return layerFE;
 }

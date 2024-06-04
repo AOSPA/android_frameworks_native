@@ -26,6 +26,7 @@
 
 #include <NotifyArgsBuilders.h>
 #include <android-base/logging.h>
+#include <android/content/pm/IPackageManagerNative.h>
 #include <gtest/gtest.h>
 #include <input/Input.h>
 #include <perfetto/trace/android/android_input_event.pbzero.h>
@@ -40,7 +41,7 @@ using perfetto::protos::pbzero::AndroidInputEventConfig;
 
 namespace {
 
-constexpr int32_t DISPLAY_ID = ADISPLAY_ID_DEFAULT;
+constexpr ui::LogicalDisplayId DISPLAY_ID = ui::LogicalDisplayId::DEFAULT;
 
 // Ensure common actions are interchangeable between keys and motions for convenience.
 static_assert(static_cast<int32_t>(AMOTION_EVENT_ACTION_DOWN) ==
@@ -65,6 +66,26 @@ const std::string ALLOWED_PKG_2{"allowed.pkg.2"};
 const std::string DISALLOWED_PKG_1{"disallowed.pkg.1"};
 const std::string DISALLOWED_PKG_2{"disallowed.pkg.2"};
 
+const std::map<std::string, gui::Uid> kPackageUidMap{
+        {ALLOWED_PKG_1, ALLOWED_UID_1},
+        {ALLOWED_PKG_2, ALLOWED_UID_2},
+        {DISALLOWED_PKG_1, DISALLOWED_UID_1},
+        {DISALLOWED_PKG_2, DISALLOWED_UID_2},
+};
+
+class FakePackageManager : public content::pm::IPackageManagerNativeDefault {
+public:
+    binder::Status getPackageUid(const ::std::string& pkg, int64_t flags, int32_t userId,
+            int32_t* outUid) override {
+        auto it = kPackageUidMap.find(pkg);
+        *outUid = it != kPackageUidMap.end() ? static_cast<int32_t>(it->second.val()) : -1;
+        return binder::Status::ok();
+    }
+};
+
+const sp<testing::NiceMock<FakePackageManager>> kPackageManager =
+        sp<testing::NiceMock<FakePackageManager>>::make();
+
 const std::shared_ptr<FakeApplicationHandle> APP = std::make_shared<FakeApplicationHandle>();
 
 } // namespace
@@ -78,18 +99,11 @@ protected:
 
     void SetUp() override {
         impl::PerfettoBackend::sUseInProcessBackendForTest = true;
-
+        impl::PerfettoBackend::sPackageManagerProvider = []() { return kPackageManager; };
         mFakePolicy = std::make_unique<FakeInputDispatcherPolicy>();
-        mFakePolicy->addPackageUidMapping(ALLOWED_PKG_1, ALLOWED_UID_1);
-        mFakePolicy->addPackageUidMapping(ALLOWED_PKG_2, ALLOWED_UID_2);
-        mFakePolicy->addPackageUidMapping(DISALLOWED_PKG_1, DISALLOWED_UID_1);
-        mFakePolicy->addPackageUidMapping(DISALLOWED_PKG_2, DISALLOWED_UID_2);
 
         auto tracingBackend = std::make_unique<impl::ThreadedBackend<impl::PerfettoBackend>>(
-                impl::PerfettoBackend([this](const auto& pkg) {
-                    return static_cast<InputDispatcherPolicyInterface&>(*mFakePolicy)
-                            .getPackageUid(pkg);
-                }));
+                impl::PerfettoBackend());
         mRequestTracerIdle = tracingBackend->getIdleWaiterForTesting();
         mDispatcher = std::make_unique<InputDispatcher>(*mFakePolicy, std::move(tracingBackend));
 
@@ -113,7 +127,7 @@ protected:
         request.token = window->getToken();
         request.windowName = window->getName();
         request.timestamp = systemTime(SYSTEM_TIME_MONOTONIC);
-        request.displayId = window->getInfo()->displayId;
+        request.displayId = window->getInfo()->displayId.val();
         mDispatcher->setFocusedWindow(request);
     }
 
@@ -630,7 +644,8 @@ TEST_F(InputTracingTest, TraceWindowDispatch) {
     waitForTracerIdle();
 }
 
-TEST_F(InputTracingTest, SimultaneousTracingSessions) {
+// TODO(b/336097719): Investigate flakiness and re-enable this test.
+TEST_F(InputTracingTest, DISABLED_SimultaneousTracingSessions) {
     auto s1 = std::make_unique<InputTraceSession>(
             [](auto& config) { config->set_mode(AndroidInputEventConfig::TRACE_MODE_TRACE_ALL); });
 

@@ -47,8 +47,6 @@ namespace android {
 
 namespace {
 
-static const bool ENABLE_POINTER_CHOREOGRAPHER = input_flags::enable_pointer_choreographer();
-
 /**
  * Log details of each gesture output by the gestures library.
  * Enable this via "adb shell setprop log.tag.TouchpadInputMapperGestures DEBUG" (requires
@@ -185,7 +183,6 @@ private:
     static AStatsManager_PullAtomCallbackReturn pullAtomCallback(int32_t atomTag,
                                                                  AStatsEventList* outEventList,
                                                                  void* cookie) {
-        ALOGI("Received pull request for touchpad usage atom");
         LOG_ALWAYS_FATAL_IF(atomTag != android::util::TOUCHPAD_USAGE);
         MetricsAccumulator& accumulator = MetricsAccumulator::getInstance();
         accumulator.produceAtomsAndReset(*outEventList);
@@ -193,14 +190,12 @@ private:
     }
 
     void produceAtomsAndReset(AStatsEventList& outEventList) {
-        ALOGI("Acquiring lock for touchpad usage metrics...");
         std::scoped_lock lock(mLock);
         produceAtomsLocked(outEventList);
         resetCountersLocked();
     }
 
     void produceAtomsLocked(AStatsEventList& outEventList) const REQUIRES(mLock) {
-        ALOGI("Producing touchpad usage atoms for %zu counters", mCounters.size());
         for (auto& [id, counters] : mCounters) {
             auto [busId, vendorId, productId, versionId] = id;
             addAStatsEvent(&outEventList, android::util::TOUCHPAD_USAGE, vendorId, productId,
@@ -237,20 +232,13 @@ private:
 
 TouchpadInputMapper::TouchpadInputMapper(InputDeviceContext& deviceContext,
                                          const InputReaderConfiguration& readerConfig)
-      : TouchpadInputMapper(deviceContext, readerConfig, ENABLE_POINTER_CHOREOGRAPHER) {}
-
-TouchpadInputMapper::TouchpadInputMapper(InputDeviceContext& deviceContext,
-                                         const InputReaderConfiguration& readerConfig,
-                                         bool enablePointerChoreographer)
       : InputMapper(deviceContext, readerConfig),
         mGestureInterpreter(NewGestureInterpreter(), DeleteGestureInterpreter),
-        mPointerController(getContext()->getPointerController(getDeviceId())),
         mTimerProvider(*getContext()),
         mStateConverter(deviceContext, mMotionAccumulator),
         mGestureConverter(*getContext(), deviceContext, getDeviceId()),
         mCapturedEventConverter(*getContext(), deviceContext, mMotionAccumulator, getDeviceId()),
-        mMetricsId(metricsIdFromInputDeviceIdentifier(deviceContext.getDeviceIdentifier())),
-        mEnablePointerChoreographer(enablePointerChoreographer) {
+        mMetricsId(metricsIdFromInputDeviceIdentifier(deviceContext.getDeviceIdentifier())) {
     RawAbsoluteAxisInfo slotAxisInfo;
     deviceContext.getAbsoluteAxisInfo(ABS_MT_SLOT, &slotAxisInfo);
     if (!slotAxisInfo.valid || slotAxisInfo.maxValue <= 0) {
@@ -277,10 +265,6 @@ TouchpadInputMapper::TouchpadInputMapper(InputDeviceContext& deviceContext,
 }
 
 TouchpadInputMapper::~TouchpadInputMapper() {
-    if (mPointerController != nullptr) {
-        mPointerController->fade(PointerControllerInterface::Transition::IMMEDIATE);
-    }
-
     // The gesture interpreter's destructor will try to free its property and timer providers,
     // calling PropertyProvider::freeProperty and TimerProvider::freeTimer using a raw pointers.
     // Depending on the declaration order in TouchpadInputMapper.h, those providers may have already
@@ -322,7 +306,8 @@ void TouchpadInputMapper::dump(std::string& dump) {
     }
     dump += INDENT3 "Captured event converter:\n";
     dump += addLinePrefix(mCapturedEventConverter.dump(), INDENT4);
-    dump += StringPrintf(INDENT3 "DisplayId: %s\n", toString(mDisplayId).c_str());
+    dump += StringPrintf(INDENT3 "DisplayId: %s\n",
+                         toString(mDisplayId, streamableToString).c_str());
 }
 
 std::list<NotifyArgs> TouchpadInputMapper::reconfigure(nsecs_t when,
@@ -334,7 +319,7 @@ std::list<NotifyArgs> TouchpadInputMapper::reconfigure(nsecs_t when,
     }
 
     if (!changes.any() || changes.test(InputReaderConfiguration::Change::DISPLAY_INFO)) {
-        mDisplayId = ADISPLAY_ID_NONE;
+        mDisplayId = ui::LogicalDisplayId::INVALID;
         std::optional<DisplayViewport> resolvedViewport;
         std::optional<FloatRect> boundsInLogicalDisplay;
         if (auto assocViewport = mDeviceContext.getAssociatedViewport(); assocViewport) {
@@ -342,33 +327,13 @@ std::list<NotifyArgs> TouchpadInputMapper::reconfigure(nsecs_t when,
             // Only generate events for the associated display.
             mDisplayId = assocViewport->displayId;
             resolvedViewport = *assocViewport;
-            if (!mEnablePointerChoreographer) {
-                const bool mismatchedPointerDisplay =
-                        (assocViewport->displayId != mPointerController->getDisplayId());
-                if (mismatchedPointerDisplay) {
-                    ALOGW("Touchpad \"%s\" associated viewport display does not match pointer "
-                          "controller",
-                          mDeviceContext.getName().c_str());
-                    mDisplayId.reset();
-                }
-            }
         } else {
             // The InputDevice is not associated with a viewport, but it controls the mouse pointer.
-            if (mEnablePointerChoreographer) {
-                // Always use DISPLAY_ID_NONE for touchpad events.
-                // PointerChoreographer will make it target the correct the displayId later.
-                resolvedViewport =
-                        getContext()->getPolicy()->getPointerViewportForAssociatedDisplay();
-                mDisplayId = resolvedViewport ? std::make_optional(ADISPLAY_ID_NONE) : std::nullopt;
-            } else {
-                mDisplayId = mPointerController->getDisplayId();
-                if (auto v = config.getDisplayViewportById(*mDisplayId); v) {
-                    resolvedViewport = *v;
-                }
-                if (auto bounds = mPointerController->getBounds(); bounds) {
-                    boundsInLogicalDisplay = *bounds;
-                }
-            }
+            // Always use DISPLAY_ID_NONE for touchpad events.
+            // PointerChoreographer will make it target the correct the displayId later.
+            resolvedViewport = getContext()->getPolicy()->getPointerViewportForAssociatedDisplay();
+            mDisplayId = resolvedViewport ? std::make_optional(ui::LogicalDisplayId::INVALID)
+                                          : std::nullopt;
         }
 
         mGestureConverter.setDisplayId(mDisplayId);
@@ -422,7 +387,6 @@ std::list<NotifyArgs> TouchpadInputMapper::reconfigure(nsecs_t when,
             // The touchpad is being captured, so we need to tidy up any fake fingers etc. that are
             // still being reported for a gesture in progress.
             out += reset(when);
-            mPointerController->fade(PointerControllerInterface::Transition::IMMEDIATE);
         } else {
             // We're transitioning from captured to uncaptured.
             mCapturedEventConverter.reset();
@@ -532,7 +496,7 @@ std::list<NotifyArgs> TouchpadInputMapper::processGestures(nsecs_t when, nsecs_t
     return out;
 }
 
-std::optional<int32_t> TouchpadInputMapper::getAssociatedDisplayId() {
+std::optional<ui::LogicalDisplayId> TouchpadInputMapper::getAssociatedDisplayId() {
     return mDisplayId;
 }
 

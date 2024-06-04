@@ -142,6 +142,8 @@ void FlagManager::dump(std::string& result) const {
     DUMP_READ_ONLY_FLAG(graphite_renderengine);
     DUMP_READ_ONLY_FLAG(latch_unsignaled_with_auto_refresh_changed);
     DUMP_READ_ONLY_FLAG(deprecate_vsync_sf);
+    DUMP_READ_ONLY_FLAG(allow_n_vsyncs_in_targeter);
+    DUMP_READ_ONLY_FLAG(detached_mirror);
 
 #undef DUMP_READ_ONLY_FLAG
 #undef DUMP_SERVER_FLAG
@@ -234,6 +236,8 @@ FLAG_MANAGER_READ_ONLY_FLAG(ce_fence_promise, "");
 FLAG_MANAGER_READ_ONLY_FLAG(graphite_renderengine, "debug.renderengine.graphite")
 FLAG_MANAGER_READ_ONLY_FLAG(latch_unsignaled_with_auto_refresh_changed, "");
 FLAG_MANAGER_READ_ONLY_FLAG(deprecate_vsync_sf, "");
+FLAG_MANAGER_READ_ONLY_FLAG(allow_n_vsyncs_in_targeter, "");
+FLAG_MANAGER_READ_ONLY_FLAG(detached_mirror, "");
 
 /// Trunk stable server flags ///
 FLAG_MANAGER_SERVER_FLAG(refresh_rate_overlay_on_external_display, "")
@@ -245,5 +249,6 @@ FLAG_MANAGER_SERVER_FLAG_IMPORTED(adpf_use_fmq_channel, "", android::os)
 /// Trunk stable readonly flags from outside SurfaceFlinger ///
 FLAG_MANAGER_READ_ONLY_FLAG_IMPORTED(idle_screen_refresh_rate_timeout, "",
                                      com::android::server::display::feature::flags)
+FLAG_MANAGER_READ_ONLY_FLAG_IMPORTED(adpf_use_fmq_channel_fixed, "", android::os)
 
 } // namespace android

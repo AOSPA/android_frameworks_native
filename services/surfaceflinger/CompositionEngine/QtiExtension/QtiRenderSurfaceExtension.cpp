@@ -42,4 +42,36 @@ int32_t QtiRenderSurfaceExtension::qtiGetClientTargetFormat() {
     return ANativeWindow_getFormat(mQtiRenderSurface->mNativeWindow.get());
 }
 
+void QtiRenderSurfaceExtension::qtiSetViewportAndProjection() {
+    // When QtiExtensions are disabled or when pointer to RenderSurface is invalid, do nothing
+    if (!mQtiEnableExtn || !mQtiRenderSurface) {
+        return;
+    }
+
+    Rect sourceCrop = Rect(mQtiRenderSurface->mSize);
+    Rect viewPort = Rect(mQtiRenderSurface->mSize.width, mQtiRenderSurface->mSize.height);
+    auto& renderEngine = mQtiRenderSurface->mCompositionEngine.getRenderEngine();
+    renderEngine.setViewportAndProjection(viewPort, sourceCrop);
+}
+
+bool QtiRenderSurfaceExtension::qtiFlipClientTarget() {
+    // When QtiExtensions are disabled or when pointer to RenderSurface is invalid, return a
+    // default value
+    if (!mQtiEnableExtn || !mQtiRenderSurface) {
+        return false;
+    }
+
+    return mQtiFlipClientTarget;
+}
+
+void QtiRenderSurfaceExtension::qtiSetFlipClientTarget(bool flip) {
+    // When QtiExtensions are disabled or when pointer to RenderSurface is invalid, return a
+    // default value
+    if (!mQtiEnableExtn || !mQtiRenderSurface) {
+        return;
+    }
+
+    mQtiFlipClientTarget = flip;
+}
+
 } // namespace android::compositionengineextension

@@ -51,6 +51,7 @@ public:
     bool refresh_rate_overlay_on_external_display() const;
     bool adpf_gpu_sf() const;
     bool adpf_use_fmq_channel() const;
+    bool adpf_use_fmq_channel_fixed() const;
 
     /// Trunk stable readonly flags ///
     bool connected_display() const;
@@ -80,6 +81,8 @@ public:
     bool graphite_renderengine() const;
     bool latch_unsignaled_with_auto_refresh_changed() const;
     bool deprecate_vsync_sf() const;
+    bool allow_n_vsyncs_in_targeter() const;
+    bool detached_mirror() const;
 
 protected:
     // overridden for unit tests

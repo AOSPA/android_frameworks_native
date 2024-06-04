@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,25 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #pragma once
 
-#include <stdint.h>
-
-namespace android {
-
-/**
- * Invalid value for display size. Used when display size isn't available.
- */
-constexpr int32_t INVALID_DISPLAY_SIZE = 0;
-
-enum {
-    /* Used when an event is not associated with any display.
-     * Typically used for non-pointer events. */
-    ADISPLAY_ID_NONE = -1,
-
-    /* The default display id. */
-    ADISPLAY_ID_DEFAULT = 0,
-};
-
-} // namespace android
+#define __INTRODUCED_IN_LLNDK(x) /* nothing on Trusty */

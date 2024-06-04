@@ -21,7 +21,9 @@
 #include <algorithm>
 
 #include <android-base/logging.h>
-#include <statslog.h>
+#ifdef __ANDROID__
+#include <statslog_libinput.h>
+#endif // __ANDROID__
 
 #include "Eigen/Core"
 #include "Eigen/Geometry"
@@ -45,18 +47,20 @@ inline constexpr float PATH_LENGTH_EPSILON = 0.001;
 
 void MotionPredictorMetricsManager::defaultReportAtomFunction(
         const MotionPredictorMetricsManager::AtomFields& atomFields) {
-    android::util::stats_write(android::util::STYLUS_PREDICTION_METRICS_REPORTED,
-                               /*stylus_vendor_id=*/0,
-                               /*stylus_product_id=*/0,
-                               atomFields.deltaTimeBucketMilliseconds,
-                               atomFields.alongTrajectoryErrorMeanMillipixels,
-                               atomFields.alongTrajectoryErrorStdMillipixels,
-                               atomFields.offTrajectoryRmseMillipixels,
-                               atomFields.pressureRmseMilliunits,
-                               atomFields.highVelocityAlongTrajectoryRmse,
-                               atomFields.highVelocityOffTrajectoryRmse,
-                               atomFields.scaleInvariantAlongTrajectoryRmse,
-                               atomFields.scaleInvariantOffTrajectoryRmse);
+#ifdef __ANDROID__
+    android::libinput::stats_write(android::libinput::STYLUS_PREDICTION_METRICS_REPORTED,
+                                   /*stylus_vendor_id=*/0,
+                                   /*stylus_product_id=*/0,
+                                   atomFields.deltaTimeBucketMilliseconds,
+                                   atomFields.alongTrajectoryErrorMeanMillipixels,
+                                   atomFields.alongTrajectoryErrorStdMillipixels,
+                                   atomFields.offTrajectoryRmseMillipixels,
+                                   atomFields.pressureRmseMilliunits,
+                                   atomFields.highVelocityAlongTrajectoryRmse,
+                                   atomFields.highVelocityOffTrajectoryRmse,
+                                   atomFields.scaleInvariantAlongTrajectoryRmse,
+                                   atomFields.scaleInvariantOffTrajectoryRmse);
+#endif // __ANDROID__
 }
 
 MotionPredictorMetricsManager::MotionPredictorMetricsManager(

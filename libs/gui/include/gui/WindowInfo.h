@@ -23,7 +23,7 @@
 #include <ftl/flags.h>
 #include <ftl/mixins.h>
 #include <gui/PidUid.h>
-#include <gui/constants.h>
+#include <ui/LogicalDisplayId.h>
 #include <ui/Rect.h>
 #include <ui/Region.h>
 #include <ui/Size.h>
@@ -177,8 +177,8 @@ struct WindowInfo : public Parcelable {
                 static_cast<uint32_t>(os::InputConfig::CLONE),
         GLOBAL_STYLUS_BLOCKS_TOUCH =
                 static_cast<uint32_t>(os::InputConfig::GLOBAL_STYLUS_BLOCKS_TOUCH),
-        SENSITIVE_FOR_TRACING =
-                static_cast<uint32_t>(os::InputConfig::SENSITIVE_FOR_TRACING),
+        SENSITIVE_FOR_PRIVACY =
+                static_cast<uint32_t>(os::InputConfig::SENSITIVE_FOR_PRIVACY),
         // clang-format on
     };
 
@@ -233,7 +233,7 @@ struct WindowInfo : public Parcelable {
     Uid ownerUid = Uid::INVALID;
     std::string packageName;
     ftl::Flags<InputConfig> inputConfig;
-    int32_t displayId = ADISPLAY_ID_NONE;
+    ui::LogicalDisplayId displayId = ui::LogicalDisplayId::INVALID;
     InputApplicationInfo applicationInfo;
     bool replaceTouchableRegionWithCrop = false;
     wp<IBinder> touchableRegionCropHandle;

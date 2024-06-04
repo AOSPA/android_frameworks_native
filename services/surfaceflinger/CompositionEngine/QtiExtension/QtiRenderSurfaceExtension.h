@@ -17,9 +17,14 @@ public:
     QtiRenderSurfaceExtension(RenderSurface* renderSurface);
 
     int32_t qtiGetClientTargetFormat();
+    void qtiSetViewportAndProjection();
+    bool qtiFlipClientTarget();
+    void qtiSetFlipClientTarget(bool flip);
 
 private:
     bool mQtiEnableExtn = false;
+    bool mQtiFlipClientTarget = false;
+
     RenderSurface* mQtiRenderSurface = nullptr;
 };
 

@@ -192,10 +192,13 @@ sp<WindowInfoHandle> TouchState::getFirstForegroundWindowHandle(DeviceId deviceI
     return nullptr;
 }
 
-bool TouchState::isSlippery() const {
+bool TouchState::isSlippery(DeviceId deviceId) const {
     // Must have exactly one foreground window.
     bool haveSlipperyForegroundWindow = false;
     for (const TouchedWindow& window : windows) {
+        if (!window.hasTouchingPointers(deviceId)) {
+            continue;
+        }
         if (window.targetFlags.test(InputTarget::Flags::FOREGROUND)) {
             if (haveSlipperyForegroundWindow ||
                 !window.windowHandle->getInfo()->inputConfig.test(
@@ -208,9 +211,11 @@ bool TouchState::isSlippery() const {
     return haveSlipperyForegroundWindow;
 }
 
-sp<WindowInfoHandle> TouchState::getWallpaperWindow() const {
-    for (size_t i = 0; i < windows.size(); i++) {
-        const TouchedWindow& window = windows[i];
+sp<WindowInfoHandle> TouchState::getWallpaperWindow(DeviceId deviceId) const {
+    for (const auto& window : windows) {
+        if (!window.hasTouchingPointers(deviceId)) {
+            continue;
+        }
         if (window.windowHandle->getInfo()->inputConfig.test(
                     gui::WindowInfo::InputConfig::IS_WALLPAPER)) {
             return window.windowHandle;

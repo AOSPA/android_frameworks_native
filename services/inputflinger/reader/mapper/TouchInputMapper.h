@@ -26,13 +26,12 @@
 #include <utility>
 #include <vector>
 
-#include <stdint.h>
-#include <gui/constants.h>
 #include <input/DisplayViewport.h>
 #include <input/Input.h>
 #include <input/InputDevice.h>
 #include <input/VelocityControl.h>
 #include <input/VelocityTracker.h>
+#include <stdint.h>
 #include <ui/Rect.h>
 #include <ui/Rotation.h>
 #include <ui/Size.h>
@@ -46,7 +45,6 @@
 #include "InputMapper.h"
 #include "InputReaderBase.h"
 #include "NotifyArgs.h"
-#include "PointerControllerInterface.h"
 #include "StylusState.h"
 #include "TouchButtonAccumulator.h"
 
@@ -187,7 +185,7 @@ public:
     [[nodiscard]] std::list<NotifyArgs> timeoutExpired(nsecs_t when) override;
     [[nodiscard]] std::list<NotifyArgs> updateExternalStylusState(
             const StylusState& state) override;
-    std::optional<int32_t> getAssociatedDisplayId() override;
+    std::optional<ui::LogicalDisplayId> getAssociatedDisplayId() override;
 
 protected:
     CursorButtonAccumulator mCursorButtonAccumulator;
@@ -391,9 +389,6 @@ protected:
 
     // The time the primary pointer last went down.
     nsecs_t mDownTime{0};
-
-    // The pointer controller, or null if the device is not a pointer.
-    std::shared_ptr<PointerControllerInterface> mPointerController;
 
     std::vector<VirtualKey> mVirtualKeys;
 
@@ -710,7 +705,7 @@ private:
 
         // Values reported for the last pointer event.
         uint32_t source;
-        int32_t displayId;
+        ui::LogicalDisplayId displayId{ui::LogicalDisplayId::INVALID};
         float lastCursorX;
         float lastCursorY;
 
@@ -723,7 +718,7 @@ private:
             hovering = false;
             downTime = 0;
             source = 0;
-            displayId = ADISPLAY_ID_NONE;
+            displayId = ui::LogicalDisplayId::INVALID;
             lastCursorX = 0.f;
             lastCursorY = 0.f;
         }
@@ -814,7 +809,8 @@ private:
 
     [[nodiscard]] std::list<NotifyArgs> dispatchPointerSimple(nsecs_t when, nsecs_t readTime,
                                                               uint32_t policyFlags, bool down,
-                                                              bool hovering, int32_t displayId);
+                                                              bool hovering,
+                                                              ui::LogicalDisplayId displayId);
     [[nodiscard]] std::list<NotifyArgs> abortPointerSimple(nsecs_t when, nsecs_t readTime,
                                                            uint32_t policyFlags);
 
@@ -837,9 +833,6 @@ private:
 
     // Returns if this touch device is a touch screen with an associated display.
     bool isTouchScreen();
-    // Updates touch spots if they are enabled. Should only be used when this device is a
-    // touchscreen.
-    void updateTouchSpots();
 
     bool isPointInsidePhysicalFrame(int32_t x, int32_t y) const;
     const VirtualKey* findVirtualKeyHit(int32_t x, int32_t y);

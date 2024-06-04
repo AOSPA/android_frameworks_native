@@ -396,8 +396,8 @@ void FakeInputDispatcherPolicy::interceptKeyBeforeQueueing(const KeyEvent& input
     }
 }
 
-void FakeInputDispatcherPolicy::interceptMotionBeforeQueueing(int32_t, uint32_t, int32_t, nsecs_t,
-                                                              uint32_t&) {}
+void FakeInputDispatcherPolicy::interceptMotionBeforeQueueing(ui::LogicalDisplayId, uint32_t,
+                                                              int32_t, nsecs_t, uint32_t&) {}
 
 nsecs_t FakeInputDispatcherPolicy::interceptKeyBeforeDispatching(const sp<IBinder>&,
                                                                  const KeyEvent&, uint32_t) {
@@ -426,7 +426,7 @@ void FakeInputDispatcherPolicy::notifySwitch(nsecs_t when, uint32_t switchValues
 }
 
 void FakeInputDispatcherPolicy::pokeUserActivity(nsecs_t eventTime, int32_t eventType,
-                                                 int32_t displayId) {
+                                                 ui::LogicalDisplayId displayId) {
     std::scoped_lock lock(mLock);
     mNotifyUserActivity.notify_all();
     mUserActivityPokeEvents.push({eventTime, eventType, displayId});
@@ -464,17 +464,6 @@ void FakeInputDispatcherPolicy::assertFilterInputEventWasCalledInternal(
     ASSERT_NE(nullptr, mFilteredEvent) << "Expected filterInputEvent() to have been called.";
     verify(*mFilteredEvent);
     mFilteredEvent = nullptr;
-}
-
-gui::Uid FakeInputDispatcherPolicy::getPackageUid(std::string pkg) {
-    std::scoped_lock lock(mLock);
-    auto it = mPackageUidMap.find(pkg);
-    return it != mPackageUidMap.end() ? it->second : gui::Uid::INVALID;
-}
-
-void FakeInputDispatcherPolicy::addPackageUidMapping(std::string package, gui::Uid uid) {
-    std::scoped_lock lock(mLock);
-    mPackageUidMap.insert_or_assign(std::move(package), uid);
 }
 
 } // namespace android

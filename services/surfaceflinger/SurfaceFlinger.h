@@ -71,6 +71,7 @@
 #include <ui/FenceResult.h>
 
 #include <common/FlagManager.h>
+#include "Display/DisplayModeController.h"
 #include "Display/PhysicalDisplay.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWC2.h"
@@ -204,6 +205,9 @@ enum class LatchUnsignaledConfig {
     // This is equivalent to ignoring the acquire fence when applying transactions.
     Always,
 };
+
+struct DisplayRenderAreaBuilder;
+struct LayerRenderAreaBuilder;
 
 using DisplayColorSetting = compositionengine::OutputColorSetting;
 
@@ -406,7 +410,7 @@ private:
 
     using TransactionSchedule = scheduler::TransactionSchedule;
     using GetLayerSnapshotsFunction = std::function<std::vector<std::pair<Layer*, sp<LayerFE>>>()>;
-    using RenderAreaFuture = ftl::Future<std::unique_ptr<RenderArea>>;
+    using RenderAreaBuilderVariant = std::variant<DisplayRenderAreaBuilder, LayerRenderAreaBuilder>;
     using DumpArgs = Vector<String16>;
     using Dumper = std::function<void(const DumpArgs&, bool asProto, std::string&)>;
 
@@ -559,15 +563,16 @@ private:
 
     static const size_t MAX_LAYERS = 4096;
 
-    // Implements IBinder.
-    status_t onTransact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) override;
-    status_t dump(int fd, const Vector<String16>& args) override { return priorityDump(fd, args); }
-    bool callingThreadHasUnscopedSurfaceFlingerAccess(bool usePermissionCache = true)
+    static bool callingThreadHasUnscopedSurfaceFlingerAccess(bool usePermissionCache = true)
             EXCLUDES(mStateLock);
 
-    // Implements ISurfaceComposer
-    sp<IBinder> createDisplay(const String8& displayName, bool secure,
-                              float requestedRefreshRate = 0.0f);
+    // IBinder overrides:
+    status_t onTransact(uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags) override;
+    status_t dump(int fd, const Vector<String16>& args) override { return priorityDump(fd, args); }
+
+    // ISurfaceComposer implementation:
+    sp<IBinder> createDisplay(const String8& displayName, bool isSecure,
+                              const std::string& uniqueId, float requestedRefreshRate = 0.0f);
     void destroyDisplay(const sp<IBinder>& displayToken);
     std::vector<PhysicalDisplayId> getPhysicalDisplayIds() const EXCLUDES(mStateLock) {
         Mutex::Autolock lock(mStateLock);
@@ -687,7 +692,7 @@ private:
 
     void updateHdcpLevels(hal::HWDisplayId hwcDisplayId, int32_t connectedLevel, int32_t maxLevel);
 
-    // Implements IBinder::DeathRecipient.
+    // IBinder::DeathRecipient overrides:
     void binderDied(const wp<IBinder>& who) override;
 
     // HWC2::ComposerCallback overrides:
@@ -731,7 +736,7 @@ private:
     // Get the controller and timeout that will help decide how the kernel idle timer will be
     // configured and what value to use as the timeout.
     std::pair<std::optional<KernelIdleTimerController>, std::chrono::milliseconds>
-            getKernelIdleTimerProperties(DisplayId) REQUIRES(mStateLock);
+            getKernelIdleTimerProperties(PhysicalDisplayId) REQUIRES(mStateLock);
     // Updates the kernel idle timer either through HWC or through sysprop
     // depending on which controller is provided
     void updateKernelIdleTimer(std::chrono::milliseconds timeoutMs, KernelIdleTimerController,
@@ -916,12 +921,12 @@ private:
     // Checks if a protected layer exists in a list of layers.
     bool layersHasProtectedLayer(const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const;
 
-    void captureScreenCommon(RenderAreaFuture, GetLayerSnapshotsFunction, ui::Size bufferSize,
-                             ui::PixelFormat, bool allowProtected, bool grayscale,
-                             const sp<IScreenCaptureListener>&);
+    void captureScreenCommon(RenderAreaBuilderVariant, GetLayerSnapshotsFunction,
+                             ui::Size bufferSize, ui::PixelFormat, bool allowProtected,
+                             bool grayscale, const sp<IScreenCaptureListener>&);
 
     ftl::SharedFuture<FenceResult> captureScreenshot(
-            RenderAreaFuture, GetLayerSnapshotsFunction,
+            RenderAreaBuilderVariant, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, const sp<IScreenCaptureListener>&);
 
@@ -929,13 +934,13 @@ private:
     // not yet been captured, and thus cannot yet be passed in as a parameter.
     // Needed for TestableSurfaceFlinger.
     ftl::SharedFuture<FenceResult> renderScreenImpl(
-            std::shared_ptr<const RenderArea>, GetLayerSnapshotsFunction,
+            std::unique_ptr<const RenderArea>, GetLayerSnapshotsFunction,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, ScreenCaptureResults&) EXCLUDES(mStateLock)
             REQUIRES(kMainThreadContext);
 
     ftl::SharedFuture<FenceResult> renderScreenImpl(
-            std::shared_ptr<const RenderArea>,
+            std::unique_ptr<const RenderArea>,
             const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
             bool grayscale, bool isProtected, ScreenCaptureResults&,
             std::vector<std::pair<Layer*, sp<android::LayerFE>>>& layers) EXCLUDES(mStateLock)
@@ -1015,8 +1020,7 @@ private:
         return getDefaultDisplayDeviceLocked();
     }
 
-    using DisplayDeviceAndSnapshot =
-            std::pair<sp<DisplayDevice>, display::PhysicalDisplay::SnapshotRef>;
+    using DisplayDeviceAndSnapshot = std::pair<sp<DisplayDevice>, display::DisplaySnapshotRef>;
 
     // Combinator for ftl::Optional<PhysicalDisplay>::and_then.
     auto getDisplayDeviceAndSnapshot() REQUIRES(mStateLock) {
@@ -1085,10 +1089,13 @@ private:
     bool configureLocked() REQUIRES(mStateLock) REQUIRES(kMainThreadContext)
             EXCLUDES(mHotplugMutex);
 
-    // Returns a string describing the hotplug, or nullptr if it was rejected.
-    const char* processHotplug(PhysicalDisplayId, hal::HWDisplayId, bool connected,
-                               DisplayIdentificationInfo&&) REQUIRES(mStateLock)
-            REQUIRES(kMainThreadContext);
+    // Returns the active mode ID, or nullopt on hotplug failure.
+    std::optional<DisplayModeId> processHotplugConnect(PhysicalDisplayId, hal::HWDisplayId,
+                                                       DisplayIdentificationInfo&&,
+                                                       const char* displayString)
+            REQUIRES(mStateLock, kMainThreadContext);
+    void processHotplugDisconnect(PhysicalDisplayId, const char* displayString)
+            REQUIRES(mStateLock, kMainThreadContext);
 
     sp<DisplayDevice> setupNewDisplayDeviceInternal(
             const wp<IBinder>& displayToken,
@@ -1351,6 +1358,8 @@ private:
     // reads from ISchedulerCallback::requestDisplayModes may happen concurrently.
     std::atomic<PhysicalDisplayId> mActiveDisplayId GUARDED_BY(mStateLock);
 
+    display::DisplayModeController mDisplayModeController;
+
     struct {
         DisplayIdGenerator<GpuVirtualDisplayId> gpu;
         std::optional<DisplayIdGenerator<HalVirtualDisplayId>> hal;
@@ -1514,7 +1523,8 @@ private:
     bool mPowerHintSessionEnabled;
 
     bool mLayerLifecycleManagerEnabled = false;
-    bool mLegacyFrontEndEnabled = true;
+    // Whether a display should be turned on when initialized
+    bool mSkipPowerOnForQuiescent;
 
     frontend::LayerLifecycleManager mLayerLifecycleManager GUARDED_BY(kMainThreadContext);
     frontend::LayerHierarchyBuilder mLayerHierarchyBuilder GUARDED_BY(kMainThreadContext);
@@ -1583,7 +1593,7 @@ private:
 
 class SurfaceComposerAIDL : public gui::BnSurfaceComposer {
 public:
-    SurfaceComposerAIDL(sp<SurfaceFlinger> sf) : mFlinger(std::move(sf)) {}
+    explicit SurfaceComposerAIDL(sp<SurfaceFlinger> sf) : mFlinger(std::move(sf)) {}
 
     binder::Status bootFinished() override;
     binder::Status createDisplayEventConnection(
@@ -1591,8 +1601,9 @@ public:
             const sp<IBinder>& layerHandle,
             sp<gui::IDisplayEventConnection>* outConnection) override;
     binder::Status createConnection(sp<gui::ISurfaceComposerClient>* outClient) override;
-    binder::Status createDisplay(const std::string& displayName, bool secure,
-                                 float requestedRefreshRate, sp<IBinder>* outDisplay) override;
+    binder::Status createDisplay(const std::string& displayName, bool isSecure,
+                                 const std::string& uniqueId, float requestedRefreshRate,
+                                 sp<IBinder>* outDisplay) override;
     binder::Status destroyDisplay(const sp<IBinder>& display) override;
     binder::Status getPhysicalDisplayIds(std::vector<int64_t>* outDisplayIds) override;
     binder::Status getPhysicalDisplayToken(int64_t displayId, sp<IBinder>* outDisplay) override;
@@ -1714,7 +1725,7 @@ private:
                                               gui::DynamicDisplayInfo*& outInfo);
 
 private:
-    sp<SurfaceFlinger> mFlinger;
+    const sp<SurfaceFlinger> mFlinger;
 };
 
 } // namespace android

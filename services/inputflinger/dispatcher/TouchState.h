@@ -65,8 +65,8 @@ struct TouchState {
     void cancelPointersForNonPilferingWindows();
 
     sp<android::gui::WindowInfoHandle> getFirstForegroundWindowHandle(DeviceId deviceId) const;
-    bool isSlippery() const;
-    sp<android::gui::WindowInfoHandle> getWallpaperWindow() const;
+    bool isSlippery(DeviceId deviceId) const;
+    sp<android::gui::WindowInfoHandle> getWallpaperWindow(DeviceId deviceId) const;
     const TouchedWindow& getTouchedWindow(
             const sp<android::gui::WindowInfoHandle>& windowHandle) const;
     // Whether any of the windows are currently being touched

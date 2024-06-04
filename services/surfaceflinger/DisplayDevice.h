@@ -357,6 +357,7 @@ struct DisplayDeviceState {
     uint32_t width = 0;
     uint32_t height = 0;
     std::string displayName;
+    std::string uniqueId;
     bool isSecure = false;
     bool isProtected = false;
     // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
@@ -391,7 +392,6 @@ struct DisplayDeviceCreationArgs {
     hardware::graphics::composer::hal::PowerMode initialPowerMode{
             hardware::graphics::composer::hal::PowerMode::OFF};
     bool isPrimary{false};
-    DisplayModeId activeModeId;
     // QTI_BEGIN
     android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
     // QTI_END

@@ -9,7 +9,6 @@
 #include "QtiGralloc.h"
 #include "vendor/qti/hardware/display/composer/3.1/IQtiComposer.h"
 
-#include <Scheduler/VsyncConfiguration.h>
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfig.h>
 #include <aidl/vendor/qti/hardware/display/config/IDisplayConfigCallback.h>
 #include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
@@ -18,8 +17,11 @@
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
 #include <composer_extn_intf.h>
+#include <compositionengine/Display.h>
+#include <compositionengine/RenderSurface.h>
 #include <config/client_interface.h>
 #include <ftl/non_null.h>
+#include "../CompositionEngine/QtiExtension/QtiRenderSurfaceExtension.h"
 
 #include <Scheduler/VSyncPredictor.h>
 #include <Scheduler/VsyncConfiguration.h>
@@ -30,6 +32,8 @@
 using aidl::vendor::qti::hardware::display::config::IDisplayConfig;
 using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
 
+using android::compositionengine::Display;
+using android::compositionengineextension::QtiRenderSurfaceExtension;
 using android::hardware::graphics::common::V1_0::BufferUsage;
 using PerfHintType = composer::PerfHintType;
 using VsyncConfiguration = android::scheduler::VsyncConfiguration;
@@ -2045,6 +2049,143 @@ void QtiSurfaceFlingerExtension::qtiAllowIdleFallback() {
             mQtiDisplayConfigHidl->AllowIdleFallback();
         }
     }
+}
+
+void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
+        sp<DisplayDevice> displayDevice, DisplayDeviceState& currentState,
+        const DisplayDeviceState& drawingState) {
+    base::unique_fd fd;
+    auto display = displayDevice->getCompositionDisplay();
+    int newWidth = currentState.layerStackSpaceRect.width();
+    int newHeight = currentState.layerStackSpaceRect.height();
+    int currentWidth = drawingState.layerStackSpaceRect.width();
+    int currentHeight = drawingState.layerStackSpaceRect.height();
+    int displayWidth = displayDevice->getWidth();
+    int displayHeight = displayDevice->getHeight();
+    bool update_needed = false;
+
+    ALOGV("%s: newWidth %d newHeight %d currentWidth %d currentHeight %d displayWidth %d "
+          "displayHeight %d",
+          __func__, newWidth, newHeight, currentWidth, currentHeight, displayWidth, displayHeight);
+
+    if (newWidth != currentWidth || newHeight != currentHeight) {
+        update_needed = true;
+        if (!((newWidth > newHeight && displayWidth > displayHeight) ||
+              (newWidth < newHeight && displayWidth < displayHeight))) {
+            std::swap(newWidth, newHeight);
+            ALOGV("%s: Width %d or height %d was updated. Swap the values of newWidth %d and "
+                  "newHeight %d",
+                  __func__, (newWidth != currentWidth), (newHeight != currentHeight), newWidth,
+                  newHeight);
+        }
+    }
+
+    if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight &&
+        !update_needed) {
+        ALOGV("%s: No changes on the configuration", __func__);
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
+        return;
+    }
+
+    if (newWidth > 0 && newHeight > 0) {
+        currentState.width = static_cast<uint32_t>(newWidth);
+        currentState.height = static_cast<uint32_t>(newHeight);
+        ALOGV("%s: Update currentState's width %d and height %d", __func__, currentState.width,
+              currentState.height);
+    }
+
+    currentState.orientedDisplaySpaceRect = currentState.layerStackSpaceRect;
+    ALOGV("%s: Update currentState's orientedDisplaySpaceRect left %f top %f right %f bottom %f",
+          __func__, currentState.orientedDisplaySpaceRect.left,
+          currentState.orientedDisplaySpaceRect.top, currentState.orientedDisplaySpaceRect.right,
+          currentState.orientedDisplaySpaceRect.bottom);
+
+    if (mQtiFlinger->mBootFinished) {
+        displayDevice->setDisplaySize(static_cast<int>(currentState.width),
+                                      static_cast<int>(currentState.height));
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
+
+        auto qtiRSExtnIntf = display->getRenderSurface()->qtiGetRenderSurfaceExtension();
+        if (!qtiRSExtnIntf) {
+            ALOGV("%s: QtiRenderSurfaceExtension is invalid", __func__);
+            return;
+        }
+        qtiRSExtnIntf->qtiSetViewportAndProjection();
+        if (displayDevice->isPoweredOn()) {
+            qtiRSExtnIntf->qtiSetFlipClientTarget(true);
+            // queue a scratch buffer to flip Client Target with updated size
+            // TODO: Get the correct HDR/SDR ratio for the buffer. Hardcoding this to the default
+            // value for now since SFExtensions doesn't have an access to the buffer object.
+            display->getRenderSurface()->queueBuffer(std::move(fd), 1.0);
+            // releases the FrameBuffer that was acquired as part of queueBuffer()
+            qtiRSExtnIntf->qtiSetFlipClientTarget(false);
+            display->getRenderSurface()->onPresentDisplayCompleted();
+        } else {
+            mQtiDisplaySizeChanged = true;
+        }
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiFbScalingOnBoot() {
+    bool useFbScaling = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kFbScaling);
+    if (useFbScaling) {
+        ALOGV("%s: Qti FrameBuffer Scaling is enabled %d", __func__, useFbScaling);
+        Mutex::Autolock _l(mQtiFlinger->mStateLock);
+        ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(
+                mQtiFlinger->getPrimaryDisplayTokenLocked());
+        if (index < 0) {
+            ALOGE("%s: Invalid token %p", __func__,
+                  mQtiFlinger->getPrimaryDisplayTokenLocked().get());
+        } else {
+            DisplayDeviceState& curState =
+                    mQtiFlinger->mCurrentState.displays.editValueAt(static_cast<size_t>(index));
+            DisplayDeviceState& drawState =
+                    mQtiFlinger->mDrawingState.displays.editValueAt(static_cast<size_t>(index));
+            qtiSetFrameBufferSizeForScaling(mQtiFlinger->getDefaultDisplayDeviceLocked(), curState,
+                                            drawState);
+        }
+    }
+}
+
+bool QtiSurfaceFlingerExtension::qtiFbScalingOnDisplayChange(
+        const wp<IBinder>& displayToken, sp<DisplayDevice> display,
+        const DisplayDeviceState& drawingState) {
+    bool useFbScaling = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kFbScaling);
+    if (useFbScaling && display->isPrimary()) {
+        const ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(displayToken);
+        DisplayDeviceState& curState =
+                mQtiFlinger->mCurrentState.displays.editValueAt(static_cast<size_t>(index));
+        qtiSetFrameBufferSizeForScaling(display, curState, drawingState);
+        return true;
+    }
+
+    return false;
+}
+
+void QtiSurfaceFlingerExtension::qtiFbScalingOnPowerChange(sp<DisplayDevice> display) {
+    bool useFbScaling = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kFbScaling);
+    if (!useFbScaling || !mQtiDisplaySizeChanged) {
+        return;
+    }
+
+    base::unique_fd fd;
+    auto compositionDisplay = display->getCompositionDisplay();
+    auto qtiRSExtnIntf = compositionDisplay->getRenderSurface()->qtiGetRenderSurfaceExtension();
+    if (!qtiRSExtnIntf) {
+        ALOGV("%s: QtiRenderSurfaceExtension is invalid", __func__);
+        return;
+    }
+    qtiRSExtnIntf->qtiSetFlipClientTarget(true);
+    // qtueue a scratch buffer to flip client target with updated size
+    // TODO: Get the correct HDR/SDR ratio for the buffer. Hardcoding this to the default value for
+    //now since SFExtensions doesn't have an access to the buffer object.
+    compositionDisplay->getRenderSurface()->queueBuffer(std::move(fd), 1.0);
+    qtiRSExtnIntf->qtiSetFlipClientTarget(false);
+    // releases the FrameBuffer that was acquired as part of queueBuffer()
+    compositionDisplay->getRenderSurface()->onPresentDisplayCompleted();
+    mQtiDisplaySizeChanged = false;
 }
 
 /*

@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include <PointerControllerInterface.h>
 #include <android-base/thread_annotations.h>
 #include <utils/Condition.h>
 #include <utils/Mutex.h>
@@ -87,7 +86,7 @@ public:
 
     std::vector<int32_t> getVibratorIds(int32_t deviceId) override;
 
-    bool canDispatchToDisplay(int32_t deviceId, int32_t displayId) override;
+    bool canDispatchToDisplay(int32_t deviceId, ui::LogicalDisplayId displayId) override;
 
     bool enableSensor(int32_t deviceId, InputDeviceSensorType sensorType,
                       std::chrono::microseconds samplingPeriod,
@@ -119,6 +118,8 @@ public:
 
     void sysfsNodeChanged(const std::string& sysfsNodePath) override;
 
+    DeviceId getLastUsedInputDeviceId() override;
+
 protected:
     // These members are protected so they can be instrumented by test cases.
     virtual std::shared_ptr<InputDevice> createDeviceLocked(nsecs_t when, int32_t deviceId,
@@ -140,9 +141,6 @@ protected:
         int32_t getGlobalMetaState() NO_THREAD_SAFETY_ANALYSIS override;
         void disableVirtualKeysUntil(nsecs_t time) REQUIRES(mReader->mLock) override;
         bool shouldDropVirtualKey(nsecs_t now, int32_t keyCode, int32_t scanCode)
-                REQUIRES(mReader->mLock) override;
-        void fadePointer() REQUIRES(mReader->mLock) override;
-        std::shared_ptr<PointerControllerInterface> getPointerController(int32_t deviceId)
                 REQUIRES(mReader->mLock) override;
         void requestTimeoutAtTime(nsecs_t when) REQUIRES(mReader->mLock) override;
         int32_t bumpGeneration() NO_THREAD_SAFETY_ANALYSIS override;
@@ -204,6 +202,9 @@ private:
     // records timestamp of the last key press on the physical keyboard
     nsecs_t mLastKeyDownTimestamp GUARDED_BY(mLock){0};
 
+    // The input device that produced a new gesture most recently.
+    DeviceId mLastUsedDeviceId GUARDED_BY(mLock){ReservedInputDeviceId::INVALID_INPUT_DEVICE_ID};
+
     // low-level input event decoding and device management
     [[nodiscard]] std::list<NotifyArgs> processEventsLocked(const RawEvent* rawEvents, size_t count)
             REQUIRES(mLock);
@@ -229,13 +230,6 @@ private:
     void getExternalStylusDevicesLocked(std::vector<InputDeviceInfo>& outDevices) REQUIRES(mLock);
     [[nodiscard]] std::list<NotifyArgs> dispatchExternalStylusStateLocked(const StylusState& state)
             REQUIRES(mLock);
-
-    // The PointerController that is shared among all the input devices that need it.
-    std::weak_ptr<PointerControllerInterface> mPointerController;
-    std::shared_ptr<PointerControllerInterface> getPointerControllerLocked(int32_t deviceId)
-            REQUIRES(mLock);
-    void updatePointerDisplayLocked() REQUIRES(mLock);
-    void fadePointerLocked() REQUIRES(mLock);
 
     int32_t mGeneration GUARDED_BY(mLock);
     int32_t bumpGenerationLocked() REQUIRES(mLock);

@@ -99,8 +99,9 @@ public:
      * This method is expected to set the POLICY_FLAG_PASS_TO_USER policy flag if the event
      * should be dispatched to applications.
      */
-    virtual void interceptMotionBeforeQueueing(int32_t displayId, uint32_t source, int32_t action,
-                                               nsecs_t when, uint32_t& policyFlags) = 0;
+    virtual void interceptMotionBeforeQueueing(ui::LogicalDisplayId displayId, uint32_t source,
+                                               int32_t action, nsecs_t when,
+                                               uint32_t& policyFlags) = 0;
 
     /* Allows the policy a chance to intercept a key before dispatching. */
     virtual nsecs_t interceptKeyBeforeDispatching(const sp<IBinder>& token,
@@ -119,7 +120,8 @@ public:
                               uint32_t policyFlags) = 0;
 
     /* Poke user activity for an event dispatched to a window. */
-    virtual void pokeUserActivity(nsecs_t eventTime, int32_t eventType, int32_t displayId) = 0;
+    virtual void pokeUserActivity(nsecs_t eventTime, int32_t eventType,
+                                  ui::LogicalDisplayId displayId) = 0;
 
     /*
      * Return true if the provided event is stale, and false otherwise. Used for determining
@@ -162,9 +164,6 @@ public:
     /* Notifies the policy that there was an input device interaction with apps. */
     virtual void notifyDeviceInteraction(DeviceId deviceId, nsecs_t timestamp,
                                          const std::set<gui::Uid>& uids) = 0;
-
-    /* Get the UID associated with the given package. */
-    virtual gui::Uid getPackageUid(std::string package) = 0;
 
 private:
     // Additional key latency in case a connection is still processing some motion events.
