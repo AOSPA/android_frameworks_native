@@ -2570,6 +2570,10 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
         invalidateLayerStack(snapshot.outputFilter, visibleReg);
     });
 
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSetDisplayAnimating();
+    /* QTI_END */
+
     for (auto& destroyedLayer : mLayerLifecycleManager.getDestroyedLayers()) {
         mLegacyLayers.erase(destroyedLayer->id);
     }
@@ -3105,10 +3109,6 @@ void SurfaceFlinger::updateLayerGeometry() {
         visibleReg.set(layer->getScreenBounds());
         invalidateLayerStack(layer->getOutputFilter(), visibleReg);
     }
-
-    /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiSetDisplayAnimating();
-    /* QTI_END */
 
     mLayersPendingRefresh.clear();
 }
