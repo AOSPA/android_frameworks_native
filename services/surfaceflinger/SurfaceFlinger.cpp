@@ -4052,8 +4052,9 @@ void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
     if (display) {
         /* QTI_BEGIN */
         mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ false);
+        //Destroy smomo instance need to be call before display disconnect
+        mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
         /* QTI_END */
-
         display->disconnect();
 
         if (display->isVirtual()) {
@@ -4061,9 +4062,6 @@ void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
         } else {
             mScheduler->unregisterDisplay(display->getPhysicalId());
         }
-        /* QTI_BEGIN */
-        mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
-        /* QTI_END */
     }
 
     mDisplays.erase(displayToken);
@@ -4096,15 +4094,14 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         if (const auto display = getDisplayDeviceLocked(displayToken)) {
             /* QTI_BEGIN */
             mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ false);
+            //Destroy smomo instance need to be call before display disconnect
+            mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
             /* QTI_END */
 
             display->disconnect();
             if (display->isVirtual()) {
                 releaseVirtualDisplay(display->getVirtualId());
             }
-            /* QTI_BEGIN */
-            mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
-            /* QTI_END */
         }
 
         mDisplays.erase(displayToken);
