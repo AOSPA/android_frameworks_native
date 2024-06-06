@@ -1531,33 +1531,6 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
 void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
     bool hasScreenshot = false;
     uint32_t hwcDisplayId;
-    for (const auto& pair : FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
-        const auto& displayDevice = pair.second;
-        if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
-            qtiIsInternalDisplay(displayDevice)) {
-            continue;
-        }
-
-        mQtiFlinger->mDrawingState.traverse([&](Layer* layer) {
-            if (layer->getLayerStack() == displayDevice->getLayerStack()) {
-                hasScreenshot |= qtiIsScreenshot(layer->getName());
-            }
-        });
-    }
-
-    for (auto& layer : mQtiFlinger->mLayersPendingRefresh) {
-        for (const auto& [token, displayDevice] :
-             FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
-            auto display = displayDevice->getCompositionDisplay();
-            if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
-                qtiIsInternalDisplay(displayDevice)) {
-                continue;
-            }
-            if (display->includesLayer(layer->getOutputFilter())) {
-                hasScreenshot |= qtiIsScreenshot(layer->getName());
-            }
-        }
-    }
 
     for (const auto& [token, displayDevice] :
          FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
@@ -1566,11 +1539,40 @@ void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
             continue;
         }
 
+        const DisplayDevice& dispRef = *displayDevice;
+        if (!mQtiFlinger->mLayerLifecycleManagerEnabled) {
+            mQtiFlinger->mDrawingState.traverseInZOrder([&](Layer* layer) {
+                const auto outputLayer = dispRef.getCompositionDisplay()
+                                                      ->getOutputLayerForLayer(
+                                                        layer->getCompositionEngineLayerFE());
+                if (outputLayer != nullptr) {
+                    hasScreenshot |= qtiIsScreenshot(layer->getName());
+                }
+            });
+        } else {
+            FTL_FAKE_GUARD(kMainThreadContext,
+                    mQtiFlinger->mLayerSnapshotBuilder.forEachVisibleSnapshot(
+                        [&](const frontend::LayerSnapshot& snapshot)
+                                FTL_FAKE_GUARD(kMainThreadContext) {
+                            if (snapshot.hasSomethingToDraw() &&
+                                dispRef.getLayerStack() == snapshot.outputFilter.layerStack) {
+                                auto seq = static_cast<const unsigned int>(snapshot.sequence);
+                                auto it = mQtiFlinger->mLegacyLayers.find(seq);
+                                if (it != mQtiFlinger->mLegacyLayers.end() &&
+                                    snapshot.outputFilter.layerStack == dispRef.getLayerStack()) {
+                                    hasScreenshot |= qtiIsScreenshot(snapshot.debugName);
+                                }
+                            }
+                        }));
+        }
+
         qtiGetHwcDisplayId(displayDevice, &hwcDisplayId);
         if (hasScreenshot != mQtiHasScreenshot) {
             if (mQtiDisplayConfigAidl) {
+                ALOGV("Trying to notify DP animation to composer using DisplayConfigAIDL.");
                 mQtiDisplayConfigAidl->setDisplayAnimating(hwcDisplayId, hasScreenshot);
             } else if (mQtiDisplayConfigHidl) {
+                ALOGV("Trying to notify DP animation to composer using DisplayConfigHIDL.");
                 mQtiDisplayConfigHidl->SetDisplayAnimating(hwcDisplayId, hasScreenshot);
             }
 
