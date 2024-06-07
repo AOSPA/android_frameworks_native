@@ -571,9 +571,10 @@ private:
     status_t dump(int fd, const Vector<String16>& args) override { return priorityDump(fd, args); }
 
     // ISurfaceComposer implementation:
-    sp<IBinder> createDisplay(const String8& displayName, bool isSecure,
-                              const std::string& uniqueId, float requestedRefreshRate = 0.0f);
-    void destroyDisplay(const sp<IBinder>& displayToken);
+    sp<IBinder> createVirtualDisplay(const std::string& displayName, bool isSecure,
+                                     const std::string& uniqueId,
+                                     float requestedRefreshRate = 0.0f);
+    status_t destroyVirtualDisplay(const sp<IBinder>& displayToken);
     std::vector<PhysicalDisplayId> getPhysicalDisplayIds() const EXCLUDES(mStateLock) {
         Mutex::Autolock lock(mStateLock);
         return getPhysicalDisplayIdsLocked();
@@ -724,6 +725,8 @@ private:
     void onChoreographerAttached() override;
     void onExpectedPresentTimePosted(TimePoint expectedPresentTime, ftl::NonNull<DisplayModePtr>,
                                      Fps renderRate) override;
+    void onCommitNotComposited(PhysicalDisplayId pacesetterDisplayId) override
+            REQUIRES(kMainThreadContext);
 
     // ICEPowerCallback overrides:
     void notifyCpuLoadUp() override;
@@ -778,13 +781,9 @@ private:
             const sp<DisplayDevice>&, const scheduler::RefreshRateSelector::PolicyVariant&)
             EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
 
-    bool shouldApplyRefreshRateSelectorPolicy(const DisplayDevice&) const
-            REQUIRES(mStateLock, kMainThreadContext);
-
     // TODO(b/241285191): Look up RefreshRateSelector on Scheduler to remove redundant parameter.
     status_t applyRefreshRateSelectorPolicy(PhysicalDisplayId,
-                                            const scheduler::RefreshRateSelector&,
-                                            bool force = false)
+                                            const scheduler::RefreshRateSelector&)
             REQUIRES(mStateLock, kMainThreadContext);
 
     void commitTransactionsLegacy() EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
@@ -1601,10 +1600,10 @@ public:
             const sp<IBinder>& layerHandle,
             sp<gui::IDisplayEventConnection>* outConnection) override;
     binder::Status createConnection(sp<gui::ISurfaceComposerClient>* outClient) override;
-    binder::Status createDisplay(const std::string& displayName, bool isSecure,
-                                 const std::string& uniqueId, float requestedRefreshRate,
-                                 sp<IBinder>* outDisplay) override;
-    binder::Status destroyDisplay(const sp<IBinder>& display) override;
+    binder::Status createVirtualDisplay(const std::string& displayName, bool isSecure,
+                                        const std::string& uniqueId, float requestedRefreshRate,
+                                        sp<IBinder>* outDisplay) override;
+    binder::Status destroyVirtualDisplay(const sp<IBinder>& displayToken) override;
     binder::Status getPhysicalDisplayIds(std::vector<int64_t>* outDisplayIds) override;
     binder::Status getPhysicalDisplayToken(int64_t displayId, sp<IBinder>* outDisplay) override;
     binder::Status setPowerMode(const sp<IBinder>& display, int mode) override;
@@ -1715,6 +1714,7 @@ public:
     binder::Status getStalledTransactionInfo(
             int pid, std::optional<gui::StalledTransactionInfo>* outInfo) override;
     binder::Status getSchedulingPolicy(gui::SchedulingPolicy* outPolicy) override;
+    binder::Status notifyShutdown() override;
 
 private:
     static const constexpr bool kUsePermissionCache = true;

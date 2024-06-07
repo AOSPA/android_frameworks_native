@@ -254,7 +254,8 @@ TEST_F(LayerSnapshotTest, UpdateClearsPreviousChangeStates) {
 TEST_F(LayerSnapshotTest, FastPathClearsPreviousChangeStates) {
     setColor(11, {1._hf, 0._hf, 0._hf});
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
-    EXPECT_EQ(getSnapshot(11)->changes, RequestedLayerState::Changes::Content);
+    EXPECT_EQ(getSnapshot(11)->changes,
+              RequestedLayerState::Changes::Content);
     EXPECT_EQ(getSnapshot(11)->clientChanges, layer_state_t::eColorChanged);
     EXPECT_EQ(getSnapshot(1)->changes.get(), 0u);
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
@@ -264,7 +265,8 @@ TEST_F(LayerSnapshotTest, FastPathClearsPreviousChangeStates) {
 TEST_F(LayerSnapshotTest, FastPathSetsChangeFlagToContent) {
     setColor(1, {1._hf, 0._hf, 0._hf});
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
-    EXPECT_EQ(getSnapshot(1)->changes, RequestedLayerState::Changes::Content);
+    EXPECT_EQ(getSnapshot(1)->changes,
+              RequestedLayerState::Changes::Content);
     EXPECT_EQ(getSnapshot(1)->clientChanges, layer_state_t::eColorChanged);
 }
 
@@ -1150,7 +1152,7 @@ TEST_F(LayerSnapshotTest, setShadowRadius) {
 
 TEST_F(LayerSnapshotTest, setTrustedOverlayForNonVisibleInput) {
     hideLayer(1);
-    setTrustedOverlay(1, true);
+    setTrustedOverlay(1, gui::TrustedOverlay::ENABLED);
     Region touch{Rect{0, 0, 1000, 1000}};
     setTouchableRegion(1, touch);
 
@@ -1329,6 +1331,87 @@ TEST_F(LayerSnapshotTest, mirroredHierarchyIgnoresLocalTransform) {
     EXPECT_EQ(getSnapshot({.id = 111})->localTransform.ty(), 200);
     EXPECT_EQ(getSnapshot({.id = 111})->geomLayerTransform.tx(), 22);
     EXPECT_EQ(getSnapshot({.id = 111})->geomLayerTransform.ty(), 220);
+}
+
+TEST_F(LayerSnapshotTest, overrideParentTrustedOverlayState) {
+    SET_FLAG_FOR_TEST(flags::override_trusted_overlay, true);
+    hideLayer(1);
+    setTrustedOverlay(1, gui::TrustedOverlay::ENABLED);
+
+    Region touch{Rect{0, 0, 1000, 1000}};
+    setTouchableRegion(1, touch);
+    setTouchableRegion(11, touch);
+    setTouchableRegion(111, touch);
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, {2});
+    EXPECT_TRUE(getSnapshot(1)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_TRUE(getSnapshot(11)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_TRUE(getSnapshot(111)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+
+    // disable trusted overlay and override parent state
+    setTrustedOverlay(11, gui::TrustedOverlay::DISABLED);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, {2});
+    EXPECT_TRUE(getSnapshot(1)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_FALSE(getSnapshot(11)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_FALSE(getSnapshot(111)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+
+    // unset state and go back to default behavior of inheriting
+    // state
+    setTrustedOverlay(11, gui::TrustedOverlay::UNSET);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, {2});
+    EXPECT_TRUE(getSnapshot(1)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_TRUE(getSnapshot(11)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_TRUE(getSnapshot(111)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+}
+
+TEST_F(LayerSnapshotTest, doNotOverrideParentTrustedOverlayState) {
+    SET_FLAG_FOR_TEST(flags::override_trusted_overlay, false);
+    hideLayer(1);
+    setTrustedOverlay(1, gui::TrustedOverlay::ENABLED);
+
+    Region touch{Rect{0, 0, 1000, 1000}};
+    setTouchableRegion(1, touch);
+    setTouchableRegion(11, touch);
+    setTouchableRegion(111, touch);
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, {2});
+    EXPECT_TRUE(getSnapshot(1)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_TRUE(getSnapshot(11)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_TRUE(getSnapshot(111)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+
+    // disable trusted overlay but flag is disabled so this behaves
+    // as UNSET
+    setTrustedOverlay(11, gui::TrustedOverlay::DISABLED);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, {2});
+    EXPECT_TRUE(getSnapshot(1)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_TRUE(getSnapshot(11)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_TRUE(getSnapshot(111)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+
+    // unset state and go back to default behavior of inheriting
+    // state
+    setTrustedOverlay(11, gui::TrustedOverlay::UNSET);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, {2});
+    EXPECT_TRUE(getSnapshot(1)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_TRUE(getSnapshot(11)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
+    EXPECT_TRUE(getSnapshot(111)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
 }
 
 } // namespace android::surfaceflinger::frontend

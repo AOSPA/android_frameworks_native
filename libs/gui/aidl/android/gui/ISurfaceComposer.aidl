@@ -105,14 +105,14 @@ interface ISurfaceComposer {
      *
      * requires ACCESS_SURFACE_FLINGER permission.
      */
-    @nullable IBinder createDisplay(@utf8InCpp String displayName, boolean isSecure,
+    @nullable IBinder createVirtualDisplay(@utf8InCpp String displayName, boolean isSecure,
             @utf8InCpp String uniqueId, float requestedRefreshRate);
 
     /**
      * Destroy a virtual display.
      * requires ACCESS_SURFACE_FLINGER permission.
      */
-    void destroyDisplay(IBinder display);
+    void destroyVirtualDisplay(IBinder displayToken);
 
     /**
      * Get stable IDs for connected physical displays.
@@ -573,4 +573,11 @@ interface ISurfaceComposer {
     @nullable StalledTransactionInfo getStalledTransactionInfo(int pid);
 
     SchedulingPolicy getSchedulingPolicy();
+
+    /**
+     * Notifies the SurfaceFlinger that the ShutdownThread is running. When it is called,
+     * transaction traces will be captured and writted into a file.
+     * This method should not block the ShutdownThread therefore it's handled asynchronously.
+     */
+    oneway void notifyShutdown();
 }
