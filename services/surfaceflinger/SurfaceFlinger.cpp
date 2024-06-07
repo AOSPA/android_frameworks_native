@@ -8595,9 +8595,15 @@ void SurfaceFlinger::attachReleaseFenceFutureToLayer(Layer* layer, LayerFE* laye
 bool SurfaceFlinger::layersHasProtectedLayer(
         const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const {
     bool protectedLayerFound = false;
-    for (auto& [_, layerFe] : layers) {
+
+    for (auto& [/* QTI_BEGIN */ layer /* QTI_END */, layerFe] : layers) {
+        /* QTI_BEGIN */
+        bool qtiSecCamera = mQtiSFExtnIntf->qtiIsSecureCamera(layer->getBuffer());
+        bool qtiSecDisplay = mQtiSFExtnIntf->qtiIsSecureDisplay(layer->getBuffer());
+        /* QTI_END */
         protectedLayerFound |=
-                (layerFe->mSnapshot->isVisible && layerFe->mSnapshot->hasProtectedContent);
+                (layerFe->mSnapshot->isVisible && layerFe->mSnapshot->hasProtectedContent
+                 /* QTI_BEGIN */ && !qtiSecCamera && qtiSecDisplay /* QTI_END */);
         if (protectedLayerFound) {
             break;
         }
