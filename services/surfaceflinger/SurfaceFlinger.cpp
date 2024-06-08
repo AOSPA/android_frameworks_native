@@ -2558,11 +2558,6 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
             // was added to the map.
             continue;
         }
-         /* QTI_BEGIN */
-            mQtiSFExtnIntf->qtiDolphinTrackBufferDecrement(it->second->getDebugName(),
-                *it->second->getPendingBufferCounter());
-        /* QTI_END */
-
         LLOG_ALWAYS_FATAL_WITH_TRACE_IF(it == mLegacyLayers.end(),
                                         "Couldnt find layer object for %s",
                                         layer->getDebugString().c_str());
@@ -2585,6 +2580,10 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
         }
         it->second->latchBufferImpl(unused, latchTime, bgColorOnly);
         newDataLatched = true;
+        /* QTI_BEGIN */
+        mQtiSFExtnIntf->qtiDolphinTrackBufferDecrement(it->second->getDebugName(),
+                *it->second->getPendingBufferCounter());
+        /* QTI_END */
 
         mLayersWithQueuedFrames.emplace(it->second);
         mLayersIdsWithQueuedFrames.emplace(it->second->sequence);
