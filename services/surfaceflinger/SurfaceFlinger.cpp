@@ -2558,11 +2558,6 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
             // was added to the map.
             continue;
         }
-         /* QTI_BEGIN */
-            mQtiSFExtnIntf->qtiDolphinTrackBufferDecrement(it->second->getDebugName(),
-                *it->second->getPendingBufferCounter());
-        /* QTI_END */
-
         LLOG_ALWAYS_FATAL_WITH_TRACE_IF(it == mLegacyLayers.end(),
                                         "Couldnt find layer object for %s",
                                         layer->getDebugString().c_str());
@@ -2585,6 +2580,10 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
         }
         it->second->latchBufferImpl(unused, latchTime, bgColorOnly);
         newDataLatched = true;
+        /* QTI_BEGIN */
+        mQtiSFExtnIntf->qtiDolphinTrackBufferDecrement(it->second->getDebugName(),
+                *it->second->getPendingBufferCounter());
+        /* QTI_END */
 
         mLayersWithQueuedFrames.emplace(it->second);
         mLayersIdsWithQueuedFrames.emplace(it->second->sequence);
@@ -2642,9 +2641,11 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     ATRACE_NAME(ftl::Concat(__func__, ' ', ftl::to_underlying(vsyncId)).c_str());
 
     /* QTI_BEGIN */
-    std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
-    if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive()) {
-      lck.lock();
+    {
+        std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
+        if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive()) {
+          lck.lock();
+        }
     }
     mQtiSFExtnIntf->qtiOnVsync(0);
     /* QTI_END */
@@ -5555,6 +5556,12 @@ status_t SurfaceFlinger::setTransactionState(
             }
 
             /* QTI_BEGIN */
+            if (*layer->getPendingBufferCounter() > 0 &&
+                mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive() &&
+                lck.owns_lock()) {
+                lck.unlock();
+            }
+
             if (!(flags & eOneWay)) {
                 mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str(), isAutoTimestamp,
                                                                desiredPresentTime);
