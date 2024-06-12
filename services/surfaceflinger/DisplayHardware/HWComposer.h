@@ -172,6 +172,8 @@ public:
             HalDisplayId,
             std::optional<std::chrono::steady_clock::time_point> earliestPresentTime) = 0;
 
+    virtual status_t executeCommands(HalDisplayId) = 0;
+
     // set power mode
     virtual status_t setPowerMode(PhysicalDisplayId, hal::PowerMode) = 0;
 
@@ -372,6 +374,8 @@ public:
     status_t presentAndGetReleaseFences(
             HalDisplayId,
             std::optional<std::chrono::steady_clock::time_point> earliestPresentTime) override;
+
+    status_t executeCommands(HalDisplayId) override;
 
     // set power mode
     status_t setPowerMode(PhysicalDisplayId, hal::PowerMode mode) override;
