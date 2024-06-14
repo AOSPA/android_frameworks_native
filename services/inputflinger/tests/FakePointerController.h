@@ -45,7 +45,8 @@ public:
     void setDisplayViewport(const DisplayViewport& viewport) override;
     void updatePointerIcon(PointerIconStyle iconId) override;
     void setCustomPointerIcon(const SpriteIcon& icon) override;
-    void setSkipScreenshot(ui::LogicalDisplayId displayId, bool skip) override;
+    void setSkipScreenshotFlagForDisplay(ui::LogicalDisplayId displayId) override;
+    void clearSkipScreenshotFlags() override;
     void fade(Transition) override;
 
     void assertViewportSet(ui::LogicalDisplayId displayId);
@@ -56,7 +57,10 @@ public:
     void assertPointerIconNotSet();
     void assertCustomPointerIconSet(PointerIconStyle iconId);
     void assertCustomPointerIconNotSet();
-    void assertIsHiddenOnMirroredDisplays(ui::LogicalDisplayId displayId, bool isHidden);
+    void assertIsSkipScreenshotFlagSet(ui::LogicalDisplayId displayId);
+    void assertIsSkipScreenshotFlagNotSet(ui::LogicalDisplayId displayId);
+    void assertSkipScreenshotFlagChanged();
+    void assertSkipScreenshotFlagNotChanged();
     bool isPointerShown();
 
 private:
@@ -80,6 +84,7 @@ private:
 
     std::map<ui::LogicalDisplayId, std::vector<int32_t>> mSpotsByDisplay;
     std::unordered_set<ui::LogicalDisplayId> mDisplaysToSkipScreenshot;
+    bool mDisplaysToSkipScreenshotFlagChanged{false};
 };
 
 } // namespace android

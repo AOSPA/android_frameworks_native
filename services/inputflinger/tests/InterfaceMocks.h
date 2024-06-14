@@ -27,7 +27,9 @@
 
 #include <EventHub.h>
 #include <InputReaderBase.h>
+#include <InputReaderContext.h>
 #include <NotifyArgs.h>
+#include <PointerChoreographerPolicyInterface.h>
 #include <StylusState.h>
 #include <VibrationElement.h>
 #include <android-base/logging.h>
@@ -36,6 +38,7 @@
 #include <input/InputDevice.h>
 #include <input/KeyCharacterMap.h>
 #include <input/KeyLayoutMap.h>
+#include <input/KeyboardClassifier.h>
 #include <input/PropertyMap.h>
 #include <input/TouchVideoFrame.h>
 #include <input/VirtualKeyMap.h>
@@ -75,8 +78,11 @@ public:
     MOCK_METHOD(void, setLastKeyDownTimestamp, (nsecs_t when));
     MOCK_METHOD(nsecs_t, getLastKeyDownTimestamp, ());
 
+    KeyboardClassifier& getKeyboardClassifier() override { return *mClassifier; };
+
 private:
     int32_t mGeneration = 0;
+    std::unique_ptr<KeyboardClassifier> mClassifier = std::make_unique<KeyboardClassifier>();
 };
 
 class MockEventHubInterface : public EventHubInterface {
@@ -172,6 +178,14 @@ public:
     MOCK_METHOD(status_t, enableDevice, (int32_t deviceId), (override));
     MOCK_METHOD(status_t, disableDevice, (int32_t deviceId), (override));
     MOCK_METHOD(void, sysfsNodeChanged, (const std::string& sysfsNodePath), (override));
+};
+
+class MockPointerChoreographerPolicyInterface : public PointerChoreographerPolicyInterface {
+public:
+    MOCK_METHOD(std::shared_ptr<PointerControllerInterface>, createPointerController,
+                (PointerControllerInterface::ControllerType), (override));
+    MOCK_METHOD(void, notifyPointerDisplayIdChanged,
+                (ui::LogicalDisplayId displayId, const FloatPoint& position), (override));
 };
 
 } // namespace android
