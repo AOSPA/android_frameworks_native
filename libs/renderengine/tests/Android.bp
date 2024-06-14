@@ -46,6 +46,7 @@ cc_test {
         "libshaders",
         "libtonemap",
         "libsurfaceflinger_common",
+        "libsurfaceflingerflags",
     ],
     header_libs: [
         "libtonemap_headers",
@@ -64,5 +65,6 @@ cc_test {
         "libui",
         "libutils",
         "server_configurable_flags",
+        "libaconfig_storage_read_api_cc",
     ],
 }

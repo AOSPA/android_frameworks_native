@@ -36,7 +36,7 @@ public:
                                                     const InputReaderConfiguration& config,
                                                     ConfigurationChanges changes) override;
     [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
-    [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
+    [[nodiscard]] std::list<NotifyArgs> process(const RawEvent& rawEvent) override;
 
     int32_t getKeyCodeState(uint32_t sourceMask, int32_t keyCode) override;
     int32_t getScanCodeState(uint32_t sourceMask, int32_t scanCode) override;
@@ -61,7 +61,6 @@ private:
     };
 
     uint32_t mSource{};
-    int32_t mKeyboardType{};
     std::optional<KeyboardLayoutInfo> mKeyboardLayoutInfo;
 
     std::vector<KeyDown> mKeyDowns{}; // keys that are down
@@ -85,8 +84,7 @@ private:
     } mParameters{};
 
     KeyboardInputMapper(InputDeviceContext& deviceContext,
-                        const InputReaderConfiguration& readerConfig, uint32_t source,
-                        int32_t keyboardType);
+                        const InputReaderConfiguration& readerConfig, uint32_t source);
     void configureParameters();
     void dumpParameters(std::string& dump) const;
 
