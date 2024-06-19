@@ -1,5 +1,5 @@
 
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -20,15 +20,17 @@ QtiDolphinWrapper::QtiDolphinWrapper() {
         qtiDolphinInit = (bool (*) ())dlsym(mQtiDolphinHandle, "dolphinInit");
         qtiDolphinSetVsyncPeriod = (void (*) (nsecs_t)) dlsym(mQtiDolphinHandle,
                 "dolphinSetVsyncPeriod");
-        qtiDolphinTrackBufferIncrement = (void (*) (const char*))dlsym(mQtiDolphinHandle,
-                "dolphinTrackBufferIncrement");
+        qtiDolphinTrackBufferIncrement = (void (*) (const char*, bool, nsecs_t))dlsym(
+                 mQtiDolphinHandle, "dolphinTrackBufferIncrement");
         qtiDolphinTrackBufferDecrement = (void (*) (const char*, int))dlsym(mQtiDolphinHandle,
                 "dolphinTrackBufferDecrement");
         qtiDolphinTrackVsyncSignal = (void (*) ())dlsym(mQtiDolphinHandle,
                 "dolphinTrackVsyncSignal");
+        qtiDolphinUnblockPendingBuffer = (void (*) ())dlsym(mQtiDolphinHandle,
+                "dolphinUnblockPendingBuffer");
         bool functionsFound = qtiDolphinInit && qtiDolphinSetVsyncPeriod &&
                               qtiDolphinTrackBufferIncrement && qtiDolphinTrackBufferDecrement &&
-                              qtiDolphinTrackVsyncSignal;
+                              qtiDolphinTrackVsyncSignal && qtiDolphinUnblockPendingBuffer;
         if (functionsFound) {
             qtiDolphinInit();
         } else {
@@ -39,6 +41,7 @@ QtiDolphinWrapper::QtiDolphinWrapper() {
             qtiDolphinTrackBufferIncrement = nullptr;
             qtiDolphinTrackBufferDecrement = nullptr;
             qtiDolphinTrackVsyncSignal = nullptr;
+            qtiDolphinUnblockPendingBuffer = nullptr;
         }
     }
 }

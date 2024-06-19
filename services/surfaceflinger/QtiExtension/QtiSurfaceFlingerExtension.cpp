@@ -1762,9 +1762,11 @@ void QtiSurfaceFlingerExtension::qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod) {
     }
 }
 
-void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferIncrement(const char* name) {
+void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferIncrement(const char *name,
+            bool isAutoTimestamp, nsecs_t desiredPresentTime) {
     if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinTrackBufferIncrement) {
-        mQtiDolphinWrapper->qtiDolphinTrackBufferIncrement(name);
+        mQtiDolphinWrapper->qtiDolphinTrackBufferIncrement(name, isAutoTimestamp,
+                                                           desiredPresentTime);
     }
 }
 
@@ -1777,6 +1779,12 @@ void QtiSurfaceFlingerExtension::qtiDolphinTrackBufferDecrement(const char* name
 void QtiSurfaceFlingerExtension::qtiDolphinTrackVsyncSignal() {
     if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinTrackVsyncSignal) {
         mQtiDolphinWrapper->qtiDolphinTrackVsyncSignal();
+    }
+}
+
+void QtiSurfaceFlingerExtension::qtiDolphinUnblockPendingBuffer() {
+    if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinUnblockPendingBuffer) {
+        mQtiDolphinWrapper->qtiDolphinUnblockPendingBuffer();
     }
 }
 

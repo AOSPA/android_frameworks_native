@@ -219,6 +219,7 @@ cc_library {
         "VelocityTracker.cpp",
         "VirtualInputDevice.cpp",
         "VirtualKeyMap.cpp",
+        "QtiExtension/QtiInputDolphinWrapper.cpp",
     ],
 
     header_libs: [

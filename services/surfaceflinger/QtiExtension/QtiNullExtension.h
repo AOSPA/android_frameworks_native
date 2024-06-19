@@ -130,8 +130,10 @@ public:
     /*
      * Methods for Dolphin APIs
      */
+    void qtiDolphinUnblockPendingBuffer();
     void qtiDolphinSetVsyncPeriod(nsecs_t vsyncPeriod);
-    void qtiDolphinTrackBufferIncrement(const char *name);
+    void qtiDolphinTrackBufferIncrement(const char *name, bool isAutoTimestamp,
+                                        nsecs_t desiredPresentTime);
     void qtiDolphinTrackBufferDecrement(const char *name, int count);
     void qtiDolphinTrackVsyncSignal();
 
