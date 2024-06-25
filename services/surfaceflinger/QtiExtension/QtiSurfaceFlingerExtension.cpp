@@ -193,7 +193,7 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
     ConditionalLock lock(mQtiFlinger->mStateLock,
                          std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
     const auto displayDevice = mQtiFlinger->getDefaultDisplayDeviceLocked();
-    auto currMode = FTL_FAKE_GUARD(kMainThreadContext, displayDevice->getActiveMode());
+    auto currMode = FTL_FAKE_GUARD(kMainThreadContext, displayDevice->refreshRateSelector().getActiveMode());
 
     const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(displayDevice->getPhysicalId());
     const auto& display = displayOpt->get();
@@ -1869,7 +1869,7 @@ void QtiSurfaceFlingerExtension::qtiSetDesiredModeByThermalLevel(float newLevelF
         const auto physicalDisplay = mQtiFlinger->mPhysicalDisplays.get(*internalDisplayId);
         display = mQtiFlinger->getDisplayDeviceLocked(*internalDisplayId);
 
-        currFps = FTL_FAKE_GUARD(kMainThreadContext, display->getActiveMode().fps.getValue());
+        currFps = FTL_FAKE_GUARD(kMainThreadContext, display->refreshRateSelector().getActiveMode().fps.getValue());
     }
 
     qtiHandleNewLevelFps(currFps, newLevelFps, &fps);
@@ -1962,7 +1962,7 @@ DisplayModePtr QtiSurfaceFlingerExtension::qtiGetModeFromFps(float fps) {
     ConditionalLock lock(mQtiFlinger->mStateLock,
                          std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
     const auto displayDevice = mQtiFlinger->getDefaultDisplayDeviceLocked();
-    auto currMode = FTL_FAKE_GUARD(kMainThreadContext, displayDevice->getActiveMode());
+    auto currMode = FTL_FAKE_GUARD(kMainThreadContext, displayDevice->refreshRateSelector().getActiveMode());
 
     const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(displayDevice->getPhysicalId());
     const auto& display = displayOpt->get();

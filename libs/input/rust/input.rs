@@ -207,6 +207,11 @@ bitflags! {
         const CANCELED = IInputConstants::INPUT_EVENT_FLAG_CANCELED as u32;
         /// FLAG_NO_FOCUS_CHANGE
         const NO_FOCUS_CHANGE = IInputConstants::MOTION_EVENT_FLAG_NO_FOCUS_CHANGE as u32;
+        /// PRIVATE_FLAG_SUPPORTS_ORIENTATION
+        const PRIVATE_SUPPORTS_ORIENTATION = IInputConstants::MOTION_EVENT_PRIVATE_FLAG_SUPPORTS_ORIENTATION as u32;
+        /// PRIVATE_FLAG_SUPPORTS_DIRECTIONAL_ORIENTATION
+        const PRIVATE_SUPPORTS_DIRECTIONAL_ORIENTATION =
+                IInputConstants::MOTION_EVENT_PRIVATE_FLAG_SUPPORTS_DIRECTIONAL_ORIENTATION as u32;
         /// FLAG_IS_ACCESSIBILITY_EVENT
         const IS_ACCESSIBILITY_EVENT = IInputConstants::INPUT_EVENT_FLAG_IS_ACCESSIBILITY_EVENT as u32;
         /// FLAG_TAINTED
@@ -272,7 +277,7 @@ bitflags! {
 
 bitflags! {
     /// Modifier state flags
-    #[derive(Debug, PartialEq)]
+    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
     pub struct ModifierState: u32 {
         /// No meta keys are pressed
         const None = input_bindgen::AMETA_NONE;
