@@ -4,6 +4,7 @@
 // #define LOG_NDEBUG 0
 #include "QtiPhaseOffsetsExtension.h"
 
+#include <inttypes.h>
 #include <log/log.h>
 
 namespace android::surfaceflingerextension {
@@ -44,10 +45,10 @@ void QtiWorkDurationsExtension::qtiUpdateWorkDurations(
             foundWorkDurationsConfig = true;
         }
 
+        auto& [early, earlyGpu, late, hwcMinWorkDuration] = item.second;
         // Update the config for the specified refresh rates or refresh rates lower than 60fps
         if (foundWorkDurationsConfig || (fps < 60)) {
             auto vsyncDuration = item.first.getPeriodNsecs();
-            auto& [early, earlyGpu, late, hwcMinWorkDuration] = item.second;
             auto sfWorkDuration =
                     std::chrono::nanoseconds(static_cast<int64_t>(vsyncDuration * 0.75));
             auto appWorkDuration = (mQtiVsyncConfiguration->mAppDuration == -1)
@@ -77,6 +78,8 @@ void QtiWorkDurationsExtension::qtiUpdateWorkDurations(
             earlyGpu.appWorkDuration = late.appWorkDuration;
             earlyGpu.appOffset = late.appOffset;
         }
+        ALOGI("%s: %dHz: sfWorkDuration %" PRId64 " appWorkDuration %" PRId64,
+               __func__, fps, late.sfWorkDuration, late.appWorkDuration);
     }
 }
 
