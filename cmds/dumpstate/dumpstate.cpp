@@ -194,6 +194,7 @@ void add_mountinfo();
 #define SDK_EXT_INFO "/apex/com.android.sdkext/bin/derive_sdk"
 #define DROPBOX_DIR "/data/system/dropbox"
 #define PRINT_FLAGS "/system/bin/printflags"
+#define UWB_LOG_DIR "/data/misc/apexdata/com.android.uwb/log"
 
 // TODO(narayan): Since this information has to be kept in sync
 // with tombstoned, we should just put it in a common header.
@@ -1576,6 +1577,7 @@ static void DumpstateLimitedOnly() {
     printf("== ANR Traces\n");
     printf("========================================================\n");
 
+    ds.anr_data_ = GetDumpFds(ANR_DIR, ANR_FILE_PREFIX);
     AddAnrTraceFiles();
 
     printf("========================================================\n");
@@ -1981,6 +1983,9 @@ Dumpstate::RunStatus Dumpstate::DumpstateDefaultAfterCritical() {
     RunCommand("SDK EXTENSIONS", {SDK_EXT_INFO, "--dump"},
                CommandOptions::WithTimeout(10).Always().DropRoot().Build());
 
+    // Dump UWB UCI logs here because apexdata requires root access
+    ds.AddDir(UWB_LOG_DIR, true);
+
     if (dump_pool_) {
         RETURN_IF_USER_DENIED_CONSENT();
         WaitForTask(std::move(dump_traces));
@@ -2200,6 +2205,74 @@ static void DumpstateOnboardingOnly() {
     ds.AddDir(LOGPERSIST_DATA_DIR, false);
 }
 
+static std::string GetTimestamp(const timespec& ts) {
+    tm tm;
+    localtime_r(&ts.tv_sec, &tm);
+
+    // Reserve enough space for the entire time string, includes the space
+    // for the '\0' to make the calculations below easier by using size for
+    // the total string size.
+    std::string str(sizeof("1970-01-01 00:00:00.123456789+0830"), '\0');
+    size_t n = strftime(str.data(), str.size(), "%F %H:%M", &tm);
+    if (n == 0) {
+        return "TIMESTAMP FAILURE";
+    }
+    int num_chars = snprintf(&str[n], str.size() - n, ":%02d.%09ld", tm.tm_sec, ts.tv_nsec);
+    if (num_chars > str.size() - n) {
+        return "TIMESTAMP FAILURE";
+    }
+    n += static_cast<size_t>(num_chars);
+    if (strftime(&str[n], str.size() - n, "%z", &tm) == 0) {
+        return "TIMESTAMP FAILURE";
+    }
+    return str;
+}
+
+static std::string GetCmdline(pid_t pid) {
+    std::string cmdline;
+    if (!android::base::ReadFileToString(android::base::StringPrintf("/proc/%d/cmdline", pid),
+                                         &cmdline)) {
+        return "UNKNOWN";
+    }
+    // There are '\0' terminators between arguments, convert them to spaces.
+    // But start by skipping all trailing '\0' values.
+    size_t cur = cmdline.size() - 1;
+    while (cur != 0 && cmdline[cur] == '\0') {
+        cur--;
+    }
+    if (cur == 0) {
+        return "UNKNOWN";
+    }
+    while ((cur = cmdline.rfind('\0', cur)) != std::string::npos) {
+        cmdline[cur] = ' ';
+    }
+    return cmdline;
+}
+
+static void DumpPidHeader(int fd, pid_t pid, const timespec& ts) {
+    // For consistency, the header to this message matches the one
+    // dumped by debuggerd.
+    dprintf(fd, "\n----- pid %d at %s -----\n", pid, GetTimestamp(ts).c_str());
+    dprintf(fd, "Cmd line: %s\n", GetCmdline(pid).c_str());
+}
+
+static void DumpPidFooter(int fd, pid_t pid) {
+    // For consistency, the footer to this message matches the one
+    // dumped by debuggerd.
+    dprintf(fd, "----- end %d -----\n", pid);
+}
+
+static bool DumpBacktrace(int fd, pid_t pid, bool is_java_process) {
+    int ret = dump_backtrace_to_file_timeout(
+        pid, is_java_process ? kDebuggerdJavaBacktrace : kDebuggerdNativeBacktrace, 3, fd);
+    if (ret == -1 && is_java_process) {
+        // Tried to unwind as a java process, try a native unwind.
+        dprintf(fd, "Java unwind failed for pid %d, trying a native unwind.\n", pid);
+        ret = dump_backtrace_to_file_timeout(pid, kDebuggerdNativeBacktrace, 3, fd);
+    }
+    return ret != -1;
+}
+
 Dumpstate::RunStatus Dumpstate::DumpTraces(const char** path) {
     const std::string temp_file_pattern = ds.bugreport_internal_dir_ + "/dumptrace_XXXXXX";
     const size_t buf_size = temp_file_pattern.length() + 1;
@@ -2248,16 +2321,6 @@ Dumpstate::RunStatus Dumpstate::DumpTraces(const char** path) {
             continue;
         }
 
-        // Skip cached processes.
-        if (IsCached(pid)) {
-            // For consistency, the header and footer to this message match those
-            // dumped by debuggerd in the success case.
-            dprintf(fd, "\n---- pid %d at [unknown] ----\n", pid);
-            dprintf(fd, "Dump skipped for cached process.\n");
-            dprintf(fd, "---- end %d ----", pid);
-            continue;
-        }
-
         const std::string link_name = android::base::StringPrintf("/proc/%d/exe", pid);
         std::string exe;
         if (!android::base::Readlink(link_name, &exe)) {
@@ -2286,16 +2349,31 @@ Dumpstate::RunStatus Dumpstate::DumpTraces(const char** path) {
             break;
         }
 
-        const uint64_t start = Nanotime();
-        const int ret = dump_backtrace_to_file_timeout(
-            pid, is_java_process ? kDebuggerdJavaBacktrace : kDebuggerdNativeBacktrace, 3, fd);
+        timespec start_timespec;
+        clock_gettime(CLOCK_REALTIME, &start_timespec);
+        if (IsCached(pid)) {
+            DumpPidHeader(fd, pid, start_timespec);
+            dprintf(fd, "Process is cached, skipping backtrace due to high chance of timeout.\n");
+            DumpPidFooter(fd, pid);
+            continue;
+        }
 
-        if (ret == -1) {
-            // For consistency, the header and footer to this message match those
-            // dumped by debuggerd in the success case.
-            dprintf(fd, "\n---- pid %d at [unknown] ----\n", pid);
-            dprintf(fd, "Dump failed, likely due to a timeout.\n");
-            dprintf(fd, "---- end %d ----", pid);
+        const uint64_t start = Nanotime();
+        if (!DumpBacktrace(fd, pid, is_java_process)) {
+            if (IsCached(pid)) {
+                DumpPidHeader(fd, pid, start_timespec);
+                dprintf(fd, "Backtrace failed, but process has become cached.\n");
+                DumpPidFooter(fd, pid);
+                continue;
+            }
+
+            DumpPidHeader(fd, pid, start_timespec);
+            dprintf(fd, "Backtrace gathering failed, likely due to a timeout.\n");
+            DumpPidFooter(fd, pid);
+
+            dprintf(fd, "\n[dump %s stack %d: %.3fs elapsed]\n",
+                    is_java_process ? "dalvik" : "native", pid,
+                    (float)(Nanotime() - start) / NANOS_PER_SEC);
             timeout_failures++;
             continue;
         }
@@ -2912,9 +2990,11 @@ void Dumpstate::DumpOptions::Initialize(BugreportMode bugreport_mode,
                                         int bugreport_flags,
                                         const android::base::unique_fd& bugreport_fd_in,
                                         const android::base::unique_fd& screenshot_fd_in,
-                                        bool is_screenshot_requested) {
+                                        bool is_screenshot_requested,
+                                        bool skip_user_consent) {
     this->use_predumped_ui_data = bugreport_flags & BugreportFlag::BUGREPORT_USE_PREDUMPED_UI_DATA;
     this->is_consent_deferred = bugreport_flags & BugreportFlag::BUGREPORT_FLAG_DEFER_CONSENT;
+    this->skip_user_consent = skip_user_consent;
     // Duplicate the fds because the passed in fds don't outlive the binder transaction.
     bugreport_fd.reset(fcntl(bugreport_fd_in.get(), F_DUPFD_CLOEXEC, 0));
     screenshot_fd.reset(fcntl(screenshot_fd_in.get(), F_DUPFD_CLOEXEC, 0));
@@ -3005,46 +3085,52 @@ Dumpstate::RunStatus Dumpstate::Run(int32_t calling_uid, const std::string& call
 }
 
 Dumpstate::RunStatus Dumpstate::Retrieve(int32_t calling_uid, const std::string& calling_package,
-                                         const bool keep_bugreport_on_retrieval) {
+                                         const bool keep_bugreport_on_retrieval,
+                                         const bool skip_user_consent) {
     Dumpstate::RunStatus status = RetrieveInternal(calling_uid, calling_package,
-                                                    keep_bugreport_on_retrieval);
+                                                    keep_bugreport_on_retrieval,
+                                                    skip_user_consent);
     HandleRunStatus(status);
     return status;
 }
 
 Dumpstate::RunStatus  Dumpstate::RetrieveInternal(int32_t calling_uid,
                                                   const std::string& calling_package,
-                                                  const bool keep_bugreport_on_retrieval) {
-  consent_callback_ = new ConsentCallback();
-  const String16 incidentcompanion("incidentcompanion");
-  sp<android::IBinder> ics(
-      defaultServiceManager()->checkService(incidentcompanion));
-  android::String16 package(calling_package.c_str());
-  if (ics != nullptr) {
-    MYLOGD("Checking user consent via incidentcompanion service\n");
-    android::interface_cast<android::os::IIncidentCompanion>(ics)->authorizeReport(
-        calling_uid, package, String16(), String16(),
-        0x1 /* FLAG_CONFIRMATION_DIALOG */, consent_callback_.get());
-  } else {
-    MYLOGD(
-        "Unable to check user consent; incidentcompanion service unavailable\n");
-    return RunStatus::USER_CONSENT_TIMED_OUT;
-  }
-  UserConsentResult consent_result = consent_callback_->getResult();
-  int timeout_ms = 30 * 1000;
-  while (consent_result == UserConsentResult::UNAVAILABLE &&
-      consent_callback_->getElapsedTimeMs() < timeout_ms) {
-    sleep(1);
-    consent_result = consent_callback_->getResult();
-  }
-  if (consent_result == UserConsentResult::DENIED) {
-    return RunStatus::USER_CONSENT_DENIED;
-  }
-  if (consent_result == UserConsentResult::UNAVAILABLE) {
-    MYLOGD("Canceling user consent request via incidentcompanion service\n");
-    android::interface_cast<android::os::IIncidentCompanion>(ics)->cancelAuthorization(
-        consent_callback_.get());
-    return RunStatus::USER_CONSENT_TIMED_OUT;
+                                                  const bool keep_bugreport_on_retrieval,
+                                                  const bool skip_user_consent) {
+  if (!android::app::admin::flags::onboarding_consentless_bugreports() || !skip_user_consent) {
+      consent_callback_ = new ConsentCallback();
+      const String16 incidentcompanion("incidentcompanion");
+      sp<android::IBinder> ics(
+          defaultServiceManager()->checkService(incidentcompanion));
+      android::String16 package(calling_package.c_str());
+      if (ics != nullptr) {
+        MYLOGD("Checking user consent via incidentcompanion service\n");
+
+        android::interface_cast<android::os::IIncidentCompanion>(ics)->authorizeReport(
+            calling_uid, package, String16(), String16(),
+            0x1 /* FLAG_CONFIRMATION_DIALOG */, consent_callback_.get());
+      } else {
+        MYLOGD(
+            "Unable to check user consent; incidentcompanion service unavailable\n");
+        return RunStatus::USER_CONSENT_TIMED_OUT;
+      }
+      UserConsentResult consent_result = consent_callback_->getResult();
+      int timeout_ms = 30 * 1000;
+      while (consent_result == UserConsentResult::UNAVAILABLE &&
+          consent_callback_->getElapsedTimeMs() < timeout_ms) {
+        sleep(1);
+        consent_result = consent_callback_->getResult();
+      }
+      if (consent_result == UserConsentResult::DENIED) {
+        return RunStatus::USER_CONSENT_DENIED;
+      }
+      if (consent_result == UserConsentResult::UNAVAILABLE) {
+        MYLOGD("Canceling user consent request via incidentcompanion service\n");
+        android::interface_cast<android::os::IIncidentCompanion>(ics)->cancelAuthorization(
+            consent_callback_.get());
+        return RunStatus::USER_CONSENT_TIMED_OUT;
+      }
   }
 
   bool copy_succeeded =
@@ -3523,7 +3609,9 @@ void Dumpstate::onUiIntensiveBugreportDumpsFinished(int32_t calling_uid) {
 
 void Dumpstate::MaybeCheckUserConsent(int32_t calling_uid, const std::string& calling_package) {
     if (multiuser_get_app_id(calling_uid) == AID_SHELL ||
-        !CalledByApi() || options_->is_consent_deferred) {
+        !CalledByApi() || options_->is_consent_deferred ||
+        (android::app::admin::flags::onboarding_consentless_bugreports() &&
+        options_->skip_user_consent)) {
         // No need to get consent for shell triggered dumpstates, or not
         // through bugreporting API (i.e. no fd to copy back), or when consent
         // is deferred.
@@ -3609,7 +3697,8 @@ Dumpstate::RunStatus Dumpstate::CopyBugreportIfUserConsented(int32_t calling_uid
     // If the caller has asked to copy the bugreport over to their directory, we need explicit
     // user consent (unless the caller is Shell).
     UserConsentResult consent_result;
-    if (multiuser_get_app_id(calling_uid) == AID_SHELL) {
+    if (multiuser_get_app_id(calling_uid) == AID_SHELL || (options_->skip_user_consent
+    && android::app::admin::flags::onboarding_consentless_bugreports())) {
         consent_result = UserConsentResult::APPROVED;
     } else {
         consent_result = consent_callback_->getResult();

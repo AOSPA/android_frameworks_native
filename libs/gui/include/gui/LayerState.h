@@ -30,6 +30,7 @@
 
 #include <android/gui/DropInputMode.h>
 #include <android/gui/FocusRequest.h>
+#include <android/gui/TrustedOverlay.h>
 
 #include <ftl/flags.h>
 #include <gui/DisplayCaptureArgs.h>
@@ -130,6 +131,8 @@ public:
     /* QTI_BEGIN */
     bool qtiInvalid = false;
     /* QTI_BEGIN */
+
+    nsecs_t dequeueTime;
 
     // Generates the release callback id based on the buffer id and frame number.
     // This is used as an identifier when release callbacks are invoked.
@@ -279,9 +282,9 @@ struct layer_state_t {
             layer_state_t::eFrameRateSelectionPriority | layer_state_t::eFixedTransformHintChanged;
 
     // Changes affecting data sent to input.
-    static constexpr uint64_t INPUT_CHANGES = layer_state_t::eInputInfoChanged |
-            layer_state_t::eDropInputModeChanged | layer_state_t::eTrustedOverlayChanged |
-            layer_state_t::eLayerStackChanged;
+    static constexpr uint64_t INPUT_CHANGES = layer_state_t::eAlphaChanged |
+            layer_state_t::eInputInfoChanged | layer_state_t::eDropInputModeChanged |
+            layer_state_t::eTrustedOverlayChanged | layer_state_t::eLayerStackChanged;
 
     // Changes that affect the visible region on a display.
     static constexpr uint64_t VISIBLE_REGION_CHANGES = layer_state_t::GEOMETRY_CHANGES |
@@ -389,7 +392,7 @@ struct layer_state_t {
 
     // An inherited state that indicates that this surface control and its children
     // should be trusted for input occlusion detection purposes
-    bool isTrustedOverlay;
+    gui::TrustedOverlay trustedOverlay;
 
     // Stretch effect to be applied to this layer
     StretchEffect stretchEffect;

@@ -34,7 +34,7 @@ public:
     CursorMotionAccumulator();
     void reset(InputDeviceContext& deviceContext);
 
-    void process(const RawEvent* rawEvent);
+    void process(const RawEvent& rawEvent);
     void finishSync();
 
     inline int32_t getRelativeX() const { return mRelX; }
@@ -62,7 +62,7 @@ public:
                                                     const InputReaderConfiguration& readerConfig,
                                                     ConfigurationChanges changes) override;
     [[nodiscard]] std::list<NotifyArgs> reset(nsecs_t when) override;
-    [[nodiscard]] std::list<NotifyArgs> process(const RawEvent* rawEvent) override;
+    [[nodiscard]] std::list<NotifyArgs> process(const RawEvent& rawEvent) override;
 
     virtual int32_t getScanCodeState(uint32_t sourceMask, int32_t scanCode) override;
 

@@ -645,8 +645,19 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
             std::bind(releaseBufferCallbackThunk, wp<BLASTBufferQueue>(this) /* callbackContext */,
                       std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
     sp<Fence> fence = bufferItem.mFence ? new Fence(bufferItem.mFence->dup()) : Fence::NO_FENCE;
+
+    nsecs_t dequeueTime = -1;
+    {
+        std::lock_guard _lock{mTimestampMutex};
+        auto dequeueTimeIt = mDequeueTimestamps.find(buffer->getId());
+        if (dequeueTimeIt != mDequeueTimestamps.end()) {
+            dequeueTime = dequeueTimeIt->second;
+            mDequeueTimestamps.erase(dequeueTimeIt);
+        }
+    }
+
     t->setBuffer(mSurfaceControl, buffer, fence, bufferItem.mFrameNumber, mProducerId,
-                 releaseBufferCallback);
+                 releaseBufferCallback, dequeueTime);
     t->setDataspace(mSurfaceControl, static_cast<ui::Dataspace>(bufferItem.mDataSpace));
     t->setHdrMetadata(mSurfaceControl, bufferItem.mHdrMetadata);
     t->setSurfaceDamageRegion(mSurfaceControl, bufferItem.mSurfaceDamage);
@@ -690,23 +701,17 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
         mPendingFrameTimelines.pop();
     }
 
-    {
-        std::lock_guard _lock{mTimestampMutex};
-        auto dequeueTime = mDequeueTimestamps.find(buffer->getId());
-        if (dequeueTime != mDequeueTimestamps.end()) {
-            Parcel p;
-            p.writeInt64(dequeueTime->second);
-            t->setMetadata(mSurfaceControl, gui::METADATA_DEQUEUE_TIME, p);
-            mDequeueTimestamps.erase(dequeueTime);
-        }
-    }
-
     mergePendingTransactions(t, bufferItem.mFrameNumber);
     if (applyTransaction) {
         // All transactions on our apply token are one-way. See comment on mAppliedLastTransaction
         t->setApplyToken(mApplyToken).apply(false, true);
         mAppliedLastTransaction = true;
         mLastAppliedFrameNumber = bufferItem.mFrameNumber;
+        /* QTI_BEGIN */
+        if (mQtiBBQExtn) {
+            mQtiBBQExtn->qtiTrackTransaction(bufferItem.mFrameNumber, bufferItem.mTimestamp);
+        }
+        /* QTI_END */
     } else {
         t->setBufferHasBarrier(mSurfaceControl, mLastAppliedFrameNumber);
         mAppliedLastTransaction = false;

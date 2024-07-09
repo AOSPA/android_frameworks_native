@@ -23,6 +23,7 @@
 #include <android-base/thread_annotations.h>
 #include <gui/WindowInfosListener.h>
 #include <type_traits>
+#include <unordered_set>
 
 namespace android {
 
@@ -75,6 +76,11 @@ public:
     virtual void setPointerIconVisibility(ui::LogicalDisplayId displayId, bool visible) = 0;
 
     /**
+     * Used by Dispatcher to notify changes in the current focused display.
+     */
+    virtual void setFocusedDisplay(ui::LogicalDisplayId displayId) = 0;
+
+    /**
      * This method may be called on any thread (usually by the input manager on a binder thread).
      */
     virtual void dump(std::string& dump) = 0;
@@ -96,6 +102,7 @@ public:
     bool setPointerIcon(std::variant<std::unique_ptr<SpriteIcon>, PointerIconStyle> icon,
                         ui::LogicalDisplayId displayId, DeviceId deviceId) override;
     void setPointerIconVisibility(ui::LogicalDisplayId displayId, bool visible) override;
+    void setFocusedDisplay(ui::LogicalDisplayId displayId) override;
 
     void notifyInputDevicesChanged(const NotifyInputDevicesChangedArgs& args) override;
     void notifyConfigurationChanged(const NotifyConfigurationChangedArgs& args) override;
@@ -106,9 +113,6 @@ public:
     void notifyVibratorState(const NotifyVibratorStateArgs& args) override;
     void notifyDeviceReset(const NotifyDeviceResetArgs& args) override;
     void notifyPointerCaptureChanged(const NotifyPointerCaptureChangedArgs& args) override;
-
-    // Public because it's also used by tests to simulate the WindowInfosListener callback
-    void onWindowInfosChanged(const std::vector<android::gui::WindowInfo>& windowInfos);
 
     void dump(std::string& dump) override;
 
@@ -126,6 +130,7 @@ private:
     InputDeviceInfo* findInputDeviceLocked(DeviceId deviceId) REQUIRES(mLock);
     bool canUnfadeOnDisplay(ui::LogicalDisplayId displayId) REQUIRES(mLock);
 
+    void fadeMouseCursorOnKeyPress(const NotifyKeyArgs& args);
     NotifyMotionArgs processMotion(const NotifyMotionArgs& args);
     NotifyMotionArgs processMouseEventLocked(const NotifyMotionArgs& args) REQUIRES(mLock);
     NotifyMotionArgs processTouchpadEventLocked(const NotifyMotionArgs& args) REQUIRES(mLock);
@@ -133,20 +138,34 @@ private:
     void processTouchscreenAndStylusEventLocked(const NotifyMotionArgs& args) REQUIRES(mLock);
     void processStylusHoverEventLocked(const NotifyMotionArgs& args) REQUIRES(mLock);
     void processDeviceReset(const NotifyDeviceResetArgs& args);
-    void onControllerAddedOrRemoved() REQUIRES(mLock);
-    void onWindowInfosChangedLocked(const std::vector<android::gui::WindowInfo>& windowInfos)
+    void onControllerAddedOrRemovedLocked() REQUIRES(mLock);
+    void onPrivacySensitiveDisplaysChangedLocked(
+            const std::unordered_set<ui::LogicalDisplayId>& privacySensitiveDisplays)
             REQUIRES(mLock);
+    void onPrivacySensitiveDisplaysChanged(
+            const std::unordered_set<ui::LogicalDisplayId>& privacySensitiveDisplays);
 
+    /* This listener keeps tracks of visible privacy sensitive displays and updates the
+     * choreographer if there are any changes.
+     *
+     * Listener uses mListenerLock to guard all private data as choreographer and SurfaceComposer
+     * both can call into the listener. To prevent deadlocks Choreographer can call listener with
+     * its lock held, but listener must not call choreographer with its lock.
+     */
     class PointerChoreographerDisplayInfoListener : public gui::WindowInfosListener {
     public:
         explicit PointerChoreographerDisplayInfoListener(PointerChoreographer* pc)
               : mPointerChoreographer(pc){};
         void onWindowInfosChanged(const gui::WindowInfosUpdate&) override;
+        void setInitialDisplayInfos(const std::vector<gui::WindowInfo>& windowInfos);
+        std::unordered_set<ui::LogicalDisplayId /*displayId*/> getPrivacySensitiveDisplays();
         void onPointerChoreographerDestroyed();
 
     private:
         std::mutex mListenerLock;
         PointerChoreographer* mPointerChoreographer GUARDED_BY(mListenerLock);
+        std::unordered_set<ui::LogicalDisplayId /*displayId*/> mPrivacySensitiveDisplays
+                GUARDED_BY(mListenerLock);
     };
     sp<PointerChoreographerDisplayInfoListener> mWindowInfoListener GUARDED_BY(mLock);
 
@@ -180,6 +199,21 @@ private:
     bool mShowTouchesEnabled GUARDED_BY(mLock);
     bool mStylusPointerIconEnabled GUARDED_BY(mLock);
     std::set<ui::LogicalDisplayId /*displayId*/> mDisplaysWithPointersHidden;
+    ui::LogicalDisplayId mCurrentFocusedDisplay GUARDED_BY(mLock);
+
+protected:
+    using WindowListenerRegisterConsumer = std::function<std::vector<gui::WindowInfo>(
+            const sp<android::gui::WindowInfosListener>&)>;
+    using WindowListenerUnregisterConsumer =
+            std::function<void(const sp<android::gui::WindowInfosListener>&)>;
+    explicit PointerChoreographer(InputListenerInterface& listener,
+                                  PointerChoreographerPolicyInterface&,
+                                  const WindowListenerRegisterConsumer& registerListener,
+                                  const WindowListenerUnregisterConsumer& unregisterListener);
+
+private:
+    const WindowListenerRegisterConsumer mRegisterListener;
+    const WindowListenerUnregisterConsumer mUnregisterListener;
 };
 
 } // namespace android

@@ -107,7 +107,7 @@ void Display::setSecure(bool secure) {
 }
 
 bool Display::isVirtual() const {
-    return VirtualDisplayId::tryCast(mId).has_value();
+    return mId.isVirtual();
 }
 
 std::optional<DisplayId> Display::getDisplayId() const {
@@ -409,6 +409,15 @@ void Display::applyClientTargetRequests(const ClientTargetProperty& clientTarget
     getRenderSurface()->setBufferDataspace(editState().dataspace);
     getRenderSurface()->setBufferPixelFormat(
             static_cast<ui::PixelFormat>(clientTargetProperty.clientTargetProperty.pixelFormat));
+}
+
+void Display::executeCommands() {
+    const auto halDisplayIdOpt = HalDisplayId::tryCast(mId);
+    if (mIsDisconnected || !halDisplayIdOpt) {
+        return;
+    }
+
+    getCompositionEngine().getHwComposer().executeCommands(*halDisplayIdOpt);
 }
 
 compositionengine::Output::FrameFences Display::presentFrame() {

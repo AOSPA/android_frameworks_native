@@ -40,7 +40,7 @@ std::list<NotifyArgs> MultiTouchInputMapper::reset(nsecs_t when) {
     return TouchInputMapper::reset(when);
 }
 
-std::list<NotifyArgs> MultiTouchInputMapper::process(const RawEvent* rawEvent) {
+std::list<NotifyArgs> MultiTouchInputMapper::process(const RawEvent& rawEvent) {
     std::list<NotifyArgs> out = TouchInputMapper::process(rawEvent);
 
     mMultiTouchMotionAccumulator.process(rawEvent);
@@ -138,13 +138,14 @@ void MultiTouchInputMapper::syncTouch(nsecs_t when, RawState* outState) {
 
         // Assign pointer id using tracking id if available.
         if (mHavePointerIds) {
-            int32_t trackingId = inSlot.getTrackingId();
+            const int32_t trackingId = inSlot.getTrackingId();
             int32_t id = -1;
             if (trackingId >= 0) {
                 for (BitSet32 idBits(mPointerIdBits); !idBits.isEmpty();) {
                     uint32_t n = idBits.clearFirstMarkedBit();
                     if (mPointerTrackingIdMap[n] == trackingId) {
                         id = n;
+                        break;
                     }
                 }
 

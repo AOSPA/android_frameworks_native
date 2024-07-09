@@ -50,6 +50,7 @@ cc_defaults {
         "libshaders",
         "libtonemap",
         "libsurfaceflinger_common",
+        "libsurfaceflingerflags",
     ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],
@@ -102,6 +103,7 @@ filegroup {
         "skia/filters/GaussianBlurFilter.cpp",
         "skia/filters/KawaseBlurFilter.cpp",
         "skia/filters/LinearEffect.cpp",
+        "skia/filters/MouriMap.cpp",
         "skia/filters/StretchShaderFactory.cpp",
     ],
 }

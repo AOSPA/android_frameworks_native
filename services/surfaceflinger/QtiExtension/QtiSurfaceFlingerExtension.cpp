@@ -193,7 +193,7 @@ QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
     ConditionalLock lock(mQtiFlinger->mStateLock,
                          std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
     const auto displayDevice = mQtiFlinger->getDefaultDisplayDeviceLocked();
-    auto currMode = FTL_FAKE_GUARD(kMainThreadContext, displayDevice->getActiveMode());
+    auto currMode = FTL_FAKE_GUARD(kMainThreadContext, displayDevice->refreshRateSelector().getActiveMode());
 
     const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(displayDevice->getPhysicalId());
     const auto& display = displayOpt->get();
@@ -1427,9 +1427,9 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     ATRACE_NAME("SmoMoUpdateState");
     Mutex::Autolock lock(mQtiFlinger->mStateLock);
 
-    mQtiSmomoOptimalRefreshActive = false;
     // Check if smomo instances exist.
     if (!mQtiSmomoInstances.size()) {
+        mQtiSmomoOptimalRefreshActive = false;
         return;
     }
 
@@ -1505,6 +1505,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
                                               : static_cast<uint32_t>(fps));
     }
 
+    bool smomo_optimal_refresh = false;
     if (numActiveDisplays == 1) {
         std::map<int, int> refresh_rate_votes;
         for (auto& instance : mQtiSmomoInstances) {
@@ -1515,12 +1516,14 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
             mQtiFlinger->mScheduler->qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
             for (auto it = refresh_rate_votes.begin(); it != refresh_rate_votes.end(); it++) {
               if (it->second != -1) {
-                mQtiSmomoOptimalRefreshActive = true;
+                smomo_optimal_refresh = true;
                 break;
               }
             }
         }
     }
+
+    mQtiSmomoOptimalRefreshActive = smomo_optimal_refresh;
 
     // Disable DRC if active displays is more than 1.
     for (auto& instance : mQtiSmomoInstances) {
@@ -1531,33 +1534,6 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
 void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
     bool hasScreenshot = false;
     uint32_t hwcDisplayId;
-    for (const auto& pair : FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
-        const auto& displayDevice = pair.second;
-        if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
-            qtiIsInternalDisplay(displayDevice)) {
-            continue;
-        }
-
-        mQtiFlinger->mDrawingState.traverse([&](Layer* layer) {
-            if (layer->getLayerStack() == displayDevice->getLayerStack()) {
-                hasScreenshot |= qtiIsScreenshot(layer->getName());
-            }
-        });
-    }
-
-    for (auto& layer : mQtiFlinger->mLayersPendingRefresh) {
-        for (const auto& [token, displayDevice] :
-             FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
-            auto display = displayDevice->getCompositionDisplay();
-            if (qtiGetHwcDisplayId(displayDevice, &hwcDisplayId) &&
-                qtiIsInternalDisplay(displayDevice)) {
-                continue;
-            }
-            if (display->includesLayer(layer->getOutputFilter())) {
-                hasScreenshot |= qtiIsScreenshot(layer->getName());
-            }
-        }
-    }
 
     for (const auto& [token, displayDevice] :
          FTL_FAKE_GUARD(mQtiFlinger->mStateLock, mQtiFlinger->mDisplays)) {
@@ -1566,11 +1542,40 @@ void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
             continue;
         }
 
+        const DisplayDevice& dispRef = *displayDevice;
+        if (!mQtiFlinger->mLayerLifecycleManagerEnabled) {
+            mQtiFlinger->mDrawingState.traverseInZOrder([&](Layer* layer) {
+                const auto outputLayer = dispRef.getCompositionDisplay()
+                                                      ->getOutputLayerForLayer(
+                                                        layer->getCompositionEngineLayerFE());
+                if (outputLayer != nullptr) {
+                    hasScreenshot |= qtiIsScreenshot(layer->getName());
+                }
+            });
+        } else {
+            FTL_FAKE_GUARD(kMainThreadContext,
+                    mQtiFlinger->mLayerSnapshotBuilder.forEachVisibleSnapshot(
+                        [&](const frontend::LayerSnapshot& snapshot)
+                                FTL_FAKE_GUARD(kMainThreadContext) {
+                            if (snapshot.hasSomethingToDraw() &&
+                                dispRef.getLayerStack() == snapshot.outputFilter.layerStack) {
+                                auto seq = static_cast<const unsigned int>(snapshot.sequence);
+                                auto it = mQtiFlinger->mLegacyLayers.find(seq);
+                                if (it != mQtiFlinger->mLegacyLayers.end() &&
+                                    snapshot.outputFilter.layerStack == dispRef.getLayerStack()) {
+                                    hasScreenshot |= qtiIsScreenshot(snapshot.debugName);
+                                }
+                            }
+                        }));
+        }
+
         qtiGetHwcDisplayId(displayDevice, &hwcDisplayId);
         if (hasScreenshot != mQtiHasScreenshot) {
             if (mQtiDisplayConfigAidl) {
+                ALOGV("Trying to notify DP animation to composer using DisplayConfigAIDL.");
                 mQtiDisplayConfigAidl->setDisplayAnimating(hwcDisplayId, hasScreenshot);
             } else if (mQtiDisplayConfigHidl) {
+                ALOGV("Trying to notify DP animation to composer using DisplayConfigHIDL.");
                 mQtiDisplayConfigHidl->SetDisplayAnimating(hwcDisplayId, hasScreenshot);
             }
 
@@ -1864,7 +1869,7 @@ void QtiSurfaceFlingerExtension::qtiSetDesiredModeByThermalLevel(float newLevelF
         const auto physicalDisplay = mQtiFlinger->mPhysicalDisplays.get(*internalDisplayId);
         display = mQtiFlinger->getDisplayDeviceLocked(*internalDisplayId);
 
-        currFps = FTL_FAKE_GUARD(kMainThreadContext, display->getActiveMode().fps.getValue());
+        currFps = FTL_FAKE_GUARD(kMainThreadContext, display->refreshRateSelector().getActiveMode().fps.getValue());
     }
 
     qtiHandleNewLevelFps(currFps, newLevelFps, &fps);
@@ -1957,7 +1962,7 @@ DisplayModePtr QtiSurfaceFlingerExtension::qtiGetModeFromFps(float fps) {
     ConditionalLock lock(mQtiFlinger->mStateLock,
                          std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
     const auto displayDevice = mQtiFlinger->getDefaultDisplayDeviceLocked();
-    auto currMode = FTL_FAKE_GUARD(kMainThreadContext, displayDevice->getActiveMode());
+    auto currMode = FTL_FAKE_GUARD(kMainThreadContext, displayDevice->refreshRateSelector().getActiveMode());
 
     const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(displayDevice->getPhysicalId());
     const auto& display = displayOpt->get();

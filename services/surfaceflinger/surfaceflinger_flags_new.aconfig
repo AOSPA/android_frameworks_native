@@ -22,6 +22,17 @@ flag {
  } # ce_fence_promise
 
  flag {
+   name: "commit_not_composited"
+   namespace: "core_graphics"
+   description: "mark frames as non janky if the transaction resulted in no composition"
+   bug: "340633280"
+   is_fixed_read_only: true
+   metadata {
+     purpose: PURPOSE_BUGFIX
+   }
+  } # commit_not_composited
+
+ flag {
   name: "deprecate_vsync_sf"
   namespace: "core_graphics"
   description: "Depracate eVsyncSourceSurfaceFlinger and use vsync_app everywhere"
@@ -41,7 +52,26 @@ flag {
   metadata {
     purpose: PURPOSE_BUGFIX
   }
-} # deprecate_vsync_sf
+} # detached_mirror
+
+flag {
+  name: "flush_buffer_slots_to_uncache"
+  namespace: "core_graphics"
+  description: "Flush DisplayCommands for disabled displays in order to uncache requested buffers."
+  bug: "330806421"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+} # flush_buffer_slots_to_uncache
+
+flag {
+  name: "force_compile_graphite_renderengine"
+  namespace: "core_graphics"
+  description: "Compile Skia's Graphite Vulkan backend in RenderEngine, but do NOT enable it, unless graphite_renderengine is also set. It can also be enabled with the debug.renderengine.graphite system property for testing. In contrast, the graphite_renderengine flag both compiles AND enables Graphite in RenderEngine."
+  bug: "293371537"
+  is_fixed_read_only: true
+} # force_compile_graphite_renderengine
 
 flag {
   name: "frame_rate_category_mrr"
@@ -64,5 +94,46 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 } # latch_unsignaled_with_auto_refresh_changed
+
+flag {
+    name: "local_tonemap_screenshots"
+    namespace: "core_graphics"
+    description: "Enables local tonemapping when capturing screenshots"
+    bug: "329464641"
+    is_fixed_read_only: true
+} # local_tonemap_screenshots
+
+flag {
+  name: "single_hop_screenshot"
+  namespace: "window_surfaces"
+  description: "Only access SF main thread once during a screenshot"
+  bug: "285553970"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+ } # single_hop_screenshot
+
+ flag {
+  name: "override_trusted_overlay"
+  namespace: "window_surfaces"
+  description: "Allow child to disable trusted overlay set by a parent layer"
+  bug: "339701674"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+} # override_trusted_overlay
+
+flag {
+  name: "vrr_bugfix_24q4"
+  namespace: "core_graphics"
+  description: "bug fixes for VRR"
+  bug: "331513837"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+} # vrr_bugfix_24q4
 
 # IMPORTANT - please keep alphabetize to reduce merge conflicts

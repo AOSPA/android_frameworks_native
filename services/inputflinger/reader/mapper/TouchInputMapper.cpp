@@ -537,18 +537,6 @@ std::optional<DisplayViewport> TouchInputMapper::findViewport() {
             return getDeviceContext().getAssociatedViewport();
         }
 
-        const std::optional<std::string> associatedDisplayUniqueIdByDescriptor =
-                getDeviceContext().getAssociatedDisplayUniqueIdByDescriptor();
-        if (associatedDisplayUniqueIdByDescriptor) {
-            return getDeviceContext().getAssociatedViewport();
-        }
-
-        const std::optional<std::string> associatedDisplayUniqueIdByPort =
-                getDeviceContext().getAssociatedDisplayUniqueIdByPort();
-        if (associatedDisplayUniqueIdByPort) {
-            return getDeviceContext().getAssociatedViewport();
-        }
-
         if (mDeviceMode == DeviceMode::POINTER) {
             std::optional<DisplayViewport> viewport =
                     mConfig.getDisplayViewportById(mConfig.defaultPointerDisplayId);
@@ -1415,14 +1403,14 @@ void TouchInputMapper::clearStylusDataPendingFlags() {
     mExternalStylusFusionTimeout = LLONG_MAX;
 }
 
-std::list<NotifyArgs> TouchInputMapper::process(const RawEvent* rawEvent) {
+std::list<NotifyArgs> TouchInputMapper::process(const RawEvent& rawEvent) {
     mCursorButtonAccumulator.process(rawEvent);
     mCursorScrollAccumulator.process(rawEvent);
     mTouchButtonAccumulator.process(rawEvent);
 
     std::list<NotifyArgs> out;
-    if (rawEvent->type == EV_SYN && rawEvent->code == SYN_REPORT) {
-        out += sync(rawEvent->when, rawEvent->readTime);
+    if (rawEvent.type == EV_SYN && rawEvent.code == SYN_REPORT) {
+        out += sync(rawEvent.when, rawEvent.readTime);
     }
     return out;
 }
@@ -2355,20 +2343,23 @@ void TouchInputMapper::cookPointerData() {
         if (mHaveTilt) {
             float tiltXAngle = (in.tiltX - mTiltXCenter) * mTiltXScale;
             float tiltYAngle = (in.tiltY - mTiltYCenter) * mTiltYScale;
-            orientation = transformAngle(mRawRotation, atan2f(-sinf(tiltXAngle), sinf(tiltYAngle)));
+            orientation = transformAngle(mRawRotation, atan2f(-sinf(tiltXAngle), sinf(tiltYAngle)),
+                                         /*isDirectional=*/true);
             tilt = acosf(cosf(tiltXAngle) * cosf(tiltYAngle));
         } else {
             tilt = 0;
 
             switch (mCalibration.orientationCalibration) {
                 case Calibration::OrientationCalibration::INTERPOLATED:
-                    orientation = transformAngle(mRawRotation, in.orientation * mOrientationScale);
+                    orientation = transformAngle(mRawRotation, in.orientation * mOrientationScale,
+                                                 /*isDirectional=*/true);
                     break;
                 case Calibration::OrientationCalibration::VECTOR: {
                     int32_t c1 = signExtendNybble((in.orientation & 0xf0) >> 4);
                     int32_t c2 = signExtendNybble(in.orientation & 0x0f);
                     if (c1 != 0 || c2 != 0) {
-                        orientation = transformAngle(mRawRotation, atan2f(c1, c2) * 0.5f);
+                        orientation = transformAngle(mRawRotation, atan2f(c1, c2) * 0.5f,
+                                                     /*isDirectional=*/true);
                         float confidence = hypotf(c1, c2);
                         float scale = 1.0f + confidence / 16.0f;
                         touchMajor *= scale;
@@ -3683,6 +3674,14 @@ NotifyMotionArgs TouchInputMapper::dispatchMotion(
     }
     if (mCurrentStreamModifiedByExternalStylus) {
         source |= AINPUT_SOURCE_BLUETOOTH_STYLUS;
+    }
+    if (mOrientedRanges.orientation.has_value()) {
+        flags |= AMOTION_EVENT_PRIVATE_FLAG_SUPPORTS_ORIENTATION;
+        if (mOrientedRanges.tilt.has_value()) {
+            // In the current implementation, only devices that report a value for tilt supports
+            // directional orientation.
+            flags |= AMOTION_EVENT_PRIVATE_FLAG_SUPPORTS_DIRECTIONAL_ORIENTATION;
+        }
     }
 
     const ui::LogicalDisplayId displayId =

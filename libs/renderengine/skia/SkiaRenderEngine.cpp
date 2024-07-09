@@ -79,6 +79,7 @@
 #include "filters/GaussianBlurFilter.h"
 #include "filters/KawaseBlurFilter.h"
 #include "filters/LinearEffect.h"
+#include "filters/MouriMap.h"
 #include "log/log_main.h"
 #include "skia/compat/SkiaBackendTexture.h"
 #include "skia/debug/SkiaCapture.h"
@@ -91,7 +92,6 @@ namespace {
 // Debugging settings
 static const bool kPrintLayerSettings = false;
 static const bool kGaneshFlushAfterEveryLayer = kPrintLayerSettings;
-static constexpr bool kEnableLayerBrightening = true;
 
 } // namespace
 
@@ -246,8 +246,8 @@ namespace skia {
 
 using base::StringAppendF;
 
-std::future<void> SkiaRenderEngine::primeCache(bool shouldPrimeUltraHDR) {
-    Cache::primeShaderCache(this, shouldPrimeUltraHDR);
+std::future<void> SkiaRenderEngine::primeCache(PrimeCacheConfig config) {
+    Cache::primeShaderCache(this, config);
     return {};
 }
 
@@ -510,9 +510,9 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
     // Determine later on if we need to leverage the stertch shader within
     // surface flinger
     const auto& stretchEffect = parameters.layer.stretchEffect;
+    const auto& targetBuffer = parameters.layer.source.buffer.buffer;
     auto shader = parameters.shader;
     if (stretchEffect.hasEffect()) {
-        const auto targetBuffer = parameters.layer.source.buffer.buffer;
         const auto graphicBuffer = targetBuffer ? targetBuffer->getBuffer() : nullptr;
         if (graphicBuffer && parameters.shader) {
             shader = mStretchShaderFactory.createSkShader(shader, stretchEffect);
@@ -520,6 +520,24 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
     }
 
     if (parameters.requiresLinearEffect) {
+        const auto format = targetBuffer != nullptr
+                ? std::optional<ui::PixelFormat>(
+                          static_cast<ui::PixelFormat>(targetBuffer->getPixelFormat()))
+                : std::nullopt;
+
+        if (parameters.display.tonemapStrategy == DisplaySettings::TonemapStrategy::Local) {
+            // TODO: Handle color matrix transforms in linear space.
+            SkImage* image = parameters.shader->isAImage((SkMatrix*)nullptr, (SkTileMode*)nullptr);
+            if (image) {
+                static MouriMap kMapper;
+                const float ratio = getHdrRenderType(parameters.layer.sourceDataspace, format) ==
+                                HdrRenderType::GENERIC_HDR
+                        ? 1.0f
+                        : parameters.layerDimmingRatio;
+                return kMapper.mouriMap(getActiveContext(), parameters.shader, ratio);
+            }
+        }
+
         auto effect =
                 shaders::LinearEffect{.inputDataspace = parameters.layer.sourceDataspace,
                                       .outputDataspace = parameters.outputDataSpace,
@@ -713,9 +731,7 @@ void SkiaRenderEngine::drawLayersInternal(
             [&](const auto& l) { return l.whitePointNits; });
 
     // ...and compute the dimming ratio if dimming is requested
-    const float displayDimmingRatio = display.targetLuminanceNits > 0.f &&
-                    maxLayerWhitePoint > 0.f &&
-                    (kEnableLayerBrightening || display.targetLuminanceNits > maxLayerWhitePoint)
+    const float displayDimmingRatio = display.targetLuminanceNits > 0.f && maxLayerWhitePoint > 0.f
             ? maxLayerWhitePoint / display.targetLuminanceNits
             : 1.f;
 

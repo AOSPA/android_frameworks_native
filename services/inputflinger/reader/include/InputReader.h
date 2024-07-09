@@ -61,8 +61,6 @@ public:
 
     std::vector<InputDeviceInfo> getInputDevices() const override;
 
-    bool isInputDeviceEnabled(int32_t deviceId) override;
-
     int32_t getScanCodeState(int32_t deviceId, uint32_t sourceMask, int32_t scanCode) override;
     int32_t getKeyCodeState(int32_t deviceId, uint32_t sourceMask, int32_t keyCode) override;
     int32_t getSwitchState(int32_t deviceId, uint32_t sourceMask, int32_t sw) override;
@@ -159,6 +157,7 @@ protected:
         void setLastKeyDownTimestamp(nsecs_t when) REQUIRES(mReader->mLock)
                 REQUIRES(mLock) override;
         nsecs_t getLastKeyDownTimestamp() REQUIRES(mReader->mLock) REQUIRES(mLock) override;
+        KeyboardClassifier& getKeyboardClassifier() override;
     } mContext;
 
     friend class ContextImpl;
@@ -178,6 +177,10 @@ private:
 
     // The next stage that should receive the events generated inside InputReader.
     InputListenerInterface& mNextListener;
+
+    // Classifier for keyboard/keyboard-like devices
+    std::unique_ptr<KeyboardClassifier> mKeyboardClassifier;
+
     // As various events are generated inside InputReader, they are stored inside this list. The
     // list can only be accessed with the lock, so the events inside it are well-ordered.
     // Once the reader is done working, these events will be swapped into a temporary storage and

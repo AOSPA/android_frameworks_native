@@ -115,6 +115,8 @@ public:
     void setUnhandledKeyHandler(std::function<std::optional<KeyEvent>(const KeyEvent&)> handler);
     void assertUnhandledKeyReported(int32_t keycode);
     void assertUnhandledKeyNotReported();
+    void setConsumeKeyBeforeDispatching(bool consumeKeyBeforeDispatching);
+    void assertFocusedDisplayNotified(ui::LogicalDisplayId expectedDisplay);
 
 private:
     std::mutex mLock;
@@ -124,6 +126,9 @@ private:
     std::optional<NotifySwitchArgs> mLastNotifySwitch GUARDED_BY(mLock);
 
     std::condition_variable mPointerCaptureChangedCondition;
+
+    std::optional<ui::LogicalDisplayId> mNotifiedFocusedDisplay GUARDED_BY(mLock);
+    std::condition_variable mFocusedDisplayNotifiedCondition;
 
     std::optional<PointerCaptureRequest> mPointerCaptureRequest GUARDED_BY(mLock);
     // ANR handling
@@ -143,6 +148,8 @@ private:
     std::chrono::milliseconds mInterceptKeyTimeout = 0ms;
 
     std::chrono::nanoseconds mStaleEventTimeout = 1000ms;
+
+    bool mConsumeKeyBeforeDispatching = false;
 
     BlockingQueue<std::pair<int32_t /*deviceId*/, std::set<gui::Uid>>> mNotifiedInteractions;
 
@@ -198,6 +205,7 @@ private:
     void notifyDropWindow(const sp<IBinder>& token, float x, float y) override;
     void notifyDeviceInteraction(int32_t deviceId, nsecs_t timestamp,
                                  const std::set<gui::Uid>& uids) override;
+    void notifyFocusedDisplayChanged(ui::LogicalDisplayId displayId) override;
 
     void assertFilterInputEventWasCalledInternal(
             const std::function<void(const InputEvent&)>& verify);

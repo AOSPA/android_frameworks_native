@@ -149,6 +149,12 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
     if (!mQtiSurfaceExtn && enableOptimalRefreshRate) {
         mQtiSurfaceExtn = new libguiextension::QtiSurfaceExtension(this);
     }
+
+    property_get("vendor.gpp.create_frc_extension", value, "0");
+    intValue = atoi(value);
+    if (!mQtiSurfaceGPPExtn && intValue == 1) {
+        mQtiSurfaceGPPExtn = std::make_shared<libguiextension::QtiSurfaceExtensionGPP>(IGraphicBufferProducer::asBinder(bufferProducer), &mGraphicBufferProducer);
+    }
     /* QTI_END */
 }
 
@@ -157,6 +163,7 @@ Surface::~Surface() {
     if (mQtiSurfaceExtn) {
         delete mQtiSurfaceExtn;
     }
+    mQtiSurfaceGPPExtn = nullptr;
     /* QTI_END */
 
     if (mConnectedToCpu) {
@@ -182,6 +189,12 @@ sp<IGraphicBufferProducer> Surface::getIGraphicBufferProducer() const {
 
 void Surface::setSidebandStream(const sp<NativeHandle>& stream) {
     mGraphicBufferProducer->setSidebandStream(stream);
+
+    /* QTI_BEGIN */
+    if (mQtiSurfaceGPPExtn) {
+        mQtiSurfaceGPPExtn->setSidebandStream(stream);
+    }
+    /* QTI_END */
 }
 
 void Surface::allocateBuffers() {
@@ -616,6 +629,13 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
     ATRACE_FORMAT("dequeueBuffer - %s", getDebugName());
     ALOGV("Surface::dequeueBuffer");
 
+
+    /* QTI_BEGIN */
+    if (mQtiSurfaceGPPExtn) {
+        mQtiSurfaceGPPExtn->DynamicEnable(&mGraphicBufferProducer);
+    }
+    /* QTI_END */
+
     IGraphicBufferProducer::DequeueBufferInput dqInput;
     {
         Mutex::Autolock lock(mMutex);
@@ -731,6 +751,12 @@ int Surface::dequeueBuffers(std::vector<BatchBuffer>* buffers) {
 
     ATRACE_CALL();
     ALOGV("Surface::dequeueBuffers");
+
+    /* QTI_BEGIN */
+    if (mQtiSurfaceGPPExtn) {
+        mQtiSurfaceGPPExtn->DynamicEnable(&mGraphicBufferProducer);
+    }
+    /* QTI_END */
 
     if (buffers->size() == 0) {
         ALOGE("%s: must dequeue at least 1 buffer!", __FUNCTION__);
@@ -1918,6 +1944,13 @@ int Surface::connect(
     Mutex::Autolock lock(mMutex);
     IGraphicBufferProducer::QueueBufferOutput output;
     mReportRemovedBuffers = reportBufferRemoval;
+
+    /* QTI_BEGIN */
+    if (mQtiSurfaceGPPExtn) {
+        mQtiSurfaceGPPExtn->Connect(api, &mGraphicBufferProducer);
+    }
+    /* QTI_END */
+
     int err = mGraphicBufferProducer->connect(listener, api, mProducerControlledByApp, &output);
     if (err == NO_ERROR) {
         mDefaultWidth = output.width;
@@ -1933,6 +1966,12 @@ int Surface::connect(
         }
 
         mConsumerRunningBehind = (output.numPendingBuffers >= 2);
+
+        /* QTI_BEGIN */
+        if (mQtiSurfaceGPPExtn) {
+            mQtiSurfaceGPPExtn->StoreConnect(api, listener, reportBufferRemoval);
+        }
+        /* QTI_END */
     }
     if (!err && api == NATIVE_WINDOW_API_CPU) {
         mConnectedToCpu = true;
@@ -1974,6 +2013,13 @@ int Surface::disconnect(int api, IGraphicBufferProducer::DisconnectMode mode) {
             mConnectedToCpu = false;
         }
     }
+
+    /* QTI_BEGIN */
+    if (mQtiSurfaceGPPExtn) {
+        mQtiSurfaceGPPExtn->Disconnect(api, &mGraphicBufferProducer);
+    }
+    /* QTI_END */
+
     return err;
 }
 

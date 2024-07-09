@@ -76,13 +76,15 @@ void FakePointerController::setCustomPointerIcon(const SpriteIcon& icon) {
     mCustomIconStyle = icon.style;
 }
 
-void FakePointerController::setSkipScreenshot(ui::LogicalDisplayId displayId, bool skip) {
-    if (skip) {
-        mDisplaysToSkipScreenshot.insert(displayId);
-    } else {
-        mDisplaysToSkipScreenshot.erase(displayId);
-    }
-};
+void FakePointerController::setSkipScreenshotFlagForDisplay(ui::LogicalDisplayId displayId) {
+    mDisplaysToSkipScreenshotFlagChanged = true;
+    mDisplaysToSkipScreenshot.insert(displayId);
+}
+
+void FakePointerController::clearSkipScreenshotFlags() {
+    mDisplaysToSkipScreenshotFlagChanged = true;
+    mDisplaysToSkipScreenshot.clear();
+}
 
 void FakePointerController::assertViewportSet(ui::LogicalDisplayId displayId) {
     ASSERT_TRUE(mDisplayId);
@@ -125,13 +127,21 @@ void FakePointerController::assertCustomPointerIconNotSet() {
     ASSERT_EQ(std::nullopt, mCustomIconStyle);
 }
 
-void FakePointerController::assertIsHiddenOnMirroredDisplays(ui::LogicalDisplayId displayId,
-                                                             bool isHidden) {
-    if (isHidden) {
-        ASSERT_TRUE(mDisplaysToSkipScreenshot.find(displayId) != mDisplaysToSkipScreenshot.end());
-    } else {
-        ASSERT_TRUE(mDisplaysToSkipScreenshot.find(displayId) == mDisplaysToSkipScreenshot.end());
-    }
+void FakePointerController::assertIsSkipScreenshotFlagSet(ui::LogicalDisplayId displayId) {
+    ASSERT_TRUE(mDisplaysToSkipScreenshot.find(displayId) != mDisplaysToSkipScreenshot.end());
+}
+
+void FakePointerController::assertIsSkipScreenshotFlagNotSet(ui::LogicalDisplayId displayId) {
+    ASSERT_TRUE(mDisplaysToSkipScreenshot.find(displayId) == mDisplaysToSkipScreenshot.end());
+}
+
+void FakePointerController::assertSkipScreenshotFlagChanged() {
+    ASSERT_TRUE(mDisplaysToSkipScreenshotFlagChanged);
+    mDisplaysToSkipScreenshotFlagChanged = false;
+}
+
+void FakePointerController::assertSkipScreenshotFlagNotChanged() {
+    ASSERT_FALSE(mDisplaysToSkipScreenshotFlagChanged);
 }
 
 bool FakePointerController::isPointerShown() {

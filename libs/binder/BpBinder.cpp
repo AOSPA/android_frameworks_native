@@ -23,6 +23,7 @@
 #include <binder/IResultReceiver.h>
 #include <binder/RpcSession.h>
 #include <binder/Stability.h>
+#include <binder/Trace.h>
 
 #include <stdio.h>
 
@@ -209,6 +210,7 @@ sp<BpBinder> BpBinder::create(int32_t handle) {
         sTrackingMap[trackedUid]++;
     }
     uint32_t numProxies = sBinderProxyCount.fetch_add(1, std::memory_order_relaxed);
+    binder::os::trace_int(ATRACE_TAG_AIDL, "binder_proxies", numProxies);
     uint32_t numLastWarned = sBinderProxyCountWarned.load(std::memory_order_relaxed);
     uint32_t numNextWarn = numLastWarned + kBinderProxyCountWarnInterval;
     if (numProxies >= numNextWarn) {
@@ -632,8 +634,8 @@ BpBinder::~BpBinder() {
             }
         }
     }
-    --sBinderProxyCount;
-
+    uint32_t numProxies = --sBinderProxyCount;
+    binder::os::trace_int(ATRACE_TAG_AIDL, "binder_proxies", numProxies);
     if (ipc) {
         ipc->expungeHandle(binderHandle(), this);
         ipc->decWeakHandle(binderHandle());

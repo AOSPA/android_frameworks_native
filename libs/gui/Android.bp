@@ -41,6 +41,11 @@ cc_aconfig_library {
     aconfig_declarations: "libgui_flags",
 }
 
+cc_aconfig_library {
+    name: "libguiflags_no_apex",
+    aconfig_declarations: "libgui_flags",
+}
+
 cc_library_headers {
     name: "libgui_headers",
     vendor_available: true,
@@ -87,6 +92,7 @@ filegroup {
         "android/gui/DropInputMode.aidl",
         "android/gui/StalledTransactionInfo.aidl",
         "android/**/TouchOcclusionMode.aidl",
+        "android/gui/TrustedOverlay.aidl",
     ],
 }
 
@@ -539,6 +545,7 @@ qtidisplayextension_cc_library_static {
         "QtiExtension/QtiBLASTBufferQueueExtension.cpp",
         "QtiExtension/QtiDolphinWrapper.cpp",
         "QtiExtension/QtiSurfaceExtension.cpp",
+        "QtiExtension/QtiSurfaceExtensionGPP.cpp",
     ],
     local_include_dirs: ["QtiExtension"],
     export_include_dirs: ["QtiExtension"],

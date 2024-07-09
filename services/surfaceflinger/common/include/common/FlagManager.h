@@ -72,6 +72,7 @@ public:
     bool enable_layer_command_batching() const;
     bool screenshot_fence_preservation() const;
     bool vulkan_renderengine() const;
+    bool vrr_bugfix_24q4() const;
     bool renderable_buffer_usage() const;
     bool restore_blur_step() const;
     bool dont_skip_on_early_ro() const;
@@ -83,6 +84,13 @@ public:
     bool deprecate_vsync_sf() const;
     bool allow_n_vsyncs_in_targeter() const;
     bool detached_mirror() const;
+    bool commit_not_composited() const;
+    bool local_tonemap_screenshots() const;
+    bool override_trusted_overlay() const;
+    bool flush_buffer_slots_to_uncache() const;
+    bool force_compile_graphite_renderengine() const;
+    bool single_hop_screenshot() const;
+    bool trace_frame_rate_override() const;
 
 protected:
     // overridden for unit tests

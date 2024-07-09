@@ -25,9 +25,15 @@ package {
 
 cc_defaults {
     name: "binder_test_defaults",
+    cmake_snapshot_supported: true,
     cflags: [
         "-Wall",
         "-Werror",
+        "-Wformat",
+        "-Wpessimizing-move",
+        "-Wsign-compare",
+        "-Wunused-result",
+        "-Wzero-as-null-pointer-constant",
     ],
 }
 
@@ -57,6 +63,7 @@ cc_test {
         "binderStatusUnitTest.cpp",
         "binderMemoryHeapBaseUnitTest.cpp",
         "binderRecordedTransactionTest.cpp",
+        "binderPersistableBundleTest.cpp",
     ],
     shared_libs: [
         "libbinder",
@@ -136,6 +143,7 @@ aidl_interface {
     name: "binderRpcTestIface",
     vendor_available: true,
     host_supported: true,
+    cmake_snapshot_supported: true,
     unstable: true,
     srcs: [
         "BinderRpcTestClientInfo.aidl",
@@ -217,6 +225,7 @@ cc_library_static {
 cc_defaults {
     name: "binderRpcTest_common_defaults",
     host_supported: true,
+    cmake_snapshot_supported: true,
     target: {
         darwin: {
             enabled: false,
@@ -258,6 +267,7 @@ cc_defaults {
     defaults: [
         "binderRpcTest_common_defaults",
     ],
+    compile_multilib: "first",
 
     srcs: [
         "binderRpcTest.cpp",
@@ -327,7 +337,7 @@ cc_defaults {
     ],
 }
 
-cc_test {
+cc_binary {
     // The module name cannot start with "binderRpcTest" because
     // then atest tries to execute it as part of binderRpcTest
     name: "binder_rpc_test_service",
@@ -338,7 +348,7 @@ cc_test {
     ],
 }
 
-cc_test {
+cc_binary {
     name: "binder_rpc_test_service_no_kernel",
     defaults: [
         "binderRpcTest_service_defaults",
@@ -349,7 +359,7 @@ cc_test {
     ],
 }
 
-cc_test {
+cc_binary {
     name: "binder_rpc_test_service_single_threaded",
     defaults: [
         "binderRpcTest_service_defaults",
@@ -364,7 +374,7 @@ cc_test {
     ],
 }
 
-cc_test {
+cc_binary {
     name: "binder_rpc_test_service_single_threaded_no_kernel",
     defaults: [
         "binderRpcTest_service_defaults",
@@ -375,6 +385,9 @@ cc_test {
     ],
     static_libs: [
         "libbinder_rpc_single_threaded_no_kernel",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
     ],
 }
 
@@ -456,6 +469,20 @@ cc_test {
 }
 
 cc_test {
+    name: "binderRpcTestNoKernelAtAll",
+    defaults: [
+        "binderRpcTest_defaults",
+        "binderRpcTest_static_defaults",
+    ],
+    static_libs: [
+        "libbinder_rpc_no_kernel",
+    ],
+    cflags: [
+        "-DBINDER_NO_KERNEL_IPC_TESTING",
+    ],
+}
+
+cc_test {
     name: "binderRpcTestSingleThreaded",
     defaults: [
         "binderRpcTest_defaults",
@@ -481,6 +508,9 @@ cc_test {
     ],
     static_libs: [
         "libbinder_rpc_single_threaded_no_kernel",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
     ],
 }
 

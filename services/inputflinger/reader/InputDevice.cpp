@@ -237,6 +237,12 @@ std::list<NotifyArgs> InputDevice::configureInternal(nsecs_t when,
     mIsExternal = mClasses.test(InputDeviceClass::EXTERNAL);
     mHasMic = mClasses.test(InputDeviceClass::MIC);
 
+    // Update keyboard type
+    if (mClasses.test(InputDeviceClass::KEYBOARD)) {
+        mContext->getKeyboardClassifier().notifyKeyboardChanged(mId, mIdentifier, mClasses.get());
+        mKeyboardType = mContext->getKeyboardClassifier().getKeyboardType(mId);
+    }
+
     using Change = InputReaderConfiguration::Change;
 
     if (!changes.any() || !isIgnored()) {
@@ -281,14 +287,14 @@ std::list<NotifyArgs> InputDevice::configureInternal(nsecs_t when,
             const std::string& inputDeviceDescriptor = mIdentifier.descriptor;
             if (!inputDeviceDescriptor.empty()) {
                 const std::unordered_map<std::string, uint8_t>& ports =
-                        readerConfig.portAssociations;
+                        readerConfig.inputPortToDisplayPortAssociations;
                 const auto& displayPort = ports.find(inputDeviceDescriptor);
                 if (displayPort != ports.end()) {
                     mAssociatedDisplayPort = std::make_optional(displayPort->second);
                 } else {
                     const std::unordered_map<std::string, std::string>&
                             displayUniqueIdsByDescriptor =
-                                    readerConfig.uniqueIdAssociationsByDescriptor;
+                                    readerConfig.inputDeviceDescriptorToDisplayUniqueIdAssociations;
                     const auto& displayUniqueIdByDescriptor =
                             displayUniqueIdsByDescriptor.find(inputDeviceDescriptor);
                     if (displayUniqueIdByDescriptor != displayUniqueIdsByDescriptor.end()) {
@@ -301,13 +307,13 @@ std::list<NotifyArgs> InputDevice::configureInternal(nsecs_t when,
             const std::string& inputPort = mIdentifier.location;
             if (!inputPort.empty()) {
                 const std::unordered_map<std::string, uint8_t>& ports =
-                        readerConfig.portAssociations;
+                        readerConfig.inputPortToDisplayPortAssociations;
                 const auto& displayPort = ports.find(inputPort);
                 if (displayPort != ports.end()) {
                     mAssociatedDisplayPort = std::make_optional(displayPort->second);
                 } else {
                     const std::unordered_map<std::string, std::string>& displayUniqueIdsByPort =
-                            readerConfig.uniqueIdAssociationsByPort;
+                            readerConfig.inputPortToDisplayUniqueIdAssociations;
                     const auto& displayUniqueIdByPort = displayUniqueIdsByPort.find(inputPort);
                     if (displayUniqueIdByPort != displayUniqueIdsByPort.end()) {
                         mAssociatedDisplayUniqueIdByPort = displayUniqueIdByPort->second;
@@ -403,7 +409,7 @@ std::list<NotifyArgs> InputDevice::process(const RawEvent* rawEvents, size_t cou
             mDropUntilNextSync = true;
         } else {
             for_each_mapper_in_subdevice(rawEvent->deviceId, [&](InputMapper& mapper) {
-                out += mapper.process(rawEvent);
+                out += mapper.process(*rawEvent);
             });
         }
         --count;
@@ -445,6 +451,7 @@ InputDeviceInfo InputDevice::getDeviceInfo() {
                              mHasMic,
                              getAssociatedDisplayId().value_or(ui::LogicalDisplayId::INVALID),
                              {mShouldSmoothScroll}, isEnabled());
+    outDeviceInfo.setKeyboardType(static_cast<int32_t>(mKeyboardType));
 
     for_each_mapper(
             [&outDeviceInfo](InputMapper& mapper) { mapper.populateDeviceInfo(outDeviceInfo); });
@@ -517,12 +524,8 @@ std::vector<std::unique_ptr<InputMapper>> InputDevice::createMappers(
 
     // Keyboard-like devices.
     uint32_t keyboardSource = 0;
-    int32_t keyboardType = AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC;
     if (classes.test(InputDeviceClass::KEYBOARD)) {
         keyboardSource |= AINPUT_SOURCE_KEYBOARD;
-    }
-    if (classes.test(InputDeviceClass::ALPHAKEY)) {
-        keyboardType = AINPUT_KEYBOARD_TYPE_ALPHABETIC;
     }
     if (classes.test(InputDeviceClass::DPAD)) {
         keyboardSource |= AINPUT_SOURCE_DPAD;
@@ -532,8 +535,8 @@ std::vector<std::unique_ptr<InputMapper>> InputDevice::createMappers(
     }
 
     if (keyboardSource != 0) {
-        mappers.push_back(createInputMapper<KeyboardInputMapper>(contextPtr, readerConfig,
-                                                                 keyboardSource, keyboardType));
+        mappers.push_back(
+                createInputMapper<KeyboardInputMapper>(contextPtr, readerConfig, keyboardSource));
     }
 
     // Cursor-like devices.
@@ -728,6 +731,13 @@ void InputDevice::updateLedState(bool reset) {
 
 std::optional<int32_t> InputDevice::getBatteryEventHubId() const {
     return mController ? std::make_optional(mController->getEventHubId()) : std::nullopt;
+}
+
+void InputDevice::setKeyboardType(KeyboardType keyboardType) {
+    if (mKeyboardType != keyboardType) {
+        mKeyboardType = keyboardType;
+        bumpGeneration();
+    }
 }
 
 InputDeviceContext::InputDeviceContext(InputDevice& device, int32_t eventHubId)

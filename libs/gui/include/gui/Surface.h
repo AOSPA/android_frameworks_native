@@ -41,6 +41,7 @@
 
 /* QTI_BEGIN */
 #include "../../QtiExtension/QtiSurfaceExtension.h"
+#include "../../QtiExtension/QtiSurfaceExtensionGPP.h"
 /* QTI_END */
 
 namespace android {
@@ -48,6 +49,7 @@ namespace android {
 /* QTI_BEGIN */
 namespace libguiextension {
 class QtiSurfaceExtension;
+class QtiSurfaceExtensionGPP;
 };
 /* QTI_END */
 
@@ -670,6 +672,10 @@ protected:
 
     // Buffers that are successfully dequeued/attached and handed to clients
     std::unordered_set<int> mDequeuedSlots;
+
+    /* QTI_BEGIN */
+    std::shared_ptr<libguiextension::QtiSurfaceExtensionGPP> mQtiSurfaceGPPExtn = nullptr;
+    /* QTI_END */
 };
 
 } // namespace android

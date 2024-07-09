@@ -376,11 +376,11 @@ public:
     sp<SurfaceControl> mirrorDisplay(DisplayId displayId);
 
     static const std::string kEmpty;
-    static sp<IBinder> createDisplay(const String8& displayName, bool isSecure,
-                                     const std::string& uniqueId = kEmpty,
-                                     float requestedRefreshRate = 0);
+    static sp<IBinder> createVirtualDisplay(const std::string& displayName, bool isSecure,
+                                            const std::string& uniqueId = kEmpty,
+                                            float requestedRefreshRate = 0);
 
-    static void destroyDisplay(const sp<IBinder>& display);
+    static status_t destroyVirtualDisplay(const sp<IBinder>& displayToken);
 
     static std::vector<PhysicalDisplayId> getPhysicalDisplayIds();
 
@@ -568,7 +568,8 @@ public:
         Transaction& setBuffer(const sp<SurfaceControl>& sc, const sp<GraphicBuffer>& buffer,
                                const std::optional<sp<Fence>>& fence = std::nullopt,
                                const std::optional<uint64_t>& frameNumber = std::nullopt,
-                               uint32_t producerId = 0, ReleaseBufferCallback callback = nullptr);
+                               uint32_t producerId = 0, ReleaseBufferCallback callback = nullptr,
+                               nsecs_t dequeueTime = -1);
         Transaction& unsetBuffer(const sp<SurfaceControl>& sc);
         std::shared_ptr<BufferData> getAndClearBuffer(const sp<SurfaceControl>& sc);
 
@@ -719,6 +720,8 @@ public:
 
         // Sets that this surface control and its children are trusted overlays for input
         Transaction& setTrustedOverlay(const sp<SurfaceControl>& sc, bool isTrustedOverlay);
+        Transaction& setTrustedOverlay(const sp<SurfaceControl>& sc,
+                                       gui::TrustedOverlay trustedOverlay);
 
         // Queues up transactions using this token in SurfaceFlinger.  By default, all transactions
         // from a client are placed on the same queue. This can be used to prevent multiple
@@ -823,6 +826,8 @@ public:
             std::pair<std::vector<gui::WindowInfo>, std::vector<gui::DisplayInfo>>* outInitialInfo =
                     nullptr);
     status_t removeWindowInfosListener(const sp<gui::WindowInfosListener>& windowInfosListener);
+
+    static void notifyShutdown();
 
 protected:
     ReleaseCallbackThread mReleaseCallbackThread;
