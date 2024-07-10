@@ -1714,7 +1714,7 @@ uint32_t QtiSurfaceFlingerExtension::qtiGetLayerClass(std::string mName) {
         uint32_t layerClass = static_cast<uint32_t>(mQtiLayerExt->GetLayerClass(mName));
         return layerClass;
     }
-    ALOGV("%s: QtiLayerExtension is not enabled, setting layer class to 0");
+    ALOGV("%s: QtiLayerExtension is not enabled, setting layer class to 0", __func__);
     return 0;
 }
 
@@ -1798,15 +1798,18 @@ void QtiSurfaceFlingerExtension::qtiDolphinUnblockPendingBuffer() {
  */
 bool QtiSurfaceFlingerExtension::qtiIsInternalDisplay(const sp<DisplayDevice>& display) {
     if (display && mQtiFlinger) {
+        if (display->isVirtual()) {
+            return false;
+        }
+
         ConditionalLock lock(mQtiFlinger->mStateLock,
                              std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
+
         if (!mQtiFlinger->mPhysicalDisplays.empty()) {
             const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(display->getPhysicalId());
-            const auto& physicalDisplay = displayOpt->get();
-            const auto& snapshot = physicalDisplay.snapshot();
-
-            const auto connectionType = snapshot.connectionType();
-            return (connectionType == ui::DisplayConnectionType::Internal);
+            if (displayOpt) {
+                return displayOpt->get().isInternal();
+            }
         }
     }
     return false;
@@ -2138,6 +2141,7 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
         } else {
             mQtiDisplaySizeChanged = true;
         }
+        mQtiFlinger->setTransactionFlags(eDisplayTransactionNeeded);
     }
 }
 
