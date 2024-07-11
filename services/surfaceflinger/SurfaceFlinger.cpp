@@ -512,14 +512,14 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
 }
 
 LatchUnsignaledConfig SurfaceFlinger::getLatchUnsignaledConfig() {
-    if (base::GetBoolProperty("debug.sf.auto_latch_unsignaled"s, true)) {
-        return LatchUnsignaledConfig::AutoSingleLayer;
-    }
-
     if (base::GetBoolProperty("debug.sf.latch_unsignaled"s, false)) {
         return LatchUnsignaledConfig::Always;
     }
-
+    /* QTI_BEGIN */
+    if (base::GetBoolProperty("debug.sf.auto_latch_unsignaled"s, true)) {
+        return LatchUnsignaledConfig::AutoSingleLayer;
+    }
+    /* QTI_END */
     return LatchUnsignaledConfig::Disabled;
 }
 
