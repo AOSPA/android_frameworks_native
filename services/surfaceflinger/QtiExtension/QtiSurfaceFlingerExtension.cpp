@@ -1434,8 +1434,20 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     }
 
     if (mQtiSmomoInstances.size() > 1) {
-        mQtiFlinger->mDrawingState.traverse(
-                [&](Layer* layer) { layer->qtiSetSmomoLayerStackId(); });
+        if (mQtiFlinger->mLayerLifecycleManagerEnabled) {
+            FTL_FAKE_GUARD(kMainThreadContext,
+                mQtiFlinger->mLayerSnapshotBuilder.forEachVisibleSnapshot(
+                    [&](const frontend::LayerSnapshot& snapshot) FTL_FAKE_GUARD(kMainThreadContext) {
+                        auto seq = static_cast<const unsigned int>(snapshot.sequence);
+                        auto it = mQtiFlinger->mLegacyLayers.find(seq);
+                        if (it != mQtiFlinger->mLegacyLayers.end()) {
+                            it->second->qtiSetSmomoLayerStackId(snapshot.outputFilter.layerStack.id);
+                        }
+                    }));
+        } else {
+            mQtiFlinger->mDrawingState.traverse(
+                    [&](Layer* layer) { layer->qtiSetSmomoLayerStackId(0); });
+        }
     }
 
     // Disable smomo if external or virtual is connected.
