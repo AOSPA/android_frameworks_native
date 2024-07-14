@@ -300,8 +300,7 @@ int AHardwareBuffer_lockPlanes(AHardwareBuffer* buffer, uint64_t usage,
       if (result == 0) {
         outPlanes->planeCount = 3;
         outPlanes->planes[0].data = yuvData.y;
-        if (format == AHARDWAREBUFFER_FORMAT_YCbCr_P010 |
-            format == AHARDWAREBUFFER_FORMAT_YCbCr_422_I) {
+        if (format == AHARDWAREBUFFER_FORMAT_YCbCr_P010) {
             outPlanes->planes[0].pixelStride = 2;
         } else {
             outPlanes->planes[0].pixelStride = 1;
