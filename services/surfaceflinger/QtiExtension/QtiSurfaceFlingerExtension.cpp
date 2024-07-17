@@ -2141,6 +2141,7 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
         } else {
             mQtiDisplaySizeChanged = true;
         }
+        mQtiFlinger->setTransactionFlags(eDisplayTransactionNeeded);
     }
 }
 

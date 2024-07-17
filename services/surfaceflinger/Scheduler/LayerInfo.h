@@ -58,7 +58,8 @@ class LayerInfo {
     static constexpr size_t kFrequentLayerWindowSize = 4;
     static constexpr Fps kMinFpsForFrequentLayer = 10_Hz;
     static constexpr auto kMaxPeriodForFrequentLayerNs =
-            std::chrono::nanoseconds(kMinFpsForFrequentLayer.getPeriodNsecs()) + 1ms;
+            std::chrono::nanoseconds(kMinFpsForFrequentLayer.getPeriodNsecs()) +
+            /* QTI_BEGIN */ 51ms; /* QTI_END */
     static constexpr size_t kNumSmallDirtyThreshold = 2;
 
     friend class LayerHistoryTest;
