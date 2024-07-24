@@ -1714,7 +1714,7 @@ uint32_t QtiSurfaceFlingerExtension::qtiGetLayerClass(std::string mName) {
         uint32_t layerClass = static_cast<uint32_t>(mQtiLayerExt->GetLayerClass(mName));
         return layerClass;
     }
-    ALOGV("%s: QtiLayerExtension is not enabled, setting layer class to 0");
+    ALOGV("%s: QtiLayerExtension is not enabled, setting layer class to 0", __func__);
     return 0;
 }
 
@@ -1798,15 +1798,18 @@ void QtiSurfaceFlingerExtension::qtiDolphinUnblockPendingBuffer() {
  */
 bool QtiSurfaceFlingerExtension::qtiIsInternalDisplay(const sp<DisplayDevice>& display) {
     if (display && mQtiFlinger) {
+        if (display->isVirtual()) {
+            return false;
+        }
+
         ConditionalLock lock(mQtiFlinger->mStateLock,
                              std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
+
         if (!mQtiFlinger->mPhysicalDisplays.empty()) {
             const auto displayOpt = mQtiFlinger->mPhysicalDisplays.get(display->getPhysicalId());
-            const auto& physicalDisplay = displayOpt->get();
-            const auto& snapshot = physicalDisplay.snapshot();
-
-            const auto connectionType = snapshot.connectionType();
-            return (connectionType == ui::DisplayConnectionType::Internal);
+            if (displayOpt) {
+                return displayOpt->get().isInternal();
+            }
         }
     }
     return false;
@@ -2071,34 +2074,21 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
     auto display = displayDevice->getCompositionDisplay();
     int newWidth = currentState.layerStackSpaceRect.width();
     int newHeight = currentState.layerStackSpaceRect.height();
-    int currentWidth = drawingState.layerStackSpaceRect.width();
-    int currentHeight = drawingState.layerStackSpaceRect.height();
     int displayWidth = displayDevice->getWidth();
     int displayHeight = displayDevice->getHeight();
-    bool update_needed = false;
 
-    ALOGV("%s: newWidth %d newHeight %d currentWidth %d currentHeight %d displayWidth %d "
-          "displayHeight %d",
-          __func__, newWidth, newHeight, currentWidth, currentHeight, displayWidth, displayHeight);
+    ALOGV("%s: newWidth %d newHeight %d displayWidth %d displayHeight %d",
+          __func__, newWidth, newHeight, displayWidth, displayHeight);
 
-    if (newWidth != currentWidth || newHeight != currentHeight) {
-        update_needed = true;
+    if (newWidth != displayWidth || newHeight != displayHeight) {
         if (!((newWidth > newHeight && displayWidth > displayHeight) ||
               (newWidth < newHeight && displayWidth < displayHeight))) {
             std::swap(newWidth, newHeight);
             ALOGV("%s: Width %d or height %d was updated. Swap the values of newWidth %d and "
                   "newHeight %d",
-                  __func__, (newWidth != currentWidth), (newHeight != currentHeight), newWidth,
+                  __func__, (newWidth != displayWidth), (newHeight != displayHeight), newWidth,
                   newHeight);
         }
-    }
-
-    if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight &&
-        !update_needed) {
-        ALOGV("%s: No changes on the configuration", __func__);
-        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
-                                     currentState.orientedDisplaySpaceRect);
-        return;
     }
 
     if (newWidth > 0 && newHeight > 0) {
@@ -2109,6 +2099,14 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
     }
 
     currentState.orientedDisplaySpaceRect = currentState.layerStackSpaceRect;
+
+    if (displayWidth == newWidth && displayHeight == newHeight) {
+        ALOGV("%s: No changes on the configuration", __func__);
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
+        return;
+    }
+
     ALOGV("%s: Update currentState's orientedDisplaySpaceRect left %f top %f right %f bottom %f",
           __func__, currentState.orientedDisplaySpaceRect.left,
           currentState.orientedDisplaySpaceRect.top, currentState.orientedDisplaySpaceRect.right,
@@ -2138,6 +2136,7 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
         } else {
             mQtiDisplaySizeChanged = true;
         }
+        mQtiFlinger->setTransactionFlags(eDisplayTransactionNeeded);
     }
 }
 
@@ -2166,7 +2165,7 @@ bool QtiSurfaceFlingerExtension::qtiFbScalingOnDisplayChange(
         const wp<IBinder>& displayToken, sp<DisplayDevice> display,
         const DisplayDeviceState& drawingState) {
     bool useFbScaling = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kFbScaling);
-    if (useFbScaling && display->isPrimary()) {
+    if (mQtiFlinger->mBootFinished && useFbScaling && display->isPrimary()) {
         const ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(displayToken);
         DisplayDeviceState& curState =
                 mQtiFlinger->mCurrentState.displays.editValueAt(static_cast<size_t>(index));
