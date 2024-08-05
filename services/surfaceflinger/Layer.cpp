@@ -4243,7 +4243,7 @@ bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bo
     }
 
     /* QTI_BEGIN */
-    mFlinger->mQtiSFExtnIntf->qtiSetPresentTime(getLayerStack().id, getSequence(),
+    mFlinger->mQtiSFExtnIntf->qtiSetPresentTime(qtiGetSmomoLayerStackId(), getSequence(),
                                                 mBufferInfo.mDesiredPresentTime);
     /* QTI_END */
 
@@ -4512,8 +4512,8 @@ void Layer::setIsSmallDirty(const Region& damageRegion,
 }
 
 /* QTI_BEGIN */
-void Layer::qtiSetSmomoLayerStackId() {
-    qtiSmomoLayerStackId = getLayerStack().id;
+void Layer::qtiSetSmomoLayerStackId(uint32_t id) {
+    qtiSmomoLayerStackId = id;
 }
 
 uint32_t Layer::qtiGetSmomoLayerStackId() {

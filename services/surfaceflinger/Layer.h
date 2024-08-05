@@ -974,7 +974,7 @@ public:
     void setIsSmallDirty(frontend::LayerSnapshot* snapshot);
 
     /* QTI_BEGIN */
-    void qtiSetSmomoLayerStackId();
+    void qtiSetSmomoLayerStackId(uint32_t id);
     uint32_t qtiGetSmomoLayerStackId();
     uint32_t qtiGetLayerClass() { return mQtiLayerClass; };
     /* QTI_END */

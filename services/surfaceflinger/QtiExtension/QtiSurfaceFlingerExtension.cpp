@@ -1434,8 +1434,20 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     }
 
     if (mQtiSmomoInstances.size() > 1) {
-        mQtiFlinger->mDrawingState.traverse(
-                [&](Layer* layer) { layer->qtiSetSmomoLayerStackId(); });
+        if (mQtiFlinger->mLayerLifecycleManagerEnabled) {
+            FTL_FAKE_GUARD(kMainThreadContext,
+                mQtiFlinger->mLayerSnapshotBuilder.forEachVisibleSnapshot(
+                    [&](const frontend::LayerSnapshot& snapshot) FTL_FAKE_GUARD(kMainThreadContext) {
+                        auto seq = static_cast<const unsigned int>(snapshot.sequence);
+                        auto it = mQtiFlinger->mLegacyLayers.find(seq);
+                        if (it != mQtiFlinger->mLegacyLayers.end()) {
+                            it->second->qtiSetSmomoLayerStackId(snapshot.outputFilter.layerStack.id);
+                        }
+                    }));
+        } else {
+            mQtiFlinger->mDrawingState.traverse(
+                    [&](Layer* layer) { layer->qtiSetSmomoLayerStackId(0); });
+        }
     }
 
     // Disable smomo if external or virtual is connected.
@@ -2074,34 +2086,21 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
     auto display = displayDevice->getCompositionDisplay();
     int newWidth = currentState.layerStackSpaceRect.width();
     int newHeight = currentState.layerStackSpaceRect.height();
-    int currentWidth = drawingState.layerStackSpaceRect.width();
-    int currentHeight = drawingState.layerStackSpaceRect.height();
     int displayWidth = displayDevice->getWidth();
     int displayHeight = displayDevice->getHeight();
-    bool update_needed = false;
 
-    ALOGV("%s: newWidth %d newHeight %d currentWidth %d currentHeight %d displayWidth %d "
-          "displayHeight %d",
-          __func__, newWidth, newHeight, currentWidth, currentHeight, displayWidth, displayHeight);
+    ALOGV("%s: newWidth %d newHeight %d displayWidth %d displayHeight %d",
+          __func__, newWidth, newHeight, displayWidth, displayHeight);
 
-    if (newWidth != currentWidth || newHeight != currentHeight) {
-        update_needed = true;
+    if (newWidth != displayWidth || newHeight != displayHeight) {
         if (!((newWidth > newHeight && displayWidth > displayHeight) ||
               (newWidth < newHeight && displayWidth < displayHeight))) {
             std::swap(newWidth, newHeight);
             ALOGV("%s: Width %d or height %d was updated. Swap the values of newWidth %d and "
                   "newHeight %d",
-                  __func__, (newWidth != currentWidth), (newHeight != currentHeight), newWidth,
+                  __func__, (newWidth != displayWidth), (newHeight != displayHeight), newWidth,
                   newHeight);
         }
-    }
-
-    if (displayDevice->getWidth() == newWidth && displayDevice->getHeight() == newHeight &&
-        !update_needed) {
-        ALOGV("%s: No changes on the configuration", __func__);
-        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
-                                     currentState.orientedDisplaySpaceRect);
-        return;
     }
 
     if (newWidth > 0 && newHeight > 0) {
@@ -2112,6 +2111,14 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
     }
 
     currentState.orientedDisplaySpaceRect = currentState.layerStackSpaceRect;
+
+    if (displayWidth == newWidth && displayHeight == newHeight) {
+        ALOGV("%s: No changes on the configuration", __func__);
+        displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
+                                     currentState.orientedDisplaySpaceRect);
+        return;
+    }
+
     ALOGV("%s: Update currentState's orientedDisplaySpaceRect left %f top %f right %f bottom %f",
           __func__, currentState.orientedDisplaySpaceRect.left,
           currentState.orientedDisplaySpaceRect.top, currentState.orientedDisplaySpaceRect.right,
@@ -2170,7 +2177,7 @@ bool QtiSurfaceFlingerExtension::qtiFbScalingOnDisplayChange(
         const wp<IBinder>& displayToken, sp<DisplayDevice> display,
         const DisplayDeviceState& drawingState) {
     bool useFbScaling = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kFbScaling);
-    if (useFbScaling && display->isPrimary()) {
+    if (mQtiFlinger->mBootFinished && useFbScaling && display->isPrimary()) {
         const ssize_t index = mQtiFlinger->mCurrentState.displays.indexOfKey(displayToken);
         DisplayDeviceState& curState =
                 mQtiFlinger->mCurrentState.displays.editValueAt(static_cast<size_t>(index));

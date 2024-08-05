@@ -8439,10 +8439,13 @@ void SurfaceFlinger::captureDisplay(const DisplayCaptureArgs& args,
     GetLayerSnapshotsFunction getLayerSnapshotsFn =
             getLayerSnapshotsForScreenshots(layerStack, args.uid, std::move(excludeLayerIds));
 
+    ftl::Flags<RenderArea::Options> options;
+    if (args.captureSecureLayers) options |= RenderArea::Options::CAPTURE_SECURE_LAYERS;
+    if (args.hintForSeamlessTransition)
+        options |= RenderArea::Options::HINT_FOR_SEAMLESS_TRANSITION;
     captureScreenCommon(RenderAreaBuilderVariant(std::in_place_type<DisplayRenderAreaBuilder>,
                                                  args.sourceCrop, reqSize, args.dataspace,
-                                                 args.hintForSeamlessTransition,
-                                                 args.captureSecureLayers, displayWeak),
+                                                 displayWeak, options),
                         getLayerSnapshotsFn, reqSize, args.pixelFormat, args.allowProtected,
                         args.grayscale, captureListener);
 }
@@ -8493,10 +8496,12 @@ void SurfaceFlinger::captureDisplay(DisplayId displayId, const CaptureArgs& args
     constexpr bool kAllowProtected = false;
     constexpr bool kGrayscale = false;
 
+    ftl::Flags<RenderArea::Options> options;
+    if (args.hintForSeamlessTransition)
+        options |= RenderArea::Options::HINT_FOR_SEAMLESS_TRANSITION;
     captureScreenCommon(RenderAreaBuilderVariant(std::in_place_type<DisplayRenderAreaBuilder>,
-                                                 Rect(), size, args.dataspace,
-                                                 args.hintForSeamlessTransition,
-                                                 false /* captureSecureLayers */, displayWeak),
+                                                 Rect(), size, args.dataspace, displayWeak,
+                                                 options),
                         getLayerSnapshotsFn, size, args.pixelFormat, kAllowProtected, kGrayscale,
                         captureListener);
 }
@@ -8595,10 +8600,13 @@ void SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
         return;
     }
 
+    ftl::Flags<RenderArea::Options> options;
+    if (args.captureSecureLayers) options |= RenderArea::Options::CAPTURE_SECURE_LAYERS;
+    if (args.hintForSeamlessTransition)
+        options |= RenderArea::Options::HINT_FOR_SEAMLESS_TRANSITION;
     captureScreenCommon(RenderAreaBuilderVariant(std::in_place_type<LayerRenderAreaBuilder>, crop,
-                                                 reqSize, dataspace, args.captureSecureLayers,
-                                                 args.hintForSeamlessTransition, parent,
-                                                 args.childrenOnly),
+                                                 reqSize, dataspace, parent, args.childrenOnly,
+                                                 options),
                         getLayerSnapshotsFn, reqSize, args.pixelFormat, args.allowProtected,
                         args.grayscale, captureListener);
 }
@@ -8621,8 +8629,15 @@ void SurfaceFlinger::attachReleaseFenceFutureToLayer(Layer* layer, LayerFE* laye
 bool SurfaceFlinger::layersHasProtectedLayer(const std::vector<sp<LayerFE>>& layers) const {
     bool protectedLayerFound = false;
     for (auto& layerFE : layers) {
-        protectedLayerFound |=
-                (layerFE->mSnapshot->isVisible && layerFE->mSnapshot->hasProtectedContent);
+        /* QTI_BEGIN */
+        bool qtiSecCamera = layerFE->getCompositionState()->qtiIsSecureCamera;
+        bool qtiSecDisplay = layerFE->getCompositionState()->qtiIsSecureDisplay;
+        /* QTI_END */
+
+        protectedLayerFound |= (layerFE->mSnapshot->isVisible &&
+                                layerFE->mSnapshot->hasProtectedContent
+                                /* QTI_BEGIN */
+                                && !qtiSecCamera && qtiSecDisplay /* QTI_END */);
         if (protectedLayerFound) {
             break;
         }
