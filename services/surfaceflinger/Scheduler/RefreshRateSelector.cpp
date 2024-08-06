@@ -33,6 +33,7 @@
 #include <ftl/match.h>
 #include <ftl/unit.h>
 #include <gui/TraceUtils.h>
+#include <scheduler/Fps.h>
 #include <scheduler/FrameRateMode.h>
 #include <utils/Trace.h>
 
@@ -700,6 +701,32 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
                        return ScoredFrameRate{score.frameRateMode, score.overallScore};
                    });
 
+    const auto selectivelyForceIdle = [&]() REQUIRES(mLock) -> RankedFrameRates {
+        const bool isIdle = signals.idle && !signals.touch;
+        ALOGV("isIdle: %s", isIdle ? "true" : "false");
+        if (isIdle && mIdleRefreshRateModeIt != mDisplayModes.end()
+                && isStrictlyLess(60_Hz, ranking.front().frameRateMode.fps)) {
+            /*
+             * We heavily rely on touch to boost higher than 60 fps.
+             * Fallback to 60 fps if a higher fps was calculated.
+             */
+            ALOGV("Forcing idle");
+            auto idleRanking = rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Ascending);
+            // Find the 60 Hz mode in the ranking
+            auto it = std::find_if(idleRanking.begin(), idleRanking.end(),
+                                   [](const ScoredFrameRate& sfr) {
+                                       return isApproxEqual(sfr.frameRateMode.fps, 60_Hz);
+                                   });
+            if (it != idleRanking.end()) {
+                return {FrameRateRanking{*it}, GlobalSignals{.idle = true}};
+            }
+            return {idleRanking, GlobalSignals{.idle = true}};
+        }
+
+        // Handle the case where we don't force idle or bestRefreshRate is not available
+        return {ranking, kNoSignals};
+    };
+
     const bool noLayerScore = std::all_of(scores.begin(), scores.end(), [](RefreshRateScore score) {
         return score.overallScore == 0;
     });
@@ -716,7 +743,7 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
         } else {
             ATRACE_FORMAT_INSTANT("%s (primaryRangeIsSingleRate)",
                                   to_string(ranking.front().frameRateMode.fps).c_str());
-            return {ranking, kNoSignals};
+            return selectivelyForceIdle();
         }
     }
 
@@ -756,7 +783,7 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     }
 
     ATRACE_FORMAT_INSTANT("%s (scored))", to_string(ranking.front().frameRateMode.fps).c_str());
-    return {ranking, kNoSignals};
+    return selectivelyForceIdle();
 }
 
 using LayerRequirementPtrs = std::vector<const RefreshRateSelector::LayerRequirement*>;
@@ -1262,6 +1289,16 @@ void RefreshRateSelector::constructAvailableRefreshRates() {
                             "No matching frame rate modes for %s range even after ignoring the "
                             "render range. policy: %s",
                             rangeName, policy->toString().c_str());
+
+        // Reset and store idle refresh rate
+        mIdleRefreshRateModeIt = mDisplayModes.end();
+        for (auto it = mDisplayModes.begin(); it != mDisplayModes.end(); ++it) {
+            if (isApproxEqual(it->second->getFps(), 60_Hz)) {
+                mIdleRefreshRateModeIt = it;
+                ALOGV("idleRefreshRate set!");
+                break;
+            }
+        }
 
         const auto stringifyModes = [&] {
             std::string str;
