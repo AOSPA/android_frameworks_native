@@ -593,6 +593,14 @@ void Scheduler::addPresentFence(PhysicalDisplayId id, std::shared_ptr<FenceTime>
 }
 
 void Scheduler::registerLayer(Layer* layer) {
+    using WindowType = gui::WindowInfo::Type;
+
+    scheduler::LayerHistory::LayerVoteType voteType;
+
+    if (layer->getWindowType() == WindowType::NOTIFICATION_SHADE) {
+        // Enforce max refresh rate for notification pulldown
+        voteType = scheduler::LayerHistory::LayerVoteType::Max;
+    }
     // If the content detection feature is off, we still keep the layer history,
     // since we use it for other features (like Frame Rate API), so layers
     // still need to be registered.
