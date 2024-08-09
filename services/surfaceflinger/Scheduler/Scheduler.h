@@ -341,6 +341,7 @@ public:
     /* QTI_BEGIN */
     void qtiUpdateThermalFps(float fps);
     void qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes);
+    bool isGameFrameRateOverridePresent();
     /* QTI_END */
 
     bool updateFrameRateOverrides(GlobalSignals, Fps displayRefreshRate) EXCLUDES(mPolicyLock);
