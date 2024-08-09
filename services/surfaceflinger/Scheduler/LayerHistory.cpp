@@ -217,14 +217,6 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
                 continue;
             }
 
-            /* QTI_BEGIN */
-            if (refresh_rate_votes_.find(key) != refresh_rate_votes_.end() &&
-                refresh_rate_votes_[key] != -1) {
-              vote.fps = Fps::fromValue(refresh_rate_votes_[key]);
-              vote.type = LayerHistory::LayerVoteType::ExplicitExact;
-            }
-            /* QTI_END */
-
             // Compute the layer's position on the screen
             const Rect bounds = Rect(info->getBounds());
             const ui::Transform transform = info->getTransform();
@@ -278,6 +270,10 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
             it++;
         }
     }
+
+    /* QTI_BEGIN */
+    mQtiGameFrameRateOverridePresent = false;
+    /* QTI_END */
 
     // iterate over active map
     it = mActiveLayerInfos.begin();
@@ -335,6 +331,9 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
                         trace(*info, gameFrameRateOverrideVoteType,
                               gameModeFrameRateOverride.getIntValue());
                     }
+                    /* QTI_BEGIN */
+                    mQtiGameFrameRateOverridePresent = true;
+                    /* QTI_END */
                 } else if (frameRate.isValid() && frameRate.isVoteValidForMrr(isVrrDevice)) {
                     info->setLayerVote({setFrameRateVoteType,
                                         isValuelessVote ? 0_Hz : frameRate.vote.rate,
@@ -351,6 +350,18 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
                         trace(*info, gameFrameRateOverrideVoteType,
                               gameDefaultFrameRateOverride.getIntValue());
                     }
+                /* QTI_BEGIN */
+                    mQtiGameFrameRateOverridePresent = true;
+                } else if (refresh_rate_votes_.find(it->first) != refresh_rate_votes_.end() &&
+                           refresh_rate_votes_[it->first] != -1) {
+                    info->setLayerVote({LayerVoteType::ExplicitExact,
+                                        Fps::fromValue(refresh_rate_votes_[it->first])});
+                    ATRACE_FORMAT_INSTANT("SmomoFrameRateOverride");
+                    if (CC_UNLIKELY(mTraceEnabled)) {
+                        trace(*info, LayerVoteType::ExplicitExact,
+                              refresh_rate_votes_[it->first]);
+                    }
+                /* QTI_END */
                 } else {
                     if (frameRate.isValid() && !frameRate.isVoteValidForMrr(isVrrDevice)) {
                         ATRACE_FORMAT_INSTANT("Reset layer to ignore explicit vote on MRR %s: %s "
@@ -367,6 +378,17 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
                     const auto type = info->isVisible() ? voteType : LayerVoteType::NoVote;
                     info->setLayerVote({type, isValuelessVote ? 0_Hz : frameRate.vote.rate,
                                         frameRate.vote.seamlessness, frameRate.category});
+                /* QTI_BEGIN */
+                } else if (refresh_rate_votes_.find(it->first) != refresh_rate_votes_.end() &&
+                           refresh_rate_votes_[it->first] != -1) {
+                    info->setLayerVote({LayerVoteType::ExplicitExact,
+                                        Fps::fromValue(refresh_rate_votes_[it->first])});
+                    ATRACE_FORMAT_INSTANT("SmomoFrameRateOverride");
+                    if (CC_UNLIKELY(mTraceEnabled)) {
+                        trace(*info, LayerVoteType::ExplicitExact,
+                              refresh_rate_votes_[it->first]);
+                    }
+                /* QTI_END */
                 } else {
                     if (!frameRate.isVoteValidForMrr(isVrrDevice)) {
                         ATRACE_FORMAT_INSTANT("Reset layer to ignore explicit vote on MRR %s: %s "
@@ -496,5 +518,13 @@ std::pair<Fps, Fps> LayerHistory::getGameFrameRateOverrideLocked(uid_t uid) cons
 
     return it->second;
 }
+
+/* QTI_BEGIN */
+bool LayerHistory::isGameFrameRateOverridePresent() {
+    std::lock_guard lock(mLock);
+
+    return mQtiGameFrameRateOverridePresent;
+}
+/* QTI_END */
 
 } // namespace android::scheduler
