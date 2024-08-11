@@ -1309,6 +1309,10 @@ void Scheduler::qtiUpdateThermalFps(float fps) {
 void Scheduler::qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes) {
   mLayerHistory.qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
 }
+
+bool Scheduler::isGameFrameRateOverridePresent() {
+    return mLayerHistory.isGameFrameRateOverridePresent();
+}
 /* QTI_END */
 
 } // namespace android::scheduler

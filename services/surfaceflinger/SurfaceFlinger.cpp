@@ -5532,8 +5532,9 @@ status_t SurfaceFlinger::setTransactionState(
     ATRACE_CALL();
     /* QTI_BEGIN */
     std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
-    if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive()) {
-      lck.lock();
+    if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive() &&
+        std::this_thread::get_id() != mMainThreadId) {
+      lck.try_lock();
     }
     /* QTI_END */
 
