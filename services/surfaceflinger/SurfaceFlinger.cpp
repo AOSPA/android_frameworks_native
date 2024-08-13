@@ -3847,7 +3847,12 @@ std::optional<DisplayModeId> SurfaceFlinger::processHotplugConnect(PhysicalDispl
     state.physical = {.id = displayId,
                       .hwcDisplayId = hwcDisplayId,
                       .activeMode = std::move(activeMode)};
-    state.isSecure = connectionType == ui::DisplayConnectionType::Internal;
+    if (mIsHdcpViaNegVsync) {
+        state.isSecure = connectionType == ui::DisplayConnectionType::Internal;
+    } else {
+        // TODO(b/349703362): Remove this when HDCP aidl API becomes ready
+        state.isSecure = true; // All physical displays are currently considered secure.
+    }
     state.isProtected = true;
     state.displayName = std::move(info.name);
 
@@ -8662,7 +8667,7 @@ bool SurfaceFlinger::layersHasProtectedLayer(const std::vector<sp<LayerFE>>& lay
         protectedLayerFound |= (layerFE->mSnapshot->isVisible &&
                                 layerFE->mSnapshot->hasProtectedContent
                                 /* QTI_BEGIN */
-                                && !qtiSecCamera && qtiSecDisplay /* QTI_END */);
+                                && !qtiSecCamera && !qtiSecDisplay /* QTI_END */);
         if (protectedLayerFound) {
             break;
         }
@@ -9892,6 +9897,10 @@ std::vector<std::pair<Layer*, LayerFE*>> SurfaceFlinger::moveSnapshotsToComposit
                     snapshot->fps = getLayerFramerate(currentTime, snapshot->sequence);
                     /* QTI_BEGIN */
                     snapshot->qtiLayerClass = legacyLayer->qtiGetLayerClass();
+                    snapshot->qtiIsSecureDisplay =
+                            legacyLayer->getCompositionState()->qtiIsSecureDisplay;
+                    snapshot->qtiIsSecureCamera =
+                            legacyLayer->getCompositionState()->qtiIsSecureCamera;
                     /* QTI_END */
                     layerFE->mSnapshot = std::move(snapshot);
                     refreshArgs.layers.push_back(layerFE);
