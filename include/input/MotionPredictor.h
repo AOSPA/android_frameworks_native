@@ -56,12 +56,20 @@ public:
     // acceleration) and has the units of d^3p/dt^3.
     std::optional<float> jerkMagnitude() const;
 
+    // forgetFactor is the coefficient of the first-order IIR filter for jerk. A factor of 1 results
+    // in no smoothing.
+    void setForgetFactor(float forgetFactor);
+    float getForgetFactor() const;
+
 private:
     const bool mNormalizedDt;
+    // Coefficient of first-order IIR filter to smooth jerk calculation.
+    float mForgetFactor = 1;
 
     RingBuffer<int64_t> mTimestamps{4};
     std::array<float, 4> mXDerivatives{}; // [x, x', x'', x''']
     std::array<float, 4> mYDerivatives{}; // [y, y', y'', y''']
+    float mJerkMagnitude;
 };
 
 /**
@@ -115,6 +123,11 @@ public:
     std::unique_ptr<MotionEvent> predict(nsecs_t timestamp);
 
     bool isPredictionAvailable(int32_t deviceId, int32_t source);
+
+    /**
+     * Currently used to expose config constants in testing.
+     */
+    const TfLiteMotionPredictorModel::Config& getModelConfig();
 
 private:
     const nsecs_t mPredictionTimestampOffsetNanos;

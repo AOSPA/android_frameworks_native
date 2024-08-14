@@ -101,6 +101,8 @@ private:
     const frontend::DisplayInfos& mDisplayInfos;
     uint32_t mTraceFlags;
     perfetto::protos::LayersProto mLayersProto;
+    std::unordered_set<uint32_t> mVisitedLayers;
+
     // winscope expects all the layers, so provide a snapshot even if it not currently drawing
     std::unordered_map<frontend::LayerHierarchy::TraversalPath, frontend::LayerSnapshot,
                        frontend::LayerHierarchy::TraversalPathHash>

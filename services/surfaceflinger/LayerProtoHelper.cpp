@@ -266,6 +266,7 @@ void LayerProtoHelper::readFromProto(const perfetto::protos::BlurRegion& proto,
 perfetto::protos::LayersProto LayerProtoFromSnapshotGenerator::generate(
         const frontend::LayerHierarchy& root) {
     mLayersProto.clear_layers();
+    mVisitedLayers.clear();
     std::unordered_set<uint64_t> stackIdsToSkip;
     if ((mTraceFlags & LayerTracing::TRACE_VIRTUAL_DISPLAYS) == 0) {
         for (const auto& [layerStack, displayInfo] : mDisplayInfos) {
@@ -326,6 +327,11 @@ void LayerProtoFromSnapshotGenerator::writeHierarchyToProto(
     perfetto::protos::LayerProto* layerProto = mLayersProto.add_layers();
     const frontend::RequestedLayerState& layer = *root.getLayer();
     frontend::LayerSnapshot* snapshot = getSnapshot(path, layer);
+    if (mVisitedLayers.find(snapshot->uniqueSequence) != mVisitedLayers.end()) {
+        TransactionTraceWriter::getInstance().invoke("DuplicateLayer", /* overwrite= */ false);
+        return;
+    }
+    mVisitedLayers.insert(snapshot->uniqueSequence);
     LayerProtoHelper::writeSnapshotToProto(layerProto, layer, *snapshot, mTraceFlags);
 
     for (const auto& [child, variant] : root.mChildren) {

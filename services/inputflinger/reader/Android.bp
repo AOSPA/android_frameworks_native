@@ -115,6 +115,7 @@ cc_library_static {
         "libinputreader_defaults",
     ],
     shared_libs: [
+        "android.companion.virtualdevice.flags-aconfig-cc-host",
         "libinputflinger_base",
     ],
     export_header_lib_headers: [
@@ -140,6 +141,7 @@ cc_library_shared {
     shared_libs: [
         // This should consist only of dependencies from inputflinger. Other dependencies should be
         // in cc_defaults so that they are included in the tests.
+        "android.companion.virtualdevice.flags-aconfig-cc-host",
         "libinputflinger_base",
         "libjsoncpp",
     ],

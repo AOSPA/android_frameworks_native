@@ -68,7 +68,7 @@ bool ConnectionTimeline::operator!=(const ConnectionTimeline& rhs) const {
 
 InputEventTimeline::InputEventTimeline(bool isDown, nsecs_t eventTime, nsecs_t readTime,
                                        uint16_t vendorId, uint16_t productId,
-                                       std::set<InputDeviceUsageSource> sources)
+                                       const std::set<InputDeviceUsageSource>& sources)
       : isDown(isDown),
         eventTime(eventTime),
         readTime(readTime),

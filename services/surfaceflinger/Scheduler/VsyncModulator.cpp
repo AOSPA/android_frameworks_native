@@ -22,8 +22,8 @@
 #include "VsyncModulator.h"
 
 #include <android-base/properties.h>
+#include <common/trace.h>
 #include <log/log.h>
-#include <utils/Trace.h>
 
 #include <chrono>
 #include <cinttypes>
@@ -72,7 +72,7 @@ VsyncModulator::VsyncConfigOpt VsyncModulator::setTransactionSchedule(Transactio
     }
 
     if (mTraceDetailedInfo) {
-        ATRACE_INT("mEarlyWakeup", static_cast<int>(mEarlyWakeupRequests.size()));
+        SFTRACE_INT("mEarlyWakeup", static_cast<int>(mEarlyWakeupRequests.size()));
     }
 
     if (mEarlyWakeupRequests.empty() && schedule == Schedule::EarlyEnd) {
@@ -172,9 +172,9 @@ VsyncConfig VsyncModulator::updateVsyncConfigLocked() {
         const bool isEarlyGpu = &offsets == &mVsyncConfigSet.earlyGpu;
         const bool isLate = &offsets == &mVsyncConfigSet.late;
 
-        ATRACE_INT("Vsync-EarlyOffsetsOn", isEarly);
-        ATRACE_INT("Vsync-EarlyGpuOffsetsOn", isEarlyGpu);
-        ATRACE_INT("Vsync-LateOffsetsOn", isLate);
+        SFTRACE_INT("Vsync-EarlyOffsetsOn", isEarly);
+        SFTRACE_INT("Vsync-EarlyGpuOffsetsOn", isEarlyGpu);
+        SFTRACE_INT("Vsync-LateOffsetsOn", isLate);
     }
 
     return offsets;

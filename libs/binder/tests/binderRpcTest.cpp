@@ -141,11 +141,6 @@ static std::string allocateSocketAddress() {
     return ret;
 };
 
-static unsigned int allocateVsockPort() {
-    static unsigned int vsockPort = 34567;
-    return vsockPort++;
-}
-
 static unique_fd initUnixSocket(std::string addr) {
     auto socket_addr = UnixSocketAddress(addr.c_str());
     unique_fd fd(TEMP_FAILURE_RETRY(socket(socket_addr.addr()->sa_family, SOCK_STREAM, AF_UNIX)));
@@ -300,7 +295,6 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
     serverConfig.socketType = static_cast<int32_t>(socketType);
     serverConfig.rpcSecurity = static_cast<int32_t>(rpcSecurity);
     serverConfig.serverVersion = serverVersion;
-    serverConfig.vsockPort = allocateVsockPort();
     serverConfig.addr = addr;
     serverConfig.socketFd = socketFd.get();
     for (auto mode : options.serverSupportedFileDescriptorTransportModes) {
@@ -379,7 +373,7 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
                         unique_fd(dup(bootstrapClientFd.get())));
                 break;
             case SocketType::VSOCK:
-                status = session->setupVsockClient(VMADDR_CID_LOCAL, serverConfig.vsockPort);
+                status = session->setupVsockClient(VMADDR_CID_LOCAL, serverInfo.port);
                 break;
             case SocketType::INET:
                 status = session->setupInetClient("127.0.0.1", serverInfo.port);
@@ -1152,8 +1146,6 @@ INSTANTIATE_TEST_SUITE_P(Trusty, BinderRpc, ::testing::ValuesIn(getTrustyBinderR
 #else // BINDER_RPC_TO_TRUSTY_TEST
 bool testSupportVsockLoopback() {
     // We don't need to enable TLS to know if vsock is supported.
-    unsigned int vsockPort = allocateVsockPort();
-
     unique_fd serverFd(
             TEMP_FAILURE_RETRY(socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)));
 
@@ -1165,16 +1157,22 @@ bool testSupportVsockLoopback() {
 
     sockaddr_vm serverAddr{
             .svm_family = AF_VSOCK,
-            .svm_port = vsockPort,
+            .svm_port = VMADDR_PORT_ANY,
             .svm_cid = VMADDR_CID_ANY,
     };
     int ret = TEMP_FAILURE_RETRY(
             bind(serverFd.get(), reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)));
-    LOG_ALWAYS_FATAL_IF(0 != ret, "Could not bind socket to port %u: %s", vsockPort,
+    LOG_ALWAYS_FATAL_IF(0 != ret, "Could not bind socket to port VMADDR_PORT_ANY: %s",
                         strerror(errno));
 
+    socklen_t len = sizeof(serverAddr);
+    ret = getsockname(serverFd.get(), reinterpret_cast<sockaddr*>(&serverAddr), &len);
+    LOG_ALWAYS_FATAL_IF(0 != ret, "Failed to getsockname: %s", strerror(errno));
+    LOG_ALWAYS_FATAL_IF(len < static_cast<socklen_t>(sizeof(serverAddr)),
+                        "getsockname didn't read the full addr struct");
+
     ret = TEMP_FAILURE_RETRY(listen(serverFd.get(), 1 /*backlog*/));
-    LOG_ALWAYS_FATAL_IF(0 != ret, "Could not listen socket on port %u: %s", vsockPort,
+    LOG_ALWAYS_FATAL_IF(0 != ret, "Could not listen socket on port %u: %s", serverAddr.svm_port,
                         strerror(errno));
 
     // Try to connect to the server using the VMADDR_CID_LOCAL cid
@@ -1183,13 +1181,13 @@ bool testSupportVsockLoopback() {
     // and they return ETIMEDOUT after that.
     unique_fd connectFd(
             TEMP_FAILURE_RETRY(socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)));
-    LOG_ALWAYS_FATAL_IF(!connectFd.ok(), "Could not create socket for port %u: %s", vsockPort,
-                        strerror(errno));
+    LOG_ALWAYS_FATAL_IF(!connectFd.ok(), "Could not create socket for port %u: %s",
+                        serverAddr.svm_port, strerror(errno));
 
     bool success = false;
     sockaddr_vm connectAddr{
             .svm_family = AF_VSOCK,
-            .svm_port = vsockPort,
+            .svm_port = serverAddr.svm_port,
             .svm_cid = VMADDR_CID_LOCAL,
     };
     ret = TEMP_FAILURE_RETRY(connect(connectFd.get(), reinterpret_cast<sockaddr*>(&connectAddr),
@@ -1538,8 +1536,9 @@ public:
                     };
                 } break;
                 case SocketType::VSOCK: {
-                    auto port = allocateVsockPort();
-                    auto status = rpcServer->setupVsockServer(VMADDR_CID_LOCAL, port);
+                    unsigned port;
+                    auto status =
+                            rpcServer->setupVsockServer(VMADDR_CID_LOCAL, VMADDR_PORT_ANY, &port);
                     if (status != OK) {
                         return AssertionFailure() << "setupVsockServer: " << statusToString(status);
                     }

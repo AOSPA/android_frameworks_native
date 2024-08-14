@@ -75,6 +75,9 @@ float normalizeRange(float x, float min, float max) {
 JerkTracker::JerkTracker(bool normalizedDt) : mNormalizedDt(normalizedDt) {}
 
 void JerkTracker::pushSample(int64_t timestamp, float xPos, float yPos) {
+    // If we previously had full samples, we have a previous jerk calculation
+    // to do weighted smoothing.
+    const bool applySmoothing = mTimestamps.size() == mTimestamps.capacity();
     mTimestamps.pushBack(timestamp);
     const int numSamples = mTimestamps.size();
 
@@ -115,6 +118,16 @@ void JerkTracker::pushSample(int64_t timestamp, float xPos, float yPos) {
         }
     }
 
+    if (numSamples == static_cast<int>(mTimestamps.capacity())) {
+        float newJerkMagnitude = std::hypot(newXDerivatives[3], newYDerivatives[3]);
+        ALOGD_IF(isDebug(), "raw jerk: %f", newJerkMagnitude);
+        if (applySmoothing) {
+            mJerkMagnitude = mJerkMagnitude + (mForgetFactor * (newJerkMagnitude - mJerkMagnitude));
+        } else {
+            mJerkMagnitude = newJerkMagnitude;
+        }
+    }
+
     std::swap(newXDerivatives, mXDerivatives);
     std::swap(newYDerivatives, mYDerivatives);
 }
@@ -125,9 +138,17 @@ void JerkTracker::reset() {
 
 std::optional<float> JerkTracker::jerkMagnitude() const {
     if (mTimestamps.size() == mTimestamps.capacity()) {
-        return std::hypot(mXDerivatives[3], mYDerivatives[3]);
+        return mJerkMagnitude;
     }
     return std::nullopt;
+}
+
+void JerkTracker::setForgetFactor(float forgetFactor) {
+    mForgetFactor = forgetFactor;
+}
+
+float JerkTracker::getForgetFactor() const {
+    return mForgetFactor;
 }
 
 // --- MotionPredictor ---
@@ -159,6 +180,7 @@ android::base::Result<void> MotionPredictor::record(const MotionEvent& event) {
     if (!mModel) {
         mModel = TfLiteMotionPredictorModel::create();
         LOG_ALWAYS_FATAL_IF(!mModel);
+        mJerkTracker.setForgetFactor(mModel->config().jerkForgetFactor);
     }
 
     if (!mBuffers) {
@@ -323,7 +345,7 @@ std::unique_ptr<MotionEvent> MotionPredictor::predict(nsecs_t timestamp) {
                                    event.getRawTransform(), event.getDownTime(), predictionTime,
                                    event.getPointerCount(), event.getPointerProperties(), &coords);
         } else {
-            prediction->addSample(predictionTime, &coords);
+            prediction->addSample(predictionTime, &coords, prediction->getId());
         }
 
         axisFrom = axisTo;
@@ -355,6 +377,14 @@ bool MotionPredictor::isPredictionAvailable(int32_t /*deviceId*/, int32_t source
         return false;
     }
     return true;
+}
+
+const TfLiteMotionPredictorModel::Config& MotionPredictor::getModelConfig() {
+    if (!mModel) {
+        mModel = TfLiteMotionPredictorModel::create();
+        LOG_ALWAYS_FATAL_IF(!mModel);
+    }
+    return mModel->config();
 }
 
 } // namespace android

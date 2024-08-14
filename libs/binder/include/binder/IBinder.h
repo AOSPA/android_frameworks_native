@@ -102,6 +102,10 @@ public:
      */
     virtual const String16& getInterfaceDescriptor() const = 0;
 
+    /**
+     * Last known alive status, from last call. May be arbitrarily stale.
+     * May be incorrect if a service returns an incorrect status code.
+     */
     virtual bool            isBinderAlive() const = 0;
     virtual status_t        pingBinder() = 0;
     virtual status_t        dump(int fd, const Vector<String16>& args) = 0;

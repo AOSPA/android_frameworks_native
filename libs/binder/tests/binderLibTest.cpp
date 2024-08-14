@@ -29,7 +29,6 @@
 
 #include <android-base/properties.h>
 #include <android-base/result-gmock.h>
-#include <android-base/strings.h>
 #include <binder/Binder.h>
 #include <binder/BpBinder.h>
 #include <binder/Functional.h>
@@ -48,16 +47,14 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include "../Utils.h"
 #include "../binder_module.h"
-
-#define ARRAY_SIZE(array) (sizeof array / sizeof array[0])
 
 using namespace android;
 using namespace android::binder::impl;
 using namespace std::string_literals;
 using namespace std::chrono_literals;
 using android::base::testing::HasValue;
-using android::base::testing::Ok;
 using android::binder::Status;
 using android::binder::unique_fd;
 using testing::ExplainMatchResult;
@@ -218,10 +215,9 @@ class BinderLibTestEnv : public ::testing::Environment {
 
             sp<IServiceManager> sm = defaultServiceManager();
             //printf("%s: pid %d, get service\n", __func__, m_pid);
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            LIBBINDER_IGNORE("-Wdeprecated-declarations")
             m_server = sm->getService(binderLibTestServiceName);
-#pragma clang diagnostic pop
+            LIBBINDER_IGNORE_END()
             ASSERT_TRUE(m_server != nullptr);
             //printf("%s: pid %d, get service done\n", __func__, m_pid);
         }
@@ -568,7 +564,7 @@ TEST_F(BinderLibTest, Freeze) {
 
 TEST_F(BinderLibTest, SetError) {
     int32_t testValue[] = { 0, -123, 123 };
-    for (size_t i = 0; i < ARRAY_SIZE(testValue); i++) {
+    for (size_t i = 0; i < countof(testValue); i++) {
         Parcel data, reply;
         data.writeInt32(testValue[i]);
         EXPECT_THAT(m_server->transact(BINDER_LIB_TEST_SET_ERROR_TRANSACTION, data, &reply),
@@ -599,8 +595,8 @@ TEST_F(BinderLibTest, IndirectGetId2)
     Parcel data, reply;
     int32_t serverId[3];
 
-    data.writeInt32(ARRAY_SIZE(serverId));
-    for (size_t i = 0; i < ARRAY_SIZE(serverId); i++) {
+    data.writeInt32(countof(serverId));
+    for (size_t i = 0; i < countof(serverId); i++) {
         sp<IBinder> server;
         BinderLibTestBundle datai;
 
@@ -618,7 +614,7 @@ TEST_F(BinderLibTest, IndirectGetId2)
     EXPECT_EQ(0, id);
 
     ASSERT_THAT(reply.readInt32(&count), StatusEq(NO_ERROR));
-    EXPECT_EQ(ARRAY_SIZE(serverId), (size_t)count);
+    EXPECT_EQ(countof(serverId), (size_t)count);
 
     for (size_t i = 0; i < (size_t)count; i++) {
         BinderLibTestBundle replyi(&reply);
@@ -638,8 +634,8 @@ TEST_F(BinderLibTest, IndirectGetId3)
     Parcel data, reply;
     int32_t serverId[3];
 
-    data.writeInt32(ARRAY_SIZE(serverId));
-    for (size_t i = 0; i < ARRAY_SIZE(serverId); i++) {
+    data.writeInt32(countof(serverId));
+    for (size_t i = 0; i < countof(serverId); i++) {
         sp<IBinder> server;
         BinderLibTestBundle datai;
         BinderLibTestBundle datai2;
@@ -664,7 +660,7 @@ TEST_F(BinderLibTest, IndirectGetId3)
     EXPECT_EQ(0, id);
 
     ASSERT_THAT(reply.readInt32(&count), StatusEq(NO_ERROR));
-    EXPECT_EQ(ARRAY_SIZE(serverId), (size_t)count);
+    EXPECT_EQ(countof(serverId), (size_t)count);
 
     for (size_t i = 0; i < (size_t)count; i++) {
         int32_t counti;
@@ -2114,10 +2110,9 @@ int run_server(int index, int readypipefd, bool usePoll)
         if (index == 0) {
             ret = sm->addService(binderLibTestServiceName, testService);
         } else {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            LIBBINDER_IGNORE("-Wdeprecated-declarations")
             sp<IBinder> server = sm->getService(binderLibTestServiceName);
-#pragma clang diagnostic pop
+            LIBBINDER_IGNORE_END()
             Parcel data, reply;
             data.writeInt32(index);
             data.writeStrongBinder(testService);

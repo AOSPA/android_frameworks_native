@@ -397,6 +397,9 @@ public:
      * Returns ReservedInputDeviceId::INVALID_INPUT_DEVICE_ID if no device has been used since boot.
      */
     virtual DeviceId getLastUsedInputDeviceId() = 0;
+
+    /* Notifies that mouse cursor faded due to typing. */
+    virtual void notifyMouseCursorFadedOnTyping() = 0;
 };
 
 // --- TouchAffineTransformation ---

@@ -67,10 +67,6 @@ void InputFilter::notifyInputDevicesChanged(const NotifyInputDevicesChangedArgs&
     mNextListener.notify(args);
 }
 
-void InputFilter::notifyConfigurationChanged(const NotifyConfigurationChangedArgs& args) {
-    mNextListener.notify(args);
-}
-
 void InputFilter::notifyKey(const NotifyKeyArgs& args) {
     if (isFilterEnabled()) {
         LOG_ALWAYS_FATAL_IF(!mInputFilterRust->notifyKey(notifyKeyArgsToKeyEvent(args)).isOk());

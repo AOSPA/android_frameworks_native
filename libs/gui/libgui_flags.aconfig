@@ -35,3 +35,19 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 } # trace_frame_rate_override
+
+flag {
+  name: "wb_platform_api_improvements"
+  namespace: "core_graphics"
+  description: "Simple improvements to Surface and ConsumerBase classes"
+  bug: "340933794"
+  is_fixed_read_only: true
+} # wb_platform_api_improvements
+
+flag {
+  name: "edge_extension_shader"
+  namespace: "windowing_frontend"
+  description: "Enable edge extension via shader"
+  bug: "322036393"
+  is_fixed_read_only: true
+} # edge_extension_shader

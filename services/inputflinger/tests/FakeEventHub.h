@@ -112,8 +112,6 @@ public:
     status_t enableDevice(int32_t deviceId) override;
     status_t disableDevice(int32_t deviceId) override;
 
-    void finishDeviceScan();
-
     void addConfigurationProperty(int32_t deviceId, const char* key, const char* value);
     void addConfigurationMap(int32_t deviceId, const PropertyMap* configuration);
 

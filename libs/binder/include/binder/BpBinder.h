@@ -176,10 +176,10 @@ private:
     BpBinder(BinderHandle&& handle, int32_t trackedUid);
     explicit BpBinder(RpcHandle&& handle);
 
-    virtual             ~BpBinder();
-    virtual void        onFirstRef();
-    virtual void        onLastStrongRef(const void* id);
-    virtual bool        onIncStrongAttempted(uint32_t flags, const void* id);
+    virtual ~BpBinder();
+    virtual void onFirstRef();
+    virtual void onLastStrongRef(const void* id);
+    virtual bool onIncStrongAttempted(uint32_t flags, const void* id);
 
     friend ::android::internal::Stability;
 
@@ -192,30 +192,30 @@ private:
         uint32_t flags;
     };
 
-            void                reportOneDeath(const Obituary& obit);
-            bool                isDescriptorCached() const;
+    void reportOneDeath(const Obituary& obit);
+    bool isDescriptorCached() const;
 
-    mutable RpcMutex            mLock;
-            volatile int32_t    mAlive;
-            volatile int32_t    mObitsSent;
-            Vector<Obituary>*   mObituaries;
-            ObjectManager       mObjects;
-    mutable String16            mDescriptorCache;
-            int32_t             mTrackedUid;
+    mutable RpcMutex mLock;
+    volatile int32_t mAlive;
+    volatile int32_t mObitsSent;
+    Vector<Obituary>* mObituaries;
+    ObjectManager mObjects;
+    mutable String16 mDescriptorCache;
+    int32_t mTrackedUid;
 
-    static RpcMutex                             sTrackingLock;
-    static std::unordered_map<int32_t,uint32_t> sTrackingMap;
-    static int                                  sNumTrackedUids;
-    static std::atomic_bool                     sCountByUidEnabled;
-    static binder_proxy_limit_callback          sLimitCallback;
-    static uint32_t                             sBinderProxyCountHighWatermark;
-    static uint32_t                             sBinderProxyCountLowWatermark;
-    static bool                                 sBinderProxyThrottleCreate;
-    static std::unordered_map<int32_t,uint32_t> sLastLimitCallbackMap;
-    static std::atomic<uint32_t>                sBinderProxyCount;
-    static std::atomic<uint32_t>                sBinderProxyCountWarned;
-    static binder_proxy_warning_callback        sWarningCallback;
-    static uint32_t                             sBinderProxyCountWarningWatermark;
+    static RpcMutex sTrackingLock;
+    static std::unordered_map<int32_t, uint32_t> sTrackingMap;
+    static int sNumTrackedUids;
+    static std::atomic_bool sCountByUidEnabled;
+    static binder_proxy_limit_callback sLimitCallback;
+    static uint32_t sBinderProxyCountHighWatermark;
+    static uint32_t sBinderProxyCountLowWatermark;
+    static bool sBinderProxyThrottleCreate;
+    static std::unordered_map<int32_t, uint32_t> sLastLimitCallbackMap;
+    static std::atomic<uint32_t> sBinderProxyCount;
+    static std::atomic<uint32_t> sBinderProxyCountWarned;
+    static binder_proxy_warning_callback sWarningCallback;
+    static uint32_t sBinderProxyCountWarningWatermark;
 };
 
 } // namespace android

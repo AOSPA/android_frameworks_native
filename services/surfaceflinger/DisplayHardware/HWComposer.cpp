@@ -28,16 +28,15 @@
 #include "HWComposer.h"
 
 #include <android-base/properties.h>
+#include <common/trace.h>
 #include <compositionengine/Output.h>
 #include <compositionengine/OutputLayer.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
 #include <ftl/concat.h>
-#include <gui/TraceUtils.h>
 #include <log/log.h>
 #include <ui/DebugUtils.h>
 #include <ui/GraphicBuffer.h>
 #include <utils/Errors.h>
-#include <utils/Trace.h>
 
 #include "../Layer.h" // needed only for debugging
 #include "../SurfaceFlingerProperties.h"
@@ -178,8 +177,8 @@ std::optional<PhysicalDisplayId> HWComposer::onVsync(hal::HWDisplayId hwcDisplay
         displayData.lastPresentTimestamp = timestamp;
     }
 
-    ATRACE_INT(ftl::Concat("HW_VSYNC_", displayIdOpt->value).c_str(),
-               displayData.vsyncTraceToggle);
+    SFTRACE_INT(ftl::Concat("HW_VSYNC_", displayIdOpt->value).c_str(),
+                displayData.vsyncTraceToggle);
     displayData.vsyncTraceToggle = !displayData.vsyncTraceToggle;
 
     return displayIdOpt;
@@ -428,14 +427,14 @@ void HWComposer::setVsyncEnabled(PhysicalDisplayId displayId, hal::Vsync enabled
         return;
     }
 
-    ATRACE_CALL();
+    SFTRACE_CALL();
     auto error = displayData.hwcDisplay->setVsyncEnabled(enabled);
     RETURN_IF_HWC_ERROR(error, displayId);
 
     displayData.vsyncEnabled = enabled;
 
-    ATRACE_INT(ftl::Concat("HW_VSYNC_ON_", displayId.value).c_str(),
-               enabled == hal::Vsync::ENABLE ? 1 : 0);
+    SFTRACE_INT(ftl::Concat("HW_VSYNC_ON_", displayId.value).c_str(),
+                enabled == hal::Vsync::ENABLE ? 1 : 0);
 }
 
 status_t HWComposer::setClientTarget(HalDisplayId displayId, uint32_t slot,
@@ -462,7 +461,7 @@ status_t HWComposer::getDeviceCompositionChanges(
         std::optional<std::chrono::steady_clock::time_point> earliestPresentTime,
         nsecs_t expectedPresentTime, Fps frameInterval,
         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
 
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
 
@@ -507,7 +506,7 @@ status_t HWComposer::getDeviceCompositionChanges(
     displayData.validateWasSkipped = false;
     bool acceptChanges = true;
 
-    ATRACE_FORMAT("NextFrameInterval %d_Hz", frameInterval.getIntValue());
+    SFTRACE_FORMAT("NextFrameInterval %d_Hz", frameInterval.getIntValue());
     if (canSkipValidate) {
         sp<Fence> outPresentFence = Fence::NO_FENCE;
         uint32_t state = UINT32_MAX;
@@ -595,7 +594,7 @@ sp<Fence> HWComposer::getLayerReleaseFence(HalDisplayId displayId, HWC2::Layer* 
 status_t HWComposer::presentAndGetReleaseFences(
         HalDisplayId displayId,
         std::optional<std::chrono::steady_clock::time_point> earliestPresentTime) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
 
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
 
@@ -614,7 +613,7 @@ status_t HWComposer::presentAndGetReleaseFences(
     }
 
     if (earliestPresentTime) {
-        ATRACE_NAME("wait for earliest present time");
+        SFTRACE_NAME("wait for earliest present time");
         std::this_thread::sleep_until(*earliestPresentTime);
     }
 
@@ -927,9 +926,9 @@ status_t HWComposer::setRefreshRateChangedCallbackDebugEnabled(PhysicalDisplayId
 status_t HWComposer::notifyExpectedPresent(PhysicalDisplayId displayId,
                                            TimePoint expectedPresentTime, Fps frameInterval) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
-    ATRACE_FORMAT("%s ExpectedPresentTime in %.2fms frameInterval %.2fms", __func__,
-                  ticks<std::milli, float>(expectedPresentTime - TimePoint::now()),
-                  ticks<std::milli, float>(Duration::fromNs(frameInterval.getPeriodNsecs())));
+    SFTRACE_FORMAT("%s ExpectedPresentTime in %.2fms frameInterval %.2fms", __func__,
+                   ticks<std::milli, float>(expectedPresentTime - TimePoint::now()),
+                   ticks<std::milli, float>(Duration::fromNs(frameInterval.getPeriodNsecs())));
     const auto error = mComposer->notifyExpectedPresent(mDisplayData[displayId].hwcDisplay->getId(),
                                                         expectedPresentTime.ns(),
                                                         frameInterval.getPeriodNsecs());
@@ -1179,7 +1178,7 @@ void HWComposer::loadHdrConversionCapabilities() {
 
 status_t HWComposer::setIdleTimerEnabled(PhysicalDisplayId displayId,
                                          std::chrono::milliseconds timeout) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
     const auto error = mDisplayData[displayId].hwcDisplay->setIdleTimerEnabled(timeout);
     if (error == hal::Error::UNSUPPORTED) {
@@ -1198,7 +1197,7 @@ bool HWComposer::hasDisplayIdleTimerCapability(PhysicalDisplayId displayId) cons
 }
 
 Hwc2::AidlTransform HWComposer::getPhysicalDisplayOrientation(PhysicalDisplayId displayId) const {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     RETURN_IF_INVALID_DISPLAY(displayId, Hwc2::AidlTransform::NONE);
     Hwc2::AidlTransform outTransform;
     const auto& hwcDisplay = mDisplayData.at(displayId).hwcDisplay;

@@ -20,6 +20,7 @@ use crate::ffi::RustInputDeviceIdentifier;
 use bitflags::bitflags;
 use inputconstants::aidl::android::os::IInputConstants;
 use inputconstants::aidl::android::os::MotionEventFlag::MotionEventFlag;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// The InputDevice ID.
@@ -324,9 +325,11 @@ bitflags! {
 
 /// A rust enum representation of a Keyboard type.
 #[repr(u32)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum KeyboardType {
     /// KEYBOARD_TYPE_NONE
+    #[default]
     None = input_bindgen::AINPUT_KEYBOARD_TYPE_NONE,
     /// KEYBOARD_TYPE_NON_ALPHABETIC
     NonAlphabetic = input_bindgen::AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC,

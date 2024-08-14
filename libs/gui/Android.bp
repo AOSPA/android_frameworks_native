@@ -341,9 +341,7 @@ cc_library_shared {
 
     header_libs: [
         "jni_headers",
-        "libdvr_headers",
         "libgui_aidl_headers",
-        "libpdx_headers",
     ],
 
     afdo: true,

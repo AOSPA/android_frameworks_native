@@ -175,6 +175,10 @@ public:
     virtual void setWasClientComposed(const sp<Fence>&) {}
     virtual const gui::LayerMetadata* getMetadata() const = 0;
     virtual const gui::LayerMetadata* getRelativeMetadata() const = 0;
+
+    /* QTI_BEGIN */
+    virtual int32_t getLayerId() const = 0;
+    /* QTI_END */
 };
 
 // TODO(b/121291683): Specialize std::hash<> for sp<T> so these and others can

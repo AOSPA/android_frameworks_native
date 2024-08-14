@@ -143,7 +143,7 @@ void addSample(MotionEvent& event, const InputMessage& msg) {
     }
 
     event.setMetaState(event.getMetaState() | msg.body.motion.metaState);
-    event.addSample(msg.body.motion.eventTime, pointerCoords);
+    event.addSample(msg.body.motion.eventTime, pointerCoords, msg.body.motion.eventId);
 }
 
 void initializeTouchModeEvent(TouchModeEvent& event, const InputMessage& msg) {
@@ -249,8 +249,9 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
             mMsgDeferred = false;
         } else {
             // Receive a fresh message.
-            status_t result = mChannel->receiveMessage(&mMsg);
-            if (result == OK) {
+            android::base::Result<InputMessage> result = mChannel->receiveMessage();
+            if (result.ok()) {
+                mMsg = std::move(result.value());
                 const auto [_, inserted] =
                         mConsumeTimes.emplace(mMsg.header.seq, systemTime(SYSTEM_TIME_MONOTONIC));
                 LOG_ALWAYS_FATAL_IF(!inserted, "Already have a consume time for seq=%" PRIu32,
@@ -258,11 +259,11 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
 
                 // Trace the event processing timeline - event was just read from the socket
                 ATRACE_ASYNC_BEGIN(mProcessingTraceTag.c_str(), /*cookie=*/mMsg.header.seq);
-            }
-            if (result) {
+            } else {
                 // Consume the next batched event unless batches are being held for later.
-                if (consumeBatches || result != WOULD_BLOCK) {
-                    result = consumeBatch(factory, frameTime, outSeq, outEvent);
+                if (consumeBatches || result.error().code() != WOULD_BLOCK) {
+                    result = android::base::Error(
+                            consumeBatch(factory, frameTime, outSeq, outEvent));
                     if (*outEvent) {
                         ALOGD_IF(DEBUG_TRANSPORT_CONSUMER,
                                  "channel '%s' consumer ~ consumed batch event, seq=%u",
@@ -270,7 +271,7 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
                         break;
                     }
                 }
-                return result;
+                return result.error().code();
             }
         }
 
@@ -718,7 +719,7 @@ void InputConsumer::resampleTouchState(nsecs_t sampleTime, MotionEvent* event,
                  currentCoords.getY(), otherCoords.getX(), otherCoords.getY(), alpha);
     }
 
-    event->addSample(sampleTime, touchState.lastResample.pointers);
+    event->addSample(sampleTime, touchState.lastResample.pointers, event->getId());
 }
 
 status_t InputConsumer::sendFinishedSignal(uint32_t seq, bool handled) {

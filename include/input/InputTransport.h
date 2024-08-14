@@ -275,7 +275,7 @@ public:
      * Return DEAD_OBJECT if the channel's peer has been closed.
      * Other errors probably indicate that the channel is broken.
      */
-    status_t receiveMessage(InputMessage* msg);
+    android::base::Result<InputMessage> receiveMessage();
 
     /* Tells whether there is a message in the channel available to be received.
      *
@@ -363,7 +363,8 @@ public:
      * Returns OK on success.
      * Returns WOULD_BLOCK if the channel is full.
      * Returns DEAD_OBJECT if the channel's peer has been closed.
-     * Returns BAD_VALUE if seq is 0 or if pointerCount is less than 1 or greater than MAX_POINTERS.
+     * Returns BAD_VALUE if seq is 0 or if pointerCount is less than 1 or greater than MAX_POINTERS,
+     * or if the verifier is enabled and the event failed verification upon publishing.
      * Other errors probably indicate that the channel is broken.
      */
     status_t publishMotionEvent(uint32_t seq, int32_t eventId, int32_t deviceId, int32_t source,

@@ -76,11 +76,14 @@ cc_test {
         "PointerChoreographer_test.cpp",
         "PreferStylusOverTouch_test.cpp",
         "PropertyProvider_test.cpp",
+        "RotaryEncoderInputMapper_test.cpp",
         "SlopController_test.cpp",
+        "SwitchInputMapper_test.cpp",
         "SyncQueue_test.cpp",
         "TimerProvider_test.cpp",
         "TestInputListener.cpp",
         "TouchpadInputMapper_test.cpp",
+        "VibratorInputMapper_test.cpp",
         "MultiTouchInputMapper_test.cpp",
         "KeyboardInputMapper_test.cpp",
         "UinputDevice.cpp",
@@ -108,6 +111,7 @@ cc_test {
         },
     },
     static_libs: [
+        "android.companion.virtualdevice.flags-aconfig-cc-test",
         "libflagtest",
         "libgmock",
     ],
@@ -115,7 +119,10 @@ cc_test {
     test_options: {
         unit_test: true,
     },
-    test_suites: ["device-tests"],
+    test_suites: [
+        "device-tests",
+        "device-platinum-tests",
+    ],
     cflags: [
         "-Wno-error=ambiguous-reversed-operator",
     ],

@@ -992,7 +992,6 @@ protected:
     void preparePerFrameBufferCompositionState();
     void preparePerFrameEffectsCompositionState();
     void gatherBufferInfo();
-    void onSurfaceFrameCreated(const std::shared_ptr<frametimeline::SurfaceFrame>&);
 
     bool isClonedFromAlive() { return getClonedFrom() != nullptr; }
 
@@ -1211,11 +1210,6 @@ private:
 
     bool hasSomethingToDraw() const { return hasEffect() || hasBufferOrSidebandStream(); }
 
-    // Fills the provided vector with the currently available JankData and removes the processed
-    // JankData from the pending list.
-    void transferAvailableJankData(const std::deque<sp<CallbackHandle>>& handles,
-                                   std::vector<JankData>& jankData);
-
     bool shouldOverrideChildrenFrameRate() const {
         return getDrawingState().frameRateSelectionStrategy ==
                 FrameRateSelectionStrategy::OverrideChildren;
@@ -1284,14 +1278,10 @@ private:
     // time.
     std::variant<nsecs_t, sp<Fence>> mCallbackHandleAcquireTimeOrFence = -1;
 
-    std::deque<std::shared_ptr<android::frametimeline::SurfaceFrame>> mPendingJankClassifications;
-    // An upper bound on the number of SurfaceFrames in the pending classifications deque.
-    static constexpr int kPendingClassificationMaxSurfaceFrames = 50;
-
     const std::string mBlastTransactionName{"BufferTX - " + mName};
     // This integer is incremented everytime a buffer arrives at the server for this layer,
     // and decremented when a buffer is dropped or latched. When changed the integer is exported
-    // to systrace with ATRACE_INT and mBlastTransactionName. This way when debugging perf it is
+    // to systrace with SFTRACE_INT and mBlastTransactionName. This way when debugging perf it is
     // possible to see when a buffer arrived at the server, and in which frame it latched.
     //
     // You can understand the trace this way:

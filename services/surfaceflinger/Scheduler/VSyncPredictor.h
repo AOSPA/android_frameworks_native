@@ -111,18 +111,7 @@ private:
             Shared,  // Within timeline, shared with next timeline.
             Outside, // Outside of the timeline.
         };
-        VsyncOnTimeline isWithin(TimePoint vsync) {
-            const auto threshold = mIdealPeriod.ns() / 2;
-            if (!mValidUntil || vsync.ns() < mValidUntil->ns() - threshold) {
-                // if mValidUntil is absent then timeline is not frozen and
-                // vsync should be unique to that timeline.
-                return VsyncOnTimeline::Unique;
-            }
-            if (vsync.ns() > mValidUntil->ns() + threshold) {
-                return VsyncOnTimeline::Outside;
-            }
-            return VsyncOnTimeline::Shared;
-        }
+        VsyncOnTimeline isWithin(TimePoint vsync);
 
     private:
         nsecs_t snapToVsyncAlignedWithRenderRate(Model model, nsecs_t vsync);

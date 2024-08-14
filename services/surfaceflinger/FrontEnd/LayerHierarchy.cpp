@@ -413,11 +413,11 @@ void LayerHierarchyBuilder::doUpdate(
 
 void LayerHierarchyBuilder::update(LayerLifecycleManager& layerLifecycleManager) {
     if (!mInitialized) {
-        ATRACE_NAME("LayerHierarchyBuilder:init");
+        SFTRACE_NAME("LayerHierarchyBuilder:init");
         init(layerLifecycleManager.getLayers());
     } else if (layerLifecycleManager.getGlobalChanges().test(
                        RequestedLayerState::Changes::Hierarchy)) {
-        ATRACE_NAME("LayerHierarchyBuilder:update");
+        SFTRACE_NAME("LayerHierarchyBuilder:update");
         doUpdate(layerLifecycleManager.getLayers(), layerLifecycleManager.getDestroyedLayers());
     } else {
         return; // nothing to do
@@ -426,7 +426,7 @@ void LayerHierarchyBuilder::update(LayerLifecycleManager& layerLifecycleManager)
     uint32_t invalidRelativeRoot;
     bool hasRelZLoop = mRoot.hasRelZLoop(invalidRelativeRoot);
     while (hasRelZLoop) {
-        ATRACE_NAME("FixRelZLoop");
+        SFTRACE_NAME("FixRelZLoop");
         TransactionTraceWriter::getInstance().invoke("relz_loop_detected",
                                                      /*overwrite=*/false);
         layerLifecycleManager.fixRelativeZLoop(invalidRelativeRoot);

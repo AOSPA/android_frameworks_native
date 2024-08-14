@@ -33,6 +33,8 @@
 #include <sys/sysmacros.h>
 #include <unistd.h>
 
+#include <android_companion_virtualdevice_flags.h>
+
 #define LOG_TAG "EventHub"
 
 // #define LOG_NDEBUG 0
@@ -67,6 +69,8 @@
 using android::base::StringPrintf;
 
 namespace android {
+
+namespace vd_flags = android::companion::virtualdevice::flags;
 
 using namespace ftl::flag_operators;
 
@@ -513,10 +517,10 @@ ftl::Flags<InputDeviceClass> getAbsAxisUsage(int32_t axis,
 
 // --- RawAbsoluteAxisInfo ---
 
-std::ostream& operator<<(std::ostream& out, const RawAbsoluteAxisInfo& info) {
-    if (info.valid) {
-        out << "min=" << info.minValue << ", max=" << info.maxValue << ", flat=" << info.flat
-            << ", fuzz=" << info.fuzz << ", resolution=" << info.resolution;
+std::ostream& operator<<(std::ostream& out, const std::optional<RawAbsoluteAxisInfo>& info) {
+    if (info) {
+        out << "min=" << info->minValue << ", max=" << info->maxValue << ", flat=" << info->flat
+            << ", fuzz=" << info->fuzz << ", resolution=" << info->resolution;
     } else {
         out << "unknown range";
     }
@@ -645,7 +649,6 @@ void EventHub::Device::populateAbsoluteAxisStates() {
             continue;
         }
         auto& [axisInfo, value] = absState[axis];
-        axisInfo.valid = true;
         axisInfo.minValue = info.minimum;
         axisInfo.maxValue = info.maximum;
         axisInfo.flat = info.flat;
@@ -885,7 +888,6 @@ EventHub::EventHub(void)
       : mBuiltInKeyboardId(NO_BUILT_IN_KEYBOARD),
         mNextDeviceId(1),
         mControllerNumbers(),
-        mNeedToSendFinishedDeviceScan(false),
         mNeedToReopenDevices(false),
         mNeedToScanDevices(true),
         mPendingEventCount(0),
@@ -1874,7 +1876,6 @@ std::vector<RawEvent> EventHub::getEvents(int timeoutMillis) {
                     .type = DEVICE_REMOVED,
             });
             it = mClosingDevices.erase(it);
-            mNeedToSendFinishedDeviceScan = true;
             if (events.size() == EVENT_BUFFER_SIZE) {
                 break;
             }
@@ -1883,7 +1884,6 @@ std::vector<RawEvent> EventHub::getEvents(int timeoutMillis) {
         if (mNeedToScanDevices) {
             mNeedToScanDevices = false;
             scanDevicesLocked();
-            mNeedToSendFinishedDeviceScan = true;
         }
 
         while (!mOpeningDevices.empty()) {
@@ -1912,18 +1912,6 @@ std::vector<RawEvent> EventHub::getEvents(int timeoutMillis) {
             if (!inserted) {
                 ALOGW("Device id %d exists, replaced.", device->id);
             }
-            mNeedToSendFinishedDeviceScan = true;
-            if (events.size() == EVENT_BUFFER_SIZE) {
-                break;
-            }
-        }
-
-        if (mNeedToSendFinishedDeviceScan) {
-            mNeedToSendFinishedDeviceScan = false;
-            events.push_back({
-                    .when = now,
-                    .type = FINISHED_DEVICE_SCAN,
-            });
             if (events.size() == EVENT_BUFFER_SIZE) {
                 break;
             }
@@ -2496,6 +2484,12 @@ void EventHub::openDeviceLocked(const std::string& devicePath) {
                         [&](int32_t keycode) { return device->hasKeycodeLocked(keycode); })) {
             device->classes |= InputDeviceClass::EXTERNAL_STYLUS;
         }
+    }
+
+    // See if the device is a rotary encoder with a single scroll axis and nothing else.
+    if (vd_flags::virtual_rotary() && device->classes == ftl::Flags<InputDeviceClass>(0) &&
+        device->relBitmask.test(REL_WHEEL) && !device->relBitmask.test(REL_HWHEEL)) {
+        device->classes |= InputDeviceClass::ROTARY_ENCODER;
     }
 
     // If the device isn't recognized as something we handle, don't monitor it.

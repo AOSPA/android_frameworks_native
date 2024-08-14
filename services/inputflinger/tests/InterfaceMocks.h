@@ -187,6 +187,7 @@ public:
     MOCK_METHOD(void, notifyPointerDisplayIdChanged,
                 (ui::LogicalDisplayId displayId, const FloatPoint& position), (override));
     MOCK_METHOD(bool, isInputMethodConnectionActive, (), (override));
+    MOCK_METHOD(void, notifyMouseCursorFadedOnTyping, (), (override));
 };
 
 } // namespace android

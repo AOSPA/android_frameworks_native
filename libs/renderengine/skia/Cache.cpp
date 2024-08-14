@@ -729,8 +729,7 @@ void Cache::primeShaderCache(SkiaRenderEngine* renderengine, PrimeCacheConfig co
         const auto externalTexture =
                 std::make_shared<impl::ExternalTexture>(externalBuffer, *renderengine,
                                                         impl::ExternalTexture::Usage::READABLE);
-        std::vector<const std::shared_ptr<ExternalTexture>> textures =
-            {srcTexture, externalTexture};
+        std::vector<std::shared_ptr<ExternalTexture>> textures = {srcTexture, externalTexture};
 
         // Another external texture with a different pixel format triggers useIsOpaqueWorkaround.
         // It doesn't have to be f16, but it can't be the usual 8888.

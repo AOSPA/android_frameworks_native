@@ -19,8 +19,8 @@
 #include <vector>
 
 #include <android-base/stringprintf.h>
+#include <common/trace.h>
 #include <ftl/concat.h>
-#include <gui/TraceUtils.h>
 #include <log/log_main.h>
 
 #include <scheduler/TimeKeeper.h>
@@ -45,14 +45,14 @@ ScheduleResult getExpectedCallbackTime(nsecs_t nextVsyncTime,
 }
 
 void traceEntry(const VSyncDispatchTimerQueueEntry& entry, nsecs_t now) {
-    if (!ATRACE_ENABLED() || !entry.wakeupTime().has_value() || !entry.targetVsync().has_value()) {
+    if (!SFTRACE_ENABLED() || !entry.wakeupTime().has_value() || !entry.targetVsync().has_value()) {
         return;
     }
 
     ftl::Concat trace(ftl::truncated<5>(entry.name()), " alarm in ",
                       ns2us(*entry.wakeupTime() - now), "us; VSYNC in ",
                       ns2us(*entry.targetVsync() - now), "us");
-    ATRACE_FORMAT_INSTANT(trace.c_str());
+    SFTRACE_FORMAT_INSTANT(trace.c_str());
 }
 
 } // namespace
@@ -98,7 +98,7 @@ std::optional<nsecs_t> VSyncDispatchTimerQueueEntry::targetVsync() const {
 
 ScheduleResult VSyncDispatchTimerQueueEntry::schedule(VSyncDispatch::ScheduleTiming timing,
                                                       VSyncTracker& tracker, nsecs_t now) {
-    ATRACE_NAME("VSyncDispatchTimerQueueEntry::schedule");
+    SFTRACE_NAME("VSyncDispatchTimerQueueEntry::schedule");
     auto nextVsyncTime =
             tracker.nextAnticipatedVSyncTimeFrom(std::max(timing.lastVsync,
                                                           now + timing.workDuration +
@@ -110,8 +110,8 @@ ScheduleResult VSyncDispatchTimerQueueEntry::schedule(VSyncDispatch::ScheduleTim
             mArmedInfo && (nextVsyncTime > (mArmedInfo->mActualVsyncTime + mMinVsyncDistance));
     bool const wouldSkipAWakeup =
             mArmedInfo && ((nextWakeupTime > (mArmedInfo->mActualWakeupTime + mMinVsyncDistance)));
-    ATRACE_FORMAT_INSTANT("%s: wouldSkipAVsyncTarget=%d wouldSkipAWakeup=%d", mName.c_str(),
-                          wouldSkipAVsyncTarget, wouldSkipAWakeup);
+    SFTRACE_FORMAT_INSTANT("%s: wouldSkipAVsyncTarget=%d wouldSkipAWakeup=%d", mName.c_str(),
+                           wouldSkipAVsyncTarget, wouldSkipAWakeup);
     if (FlagManager::getInstance().dont_skip_on_early_ro()) {
         if (wouldSkipAVsyncTarget || wouldSkipAWakeup) {
             nextVsyncTime = mArmedInfo->mActualVsyncTime;
@@ -154,13 +154,13 @@ nsecs_t VSyncDispatchTimerQueueEntry::adjustVsyncIfNeeded(VSyncTracker& tracker,
     bool const nextVsyncTooClose = mLastDispatchTime &&
             (nextVsyncTime - *mLastDispatchTime + mMinVsyncDistance) <= currentPeriod;
     if (alreadyDispatchedForVsync) {
-        ATRACE_FORMAT_INSTANT("alreadyDispatchedForVsync");
+        SFTRACE_FORMAT_INSTANT("alreadyDispatchedForVsync");
         return tracker.nextAnticipatedVSyncTimeFrom(*mLastDispatchTime + mMinVsyncDistance,
                                                     *mLastDispatchTime);
     }
 
     if (nextVsyncTooClose) {
-        ATRACE_FORMAT_INSTANT("nextVsyncTooClose");
+        SFTRACE_FORMAT_INSTANT("nextVsyncTooClose");
         return tracker.nextAnticipatedVSyncTimeFrom(*mLastDispatchTime + currentPeriod,
                                                     *mLastDispatchTime + currentPeriod);
     }
@@ -172,7 +172,7 @@ auto VSyncDispatchTimerQueueEntry::getArmedInfo(VSyncTracker& tracker, nsecs_t n
                                                 VSyncDispatch::ScheduleTiming timing,
                                                 std::optional<ArmingInfo> armedInfo) const
         -> ArmingInfo {
-    ATRACE_NAME("VSyncDispatchTimerQueueEntry::getArmedInfo");
+    SFTRACE_NAME("VSyncDispatchTimerQueueEntry::getArmedInfo");
     const auto earliestReadyBy = now + timing.workDuration + timing.readyDuration;
     const auto earliestVsync = std::max(earliestReadyBy, timing.lastVsync);
 
@@ -188,8 +188,8 @@ auto VSyncDispatchTimerQueueEntry::getArmedInfo(VSyncTracker& tracker, nsecs_t n
                 armedInfo && (nextVsyncTime > (armedInfo->mActualVsyncTime + mMinVsyncDistance));
         bool const wouldSkipAWakeup =
                 armedInfo && (nextWakeupTime > (armedInfo->mActualWakeupTime + mMinVsyncDistance));
-        ATRACE_FORMAT_INSTANT("%s: wouldSkipAVsyncTarget=%d wouldSkipAWakeup=%d", mName.c_str(),
-                              wouldSkipAVsyncTarget, wouldSkipAWakeup);
+        SFTRACE_FORMAT_INSTANT("%s: wouldSkipAVsyncTarget=%d wouldSkipAWakeup=%d", mName.c_str(),
+                               wouldSkipAVsyncTarget, wouldSkipAWakeup);
         if (wouldSkipAVsyncTarget || wouldSkipAWakeup) {
             return *armedInfo;
         }
@@ -199,7 +199,7 @@ auto VSyncDispatchTimerQueueEntry::getArmedInfo(VSyncTracker& tracker, nsecs_t n
 }
 
 void VSyncDispatchTimerQueueEntry::update(VSyncTracker& tracker, nsecs_t now) {
-    ATRACE_NAME("VSyncDispatchTimerQueueEntry::update");
+    SFTRACE_NAME("VSyncDispatchTimerQueueEntry::update");
     if (!mArmedInfo && !mWorkloadUpdateInfo) {
         return;
     }
@@ -208,9 +208,9 @@ void VSyncDispatchTimerQueueEntry::update(VSyncTracker& tracker, nsecs_t now) {
         const auto workDelta = mWorkloadUpdateInfo->workDuration - mScheduleTiming.workDuration;
         const auto readyDelta = mWorkloadUpdateInfo->readyDuration - mScheduleTiming.readyDuration;
         const auto lastVsyncDelta = mWorkloadUpdateInfo->lastVsync - mScheduleTiming.lastVsync;
-        ATRACE_FORMAT_INSTANT("Workload updated workDelta=%" PRId64 " readyDelta=%" PRId64
-                              " lastVsyncDelta=%" PRId64,
-                              workDelta, readyDelta, lastVsyncDelta);
+        SFTRACE_FORMAT_INSTANT("Workload updated workDelta=%" PRId64 " readyDelta=%" PRId64
+                               " lastVsyncDelta=%" PRId64,
+                               workDelta, readyDelta, lastVsyncDelta);
         mScheduleTiming = *mWorkloadUpdateInfo;
         mWorkloadUpdateInfo.reset();
     }
@@ -310,7 +310,7 @@ void VSyncDispatchTimerQueue::rearmTimer(nsecs_t now) {
 
 void VSyncDispatchTimerQueue::rearmTimerSkippingUpdateFor(
         nsecs_t now, CallbackMap::const_iterator skipUpdateIt) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     std::optional<nsecs_t> min;
     std::optional<nsecs_t> targetVsync;
     std::optional<std::string_view> nextWakeupName;
@@ -337,13 +337,13 @@ void VSyncDispatchTimerQueue::rearmTimerSkippingUpdateFor(
     if (min && min < mIntendedWakeupTime) {
         setTimer(*min, now);
     } else {
-        ATRACE_NAME("cancel timer");
+        SFTRACE_NAME("cancel timer");
         cancelTimer();
     }
 }
 
 void VSyncDispatchTimerQueue::timerCallback() {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     struct Invocation {
         std::shared_ptr<VSyncDispatchTimerQueueEntry> callback;
         nsecs_t vsyncTimestamp;
@@ -383,7 +383,7 @@ void VSyncDispatchTimerQueue::timerCallback() {
 
     for (auto const& invocation : invocations) {
         ftl::Concat trace(ftl::truncated<5>(invocation.callback->name()));
-        ATRACE_FORMAT("%s: %s", __func__, trace.c_str());
+        SFTRACE_FORMAT("%s: %s", __func__, trace.c_str());
         invocation.callback->callback(invocation.vsyncTimestamp, invocation.wakeupTimestamp,
                                       invocation.deadlineTimestamp);
     }

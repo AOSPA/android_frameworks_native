@@ -83,7 +83,7 @@ auto DisplayModeController::setDesiredMode(PhysicalDisplayId displayId,
             FTL_EXPECT(mDisplays.get(displayId).ok_or(DesiredModeAction::None)).get();
 
     {
-        ATRACE_NAME(displayPtr->concatId(__func__).c_str());
+        SFTRACE_NAME(displayPtr->concatId(__func__).c_str());
         ALOGD("%s %s", displayPtr->concatId(__func__).c_str(), to_string(desiredMode).c_str());
 
         std::scoped_lock lock(displayPtr->desiredModeLock);
@@ -204,7 +204,7 @@ bool DisplayModeController::initiateModeChange(PhysicalDisplayId displayId,
         return false;
     }
 
-    ATRACE_INT(displayPtr->pendingModeFpsTrace.c_str(), mode.getVsyncRate().getIntValue());
+    SFTRACE_INT(displayPtr->pendingModeFpsTrace.c_str(), mode.getVsyncRate().getIntValue());
     return true;
 }
 
@@ -227,8 +227,8 @@ void DisplayModeController::setActiveModeLocked(PhysicalDisplayId displayId, Dis
                                                 Fps vsyncRate, Fps renderFps) {
     const auto& displayPtr = FTL_TRY(mDisplays.get(displayId).ok_or(ftl::Unit())).get();
 
-    ATRACE_INT(displayPtr->activeModeFpsTrace.c_str(), vsyncRate.getIntValue());
-    ATRACE_INT(displayPtr->renderRateFpsTrace.c_str(), renderFps.getIntValue());
+    SFTRACE_INT(displayPtr->activeModeFpsTrace.c_str(), vsyncRate.getIntValue());
+    SFTRACE_INT(displayPtr->renderRateFpsTrace.c_str(), renderFps.getIntValue());
 
     displayPtr->selectorPtr->setActiveMode(modeId, renderFps);
 

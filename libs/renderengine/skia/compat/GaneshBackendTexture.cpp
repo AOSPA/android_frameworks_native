@@ -32,15 +32,15 @@
 #include "skia/compat/SkiaBackendTexture.h"
 
 #include <android/hardware_buffer.h>
+#include <common/trace.h>
 #include <log/log_main.h>
-#include <utils/Trace.h>
 
 namespace android::renderengine::skia {
 
 GaneshBackendTexture::GaneshBackendTexture(sk_sp<GrDirectContext> grContext,
                                            AHardwareBuffer* buffer, bool isOutputBuffer)
       : SkiaBackendTexture(buffer, isOutputBuffer), mGrContext(grContext) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     AHardwareBuffer_Desc desc;
     AHardwareBuffer_describe(buffer, &desc);
     const bool createProtectedImage = 0 != (desc.usage & AHARDWAREBUFFER_USAGE_PROTECTED_CONTENT);

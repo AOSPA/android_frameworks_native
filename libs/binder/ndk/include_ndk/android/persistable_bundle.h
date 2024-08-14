@@ -29,6 +29,11 @@
 #include <sys/cdefs.h>
 #include <sys/types.h>
 
+#ifndef __clang__
+#define _Nullable
+#define _Nonnull
+#endif
+
 __BEGIN_DECLS
 
 /*

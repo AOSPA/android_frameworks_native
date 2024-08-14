@@ -19,7 +19,7 @@
 #undef LOG_TAG
 #define LOG_TAG "SurfaceFlinger"
 
-#include <gui/TraceUtils.h>
+#include <common/trace.h>
 #include <log/log.h>
 #include <private/android_filesystem_config.h>
 #include <sys/types.h>
@@ -581,8 +581,8 @@ bool RequestedLayerState::backpressureEnabled() const {
 bool RequestedLayerState::isSimpleBufferUpdate(const layer_state_t& s) const {
     static constexpr uint64_t requiredFlags = layer_state_t::eBufferChanged;
     if ((s.what & requiredFlags) != requiredFlags) {
-        ATRACE_FORMAT_INSTANT("%s: false [missing required flags 0x%" PRIx64 "]", __func__,
-                              (s.what | requiredFlags) & ~s.what);
+        SFTRACE_FORMAT_INSTANT("%s: false [missing required flags 0x%" PRIx64 "]", __func__,
+                               (s.what | requiredFlags) & ~s.what);
         return false;
     }
 
@@ -594,8 +594,8 @@ bool RequestedLayerState::isSimpleBufferUpdate(const layer_state_t& s) const {
                      ? 0
                      : (layer_state_t::eAutoRefreshChanged | layer_state_t::eFlagsChanged));
     if (s.what & deniedFlags) {
-        ATRACE_FORMAT_INSTANT("%s: false [has denied flags 0x%" PRIx64 "]", __func__,
-                              s.what & deniedFlags);
+        SFTRACE_FORMAT_INSTANT("%s: false [has denied flags 0x%" PRIx64 "]", __func__,
+                               s.what & deniedFlags);
         return false;
     }
 
@@ -609,15 +609,16 @@ bool RequestedLayerState::isSimpleBufferUpdate(const layer_state_t& s) const {
             layer_state_t::eSidebandStreamChanged | layer_state_t::eColorSpaceAgnosticChanged |
             layer_state_t::eShadowRadiusChanged | layer_state_t::eFixedTransformHintChanged |
             layer_state_t::eTrustedOverlayChanged | layer_state_t::eStretchChanged |
-            layer_state_t::eBufferCropChanged | layer_state_t::eDestinationFrameChanged |
-            layer_state_t::eDimmingEnabledChanged | layer_state_t::eExtendedRangeBrightnessChanged |
+            layer_state_t::eEdgeExtensionChanged | layer_state_t::eBufferCropChanged |
+            layer_state_t::eDestinationFrameChanged | layer_state_t::eDimmingEnabledChanged |
+            layer_state_t::eExtendedRangeBrightnessChanged |
             layer_state_t::eDesiredHdrHeadroomChanged |
             (FlagManager::getInstance().latch_unsignaled_with_auto_refresh_changed()
                      ? layer_state_t::eFlagsChanged
                      : 0);
     if (changedFlags & deniedChanges) {
-        ATRACE_FORMAT_INSTANT("%s: false [has denied changes flags 0x%" PRIx64 "]", __func__,
-                              changedFlags & deniedChanges);
+        SFTRACE_FORMAT_INSTANT("%s: false [has denied changes flags 0x%" PRIx64 "]", __func__,
+                               changedFlags & deniedChanges);
         return false;
     }
 

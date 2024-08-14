@@ -17,9 +17,11 @@
 #define LOG_TAG "ServiceManagerCppClient"
 
 #include <binder/IServiceManager.h>
+#include "BackendUnifiedServiceManager.h"
 
 #include <inttypes.h>
 #include <unistd.h>
+#include <chrono>
 #include <condition_variable>
 
 #include <android-base/properties.h>
@@ -27,9 +29,7 @@
 #include <android/os/IServiceManager.h>
 #include <binder/IPCThreadState.h>
 #include <binder/Parcel.h>
-#include <utils/Log.h>
 #include <utils/String8.h>
-#include <utils/SystemClock.h>
 
 #ifndef __ANDROID_VNDK__
 #include <binder/IPermissionController.h>
@@ -47,8 +47,11 @@
 #endif
 
 #include "Static.h"
+#include "Utils.h"
 
 namespace android {
+
+using namespace std::chrono_literals;
 
 using AidlRegistrationCallback = IServiceManager::LocalRegistrationCallback;
 
@@ -111,14 +114,12 @@ public:
     std::vector<IServiceManager::ServiceDebugInfo> getServiceDebugInfo() override;
     // for legacy ABI
     const String16& getInterfaceDescriptor() const override {
-        return mTheRealServiceManager->getInterfaceDescriptor();
+        return mUnifiedServiceManager->getInterfaceDescriptor();
     }
-    IBinder* onAsBinder() override {
-        return IInterface::asBinder(mTheRealServiceManager).get();
-    }
+    IBinder* onAsBinder() override { return IInterface::asBinder(mUnifiedServiceManager).get(); }
 
 protected:
-    sp<AidlServiceManager> mTheRealServiceManager;
+    sp<BackendUnifiedServiceManager> mUnifiedServiceManager;
     // AidlRegistrationCallback -> services that its been registered for
     // notifications.
     using LocalRegistrationAndWaiter =
@@ -136,9 +137,9 @@ protected:
     // will still have the 5s delay that is expected by a large amount of Android code.
     //
     // When implementing ServiceManagerShim, use realGetService instead of
-    // mTheRealServiceManager->getService so that it can be overridden in ServiceManagerHostShim.
+    // mUnifiedServiceManager->getService so that it can be overridden in ServiceManagerHostShim.
     virtual Status realGetService(const std::string& name, sp<IBinder>* _aidl_return) {
-        return mTheRealServiceManager->getService(name, _aidl_return);
+        return mUnifiedServiceManager->getService(name, _aidl_return);
     }
 };
 
@@ -148,26 +149,7 @@ protected:
 sp<IServiceManager> defaultServiceManager()
 {
     std::call_once(gSmOnce, []() {
-#if defined(__BIONIC__) && !defined(__ANDROID_VNDK__)
-        /* wait for service manager */ {
-            using std::literals::chrono_literals::operator""s;
-            using android::base::WaitForProperty;
-            while (!WaitForProperty("servicemanager.ready", "true", 1s)) {
-                ALOGE("Waited for servicemanager.ready for a second, waiting another...");
-            }
-        }
-#endif
-
-        sp<AidlServiceManager> sm = nullptr;
-        while (sm == nullptr) {
-            sm = interface_cast<AidlServiceManager>(ProcessState::self()->getContextObject(nullptr));
-            if (sm == nullptr) {
-                ALOGE("Waiting 1s on context object on %s.", ProcessState::self()->getDriverName().c_str());
-                sleep(1);
-            }
-        }
-
-        gDefaultServiceManager = sp<ServiceManagerShim>::make(sm);
+        gDefaultServiceManager = sp<ServiceManagerShim>::make(getBackendUnifiedServiceManager());
     });
 
     return gDefaultServiceManager;
@@ -214,16 +196,16 @@ bool checkPermission(const String16& permission, pid_t pid, uid_t uid, bool logP
     pc = gPermissionController;
     gPermissionControllerLock.unlock();
 
-    int64_t startTime = 0;
+    auto startTime = std::chrono::steady_clock::now().min();
 
     while (true) {
         if (pc != nullptr) {
             bool res = pc->checkPermission(permission, pid, uid);
             if (res) {
-                if (startTime != 0) {
-                    ALOGI("Check passed after %d seconds for %s from uid=%d pid=%d",
-                          (int)((uptimeMillis() - startTime) / 1000), String8(permission).c_str(),
-                          uid, pid);
+                if (startTime != startTime.min()) {
+                    const auto waitTime = std::chrono::steady_clock::now() - startTime;
+                    ALOGI("Check passed after %" PRIu64 "ms for %s from uid=%d pid=%d",
+                          to_ms(waitTime), String8(permission).c_str(), uid, pid);
                 }
                 return res;
             }
@@ -249,8 +231,8 @@ bool checkPermission(const String16& permission, pid_t pid, uid_t uid, bool logP
         sp<IBinder> binder = defaultServiceManager()->checkService(_permission);
         if (binder == nullptr) {
             // Wait for the permission controller to come back...
-            if (startTime == 0) {
-                startTime = uptimeMillis();
+            if (startTime == startTime.min()) {
+                startTime = std::chrono::steady_clock::now();
                 ALOGI("Waiting to check permission %s from uid=%d pid=%d",
                       String8(permission).c_str(), uid, pid);
             }
@@ -290,9 +272,9 @@ void* openDeclaredPassthroughHal(const String16& interface, const String16& inst
 
 // ----------------------------------------------------------------------
 
-ServiceManagerShim::ServiceManagerShim(const sp<AidlServiceManager>& impl)
- : mTheRealServiceManager(impl)
-{}
+ServiceManagerShim::ServiceManagerShim(const sp<AidlServiceManager>& impl) {
+    mUnifiedServiceManager = sp<BackendUnifiedServiceManager>::make(impl);
+}
 
 // This implementation could be simplified and made more efficient by delegating
 // to waitForService. However, this changes the threading structure in some
@@ -307,8 +289,8 @@ sp<IBinder> ServiceManagerShim::getService(const String16& name) const
 
     const bool isVendorService =
         strcmp(ProcessState::self()->getDriverName().c_str(), "/dev/vndbinder") == 0;
-    constexpr int64_t timeout = 5000;
-    int64_t startTime = uptimeMillis();
+    constexpr auto timeout = 5s;
+    const auto startTime = std::chrono::steady_clock::now();
     // Vendor code can't access system properties
     if (!gSystemBootCompleted && !isVendorService) {
 #ifdef __ANDROID__
@@ -326,15 +308,16 @@ sp<IBinder> ServiceManagerShim::getService(const String16& name) const
           ProcessState::self()->getDriverName().c_str());
 
     int n = 0;
-    while (uptimeMillis() - startTime < timeout) {
+    while (std::chrono::steady_clock::now() - startTime < timeout) {
         n++;
         usleep(1000*sleepTime);
 
         sp<IBinder> svc = checkService(name);
         if (svc != nullptr) {
-            ALOGI("Waiting for service '%s' on '%s' successful after waiting %" PRIi64 "ms",
+            const auto waitTime = std::chrono::steady_clock::now() - startTime;
+            ALOGI("Waiting for service '%s' on '%s' successful after waiting %" PRIu64 "ms",
                   String8(name).c_str(), ProcessState::self()->getDriverName().c_str(),
-                  uptimeMillis() - startTime);
+                  to_ms(waitTime));
             return svc;
         }
     }
@@ -345,7 +328,7 @@ sp<IBinder> ServiceManagerShim::getService(const String16& name) const
 sp<IBinder> ServiceManagerShim::checkService(const String16& name) const
 {
     sp<IBinder> ret;
-    if (!mTheRealServiceManager->checkService(String8(name).c_str(), &ret).isOk()) {
+    if (!mUnifiedServiceManager->checkService(String8(name).c_str(), &ret).isOk()) {
         return nullptr;
     }
     return ret;
@@ -354,15 +337,15 @@ sp<IBinder> ServiceManagerShim::checkService(const String16& name) const
 status_t ServiceManagerShim::addService(const String16& name, const sp<IBinder>& service,
                                         bool allowIsolated, int dumpsysPriority)
 {
-    Status status = mTheRealServiceManager->addService(
-        String8(name).c_str(), service, allowIsolated, dumpsysPriority);
+    Status status = mUnifiedServiceManager->addService(String8(name).c_str(), service,
+                                                       allowIsolated, dumpsysPriority);
     return status.exceptionCode();
 }
 
 Vector<String16> ServiceManagerShim::listServices(int dumpsysPriority)
 {
     std::vector<std::string> ret;
-    if (!mTheRealServiceManager->listServices(dumpsysPriority, &ret).isOk()) {
+    if (!mUnifiedServiceManager->listServices(dumpsysPriority, &ret).isOk()) {
         return {};
     }
 
@@ -420,15 +403,13 @@ sp<IBinder> ServiceManagerShim::waitForService(const String16& name16)
     if (out != nullptr) return out;
 
     sp<Waiter> waiter = sp<Waiter>::make();
-    if (Status status = mTheRealServiceManager->registerForNotifications(name, waiter);
+    if (Status status = mUnifiedServiceManager->registerForNotifications(name, waiter);
         !status.isOk()) {
         ALOGW("Failed to registerForNotifications in waitForService for %s: %s", name.c_str(),
               status.toString8().c_str());
         return nullptr;
     }
-    Defer unregister ([&] {
-        mTheRealServiceManager->unregisterForNotifications(name, waiter);
-    });
+    Defer unregister([&] { mUnifiedServiceManager->unregisterForNotifications(name, waiter); });
 
     while(true) {
         {
@@ -438,7 +419,6 @@ sp<IBinder> ServiceManagerShim::waitForService(const String16& name16)
             // that another thread serves the callback, and we never get a
             // command, so we hang indefinitely.
             std::unique_lock<std::mutex> lock(waiter->mMutex);
-            using std::literals::chrono_literals::operator""s;
             waiter->mCv.wait_for(lock, 1s, [&] {
                 return waiter->mBinder != nullptr;
             });
@@ -469,7 +449,7 @@ sp<IBinder> ServiceManagerShim::waitForService(const String16& name16)
 
 bool ServiceManagerShim::isDeclared(const String16& name) {
     bool declared;
-    if (Status status = mTheRealServiceManager->isDeclared(String8(name).c_str(), &declared);
+    if (Status status = mUnifiedServiceManager->isDeclared(String8(name).c_str(), &declared);
         !status.isOk()) {
         ALOGW("Failed to get isDeclared for %s: %s", String8(name).c_str(),
               status.toString8().c_str());
@@ -481,7 +461,7 @@ bool ServiceManagerShim::isDeclared(const String16& name) {
 Vector<String16> ServiceManagerShim::getDeclaredInstances(const String16& interface) {
     std::vector<std::string> out;
     if (Status status =
-                mTheRealServiceManager->getDeclaredInstances(String8(interface).c_str(), &out);
+                mUnifiedServiceManager->getDeclaredInstances(String8(interface).c_str(), &out);
         !status.isOk()) {
         ALOGW("Failed to getDeclaredInstances for %s: %s", String8(interface).c_str(),
               status.toString8().c_str());
@@ -498,7 +478,7 @@ Vector<String16> ServiceManagerShim::getDeclaredInstances(const String16& interf
 
 std::optional<String16> ServiceManagerShim::updatableViaApex(const String16& name) {
     std::optional<std::string> declared;
-    if (Status status = mTheRealServiceManager->updatableViaApex(String8(name).c_str(), &declared);
+    if (Status status = mUnifiedServiceManager->updatableViaApex(String8(name).c_str(), &declared);
         !status.isOk()) {
         ALOGW("Failed to get updatableViaApex for %s: %s", String8(name).c_str(),
               status.toString8().c_str());
@@ -509,7 +489,7 @@ std::optional<String16> ServiceManagerShim::updatableViaApex(const String16& nam
 
 Vector<String16> ServiceManagerShim::getUpdatableNames(const String16& apexName) {
     std::vector<std::string> out;
-    if (Status status = mTheRealServiceManager->getUpdatableNames(String8(apexName).c_str(), &out);
+    if (Status status = mUnifiedServiceManager->getUpdatableNames(String8(apexName).c_str(), &out);
         !status.isOk()) {
         ALOGW("Failed to getUpdatableNames for %s: %s", String8(apexName).c_str(),
               status.toString8().c_str());
@@ -528,7 +508,7 @@ std::optional<IServiceManager::ConnectionInfo> ServiceManagerShim::getConnection
         const String16& name) {
     std::optional<os::ConnectionInfo> connectionInfo;
     if (Status status =
-                mTheRealServiceManager->getConnectionInfo(String8(name).c_str(), &connectionInfo);
+                mUnifiedServiceManager->getConnectionInfo(String8(name).c_str(), &connectionInfo);
         !status.isOk()) {
         ALOGW("Failed to get ConnectionInfo for %s: %s", String8(name).c_str(),
               status.toString8().c_str());
@@ -549,7 +529,7 @@ status_t ServiceManagerShim::registerForNotifications(const String16& name,
     sp<RegistrationWaiter> registrationWaiter = sp<RegistrationWaiter>::make(cb);
     std::lock_guard<std::mutex> lock(mNameToRegistrationLock);
     if (Status status =
-                mTheRealServiceManager->registerForNotifications(nameStr, registrationWaiter);
+                mUnifiedServiceManager->registerForNotifications(nameStr, registrationWaiter);
         !status.isOk()) {
         ALOGW("Failed to registerForNotifications for %s: %s", nameStr.c_str(),
               status.toString8().c_str());
@@ -600,7 +580,7 @@ status_t ServiceManagerShim::unregisterForNotifications(const String16& name,
         ALOGE("%s Callback passed wasn't used to register for notifications", __FUNCTION__);
         return BAD_VALUE;
     }
-    if (Status status = mTheRealServiceManager->unregisterForNotifications(String8(name).c_str(),
+    if (Status status = mUnifiedServiceManager->unregisterForNotifications(String8(name).c_str(),
                                                                            registrationWaiter);
         !status.isOk()) {
         ALOGW("Failed to get service manager to unregisterForNotifications for %s: %s",
@@ -613,7 +593,7 @@ status_t ServiceManagerShim::unregisterForNotifications(const String16& name,
 std::vector<IServiceManager::ServiceDebugInfo> ServiceManagerShim::getServiceDebugInfo() {
     std::vector<os::ServiceDebugInfo> serviceDebugInfos;
     std::vector<IServiceManager::ServiceDebugInfo> ret;
-    if (Status status = mTheRealServiceManager->getServiceDebugInfo(&serviceDebugInfos);
+    if (Status status = mUnifiedServiceManager->getServiceDebugInfo(&serviceDebugInfos);
         !status.isOk()) {
         ALOGW("%s Failed to get ServiceDebugInfo", __FUNCTION__);
         return ret;

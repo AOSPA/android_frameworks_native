@@ -61,6 +61,10 @@ public:
     MOCK_CONST_METHOD0(hasRoundedCorners, bool());
     MOCK_CONST_METHOD0(getMetadata, gui::LayerMetadata*());
     MOCK_CONST_METHOD0(getRelativeMetadata, gui::LayerMetadata*());
+
+    /* QTI_BEGIN */
+    MOCK_CONST_METHOD0(getLayerId, int32_t());
+    /* QTI_END */
 };
 
 } // namespace android::compositionengine::mock

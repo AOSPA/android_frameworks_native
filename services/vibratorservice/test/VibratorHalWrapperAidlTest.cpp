@@ -16,7 +16,7 @@
 
 #define LOG_TAG "VibratorHalWrapperAidlTest"
 
-#include <android/hardware/vibrator/IVibrator.h>
+#include <aidl/android/hardware/vibrator/IVibrator.h>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -27,18 +27,17 @@
 #include <vibratorservice/VibratorCallbackScheduler.h>
 #include <vibratorservice/VibratorHalWrapper.h>
 
+#include "test_mocks.h"
 #include "test_utils.h"
 
-using android::binder::Status;
-
-using android::hardware::vibrator::Braking;
-using android::hardware::vibrator::CompositeEffect;
-using android::hardware::vibrator::CompositePrimitive;
-using android::hardware::vibrator::Effect;
-using android::hardware::vibrator::EffectStrength;
-using android::hardware::vibrator::IVibrator;
-using android::hardware::vibrator::IVibratorCallback;
-using android::hardware::vibrator::PrimitivePwle;
+using aidl::android::hardware::vibrator::Braking;
+using aidl::android::hardware::vibrator::CompositeEffect;
+using aidl::android::hardware::vibrator::CompositePrimitive;
+using aidl::android::hardware::vibrator::Effect;
+using aidl::android::hardware::vibrator::EffectStrength;
+using aidl::android::hardware::vibrator::IVibrator;
+using aidl::android::hardware::vibrator::IVibratorCallback;
+using aidl::android::hardware::vibrator::PrimitivePwle;
 
 using namespace android;
 using namespace std::chrono_literals;
@@ -46,61 +45,10 @@ using namespace testing;
 
 // -------------------------------------------------------------------------------------------------
 
-class MockBinder : public BBinder {
-public:
-    MOCK_METHOD(status_t, linkToDeath,
-                (const sp<DeathRecipient>& recipient, void* cookie, uint32_t flags), (override));
-    MOCK_METHOD(status_t, unlinkToDeath,
-                (const wp<DeathRecipient>& recipient, void* cookie, uint32_t flags,
-                 wp<DeathRecipient>* outRecipient),
-                (override));
-    MOCK_METHOD(status_t, pingBinder, (), (override));
-};
-
-class MockIVibrator : public IVibrator {
-public:
-    MOCK_METHOD(Status, getCapabilities, (int32_t * ret), (override));
-    MOCK_METHOD(Status, off, (), (override));
-    MOCK_METHOD(Status, on, (int32_t timeout, const sp<IVibratorCallback>& cb), (override));
-    MOCK_METHOD(Status, perform,
-                (Effect e, EffectStrength s, const sp<IVibratorCallback>& cb, int32_t* ret),
-                (override));
-    MOCK_METHOD(Status, getSupportedEffects, (std::vector<Effect> * ret), (override));
-    MOCK_METHOD(Status, setAmplitude, (float amplitude), (override));
-    MOCK_METHOD(Status, setExternalControl, (bool enabled), (override));
-    MOCK_METHOD(Status, getCompositionDelayMax, (int32_t * ret), (override));
-    MOCK_METHOD(Status, getCompositionSizeMax, (int32_t * ret), (override));
-    MOCK_METHOD(Status, getSupportedPrimitives, (std::vector<CompositePrimitive> * ret),
-                (override));
-    MOCK_METHOD(Status, getPrimitiveDuration, (CompositePrimitive p, int32_t* ret), (override));
-    MOCK_METHOD(Status, compose,
-                (const std::vector<CompositeEffect>& e, const sp<IVibratorCallback>& cb),
-                (override));
-    MOCK_METHOD(Status, composePwle,
-                (const std::vector<PrimitivePwle>& e, const sp<IVibratorCallback>& cb), (override));
-    MOCK_METHOD(Status, getSupportedAlwaysOnEffects, (std::vector<Effect> * ret), (override));
-    MOCK_METHOD(Status, alwaysOnEnable, (int32_t id, Effect e, EffectStrength s), (override));
-    MOCK_METHOD(Status, alwaysOnDisable, (int32_t id), (override));
-    MOCK_METHOD(Status, getQFactor, (float * ret), (override));
-    MOCK_METHOD(Status, getResonantFrequency, (float * ret), (override));
-    MOCK_METHOD(Status, getFrequencyResolution, (float* ret), (override));
-    MOCK_METHOD(Status, getFrequencyMinimum, (float* ret), (override));
-    MOCK_METHOD(Status, getBandwidthAmplitudeMap, (std::vector<float> * ret), (override));
-    MOCK_METHOD(Status, getPwlePrimitiveDurationMax, (int32_t * ret), (override));
-    MOCK_METHOD(Status, getPwleCompositionSizeMax, (int32_t * ret), (override));
-    MOCK_METHOD(Status, getSupportedBraking, (std::vector<Braking> * ret), (override));
-    MOCK_METHOD(int32_t, getInterfaceVersion, (), (override));
-    MOCK_METHOD(std::string, getInterfaceHash, (), (override));
-    MOCK_METHOD(IBinder*, onAsBinder, (), (override));
-};
-
-// -------------------------------------------------------------------------------------------------
-
 class VibratorHalWrapperAidlTest : public Test {
 public:
     void SetUp() override {
-        mMockBinder = new StrictMock<MockBinder>();
-        mMockHal = new StrictMock<MockIVibrator>();
+        mMockHal = ndk::SharedRefBase::make<StrictMock<vibrator::MockIVibrator>>();
         mMockScheduler = std::make_shared<StrictMock<vibrator::MockCallbackScheduler>>();
         mWrapper = std::make_unique<vibrator::AidlHalWrapper>(mMockScheduler, mMockHal);
         ASSERT_NE(mWrapper, nullptr);
@@ -109,54 +57,28 @@ public:
 protected:
     std::shared_ptr<StrictMock<vibrator::MockCallbackScheduler>> mMockScheduler = nullptr;
     std::unique_ptr<vibrator::HalWrapper> mWrapper = nullptr;
-    sp<StrictMock<MockIVibrator>> mMockHal = nullptr;
-    sp<StrictMock<MockBinder>> mMockBinder = nullptr;
+    std::shared_ptr<StrictMock<vibrator::MockIVibrator>> mMockHal = nullptr;
 };
 
 // -------------------------------------------------------------------------------------------------
-
-ACTION(TriggerCallbackInArg1) {
-    if (arg1 != nullptr) {
-        arg1->onComplete();
-    }
-}
-
-ACTION(TriggerCallbackInArg2) {
-    if (arg2 != nullptr) {
-        arg2->onComplete();
-    }
-}
-
-TEST_F(VibratorHalWrapperAidlTest, TestPing) {
-    EXPECT_CALL(*mMockHal.get(), onAsBinder())
-            .Times(Exactly(2))
-            .WillRepeatedly(Return(mMockBinder.get()));
-    EXPECT_CALL(*mMockBinder.get(), pingBinder())
-            .Times(Exactly(2))
-            .WillOnce(Return(android::OK))
-            .WillRepeatedly(Return(android::DEAD_OBJECT));
-
-    ASSERT_TRUE(mWrapper->ping().isOk());
-    ASSERT_TRUE(mWrapper->ping().isFailed());
-}
 
 TEST_F(VibratorHalWrapperAidlTest, TestOnWithCallbackSupport) {
     {
         InSequence seq;
         EXPECT_CALL(*mMockHal.get(), getCapabilities(_))
                 .Times(Exactly(1))
-                .WillRepeatedly(
-                        DoAll(SetArgPointee<0>(IVibrator::CAP_ON_CALLBACK), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<0>(IVibrator::CAP_ON_CALLBACK),
+                                Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), on(Eq(10), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(TriggerCallbackInArg1(), Return(Status())));
+                .WillOnce(DoAll(WithArg<1>(vibrator::TriggerCallback()),
+                                Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), on(Eq(100), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(
-                        Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)));
         EXPECT_CALL(*mMockHal.get(), on(Eq(1000), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
     }
 
     std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
@@ -179,20 +101,20 @@ TEST_F(VibratorHalWrapperAidlTest, TestOnWithoutCallbackSupport) {
         InSequence seq;
         EXPECT_CALL(*mMockHal.get(), getCapabilities(_))
                 .Times(Exactly(1))
-                .WillRepeatedly(
-                        DoAll(SetArgPointee<0>(IVibrator::CAP_COMPOSE_EFFECTS), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<0>(IVibrator::CAP_COMPOSE_EFFECTS),
+                                Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), on(Eq(10), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status()));
+                .WillOnce(Return(ndk::ScopedAStatus::ok()));
         EXPECT_CALL(*mMockScheduler.get(), schedule(_, Eq(10ms)))
                 .Times(Exactly(1))
-                .WillRepeatedly(vibrator::TriggerSchedulerCallback());
+                .WillOnce(vibrator::TriggerSchedulerCallback());
         EXPECT_CALL(*mMockHal.get(), on(Eq(11), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromStatusT(UNKNOWN_TRANSACTION)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromStatus(STATUS_UNKNOWN_TRANSACTION)));
         EXPECT_CALL(*mMockHal.get(), on(Eq(12), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
     }
 
     std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
@@ -211,10 +133,9 @@ TEST_F(VibratorHalWrapperAidlTest, TestOnWithoutCallbackSupport) {
 TEST_F(VibratorHalWrapperAidlTest, TestOff) {
     EXPECT_CALL(*mMockHal.get(), off())
             .Times(Exactly(3))
-            .WillOnce(Return(Status()))
-            .WillOnce(
-                    Return(Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)))
-            .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+            .WillOnce(Return(ndk::ScopedAStatus::ok()))
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)))
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
 
     ASSERT_TRUE(mWrapper->off().isOk());
     ASSERT_TRUE(mWrapper->off().isUnsupported());
@@ -224,13 +145,15 @@ TEST_F(VibratorHalWrapperAidlTest, TestOff) {
 TEST_F(VibratorHalWrapperAidlTest, TestSetAmplitude) {
     {
         InSequence seq;
-        EXPECT_CALL(*mMockHal.get(), setAmplitude(Eq(0.1f))).Times(Exactly(1));
+        EXPECT_CALL(*mMockHal.get(), setAmplitude(Eq(0.1f)))
+                .Times(Exactly(1))
+                .WillOnce(Return(ndk::ScopedAStatus::ok()));
         EXPECT_CALL(*mMockHal.get(), setAmplitude(Eq(0.2f)))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromStatusT(UNKNOWN_TRANSACTION)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromStatus(STATUS_UNKNOWN_TRANSACTION)));
         EXPECT_CALL(*mMockHal.get(), setAmplitude(Eq(0.5f)))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
     }
 
     ASSERT_TRUE(mWrapper->setAmplitude(0.1f).isOk());
@@ -241,12 +164,13 @@ TEST_F(VibratorHalWrapperAidlTest, TestSetAmplitude) {
 TEST_F(VibratorHalWrapperAidlTest, TestSetExternalControl) {
     {
         InSequence seq;
-        EXPECT_CALL(*mMockHal.get(), setExternalControl(Eq(true))).Times(Exactly(1));
+        EXPECT_CALL(*mMockHal.get(), setExternalControl(Eq(true)))
+                .Times(Exactly(1))
+                .WillOnce(Return(ndk::ScopedAStatus::ok()));
         EXPECT_CALL(*mMockHal.get(), setExternalControl(Eq(false)))
                 .Times(Exactly(2))
-                .WillOnce(Return(
-                        Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)))
-                .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)))
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
     }
 
     ASSERT_TRUE(mWrapper->setExternalControl(true).isOk());
@@ -259,15 +183,16 @@ TEST_F(VibratorHalWrapperAidlTest, TestAlwaysOnEnable) {
         InSequence seq;
         EXPECT_CALL(*mMockHal.get(),
                     alwaysOnEnable(Eq(1), Eq(Effect::CLICK), Eq(EffectStrength::LIGHT)))
-                .Times(Exactly(1));
+                .Times(Exactly(1))
+                .WillOnce(Return(ndk::ScopedAStatus::ok()));
         EXPECT_CALL(*mMockHal.get(),
                     alwaysOnEnable(Eq(2), Eq(Effect::TICK), Eq(EffectStrength::MEDIUM)))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromStatusT(UNKNOWN_TRANSACTION)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromStatus(STATUS_UNKNOWN_TRANSACTION)));
         EXPECT_CALL(*mMockHal.get(),
                     alwaysOnEnable(Eq(3), Eq(Effect::POP), Eq(EffectStrength::STRONG)))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
     }
 
     auto result = mWrapper->alwaysOnEnable(1, Effect::CLICK, EffectStrength::LIGHT);
@@ -281,14 +206,15 @@ TEST_F(VibratorHalWrapperAidlTest, TestAlwaysOnEnable) {
 TEST_F(VibratorHalWrapperAidlTest, TestAlwaysOnDisable) {
     {
         InSequence seq;
-        EXPECT_CALL(*mMockHal.get(), alwaysOnDisable(Eq(1))).Times(Exactly(1));
+        EXPECT_CALL(*mMockHal.get(), alwaysOnDisable(Eq(1)))
+                .Times(Exactly(1))
+                .WillOnce(Return(ndk::ScopedAStatus::ok()));
         EXPECT_CALL(*mMockHal.get(), alwaysOnDisable(Eq(2)))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(
-                        Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)));
         EXPECT_CALL(*mMockHal.get(), alwaysOnDisable(Eq(3)))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
     }
 
     ASSERT_TRUE(mWrapper->alwaysOnDisable(1).isOk());
@@ -311,66 +237,70 @@ TEST_F(VibratorHalWrapperAidlTest, TestGetInfoDoesNotCacheFailedResult) {
     std::vector<float> amplitudes = {0.f, 1.f, 0.f};
 
     std::vector<std::chrono::milliseconds> primitiveDurations;
-    constexpr auto primitiveRange = enum_range<CompositePrimitive>();
+    constexpr auto primitiveRange = ndk::enum_range<CompositePrimitive>();
     constexpr auto primitiveCount = std::distance(primitiveRange.begin(), primitiveRange.end());
     primitiveDurations.resize(primitiveCount);
     primitiveDurations[static_cast<size_t>(CompositePrimitive::CLICK)] = 10ms;
 
     EXPECT_CALL(*mMockHal.get(), getCapabilities(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(IVibrator::CAP_ON_CALLBACK), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(IVibrator::CAP_ON_CALLBACK),
+                            Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getSupportedEffects(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(supportedEffects), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(supportedEffects), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getSupportedBraking(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(supportedBraking), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(supportedBraking), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getSupportedPrimitives(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(supportedPrimitives), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(
+                    DoAll(SetArgPointee<0>(supportedPrimitives), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::CLICK), _))
             .Times(Exactly(1))
-            .WillRepeatedly(DoAll(SetArgPointee<1>(10), Return(Status())));
+            .WillOnce(DoAll(SetArgPointee<1>(10), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getCompositionSizeMax(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(COMPOSITION_SIZE_MAX), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(COMPOSITION_SIZE_MAX),
+                            Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getCompositionDelayMax(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(PRIMITIVE_DELAY_MAX), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(
+                    DoAll(SetArgPointee<0>(PRIMITIVE_DELAY_MAX), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getPwlePrimitiveDurationMax(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(PWLE_DURATION_MAX), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(PWLE_DURATION_MAX), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getPwleCompositionSizeMax(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(PWLE_SIZE_MAX), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(PWLE_SIZE_MAX), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getFrequencyMinimum(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(F_MIN), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(F_MIN), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getResonantFrequency(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(F0), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(F0), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getFrequencyResolution(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(F_RESOLUTION), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(F_RESOLUTION), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getQFactor(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(Q_FACTOR), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(Q_FACTOR), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getBandwidthAmplitudeMap(_))
             .Times(Exactly(2))
-            .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(amplitudes), Return(Status())));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(amplitudes), Return(ndk::ScopedAStatus::ok())));
 
     vibrator::Info failed = mWrapper->getInfo();
     ASSERT_TRUE(failed.capabilities.isFailed());
@@ -417,46 +347,46 @@ TEST_F(VibratorHalWrapperAidlTest, TestGetInfoCachesResult) {
 
     EXPECT_CALL(*mMockHal.get(), getCapabilities(_))
             .Times(Exactly(1))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(IVibrator::CAP_ON_CALLBACK), Return(Status())));
+            .WillOnce(DoAll(SetArgPointee<0>(IVibrator::CAP_ON_CALLBACK),
+                            Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getSupportedEffects(_))
             .Times(Exactly(1))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(supportedEffects), Return(Status())));
+            .WillOnce(DoAll(SetArgPointee<0>(supportedEffects), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getQFactor(_))
             .Times(Exactly(1))
-            .WillRepeatedly(
-                    Return(Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)));
     EXPECT_CALL(*mMockHal.get(), getSupportedPrimitives(_))
             .Times(Exactly(1))
-            .WillRepeatedly(Return(Status::fromStatusT(UNKNOWN_TRANSACTION)));
+            .WillOnce(Return(ndk::ScopedAStatus::fromStatus(STATUS_UNKNOWN_TRANSACTION)));
     EXPECT_CALL(*mMockHal.get(), getCompositionSizeMax(_))
             .Times(Exactly(1))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(COMPOSITION_SIZE_MAX), Return(Status())));
+            .WillOnce(DoAll(SetArgPointee<0>(COMPOSITION_SIZE_MAX),
+                            Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getCompositionDelayMax(_))
             .Times(Exactly(1))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(PRIMITIVE_DELAY_MAX), Return(Status())));
+            .WillOnce(
+                    DoAll(SetArgPointee<0>(PRIMITIVE_DELAY_MAX), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getPwlePrimitiveDurationMax(_))
             .Times(Exactly(1))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(PWLE_DURATION_MAX), Return(Status())));
+            .WillOnce(DoAll(SetArgPointee<0>(PWLE_DURATION_MAX), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getPwleCompositionSizeMax(_))
             .Times(Exactly(1))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(PWLE_SIZE_MAX), Return(Status())));
+            .WillOnce(DoAll(SetArgPointee<0>(PWLE_SIZE_MAX), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getFrequencyMinimum(_))
             .Times(Exactly(1))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(F_MIN), Return(Status())));
+            .WillOnce(DoAll(SetArgPointee<0>(F_MIN), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getResonantFrequency(_))
             .Times(Exactly(1))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(F0), Return(Status())));
+            .WillOnce(DoAll(SetArgPointee<0>(F0), Return(ndk::ScopedAStatus::ok())));
     EXPECT_CALL(*mMockHal.get(), getFrequencyResolution(_))
             .Times(Exactly(1))
-            .WillRepeatedly(
-                    Return(Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)));
     EXPECT_CALL(*mMockHal.get(), getBandwidthAmplitudeMap(_))
             .Times(Exactly(1))
-            .WillRepeatedly(Return(Status::fromStatusT(UNKNOWN_TRANSACTION)));
+            .WillOnce(Return(ndk::ScopedAStatus::fromStatus(STATUS_UNKNOWN_TRANSACTION)));
     EXPECT_CALL(*mMockHal.get(), getSupportedBraking(_))
             .Times(Exactly(1))
-            .WillRepeatedly(
-                    Return(Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)));
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)));
 
     std::vector<std::thread> threads;
     for (int i = 0; i < 10; i++) {
@@ -487,18 +417,18 @@ TEST_F(VibratorHalWrapperAidlTest, TestPerformEffectWithCallbackSupport) {
         InSequence seq;
         EXPECT_CALL(*mMockHal.get(), getCapabilities(_))
                 .Times(Exactly(1))
-                .WillRepeatedly(
-                        DoAll(SetArgPointee<0>(IVibrator::CAP_PERFORM_CALLBACK), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<0>(IVibrator::CAP_PERFORM_CALLBACK),
+                                Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), perform(Eq(Effect::CLICK), Eq(EffectStrength::LIGHT), _, _))
                 .Times(Exactly(1))
-                .WillRepeatedly(
-                        DoAll(SetArgPointee<3>(1000), TriggerCallbackInArg2(), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<3>(1000), WithArg<2>(vibrator::TriggerCallback()),
+                                Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), perform(Eq(Effect::POP), Eq(EffectStrength::MEDIUM), _, _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromStatusT(UNKNOWN_TRANSACTION)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromStatus(STATUS_UNKNOWN_TRANSACTION)));
         EXPECT_CALL(*mMockHal.get(), perform(Eq(Effect::THUD), Eq(EffectStrength::STRONG), _, _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
     }
 
     std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
@@ -525,21 +455,20 @@ TEST_F(VibratorHalWrapperAidlTest, TestPerformEffectWithoutCallbackSupport) {
         InSequence seq;
         EXPECT_CALL(*mMockHal.get(), getCapabilities(_))
                 .Times(Exactly(1))
-                .WillRepeatedly(
-                        DoAll(SetArgPointee<0>(IVibrator::CAP_ON_CALLBACK), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<0>(IVibrator::CAP_ON_CALLBACK),
+                                Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), perform(Eq(Effect::CLICK), Eq(EffectStrength::LIGHT), _, _))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(SetArgPointee<3>(10), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<3>(10), Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockScheduler.get(), schedule(_, Eq(10ms)))
                 .Times(Exactly(1))
-                .WillRepeatedly(vibrator::TriggerSchedulerCallback());
+                .WillOnce(vibrator::TriggerSchedulerCallback());
         EXPECT_CALL(*mMockHal.get(), perform(Eq(Effect::POP), Eq(EffectStrength::MEDIUM), _, _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(
-                        Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)));
         EXPECT_CALL(*mMockHal.get(), perform(Eq(Effect::THUD), Eq(EffectStrength::STRONG), _, _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
     }
 
     std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
@@ -576,26 +505,28 @@ TEST_F(VibratorHalWrapperAidlTest, TestPerformComposedEffect) {
         InSequence seq;
         EXPECT_CALL(*mMockHal.get(), getSupportedPrimitives(_))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(SetArgPointee<0>(supportedPrimitives), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<0>(supportedPrimitives),
+                                Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::CLICK), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(SetArgPointee<1>(1), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<1>(1), Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::SPIN), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(SetArgPointee<1>(2), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<1>(2), Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::THUD), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(SetArgPointee<1>(3), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<1>(3), Return(ndk::ScopedAStatus::ok())));
 
         EXPECT_CALL(*mMockHal.get(), compose(Eq(emptyEffects), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(TriggerCallbackInArg1(), Return(Status())));
+                .WillOnce(DoAll(WithArg<1>(vibrator::TriggerCallback()),
+                                Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), compose(Eq(singleEffect), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromStatusT(UNKNOWN_TRANSACTION)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromStatus(STATUS_UNKNOWN_TRANSACTION)));
         EXPECT_CALL(*mMockHal.get(), compose(Eq(multipleEffects), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
     }
 
     std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
@@ -630,26 +561,32 @@ TEST_F(VibratorHalWrapperAidlTest, TestPerformComposedCachesPrimitiveDurationsAn
         InSequence seq;
         EXPECT_CALL(*mMockHal.get(), getSupportedPrimitives(_))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(SetArgPointee<0>(supportedPrimitives), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<0>(supportedPrimitives),
+                                Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::SPIN), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(SetArgPointee<1>(2), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<1>(2), Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::THUD), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)));
         EXPECT_CALL(*mMockHal.get(), compose(Eq(multipleEffects), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(TriggerCallbackInArg1(), Return(Status())));
+                .WillOnce(DoAll(WithArg<1>(vibrator::TriggerCallback()),
+                                Return(ndk::ScopedAStatus::ok())));
 
         EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::SPIN), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(SetArgPointee<1>(2), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<1>(2), Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), getPrimitiveDuration(Eq(CompositePrimitive::THUD), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(DoAll(SetArgPointee<1>(2), Return(Status())));
+                .WillOnce(DoAll(SetArgPointee<1>(2), Return(ndk::ScopedAStatus::ok())));
         EXPECT_CALL(*mMockHal.get(), compose(Eq(multipleEffects), _))
                 .Times(Exactly(2))
-                .WillRepeatedly(DoAll(TriggerCallbackInArg1(), Return(Status())));
+                // ndk::ScopedAStatus::ok() cannot be copy-constructed so can't use WillRepeatedly
+                .WillOnce(DoAll(WithArg<1>(vibrator::TriggerCallback()),
+                                Return(ndk::ScopedAStatus::ok())))
+                .WillOnce(DoAll(WithArg<1>(vibrator::TriggerCallback()),
+                                Return(ndk::ScopedAStatus::ok())));
     }
 
     std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
@@ -680,12 +617,12 @@ TEST_F(VibratorHalWrapperAidlTest, TestPerformPwleEffect) {
         InSequence seq;
         EXPECT_CALL(*mMockHal.get(), composePwle(Eq(emptyPrimitives), _))
                 .Times(Exactly(1))
-                .WillRepeatedly(Return(
-                        Status::fromExceptionCode(Status::Exception::EX_UNSUPPORTED_OPERATION)));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)));
         EXPECT_CALL(*mMockHal.get(), composePwle(Eq(multiplePrimitives), _))
                 .Times(Exactly(2))
-                .WillOnce(Return(Status::fromExceptionCode(Status::Exception::EX_SECURITY)))
-                .WillRepeatedly(DoAll(TriggerCallbackInArg1(), Return(Status())));
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+                .WillOnce(DoAll(WithArg<1>(vibrator::TriggerCallback()),
+                                Return(ndk::ScopedAStatus::ok())));
     }
 
     std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();

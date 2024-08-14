@@ -57,7 +57,7 @@ else
         exit 1
     fi
     ${ANDROID_BUILD_TOP}/build/soong/soong_ui.bash --make-mode binder_sdk
-    BINDER_SDK_ZIP="${ANDROID_BUILD_TOP}/out/soong/.intermediates/frameworks/native/libs/binder/binder_sdk/linux_glibc_x86_64/*/binder_sdk.zip"
+    BINDER_SDK_ZIP="${ANDROID_BUILD_TOP}/out/soong/.intermediates/frameworks/native/libs/binder/binder_sdk/linux_glibc_x86_64/binder_sdk.zip"
     DOCKER_PATH="$(dirname $(ls -1 ${BINDER_SDK_ZIP} | head --lines=1))"
 fi
 

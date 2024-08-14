@@ -1585,10 +1585,15 @@ status_t Parcel::writeFileDescriptor(int fd, bool takeOwnership) {
             fdVariant = borrowed_fd(fd);
         }
         if (!mAllowFds) {
+            ALOGE("FDs are not allowed in this parcel. Both the service and the client must set "
+                  "the FileDescriptorTransportMode and agree on the support.");
             return FDS_NOT_ALLOWED;
         }
         switch (rpcFields->mSession->getFileDescriptorTransportMode()) {
             case RpcSession::FileDescriptorTransportMode::NONE: {
+                ALOGE("FDs are not allowed in this RpcSession. Both the service and the client "
+                      "must set "
+                      "the FileDescriptorTransportMode and agree on the support.");
                 return FDS_NOT_ALLOWED;
             }
             case RpcSession::FileDescriptorTransportMode::UNIX:

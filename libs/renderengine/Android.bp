@@ -105,6 +105,7 @@ filegroup {
         "skia/filters/LinearEffect.cpp",
         "skia/filters/MouriMap.cpp",
         "skia/filters/StretchShaderFactory.cpp",
+        "skia/filters/EdgeExtensionShaderFactory.cpp",
     ],
 }
 

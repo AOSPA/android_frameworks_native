@@ -169,6 +169,8 @@ public:
 
     DeviceId getLastUsedInputDeviceId() override { return reader->getLastUsedInputDeviceId(); }
 
+    void notifyMouseCursorFadedOnTyping() override { reader->notifyMouseCursorFadedOnTyping(); }
+
 private:
     std::unique_ptr<InputReaderInterface> reader;
 };

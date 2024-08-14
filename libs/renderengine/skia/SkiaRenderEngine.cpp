@@ -54,8 +54,8 @@
 #include <SkTileMode.h>
 #include <android-base/stringprintf.h>
 #include <common/FlagManager.h>
+#include <common/trace.h>
 #include <gui/FenceMonitor.h>
-#include <gui/TraceUtils.h>
 #include <include/gpu/ganesh/SkSurfaceGanesh.h>
 #include <pthread.h>
 #include <src/core/SkTraceEventCommon.h>
@@ -64,7 +64,6 @@
 #include <ui/DebugUtils.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/HdrRenderTypeUtils.h>
-#include <utils/Trace.h>
 
 #include <cmath>
 #include <cstdint>
@@ -261,7 +260,7 @@ void SkiaRenderEngine::SkSLCacheMonitor::store(const SkData& key, const SkData& 
                                                const SkString& description) {
     mShadersCachedSinceLastCall++;
     mTotalShadersCompiled++;
-    ATRACE_FORMAT("SF cache: %i shaders", mTotalShadersCompiled);
+    SFTRACE_FORMAT("SF cache: %i shaders", mTotalShadersCompiled);
 }
 
 int SkiaRenderEngine::reportShadersCompiled() {
@@ -416,7 +415,7 @@ void SkiaRenderEngine::mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer,
     if (isProtectedBuffer || isProtected() || !isGpuSampleable) {
         return;
     }
-    ATRACE_CALL();
+    SFTRACE_CALL();
 
     // If we were to support caching protected buffers then we will need to switch the
     // currently bound context if we are not already using the protected context (and subsequently
@@ -441,7 +440,7 @@ void SkiaRenderEngine::mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer,
 }
 
 void SkiaRenderEngine::unmapExternalTextureBuffer(sp<GraphicBuffer>&& buffer) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     std::lock_guard<std::mutex> lock(mRenderingMutex);
     if (const auto& iter = mGraphicBufferExternalRefs.find(buffer->getId());
         iter != mGraphicBufferExternalRefs.end()) {
@@ -498,7 +497,7 @@ bool SkiaRenderEngine::canSkipPostRenderCleanup() const {
 }
 
 void SkiaRenderEngine::cleanupPostRender() {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     std::lock_guard<std::mutex> lock(mRenderingMutex);
     mTextureCleanupMgr.cleanup();
 }
@@ -507,15 +506,23 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
         const RuntimeEffectShaderParameters& parameters) {
     // The given surface will be stretched by HWUI via matrix transformation
     // which gets similar results for most surfaces
-    // Determine later on if we need to leverage the stertch shader within
+    // Determine later on if we need to leverage the stretch shader within
     // surface flinger
     const auto& stretchEffect = parameters.layer.stretchEffect;
     const auto& targetBuffer = parameters.layer.source.buffer.buffer;
+    const auto graphicBuffer = targetBuffer ? targetBuffer->getBuffer() : nullptr;
+
     auto shader = parameters.shader;
-    if (stretchEffect.hasEffect()) {
-        const auto graphicBuffer = targetBuffer ? targetBuffer->getBuffer() : nullptr;
-        if (graphicBuffer && parameters.shader) {
+    if (graphicBuffer && parameters.shader) {
+        if (stretchEffect.hasEffect()) {
             shader = mStretchShaderFactory.createSkShader(shader, stretchEffect);
+        }
+        // The given surface requires to be filled outside of its buffer bounds if the edge
+        // extension is required
+        const auto& edgeExtensionEffect = parameters.layer.edgeExtensionEffect;
+        if (edgeExtensionEffect.hasEffect()) {
+            shader = mEdgeExtensionShaderFactory.createSkShader(shader, parameters.layer,
+                                                                parameters.imageBounds);
         }
     }
 
@@ -525,21 +532,26 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
                           static_cast<ui::PixelFormat>(targetBuffer->getPixelFormat()))
                 : std::nullopt;
 
-        if (parameters.display.tonemapStrategy == DisplaySettings::TonemapStrategy::Local) {
-            // TODO: Handle color matrix transforms in linear space.
-            SkImage* image = parameters.shader->isAImage((SkMatrix*)nullptr, (SkTileMode*)nullptr);
-            if (image) {
-                static MouriMap kMapper;
-                const float ratio = getHdrRenderType(parameters.layer.sourceDataspace, format) ==
-                                HdrRenderType::GENERIC_HDR
-                        ? 1.0f
-                        : parameters.layerDimmingRatio;
-                return kMapper.mouriMap(getActiveContext(), parameters.shader, ratio);
-            }
+        const auto hdrType = getHdrRenderType(parameters.layer.sourceDataspace, format,
+                                              parameters.layerDimmingRatio);
+
+        const auto usingLocalTonemap =
+                parameters.display.tonemapStrategy == DisplaySettings::TonemapStrategy::Local &&
+                hdrType != HdrRenderType::SDR &&
+                shader->isAImage((SkMatrix*)nullptr, (SkTileMode*)nullptr);
+
+        if (usingLocalTonemap) {
+            static MouriMap kMapper;
+            const float ratio =
+                    hdrType == HdrRenderType::GENERIC_HDR ? 1.0f : parameters.layerDimmingRatio;
+            shader = kMapper.mouriMap(getActiveContext(), shader, ratio);
         }
 
+        // disable tonemapping if we already locally tonemapped
+        auto inputDataspace =
+                usingLocalTonemap ? parameters.outputDataSpace : parameters.layer.sourceDataspace;
         auto effect =
-                shaders::LinearEffect{.inputDataspace = parameters.layer.sourceDataspace,
+                shaders::LinearEffect{.inputDataspace = inputDataspace,
                                       .outputDataspace = parameters.outputDataSpace,
                                       .undoPremultipliedAlpha = parameters.undoPremultipliedAlpha,
                                       .fakeOutputDataspace = parameters.fakeOutputDataspace};
@@ -555,20 +567,20 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
 
         mat4 colorTransform = parameters.layer.colorTransform;
 
-        colorTransform *=
-                mat4::scale(vec4(parameters.layerDimmingRatio, parameters.layerDimmingRatio,
-                                 parameters.layerDimmingRatio, 1.f));
+        if (!usingLocalTonemap) {
+            colorTransform *=
+                    mat4::scale(vec4(parameters.layerDimmingRatio, parameters.layerDimmingRatio,
+                                     parameters.layerDimmingRatio, 1.f));
+        }
 
-        const auto targetBuffer = parameters.layer.source.buffer.buffer;
-        const auto graphicBuffer = targetBuffer ? targetBuffer->getBuffer() : nullptr;
         const auto hardwareBuffer = graphicBuffer ? graphicBuffer->toAHardwareBuffer() : nullptr;
-        return createLinearEffectShader(parameters.shader, effect, runtimeEffect,
-                                        std::move(colorTransform), parameters.display.maxLuminance,
+        return createLinearEffectShader(shader, effect, runtimeEffect, std::move(colorTransform),
+                                        parameters.display.maxLuminance,
                                         parameters.display.currentLuminanceNits,
                                         parameters.layer.source.buffer.maxLuminanceNits,
                                         hardwareBuffer, parameters.display.renderIntent);
     }
-    return parameters.shader;
+    return shader;
 }
 
 void SkiaRenderEngine::initCanvas(SkCanvas* canvas, const DisplaySettings& display) {
@@ -683,7 +695,7 @@ void SkiaRenderEngine::drawLayersInternal(
         const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
         const DisplaySettings& display, const std::vector<LayerSettings>& layers,
         const std::shared_ptr<ExternalTexture>& buffer, base::unique_fd&& bufferFence) {
-    ATRACE_FORMAT("%s for %s", __func__, display.namePlusId.c_str());
+    SFTRACE_FORMAT("%s for %s", __func__, display.namePlusId.c_str());
 
     std::lock_guard<std::mutex> lock(mRenderingMutex);
 
@@ -777,7 +789,7 @@ void SkiaRenderEngine::drawLayersInternal(
         logSettings(display);
     }
     for (const auto& layer : layers) {
-        ATRACE_FORMAT("DrawLayer: %s", layer.name.c_str());
+        SFTRACE_FORMAT("DrawLayer: %s", layer.name.c_str());
 
         if (kPrintLayerSettings) {
             logSettings(layer);
@@ -872,7 +884,7 @@ void SkiaRenderEngine::drawLayersInternal(
             // TODO(b/182216890): Filter out empty layers earlier
             if (blurRect.width() > 0 && blurRect.height() > 0) {
                 if (layer.backgroundBlurRadius > 0) {
-                    ATRACE_NAME("BackgroundBlur");
+                    SFTRACE_NAME("BackgroundBlur");
                     auto blurredImage = mBlurFilter->generate(context, layer.backgroundBlurRadius,
                                                               blurInput, blurRect);
 
@@ -885,7 +897,7 @@ void SkiaRenderEngine::drawLayersInternal(
                 canvas->concat(getSkM44(layer.blurRegionTransform).asM33());
                 for (auto region : layer.blurRegions) {
                     if (cachedBlurs[region.blurRadius] == nullptr) {
-                        ATRACE_NAME("BlurRegion");
+                        SFTRACE_NAME("BlurRegion");
                         cachedBlurs[region.blurRadius] =
                                 mBlurFilter->generate(context, region.blurRadius, blurInput,
                                                       blurRect);
@@ -968,7 +980,7 @@ void SkiaRenderEngine::drawLayersInternal(
 
         SkPaint paint;
         if (layer.source.buffer.buffer) {
-            ATRACE_NAME("DrawImage");
+            SFTRACE_NAME("DrawImage");
             validateInputBufferUsage(layer.source.buffer.buffer->getBuffer());
             const auto& item = layer.source.buffer;
             auto imageTextureRef = getOrCreateBackendTexture(item.buffer->getBuffer(), false);
@@ -1035,18 +1047,20 @@ void SkiaRenderEngine::drawLayersInternal(
                                                            toSkColorSpace(layerDataspace)));
             }
 
-            paint.setShader(createRuntimeEffectShader(
-                    RuntimeEffectShaderParameters{.shader = shader,
-                                                  .layer = layer,
-                                                  .display = display,
-                                                  .undoPremultipliedAlpha = !item.isOpaque &&
-                                                          item.usePremultipliedAlpha,
-                                                  .requiresLinearEffect = requiresLinearEffect,
-                                                  .layerDimmingRatio = dimInLinearSpace
-                                                          ? layerDimmingRatio
-                                                          : 1.f,
-                                                  .outputDataSpace = display.outputDataspace,
-                                                  .fakeOutputDataspace = fakeDataspace}));
+            SkRect imageBounds;
+            matrix.mapRect(&imageBounds, SkRect::Make(image->bounds()));
+
+            paint.setShader(createRuntimeEffectShader(RuntimeEffectShaderParameters{
+                    .shader = shader,
+                    .layer = layer,
+                    .display = display,
+                    .undoPremultipliedAlpha = !item.isOpaque && item.usePremultipliedAlpha,
+                    .requiresLinearEffect = requiresLinearEffect,
+                    .layerDimmingRatio = dimInLinearSpace ? layerDimmingRatio : 1.f,
+                    .outputDataSpace = display.outputDataspace,
+                    .fakeOutputDataspace = fakeDataspace,
+                    .imageBounds = imageBounds,
+            }));
 
             // Turn on dithering when dimming beyond this (arbitrary) threshold...
             static constexpr float kDimmingThreshold = 0.9f;
@@ -1099,7 +1113,7 @@ void SkiaRenderEngine::drawLayersInternal(
                 paint.setColorFilter(SkColorFilters::Matrix(colorMatrix));
             }
         } else {
-            ATRACE_NAME("DrawColor");
+            SFTRACE_NAME("DrawColor");
             const auto color = layer.source.solidColor;
             sk_sp<SkShader> shader = SkShaders::Color(SkColor4f{.fR = color.r,
                                                                 .fG = color.g,
@@ -1114,7 +1128,8 @@ void SkiaRenderEngine::drawLayersInternal(
                                                   .requiresLinearEffect = requiresLinearEffect,
                                                   .layerDimmingRatio = layerDimmingRatio,
                                                   .outputDataSpace = display.outputDataspace,
-                                                  .fakeOutputDataspace = fakeDataspace}));
+                                                  .fakeOutputDataspace = fakeDataspace,
+                                                  .imageBounds = SkRect::MakeEmpty()}));
         }
 
         if (layer.disableBlending) {
@@ -1155,7 +1170,7 @@ void SkiaRenderEngine::drawLayersInternal(
             canvas->drawRect(bounds.rect(), paint);
         }
         if (kGaneshFlushAfterEveryLayer) {
-            ATRACE_NAME("flush surface");
+            SFTRACE_NAME("flush surface");
             // No-op in Graphite. If "flushing" Skia's drawing commands after each layer is desired
             // in Graphite, then a graphite::Recording would need to be snapped and tracked for each
             // layer, which is likely possible but adds non-trivial complexity (in both bookkeeping
@@ -1170,7 +1185,7 @@ void SkiaRenderEngine::drawLayersInternal(
     LOG_ALWAYS_FATAL_IF(activeSurface != dstSurface);
     auto drawFence = sp<Fence>::make(flushAndSubmit(context, dstSurface));
 
-    if (ATRACE_ENABLED()) {
+    if (SFTRACE_ENABLED()) {
         static gui::FenceMonitor sMonitor("RE Completion");
         sMonitor.queueFence(drawFence);
     }
@@ -1188,7 +1203,7 @@ size_t SkiaRenderEngine::getMaxViewportDims() const {
 void SkiaRenderEngine::drawShadow(SkCanvas* canvas,
                                   const SkRRect& casterRRect,
                                   const ShadowSettings& settings) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     const float casterZ = settings.length / 2.0f;
     const auto flags =
             settings.casterIsTranslucent ? kTransparentOccluder_ShadowFlag : kNone_ShadowFlag;

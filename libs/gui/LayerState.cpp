@@ -177,6 +177,7 @@ status_t layer_state_t::write(Parcel& output) const
     }
 
     SAFE_PARCEL(output.write, stretchEffect);
+    SAFE_PARCEL(output.writeParcelable, edgeExtensionParameters);
     SAFE_PARCEL(output.write, bufferCrop);
     SAFE_PARCEL(output.write, destinationFrame);
     SAFE_PARCEL(output.writeInt32, static_cast<uint32_t>(trustedOverlay));
@@ -306,6 +307,7 @@ status_t layer_state_t::read(const Parcel& input)
     }
 
     SAFE_PARCEL(input.read, stretchEffect);
+    SAFE_PARCEL(input.readParcelable, &edgeExtensionParameters);
     SAFE_PARCEL(input.read, bufferCrop);
     SAFE_PARCEL(input.read, destinationFrame);
     uint32_t trustedOverlayInt;
@@ -682,6 +684,10 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eStretchChanged;
         stretchEffect = other.stretchEffect;
     }
+    if (other.what & eEdgeExtensionChanged) {
+        what |= eEdgeExtensionChanged;
+        edgeExtensionParameters = other.edgeExtensionParameters;
+    }
     if (other.what & eBufferCropChanged) {
         what |= eBufferCropChanged;
         bufferCrop = other.bufferCrop;
@@ -783,6 +789,7 @@ uint64_t layer_state_t::diff(const layer_state_t& other) const {
     CHECK_DIFF(diff, eAutoRefreshChanged, other, autoRefresh);
     CHECK_DIFF(diff, eTrustedOverlayChanged, other, trustedOverlay);
     CHECK_DIFF(diff, eStretchChanged, other, stretchEffect);
+    CHECK_DIFF(diff, eEdgeExtensionChanged, other, edgeExtensionParameters);
     CHECK_DIFF(diff, eBufferCropChanged, other, bufferCrop);
     CHECK_DIFF(diff, eDestinationFrameChanged, other, destinationFrame);
     if (other.what & eProducerDisconnect) diff |= eProducerDisconnect;

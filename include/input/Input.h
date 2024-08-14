@@ -196,6 +196,13 @@ static constexpr size_t MAX_POINTERS = 16;
 #define MAX_POINTER_ID 31
 
 /*
+ * Number of high resolution scroll units for one detent (scroll wheel click), as defined in
+ * evdev. This is relevant when an input device is emitting REL_WHEEL_HI_RES or REL_HWHEEL_HI_RES
+ * events.
+ */
+constexpr int32_t kEvdevHighResScrollUnitsPerDetent = 120;
+
+/*
  * Declare a concrete type for the NDK's input event forward declaration.
  */
 struct AInputEvent {
@@ -893,9 +900,7 @@ public:
     void splitFrom(const MotionEvent& other, std::bitset<MAX_POINTER_ID + 1> splitPointerIds,
                    int32_t newEventId);
 
-    void addSample(
-            nsecs_t eventTime,
-            const PointerCoords* pointerCoords);
+    void addSample(nsecs_t eventTime, const PointerCoords* pointerCoords, int32_t eventId);
 
     void offsetLocation(float xOffset, float yOffset);
 

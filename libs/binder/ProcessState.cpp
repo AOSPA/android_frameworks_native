@@ -26,7 +26,6 @@
 #include <binder/Stability.h>
 #include <cutils/atomic.h>
 #include <utils/AndroidThreads.h>
-#include <utils/Log.h>
 #include <utils/String8.h>
 #include <utils/Thread.h>
 
@@ -555,7 +554,7 @@ ProcessState::ProcessState(const char* driver)
         mMaxThreads(DEFAULT_MAX_BINDER_THREADS),
         mCurrentThreads(0),
         mKernelStartedThreads(0),
-        mStarvationStartTimeMs(0),
+        mStarvationStartTime(never()),
         mForked(false),
         mThreadPoolStarted(false),
         mThreadPoolSeq(1),

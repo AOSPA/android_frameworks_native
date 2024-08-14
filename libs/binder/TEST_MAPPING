@@ -129,6 +129,12 @@
       "name": "memunreachable_binder_test"
     }
   ],
+  "postsubmit": [
+    {
+      "name": "binder_sdk_test",
+      "host": true
+    }
+  ],
   "imports": [
     {
       "path": "packages/modules/Virtualization"

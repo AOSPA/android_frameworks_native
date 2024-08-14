@@ -58,6 +58,7 @@ cc_test {
     ],
     test_suites: ["device-tests"],
     static_libs: ["libc++fs"],
+    header_libs: ["surfaceflinger_tests_common_headers"],
     srcs: [
         ":libsurfaceflinger_mock_sources",
         ":libsurfaceflinger_sources",
@@ -84,6 +85,7 @@ cc_test {
         "FrameTimelineTest.cpp",
         "GameModeTest.cpp",
         "HWComposerTest.cpp",
+        "JankTrackerTest.cpp",
         "OneShotTimerTest.cpp",
         "LayerHistoryTest.cpp",
         "LayerHistoryIntegrationTest.cpp",
@@ -210,6 +212,7 @@ cc_defaults {
         "libsync",
         "libui",
         "libutils",
+        "libtracing_perfetto",
     ],
     header_libs: [
         "android.hardware.graphics.composer3-command-buffer",

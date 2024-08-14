@@ -1381,6 +1381,12 @@ int Surface::query(int what, int* value) const {
             }
         }
     }
+
+    /* QTI_BEGIN */
+    if (mQtiSurfaceGPPExtn && mQtiSurfaceGPPExtn->IsGPPEnabled()) {
+        return mQtiSurfaceGPPExtn->query(what, value);
+    }
+    /* QTI_END */
     return mGraphicBufferProducer->query(what, value);
 }
 

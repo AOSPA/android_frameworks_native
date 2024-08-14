@@ -411,16 +411,6 @@ TEST_F(InputDispatcherTest, InjectInputEvent_ValidatesMotionEvents) {
             << "Should reject motion events with duplicate pointer ids.";
 }
 
-/* Test InputDispatcher for notifyConfigurationChanged and notifySwitch events */
-
-TEST_F(InputDispatcherTest, NotifyConfigurationChanged_CallsPolicy) {
-    constexpr nsecs_t eventTime = 20;
-    mDispatcher->notifyConfigurationChanged({/*id=*/10, eventTime});
-    ASSERT_TRUE(mDispatcher->waitForIdle());
-
-    mFakePolicy->assertNotifyConfigurationChangedWasCalled(eventTime);
-}
-
 TEST_F(InputDispatcherTest, NotifySwitch_CallsPolicy) {
     NotifySwitchArgs args(InputEvent::nextId(), /*eventTime=*/20, /*policyFlags=*/0,
                           /*switchValues=*/1,
@@ -4172,6 +4162,121 @@ TEST_F(InputDispatcherTest, SplitTouchesSendCorrectActionDownTime) {
     window2->consumeMotionEvent(WithDownTime(secondDown->getDownTime()));
 }
 
+/**
+ * When events are not split, the downTime should be adjusted such that the downTime corresponds
+ * to the event time of the first ACTION_DOWN. If a new window appears, it should not affect
+ * the event routing because the first window prevents splitting.
+ */
+TEST_F(InputDispatcherTest, SplitTouchesSendCorrectActionDownTimeForNewWindow) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window1 =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window1", DISPLAY_ID);
+    window1->setTouchableRegion(Region{{0, 0, 100, 100}});
+    window1->setPreventSplitting(true);
+
+    sp<FakeWindowHandle> window2 =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window2", DISPLAY_ID);
+    window2->setTouchableRegion(Region{{100, 0, 200, 100}});
+
+    mDispatcher->onWindowInfosChanged({{*window1->getInfo()}, {}, 0, 0});
+
+    // Touch down on the first window
+    NotifyMotionArgs downArgs = MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                        .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                        .build();
+    mDispatcher->notifyMotion(downArgs);
+
+    window1->consumeMotionEvent(
+            AllOf(WithMotionAction(ACTION_DOWN), WithDownTime(downArgs.downTime)));
+
+    // Second window is added
+    mDispatcher->onWindowInfosChanged({{*window1->getInfo(), *window2->getInfo()}, {}, 0, 0});
+
+    // Now touch down on the window with another pointer
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(150).y(50))
+                                      .downTime(downArgs.downTime)
+                                      .build());
+    window1->consumeMotionPointerDown(1, AllOf(WithDownTime(downArgs.downTime)));
+
+    // Finish the gesture
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(150).y(50))
+                                      .downTime(downArgs.downTime)
+                                      .build());
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .downTime(downArgs.downTime)
+                                      .build());
+    window1->consumeMotionPointerUp(1, AllOf(WithDownTime(downArgs.downTime)));
+    window1->consumeMotionEvent(
+            AllOf(WithMotionAction(ACTION_UP), WithDownTime(downArgs.downTime)));
+    window2->assertNoEvents();
+}
+
+/**
+ * When splitting touch events, the downTime should be adjusted such that the downTime corresponds
+ * to the event time of the first ACTION_DOWN sent to the new window.
+ * If a new window that does not support split appears on the screen and gets touched with the
+ * second finger, it should not get any events because it doesn't want split touches. At the same
+ * time, the first window should not get the pointer_down event because it supports split touches
+ * (and the touch occurred outside of the bounds of window1).
+ */
+TEST_F(InputDispatcherTest, SplitTouchesDropsEventForNonSplittableSecondWindow) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window1 =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window1", DISPLAY_ID);
+    window1->setTouchableRegion(Region{{0, 0, 100, 100}});
+
+    sp<FakeWindowHandle> window2 =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Window2", DISPLAY_ID);
+    window2->setTouchableRegion(Region{{100, 0, 200, 100}});
+
+    mDispatcher->onWindowInfosChanged({{*window1->getInfo()}, {}, 0, 0});
+
+    // Touch down on the first window
+    NotifyMotionArgs downArgs = MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                        .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                        .build();
+    mDispatcher->notifyMotion(downArgs);
+
+    window1->consumeMotionEvent(
+            AllOf(WithMotionAction(ACTION_DOWN), WithDownTime(downArgs.downTime)));
+
+    // Second window is added
+    window2->setPreventSplitting(true);
+    mDispatcher->onWindowInfosChanged({{*window1->getInfo(), *window2->getInfo()}, {}, 0, 0});
+
+    // Now touch down on the window with another pointer
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(150).y(50))
+                                      .downTime(downArgs.downTime)
+                                      .build());
+    // Event is dropped because window2 doesn't support split touch, and window1 does.
+
+    // Complete the gesture
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(150).y(50))
+                                      .downTime(downArgs.downTime)
+                                      .build());
+    // A redundant MOVE event is generated that doesn't carry any new information
+    window1->consumeMotionEvent(
+            AllOf(WithMotionAction(ACTION_MOVE), WithDownTime(downArgs.downTime)));
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .downTime(downArgs.downTime)
+                                      .build());
+
+    window1->consumeMotionEvent(
+            AllOf(WithMotionAction(ACTION_UP), WithDownTime(downArgs.downTime)));
+    window1->assertNoEvents();
+    window2->assertNoEvents();
+}
+
 TEST_F(InputDispatcherTest, HoverMoveEnterMouseClickAndHoverMoveExit) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> windowLeft = sp<FakeWindowHandle>::make(application, mDispatcher, "Left",
@@ -4375,6 +4480,201 @@ TEST_F(InputDispatcherTest, TwoPointersDownMouseClick) {
     window->consumeMotionEvent(AllOf(WithMotionAction(ACTION_MOVE), WithDeviceId(touchDeviceId)));
     window->assertNoEvents();
 }
+
+/**
+ * A spy window sits above a window with NO_INPUT_CHANNEL. Ensure that the spy receives events even
+ * though the window underneath should not get any events.
+ */
+TEST_F(InputDispatcherTest, NonSplittableSpyAboveNoInputChannelWindowSinglePointer) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+
+    sp<FakeWindowHandle> spyWindow = sp<FakeWindowHandle>::make(application, mDispatcher, "Spy",
+                                                                ui::LogicalDisplayId::DEFAULT);
+    spyWindow->setFrame(Rect(0, 0, 100, 100));
+    spyWindow->setTrustedOverlay(true);
+    spyWindow->setPreventSplitting(true);
+    spyWindow->setSpy(true);
+    // Another window below spy that has both NO_INPUT_CHANNEL and PREVENT_SPLITTING
+    sp<FakeWindowHandle> inputSinkWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Input sink below spy",
+                                       ui::LogicalDisplayId::DEFAULT);
+    inputSinkWindow->setFrame(Rect(0, 0, 100, 100));
+    inputSinkWindow->setTrustedOverlay(true);
+    inputSinkWindow->setPreventSplitting(true);
+    inputSinkWindow->setNoInputChannel(true);
+
+    mDispatcher->onWindowInfosChanged(
+            {{*spyWindow->getInfo(), *inputSinkWindow->getInfo()}, {}, 0, 0});
+
+    // Tap the spy window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(51))
+                                      .build());
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(/*id=*/0, ToolType::FINGER).x(50).y(51))
+                    .build());
+
+    spyWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_DOWN)));
+    spyWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_UP)));
+    inputSinkWindow->assertNoEvents();
+}
+
+/**
+ * A spy window sits above a window with NO_INPUT_CHANNEL. Ensure that the spy receives events even
+ * though the window underneath should not get any events.
+ * Same test as above, but with two pointers touching instead of one.
+ */
+TEST_F(InputDispatcherTest, NonSplittableSpyAboveNoInputChannelWindowTwoPointers) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+
+    sp<FakeWindowHandle> spyWindow = sp<FakeWindowHandle>::make(application, mDispatcher, "Spy",
+                                                                ui::LogicalDisplayId::DEFAULT);
+    spyWindow->setFrame(Rect(0, 0, 100, 100));
+    spyWindow->setTrustedOverlay(true);
+    spyWindow->setPreventSplitting(true);
+    spyWindow->setSpy(true);
+    // Another window below spy that would have both NO_INPUT_CHANNEL and PREVENT_SPLITTING
+    sp<FakeWindowHandle> inputSinkWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Input sink below spy",
+                                       ui::LogicalDisplayId::DEFAULT);
+    inputSinkWindow->setFrame(Rect(0, 0, 100, 100));
+    inputSinkWindow->setTrustedOverlay(true);
+    inputSinkWindow->setPreventSplitting(true);
+    inputSinkWindow->setNoInputChannel(true);
+
+    mDispatcher->onWindowInfosChanged(
+            {{*spyWindow->getInfo(), *inputSinkWindow->getInfo()}, {}, 0, 0});
+
+    // Both fingers land into the spy window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(51))
+                                      .build());
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(/*id=*/0, ToolType::FINGER).x(50).y(51))
+                    .pointer(PointerBuilder(/*id=*/1, ToolType::FINGER).x(10).y(11))
+                    .build());
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(POINTER_1_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(/*id=*/0, ToolType::FINGER).x(50).y(51))
+                    .pointer(PointerBuilder(/*id=*/1, ToolType::FINGER).x(10).y(11))
+                    .build());
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(/*id=*/0, ToolType::FINGER).x(50).y(51))
+                    .build());
+
+    spyWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_DOWN)));
+    spyWindow->consumeMotionPointerDown(1, WithPointerCount(2));
+    spyWindow->consumeMotionPointerUp(1, WithPointerCount(2));
+    spyWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_UP)));
+    inputSinkWindow->assertNoEvents();
+}
+
+/** Check the behaviour for cases where input sink prevents or doesn't prevent splitting. */
+class SpyThatPreventsSplittingWithApplicationFixture : public InputDispatcherTest,
+                                                       public ::testing::WithParamInterface<bool> {
+};
+
+/**
+ * Three windows:
+ * - An application window (app window)
+ * - A spy window that does not overlap the app window. Has PREVENT_SPLITTING flag
+ * - A window below the spy that has NO_INPUT_CHANNEL (call it 'inputSink')
+ *
+ * The spy window is side-by-side with the app window. The inputSink is below the spy.
+ * We first touch the area outside of the appWindow, but inside spyWindow.
+ * Only the SPY window should get the DOWN event.
+ * The spy pilfers after receiving the first DOWN event.
+ * Next, we touch the app window.
+ * The spy should receive POINTER_DOWN(1) (since spy is preventing splits).
+ * Also, since the spy is already pilfering the first pointer, it will be sent the remaining new
+ * pointers automatically, as well.
+ * Next, the first pointer (from the spy) is lifted.
+ * Spy should get POINTER_UP(0).
+ * This event should not go to the app because the app never received this pointer to begin with.
+ * Now, lift the remaining pointer and check that the spy receives UP event.
+ *
+ * Finally, send a new ACTION_DOWN event to the spy and check that it's received.
+ * This test attempts to reproduce a crash in the dispatcher.
+ */
+TEST_P(SpyThatPreventsSplittingWithApplicationFixture, SpyThatPreventsSplittingWithApplication) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+
+    sp<FakeWindowHandle> spyWindow = sp<FakeWindowHandle>::make(application, mDispatcher, "Spy",
+                                                                ui::LogicalDisplayId::DEFAULT);
+    spyWindow->setFrame(Rect(100, 100, 200, 200));
+    spyWindow->setTrustedOverlay(true);
+    spyWindow->setPreventSplitting(true);
+    spyWindow->setSpy(true);
+    // Another window below spy that has both NO_INPUT_CHANNEL and PREVENT_SPLITTING
+    sp<FakeWindowHandle> inputSinkWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Input sink below spy",
+                                       ui::LogicalDisplayId::DEFAULT);
+    inputSinkWindow->setFrame(Rect(100, 100, 200, 200)); // directly below the spy
+    inputSinkWindow->setTrustedOverlay(true);
+    inputSinkWindow->setPreventSplitting(GetParam());
+    inputSinkWindow->setNoInputChannel(true);
+
+    sp<FakeWindowHandle> appWindow = sp<FakeWindowHandle>::make(application, mDispatcher, "App",
+                                                                ui::LogicalDisplayId::DEFAULT);
+    appWindow->setFrame(Rect(0, 0, 100, 100));
+
+    mDispatcher->setFocusedApplication(ui::LogicalDisplayId::DEFAULT, application);
+    mDispatcher->onWindowInfosChanged(
+            {{*spyWindow->getInfo(), *inputSinkWindow->getInfo(), *appWindow->getInfo()},
+             {},
+             0,
+             0});
+
+    // First finger lands outside of the appWindow, but inside of the spy window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(150).y(150))
+                                      .build());
+    spyWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_DOWN)));
+
+    mDispatcher->pilferPointers(spyWindow->getToken());
+
+    // Second finger lands in the app, and goes to the spy window. It doesn't go to the app because
+    // the spy is already pilfering the first pointer, and this automatically grants the remaining
+    // new pointers to the spy, as well.
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(/*id=*/0, ToolType::FINGER).x(150).y(150))
+                    .pointer(PointerBuilder(/*id=*/1, ToolType::FINGER).x(50).y(50))
+                    .build());
+
+    spyWindow->consumeMotionPointerDown(1, WithPointerCount(2));
+
+    // Now lift up the first pointer
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(POINTER_0_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(/*id=*/0, ToolType::FINGER).x(150).y(150))
+                    .pointer(PointerBuilder(/*id=*/1, ToolType::FINGER).x(50).y(50))
+                    .build());
+    spyWindow->consumeMotionPointerUp(0, WithPointerCount(2));
+
+    // And lift the remaining pointer!
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(/*id=*/1, ToolType::FINGER).x(50).y(50))
+                    .build());
+    spyWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_UP), WithPointerCount(1)));
+
+    // Now send a new DOWN, which should again go to spy.
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(150).y(150))
+                                      .build());
+    spyWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_DOWN)));
+    // The app window doesn't get any events this entire time because the spy received the events
+    // first and pilfered, which makes all new pointers go to it as well.
+    appWindow->assertNoEvents();
+}
+
+// Behaviour should be the same regardless of whether inputSink supports splitting.
+INSTANTIATE_TEST_SUITE_P(SpyThatPreventsSplittingWithApplication,
+                         SpyThatPreventsSplittingWithApplicationFixture, testing::Bool());
 
 TEST_F(InputDispatcherTest, HoverWithSpyWindows) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
@@ -5355,6 +5655,72 @@ TEST_F(InputDispatcherTest, SplittableAndNonSplittableWindows) {
                     .build());
     leftWindow->assertNoEvents();
     rightWindow->assertNoEvents();
+}
+
+/**
+ * Two windows: left and right. The left window has PREVENT_SPLITTING input config. Device A sends a
+ * down event to the right window. Device B sends a down event to the left window, and then a
+ * POINTER_DOWN event to the right window. However, since the left window prevents splitting, the
+ * POINTER_DOWN event should only go to the left window, and not to the right window.
+ * This test attempts to reproduce a crash.
+ */
+TEST_F(InputDispatcherTest, MultiDeviceTwoWindowsPreventSplitting) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> leftWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Left window (prevent splitting)",
+                                       ui::LogicalDisplayId::DEFAULT);
+    leftWindow->setFrame(Rect(0, 0, 100, 100));
+    leftWindow->setPreventSplitting(true);
+
+    sp<FakeWindowHandle> rightWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Right window",
+                                       ui::LogicalDisplayId::DEFAULT);
+    rightWindow->setFrame(Rect(100, 0, 200, 100));
+
+    mDispatcher->onWindowInfosChanged(
+            {{*leftWindow->getInfo(), *rightWindow->getInfo()}, {}, 0, 0});
+
+    const DeviceId deviceA = 9;
+    const DeviceId deviceB = 3;
+    // Touch the right window with device A
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(150).y(50))
+                                      .deviceId(deviceA)
+                                      .build());
+    rightWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_DOWN), WithDeviceId(deviceA)));
+    // Touch the left window with device B
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .deviceId(deviceB)
+                                      .build());
+    leftWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_DOWN), WithDeviceId(deviceB)));
+    // Send a second pointer from device B to the right window. It shouldn't go to the right window
+    // because the left window prevents splitting.
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .deviceId(deviceB)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(120).y(120))
+                                      .build());
+    leftWindow->consumeMotionPointerDown(1, WithDeviceId(deviceB));
+
+    // Finish the gesture for both devices
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .deviceId(deviceB)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(120).y(120))
+                                      .build());
+    leftWindow->consumeMotionPointerUp(1, WithDeviceId(deviceB));
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .deviceId(deviceB)
+                                      .build());
+    leftWindow->consumeMotionEvent(
+            AllOf(WithMotionAction(ACTION_UP), WithDeviceId(deviceB), WithPointerId(0, 0)));
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(150).y(50))
+                                      .deviceId(deviceA)
+                                      .build());
+    rightWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_UP), WithDeviceId(deviceA)));
 }
 
 TEST_F(InputDispatcherTest, TouchpadThreeFingerSwipeOnlySentToTrustedOverlays) {

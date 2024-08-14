@@ -21,6 +21,7 @@
  */
 
 #include <android-base/stringprintf.h>
+#include <common/trace.h>
 #include <compositionengine/CompositionEngine.h>
 #include <compositionengine/CompositionRefreshArgs.h>
 #include <compositionengine/DisplayCreationArgs.h>
@@ -31,9 +32,6 @@
 #include <compositionengine/impl/DumpHelpers.h>
 #include <compositionengine/impl/OutputLayer.h>
 #include <compositionengine/impl/RenderSurface.h>
-#include <gui/TraceUtils.h>
-
-#include <utils/Trace.h>
 #include <string>
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
@@ -281,7 +279,7 @@ void Display::beginFrame() {
 
 bool Display::chooseCompositionStrategy(
         std::optional<android::HWComposer::DeviceRequestedChanges>* outChanges) {
-    ATRACE_FORMAT("%s for %s", __func__, getNamePlusId().c_str());
+    SFTRACE_FORMAT("%s for %s", __func__, getNamePlusId().c_str());
     ALOGV(__FUNCTION__);
 
     if (mIsDisconnected) {
@@ -512,13 +510,13 @@ void Display::qtiBeginDraw() {
     auto displayext = surfaceflingerextension::QtiExtensionContext::instance().getDisplayExtension();
     auto hwcextn = surfaceflingerextension::QtiExtensionContext::instance().getQtiHWComposerExtension();
     if (displayext && hwcextn) {
-        ATRACE_CALL();
+        SFTRACE_CALL();
         const auto physicalDisplayId = PhysicalDisplayId::tryCast(mId);
         if (!physicalDisplayId.has_value() || isVirtual()) {
             if (!physicalDisplayId.has_value())
-                ATRACE_NAME("Specfence_noPhysicalDisplayId");
+                SFTRACE_NAME("Specfence_noPhysicalDisplayId");
             else
-                ATRACE_NAME("Specfence_isVirtual");
+                SFTRACE_NAME("Specfence_isVirtual");
             return;
         }
         composer::FBTLayerInfo fbtLayerInfo;
@@ -567,10 +565,10 @@ void Display::qtiBeginDraw() {
         dataspace =
                 renderSurface->qtiGetDisplaySurfaceExtension()->getClientTargetCurrentDataspace();
 
-        if (ATRACE_ENABLED()) {
+        if (SFTRACE_ENABLED()) {
             std::string temp =
                     "Specfence_QtiBeginDraw_currentIndex_" + std::to_string(current.index);
-            ATRACE_NAME(temp.c_str());
+            SFTRACE_NAME(temp.c_str());
         }
 
         if (current.index < 0) {
@@ -588,7 +586,7 @@ void Display::qtiBeginDraw() {
         }
     }
 #else
-    ATRACE_NAME("Specfence_macroisundefined");
+    SFTRACE_NAME("Specfence_macroisundefined");
 #endif
 }
 
@@ -596,7 +594,7 @@ void Display::qtiEndDraw() {
 #ifdef QTI_DISPLAY_EXTENSION
     auto displayext = surfaceflingerextension::QtiExtensionContext::instance().getDisplayExtension();
     if (displayext) {
-        ATRACE_CALL();
+        SFTRACE_CALL();
         auto& outputState = editState();
         if (!outputState.usesClientComposition || isVirtual()) {
             return;

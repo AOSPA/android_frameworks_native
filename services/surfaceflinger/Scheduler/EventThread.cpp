@@ -33,7 +33,7 @@
 #include <android-base/stringprintf.h>
 
 #include <binder/IPCThreadState.h>
-
+#include <common/trace.h>
 #include <cutils/compiler.h>
 #include <cutils/sched_policy.h>
 
@@ -41,7 +41,6 @@
 #include <gui/SchedulingPolicy.h>
 
 #include <utils/Errors.h>
-#include <utils/Trace.h>
 
 #include <common/FlagManager.h>
 #include <scheduler/VsyncConfig.h>
@@ -227,14 +226,14 @@ binder::Status EventThreadConnection::setVsyncRate(int rate) {
 }
 
 binder::Status EventThreadConnection::requestNextVsync() {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     mEventThread->requestNextVsync(sp<EventThreadConnection>::fromExisting(this));
     return binder::Status::ok();
 }
 
 binder::Status EventThreadConnection::getLatestVsyncEventData(
         ParcelableVsyncEventData* outVsyncEventData) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     outVsyncEventData->vsync =
             mEventThread->getLatestVsyncEventData(sp<EventThreadConnection>::fromExisting(this),
                                                   systemTime());

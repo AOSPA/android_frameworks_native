@@ -18,6 +18,7 @@
 
 #include <android-base/stringprintf.h>
 #include <android/native_window.h>
+#include <common/trace.h>
 #include <compositionengine/CompositionEngine.h>
 #include <compositionengine/Display.h>
 #include <compositionengine/DisplaySurface.h>
@@ -32,7 +33,6 @@
 #include <system/window.h>
 #include <ui/GraphicBuffer.h>
 #include <ui/Rect.h>
-#include <utils/Trace.h>
 
 /* QTI_BEGIN */
 #include "QtiExtension/QtiRenderSurfaceExtension.h"
@@ -159,7 +159,7 @@ void RenderSurface::prepareFrame(bool usesClientComposition, bool usesDeviceComp
 
 std::shared_ptr<renderengine::ExternalTexture> RenderSurface::dequeueBuffer(
         base::unique_fd* bufferFence) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     int fd = -1;
     ANativeWindowBuffer* buffer = nullptr;
 

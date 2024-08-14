@@ -71,18 +71,14 @@ struct RawEvent {
 
 /* Describes an absolute axis. */
 struct RawAbsoluteAxisInfo {
-    bool valid{false}; // true if the information is valid, false otherwise
-
     int32_t minValue{};   // minimum value
     int32_t maxValue{};   // maximum value
     int32_t flat{};       // center flat position, eg. flat == 8 means center is between -8 and 8
     int32_t fuzz{};       // error tolerance, eg. fuzz == 4 means value is +/- 4 due to noise
     int32_t resolution{}; // resolution in units per mm or radians per mm
-
-    inline void clear() { *this = RawAbsoluteAxisInfo(); }
 };
 
-std::ostream& operator<<(std::ostream& out, const RawAbsoluteAxisInfo& info);
+std::ostream& operator<<(std::ostream& out, const std::optional<RawAbsoluteAxisInfo>& info);
 
 /*
  * Input device classes.
@@ -258,9 +254,6 @@ public:
         DEVICE_ADDED = 0x10000000,
         // Sent when a device is removed.
         DEVICE_REMOVED = 0x20000000,
-        // Sent when all added/removed devices from the most recent scan have been reported.
-        // This event is always sent at least once.
-        FINISHED_DEVICE_SCAN = 0x30000000,
 
         FIRST_SYNTHETIC_EVENT = DEVICE_ADDED,
     };
@@ -793,7 +786,6 @@ private:
     std::vector<std::unique_ptr<Device>> mOpeningDevices;
     std::vector<std::unique_ptr<Device>> mClosingDevices;
 
-    bool mNeedToSendFinishedDeviceScan;
     bool mNeedToReopenDevices;
     bool mNeedToScanDevices;
     std::vector<std::string> mExcludedDevices;

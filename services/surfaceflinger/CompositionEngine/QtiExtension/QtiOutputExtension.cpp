@@ -150,7 +150,7 @@ void QtiOutputExtension::qtiGetVisibleLayerInfo(
 
         for (auto* layer: output->getOutputLayersOrderedByZ()) {
             sfext->qtiSetVisibleLayerInfo(*displayId, layer->getLayerFE().getDebugName(),
-                    layer->getLayerFE().getSequence());
+                    layer->getLayerFE().getLayerId());
         }
     }
 }

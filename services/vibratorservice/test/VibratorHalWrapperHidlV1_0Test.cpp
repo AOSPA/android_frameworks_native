@@ -16,7 +16,7 @@
 
 #define LOG_TAG "VibratorHalWrapperHidlV1_0Test"
 
-#include <android/hardware/vibrator/IVibrator.h>
+#include <aidl/android/hardware/vibrator/IVibrator.h>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -27,17 +27,18 @@
 #include <vibratorservice/VibratorCallbackScheduler.h>
 #include <vibratorservice/VibratorHalWrapper.h>
 
+#include "test_mocks.h"
 #include "test_utils.h"
 
 namespace V1_0 = android::hardware::vibrator::V1_0;
 
-using android::hardware::vibrator::Braking;
-using android::hardware::vibrator::CompositeEffect;
-using android::hardware::vibrator::CompositePrimitive;
-using android::hardware::vibrator::Effect;
-using android::hardware::vibrator::EffectStrength;
-using android::hardware::vibrator::IVibrator;
-using android::hardware::vibrator::PrimitivePwle;
+using aidl::android::hardware::vibrator::Braking;
+using aidl::android::hardware::vibrator::CompositeEffect;
+using aidl::android::hardware::vibrator::CompositePrimitive;
+using aidl::android::hardware::vibrator::Effect;
+using aidl::android::hardware::vibrator::EffectStrength;
+using aidl::android::hardware::vibrator::IVibrator;
+using aidl::android::hardware::vibrator::PrimitivePwle;
 
 using namespace android;
 using namespace std::chrono_literals;

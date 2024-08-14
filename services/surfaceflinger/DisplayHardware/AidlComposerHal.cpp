@@ -25,9 +25,8 @@
 #include <android/binder_ibinder_platform.h>
 #include <android/binder_manager.h>
 #include <common/FlagManager.h>
-#include <gui/TraceUtils.h>
+#include <common/trace.h>
 #include <log/log.h>
-#include <utils/Trace.h>
 
 #include <aidl/android/hardware/graphics/composer3/BnComposerCallback.h>
 
@@ -701,7 +700,7 @@ Error AidlComposer::getReleaseFences(Display display, std::vector<Layer>* outLay
 
 Error AidlComposer::presentDisplay(Display display, int* outPresentFence) {
     const auto displayId = translate<int64_t>(display);
-    ATRACE_FORMAT("HwcPresentDisplay %" PRId64, displayId);
+    SFTRACE_FORMAT("HwcPresentDisplay %" PRId64, displayId);
 
     Error error = Error::NONE;
     mMutex.lock_shared();
@@ -834,7 +833,7 @@ Error AidlComposer::validateDisplay(Display display, nsecs_t expectedPresentTime
                                     int32_t frameIntervalNs, uint32_t* outNumTypes,
                                     uint32_t* outNumRequests) {
     const auto displayId = translate<int64_t>(display);
-    ATRACE_FORMAT("HwcValidateDisplay %" PRId64, displayId);
+    SFTRACE_FORMAT("HwcValidateDisplay %" PRId64, displayId);
 
     Error error = Error::NONE;
     mMutex.lock_shared();
@@ -864,7 +863,7 @@ Error AidlComposer::presentOrValidateDisplay(Display display, nsecs_t expectedPr
                                              uint32_t* outNumRequests, int* outPresentFence,
                                              uint32_t* state) {
     const auto displayId = translate<int64_t>(display);
-    ATRACE_FORMAT("HwcPresentOrValidateDisplay %" PRId64, displayId);
+    SFTRACE_FORMAT("HwcPresentOrValidateDisplay %" PRId64, displayId);
 
     Error error = Error::NONE;
     mMutex.lock_shared();

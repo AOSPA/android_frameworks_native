@@ -14,6 +14,7 @@
 #include <composer_extn_intf.h>
 #include <list>
 #include <map>
+#include <set>
 
 #include "../DisplayHardware/HWComposer.h"
 #include "../DisplayHardware/PowerAdvisor.h"
@@ -294,7 +295,7 @@ private:
     bool mQtiAllowThermalFpsChange = false;
     bool mQtiRequestedContentFps = false;
     int mQtiFailedAttempts = 0;
-    bool mQtiHasScreenshot = false;
+    std::set<uint32_t> mQtiHasScreenshotSet;
 
     std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
     std::shared_ptr<DisplayConfigAidlCallbackHandler> mQtiAidlCallbackHandler = nullptr;

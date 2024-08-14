@@ -259,6 +259,7 @@ cc_library {
     ],
 
     shared_libs: [
+        "android.companion.virtualdevice.flags-aconfig-cc-host",
         "libbase",
         "libbinder",
         "libbinder_ndk",

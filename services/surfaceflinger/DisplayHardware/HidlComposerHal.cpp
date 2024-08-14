@@ -33,11 +33,11 @@
 #include <SurfaceFlingerProperties.h>
 #include <aidl/android/hardware/graphics/common/DisplayHotplugEvent.h>
 #include <android/binder_manager.h>
+#include <common/trace.h>
 #include <composer-command-buffer/2.2/ComposerCommandBuffer.h>
 #include <hidl/HidlTransportSupport.h>
 #include <hidl/HidlTransportUtils.h>
 #include <log/log.h>
-#include <utils/Trace.h>
 
 #include "HWC2.h"
 #include "Hal.h"
@@ -659,7 +659,7 @@ Error HidlComposer::getReleaseFences(Display display, std::vector<Layer>* outLay
 }
 
 Error HidlComposer::presentDisplay(Display display, int* outPresentFence) {
-    ATRACE_NAME("HwcPresentDisplay");
+    SFTRACE_NAME("HwcPresentDisplay");
     mWriter.selectDisplay(display);
     mWriter.presentDisplay();
 
@@ -747,7 +747,7 @@ Error HidlComposer::setClientTargetSlotCount(Display display) {
 Error HidlComposer::validateDisplay(Display display, nsecs_t /*expectedPresentTime*/,
                                     int32_t /*frameIntervalNs*/, uint32_t* outNumTypes,
                                     uint32_t* outNumRequests) {
-    ATRACE_NAME("HwcValidateDisplay");
+    SFTRACE_NAME("HwcValidateDisplay");
     mWriter.selectDisplay(display);
     mWriter.validateDisplay();
 
@@ -765,7 +765,7 @@ Error HidlComposer::presentOrValidateDisplay(Display display, nsecs_t /*expected
                                              int32_t /*frameIntervalNs*/, uint32_t* outNumTypes,
                                              uint32_t* outNumRequests, int* outPresentFence,
                                              uint32_t* state) {
-    ATRACE_NAME("HwcPresentOrValidateDisplay");
+    SFTRACE_NAME("HwcPresentOrValidateDisplay");
     mWriter.selectDisplay(display);
     mWriter.presentOrvalidateDisplay();
 

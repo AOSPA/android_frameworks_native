@@ -55,6 +55,10 @@ public:
     void setReleaseFence(const FenceResult& releaseFence) override;
     LayerFE::ReleaseFencePromiseStatus getReleaseFencePromiseStatus() override;
 
+    /* QTI_BEGIN */
+    int32_t getLayerId() const override;
+    /* QTI_END */
+
     std::unique_ptr<surfaceflinger::frontend::LayerSnapshot> mSnapshot;
 
 private:

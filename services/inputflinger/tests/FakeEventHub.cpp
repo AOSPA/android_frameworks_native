@@ -88,10 +88,6 @@ status_t FakeEventHub::disableDevice(int32_t deviceId) {
     return device->disable();
 }
 
-void FakeEventHub::finishDeviceScan() {
-    enqueueEvent(ARBITRARY_TIME, READ_TIME, 0, EventHubInterface::FINISHED_DEVICE_SCAN, 0, 0);
-}
-
 void FakeEventHub::addConfigurationProperty(int32_t deviceId, const char* key, const char* value) {
     getDevice(deviceId)->configuration.addProperty(key, value);
 }
@@ -105,7 +101,6 @@ void FakeEventHub::addAbsoluteAxis(int32_t deviceId, int axis, int32_t minValue,
     Device* device = getDevice(deviceId);
 
     RawAbsoluteAxisInfo info;
-    info.valid = true;
     info.minValue = minValue;
     info.maxValue = maxValue;
     info.flat = flat;

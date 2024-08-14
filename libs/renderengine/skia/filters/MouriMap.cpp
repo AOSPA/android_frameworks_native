@@ -35,7 +35,7 @@ const SkString kCrosstalkAndChunk16x16(R"(
         float maximum = 0.0;
         for (int y = 0; y < 16; y++) {
             for (int x = 0; x < 16; x++) {
-                float3 linear = toLinearSrgb(bitmap.eval(xy * 16 + vec2(x, y)).rgb) * hdrSdrRatio;
+                float3 linear = toLinearSrgb(bitmap.eval((xy - 0.5) * 16 + 0.5 + vec2(x, y)).rgb) * hdrSdrRatio;
                 float maxRGB = max(linear.r, max(linear.g, linear.b));
                 maximum = max(maximum, log2(max(maxRGB, 1.0)));
             }
@@ -49,7 +49,7 @@ const SkString kChunk8x8(R"(
         float maximum = 0.0;
         for (int y = 0; y < 8; y++) {
             for (int x = 0; x < 8; x++) {
-                maximum = max(maximum, bitmap.eval(xy * 8 + vec2(x, y)).r);
+                maximum = max(maximum, bitmap.eval((xy - 0.5) * 8 + 0.5 + vec2(x, y)).r);
             }
         }
         return float4(float3(maximum), 1.0);
@@ -84,13 +84,13 @@ const SkString kTonemap(R"(
         float3 linear = toLinearSrgb(rgba.rgb) * hdrSdrRatio;
 
         if (localMax <= 1.0) {
-            return float4(fromLinearSrgb(linear), 1.0);
+            return float4(fromLinearSrgb(linear), rgba.a);
         }
 
         float maxRGB = max(linear.r, max(linear.g, linear.b));
         localMax = max(localMax, maxRGB);
         float gain = (1 + maxRGB / (localMax * localMax)) / (1 + maxRGB);
-        return float4(fromLinearSrgb(linear * gain), 1.0);
+        return float4(fromLinearSrgb(linear * gain), rgba.a);
     }
 )");
 

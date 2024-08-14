@@ -22,6 +22,7 @@
 #include <variant>
 
 #include <android-base/logging.h>
+#include <android_companion_virtualdevice_flags.h>
 #include <com_android_input_flags.h>
 #include <gtest/gtest.h>
 #include <input/DisplayViewport.h>
@@ -127,6 +128,7 @@ private:
 } // namespace
 
 namespace input_flags = com::android::input::flags;
+namespace vd_flags = android::companion::virtualdevice::flags;
 
 /**
  * Unit tests for CursorInputMapper.
@@ -150,6 +152,10 @@ protected:
         EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_WHEEL))
                 .WillRepeatedly(Return(false));
         EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_HWHEEL))
+                .WillRepeatedly(Return(false));
+        EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_WHEEL_HI_RES))
+                .WillRepeatedly(Return(false));
+        EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_HWHEEL_HI_RES))
                 .WillRepeatedly(Return(false));
 
         mFakePolicy->setDefaultPointerDisplayId(DISPLAY_ID);
@@ -194,6 +200,7 @@ class CursorInputMapperUnitTest : public CursorInputMapperUnitTestBase {
 protected:
     void SetUp() override {
         input_flags::enable_new_mouse_pointer_ballistics(false);
+        vd_flags::high_resolution_scroll(false);
         CursorInputMapperUnitTestBase::SetUp();
     }
 };
@@ -840,6 +847,72 @@ TEST_F(CursorInputMapperUnitTest, ProcessWhenModeIsPointerShouldKeepZeroCoords) 
                               WithOrientation(0.0f), WithDistance(0.0f)))));
 }
 
+TEST_F(CursorInputMapperUnitTest, ProcessRegularScroll) {
+    createMapper();
+
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_REL, REL_WHEEL, 1);
+    args += process(ARBITRARY_TIME, EV_REL, REL_HWHEEL, 1);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    EXPECT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_SCROLL),
+                                          WithScroll(1.0f, 1.0f)))));
+}
+
+TEST_F(CursorInputMapperUnitTest, ProcessHighResScroll) {
+    vd_flags::high_resolution_scroll(true);
+    EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_WHEEL_HI_RES))
+            .WillRepeatedly(Return(true));
+    EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_HWHEEL_HI_RES))
+            .WillRepeatedly(Return(true));
+    createMapper();
+
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_REL, REL_WHEEL_HI_RES, 60);
+    args += process(ARBITRARY_TIME, EV_REL, REL_HWHEEL_HI_RES, 60);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    EXPECT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_SCROLL),
+                                          WithScroll(0.5f, 0.5f)))));
+}
+
+TEST_F(CursorInputMapperUnitTest, HighResScrollIgnoresRegularScroll) {
+    vd_flags::high_resolution_scroll(true);
+    EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_WHEEL_HI_RES))
+            .WillRepeatedly(Return(true));
+    EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_HWHEEL_HI_RES))
+            .WillRepeatedly(Return(true));
+    createMapper();
+
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_REL, REL_WHEEL_HI_RES, 60);
+    args += process(ARBITRARY_TIME, EV_REL, REL_HWHEEL_HI_RES, 60);
+    args += process(ARBITRARY_TIME, EV_REL, REL_WHEEL, 1);
+    args += process(ARBITRARY_TIME, EV_REL, REL_HWHEEL, 1);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    EXPECT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_SCROLL),
+                                          WithScroll(0.5f, 0.5f)))));
+}
+
 /**
  * When Pointer Capture is enabled, we expect to report unprocessed relative movements, so any
  * pointer acceleration or speed processing should not be applied.
@@ -1028,6 +1101,72 @@ TEST_F(CursorInputMapperUnitTestWithNewBallistics, ConfigureAccelerationOnDispla
                 ElementsAre(VariantWith<NotifyMotionArgs>(
                         AllOf(WithMotionAction(HOVER_MOVE), WithDisplayId(DISPLAY_ID),
                               WithRelativeMotion(10, 20)))));
+}
+
+TEST_F(CursorInputMapperUnitTestWithNewBallistics, ProcessRegularScroll) {
+    createMapper();
+
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_REL, REL_WHEEL, 1);
+    args += process(ARBITRARY_TIME, EV_REL, REL_HWHEEL, 1);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    EXPECT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_SCROLL),
+                                          WithScroll(1.0f, 1.0f)))));
+}
+
+TEST_F(CursorInputMapperUnitTestWithNewBallistics, ProcessHighResScroll) {
+    vd_flags::high_resolution_scroll(true);
+    EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_WHEEL_HI_RES))
+            .WillRepeatedly(Return(true));
+    EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_HWHEEL_HI_RES))
+            .WillRepeatedly(Return(true));
+    createMapper();
+
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_REL, REL_WHEEL_HI_RES, 60);
+    args += process(ARBITRARY_TIME, EV_REL, REL_HWHEEL_HI_RES, 60);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    EXPECT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_SCROLL),
+                                          WithScroll(0.5f, 0.5f)))));
+}
+
+TEST_F(CursorInputMapperUnitTestWithNewBallistics, HighResScrollIgnoresRegularScroll) {
+    vd_flags::high_resolution_scroll(true);
+    EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_WHEEL_HI_RES))
+            .WillRepeatedly(Return(true));
+    EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_HWHEEL_HI_RES))
+            .WillRepeatedly(Return(true));
+    createMapper();
+
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_REL, REL_WHEEL_HI_RES, 60);
+    args += process(ARBITRARY_TIME, EV_REL, REL_HWHEEL_HI_RES, 60);
+    args += process(ARBITRARY_TIME, EV_REL, REL_WHEEL, 1);
+    args += process(ARBITRARY_TIME, EV_REL, REL_HWHEEL, 1);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    EXPECT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_SCROLL),
+                                          WithScroll(0.5f, 0.5f)))));
 }
 
 namespace {

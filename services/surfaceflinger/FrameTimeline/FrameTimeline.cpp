@@ -22,13 +22,15 @@
 
 #include <android-base/stringprintf.h>
 #include <common/FlagManager.h>
+#include <common/trace.h>
 #include <utils/Log.h>
-#include <utils/Trace.h>
 
 #include <chrono>
 #include <cinttypes>
 #include <numeric>
 #include <unordered_set>
+
+#include "../Jank/JankTracker.h"
 
 namespace android::frametimeline {
 
@@ -357,7 +359,11 @@ void SurfaceFrame::setActualQueueTime(nsecs_t actualQueueTime) {
 
 void SurfaceFrame::setAcquireFenceTime(nsecs_t acquireFenceTime) {
     std::scoped_lock lock(mMutex);
-    mActuals.endTime = std::max(acquireFenceTime, mActualQueueTime);
+    if (CC_UNLIKELY(acquireFenceTime == Fence::SIGNAL_TIME_PENDING)) {
+        mActuals.endTime = mActualQueueTime;
+    } else {
+        mActuals.endTime = std::max(acquireFenceTime, mActualQueueTime);
+    }
 }
 
 void SurfaceFrame::setDropTime(nsecs_t dropTime) {
@@ -693,6 +699,13 @@ void SurfaceFrame::onPresent(nsecs_t presentTime, int32_t displayFrameJankType, 
         mTimeStats->incrementJankyFrames({refreshRate, mRenderRate, mOwnerUid, mLayerName,
                                           mGameMode, mJankType, displayDeadlineDelta,
                                           displayPresentDelta, deadlineDelta});
+
+        gui::JankData jd;
+        jd.frameVsyncId = mToken;
+        jd.jankType = mJankType;
+        jd.frameIntervalNs =
+                (mRenderRate ? *mRenderRate : mDisplayFrameRenderRate).getPeriodNsecs();
+        JankTracker::onJankData(mLayerId, jd);
     }
 }
 
@@ -828,7 +841,7 @@ void SurfaceFrame::trace(int64_t displayFrameToken, nsecs_t monoBootOffset) cons
 namespace impl {
 
 int64_t TokenManager::generateTokenForPredictions(TimelineItem&& predictions) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     std::scoped_lock lock(mMutex);
     while (mPredictions.size() >= kMaxTokens) {
         mPredictions.erase(mPredictions.begin());
@@ -874,7 +887,7 @@ void FrameTimeline::registerDataSource() {
 std::shared_ptr<SurfaceFrame> FrameTimeline::createSurfaceFrameForToken(
         const FrameTimelineInfo& frameTimelineInfo, pid_t ownerPid, uid_t ownerUid, int32_t layerId,
         std::string layerName, std::string debugName, bool isBuffer, GameMode gameMode) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     if (frameTimelineInfo.vsyncId == FrameTimelineInfo::INVALID_VSYNC_ID) {
         return std::make_shared<SurfaceFrame>(frameTimelineInfo, ownerPid, ownerUid, layerId,
                                               std::move(layerName), std::move(debugName),
@@ -910,14 +923,14 @@ FrameTimeline::DisplayFrame::DisplayFrame(std::shared_ptr<TimeStats> timeStats,
 }
 
 void FrameTimeline::addSurfaceFrame(std::shared_ptr<SurfaceFrame> surfaceFrame) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     std::scoped_lock lock(mMutex);
     mCurrentDisplayFrame->addSurfaceFrame(surfaceFrame);
 }
 
 void FrameTimeline::setSfWakeUp(int64_t token, nsecs_t wakeUpTime, Fps refreshRate,
                                 Fps renderRate) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     std::scoped_lock lock(mMutex);
     mCurrentDisplayFrame->onSfWakeUp(token, refreshRate, renderRate,
                                      mTokenManager.getPredictionsForToken(token), wakeUpTime);
@@ -926,7 +939,7 @@ void FrameTimeline::setSfWakeUp(int64_t token, nsecs_t wakeUpTime, Fps refreshRa
 void FrameTimeline::setSfPresent(nsecs_t sfPresentTime,
                                  const std::shared_ptr<FenceTime>& presentFence,
                                  const std::shared_ptr<FenceTime>& gpuFence) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     std::scoped_lock lock(mMutex);
     mCurrentDisplayFrame->setActualEndTime(sfPresentTime);
     mCurrentDisplayFrame->setGpuFence(gpuFence);
@@ -936,7 +949,7 @@ void FrameTimeline::setSfPresent(nsecs_t sfPresentTime,
 }
 
 void FrameTimeline::onCommitNotComposited() {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     std::scoped_lock lock(mMutex);
     mCurrentDisplayFrame->onCommitNotComposited();
     mCurrentDisplayFrame.reset();
@@ -1535,7 +1548,7 @@ void FrameTimeline::dumpPresentTime(std::string& result) {
 /* QTI_END */
 
 void FrameTimeline::parseArgs(const Vector<String16>& args, std::string& result) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     std::unordered_map<std::string, bool> argsMap;
     for (size_t i = 0; i < args.size(); i++) {
         argsMap[std::string(String8(args[i]).c_str())] = true;

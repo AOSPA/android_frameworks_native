@@ -18,6 +18,7 @@
 
 #include <android/input.h>
 #include <android/keycodes.h>
+#include <android_companion_virtualdevice_flags.h>
 #include <fcntl.h>
 #include <input/Input.h>
 #include <input/VirtualInputDevice.h>
@@ -39,6 +40,8 @@ static bool isDebug() {
 }
 
 namespace android {
+
+namespace vd_flags = android::companion::virtualdevice::flags;
 
 VirtualInputDevice::VirtualInputDevice(unique_fd fd) : mFd(std::move(fd)) {}
 
@@ -253,7 +256,10 @@ const std::map<int, int> VirtualMouse::BUTTON_CODE_MAPPING = {
         // clang-format on
 };
 
-VirtualMouse::VirtualMouse(unique_fd fd) : VirtualInputDevice(std::move(fd)) {}
+VirtualMouse::VirtualMouse(unique_fd fd)
+      : VirtualInputDevice(std::move(fd)),
+        mAccumulatedHighResScrollX(0),
+        mAccumulatedHighResScrollY(0) {}
 
 VirtualMouse::~VirtualMouse() {}
 
@@ -272,9 +278,47 @@ bool VirtualMouse::writeRelativeEvent(float relativeX, float relativeY,
 
 bool VirtualMouse::writeScrollEvent(float xAxisMovement, float yAxisMovement,
                                     std::chrono::nanoseconds eventTime) {
-    return writeInputEvent(EV_REL, REL_HWHEEL, xAxisMovement, eventTime) &&
-            writeInputEvent(EV_REL, REL_WHEEL, yAxisMovement, eventTime) &&
-            writeInputEvent(EV_SYN, SYN_REPORT, 0, eventTime);
+    if (!vd_flags::high_resolution_scroll()) {
+        return writeInputEvent(EV_REL, REL_HWHEEL, static_cast<int32_t>(xAxisMovement),
+                               eventTime) &&
+                writeInputEvent(EV_REL, REL_WHEEL, static_cast<int32_t>(yAxisMovement),
+                                eventTime) &&
+                writeInputEvent(EV_SYN, SYN_REPORT, 0, eventTime);
+    }
+
+    const auto highResScrollX =
+            static_cast<int32_t>(xAxisMovement * kEvdevHighResScrollUnitsPerDetent);
+    const auto highResScrollY =
+            static_cast<int32_t>(yAxisMovement * kEvdevHighResScrollUnitsPerDetent);
+    bool highResScrollResult =
+            writeInputEvent(EV_REL, REL_HWHEEL_HI_RES, highResScrollX, eventTime) &&
+            writeInputEvent(EV_REL, REL_WHEEL_HI_RES, highResScrollY, eventTime);
+    if (!highResScrollResult) {
+        return false;
+    }
+
+    // According to evdev spec, a high-resolution mouse needs to emit REL_WHEEL / REL_HWHEEL events
+    // in addition to high-res scroll events. Regular scroll events can approximate high-res scroll
+    // events, so we send a regular scroll event when the accumulated scroll motion reaches a detent
+    // (single mouse wheel click).
+    mAccumulatedHighResScrollX += highResScrollX;
+    mAccumulatedHighResScrollY += highResScrollY;
+    const int32_t scrollX = mAccumulatedHighResScrollX / kEvdevHighResScrollUnitsPerDetent;
+    const int32_t scrollY = mAccumulatedHighResScrollY / kEvdevHighResScrollUnitsPerDetent;
+    if (scrollX != 0) {
+        if (!writeInputEvent(EV_REL, REL_HWHEEL, scrollX, eventTime)) {
+            return false;
+        }
+        mAccumulatedHighResScrollX %= kEvdevHighResScrollUnitsPerDetent;
+    }
+    if (scrollY != 0) {
+        if (!writeInputEvent(EV_REL, REL_WHEEL, scrollY, eventTime)) {
+            return false;
+        }
+        mAccumulatedHighResScrollY %= kEvdevHighResScrollUnitsPerDetent;
+    }
+
+    return writeInputEvent(EV_SYN, SYN_REPORT, 0, eventTime);
 }
 
 // --- VirtualTouchscreen ---
@@ -507,6 +551,41 @@ bool VirtualStylus::handleStylusUp(uint16_t tool, std::chrono::nanoseconds event
     }
     mIsStylusDown = false;
     return true;
+}
+
+// --- VirtualRotaryEncoder ---
+VirtualRotaryEncoder::VirtualRotaryEncoder(unique_fd fd)
+      : VirtualInputDevice(std::move(fd)), mAccumulatedHighResScrollAmount(0) {}
+
+VirtualRotaryEncoder::~VirtualRotaryEncoder() {}
+
+bool VirtualRotaryEncoder::writeScrollEvent(float scrollAmount,
+                                            std::chrono::nanoseconds eventTime) {
+    if (!vd_flags::high_resolution_scroll()) {
+        return writeInputEvent(EV_REL, REL_WHEEL, static_cast<int32_t>(scrollAmount), eventTime) &&
+                writeInputEvent(EV_SYN, SYN_REPORT, 0, eventTime);
+    }
+
+    const auto highResScrollAmount =
+            static_cast<int32_t>(scrollAmount * kEvdevHighResScrollUnitsPerDetent);
+    if (!writeInputEvent(EV_REL, REL_WHEEL_HI_RES, highResScrollAmount, eventTime)) {
+        return false;
+    }
+
+    // According to evdev spec, a high-resolution scroll device needs to emit REL_WHEEL / REL_HWHEEL
+    // events in addition to high-res scroll events. Regular scroll events can approximate high-res
+    // scroll events, so we send a regular scroll event when the accumulated scroll motion reaches a
+    // detent (single wheel click).
+    mAccumulatedHighResScrollAmount += highResScrollAmount;
+    const int32_t scroll = mAccumulatedHighResScrollAmount / kEvdevHighResScrollUnitsPerDetent;
+    if (scroll != 0) {
+        if (!writeInputEvent(EV_REL, REL_WHEEL, scroll, eventTime)) {
+            return false;
+        }
+        mAccumulatedHighResScrollAmount %= kEvdevHighResScrollUnitsPerDetent;
+    }
+
+    return writeInputEvent(EV_SYN, SYN_REPORT, 0, eventTime);
 }
 
 } // namespace android

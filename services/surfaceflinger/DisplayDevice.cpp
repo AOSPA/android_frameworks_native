@@ -30,6 +30,7 @@
 
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
+#include <common/trace.h>
 #include <compositionengine/CompositionEngine.h>
 #include <compositionengine/Display.h>
 #include <compositionengine/DisplayColorProfile.h>
@@ -446,7 +447,7 @@ void DisplayDevice::enableHdrSdrRatioOverlay(bool enable) {
 }
 
 void DisplayDevice::updateHdrSdrRatioOverlayRatio(float currentHdrSdrRatio) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     mHdrSdrRatio = currentHdrSdrRatio;
     if (mHdrSdrRatioOverlay) {
         mHdrSdrRatioOverlay->changeHdrSdrRatio(currentHdrSdrRatio);
@@ -488,7 +489,7 @@ void DisplayDevice::enableRefreshRateOverlay(bool enable, bool setByHwc, Fps ref
 }
 
 void DisplayDevice::updateRefreshRateOverlayRate(Fps refreshRate, Fps renderFps, bool setByHwc) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     if (mRefreshRateOverlay) {
         if (!mRefreshRateOverlay->isSetByHwc() || setByHwc) {
             if (mRefreshRateSelector->isVrrDevice() && !mRefreshRateOverlay->isSetByHwc()) {
@@ -513,6 +514,12 @@ bool DisplayDevice::onKernelTimerChanged(std::optional<DisplayModeId> desiredMod
     }
 
     return false;
+}
+
+void DisplayDevice::onVrrIdle(bool idle) {
+    if (mRefreshRateOverlay) {
+        mRefreshRateOverlay->onVrrIdle(idle);
+    }
 }
 
 void DisplayDevice::animateOverlay() {

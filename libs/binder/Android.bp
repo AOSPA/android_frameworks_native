@@ -87,7 +87,7 @@ cc_library_headers {
 
 cc_cmake_snapshot {
     name: "binder_sdk",
-    modules: [
+    modules_host: [
         "libbinder_sdk",
         "libbinder_sdk_single_threaded",
         "libbinder_ndk_sdk",
@@ -100,7 +100,6 @@ cc_cmake_snapshot {
     prebuilts: [
         // to enable arm64 host support, build with musl - e.g. on aosp_cf_arm64_phone
         "aidl",
-        "libc++",
     ],
     include_sources: true,
     cflags: [
@@ -267,7 +266,20 @@ cc_defaults {
         "-Wunused-const-variable",
         "-DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION",
         "-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION",
+        // Hide symbols by default and set the BUILDING_LIBBINDER macro so that
+        // the code knows to export them.
+        "-fvisibility=hidden",
+        "-DBUILDING_LIBBINDER",
     ],
+
+    target: {
+        vendor: {
+            // Trimming the exported symbols reveals a bug in vendor code, so
+            // disable it for the vendor variant for now. http://b/349657329
+            // TODO: Fix the issue and remove this override.
+            cflags: ["-fvisibility=default"],
+        },
+    },
 }
 
 cc_defaults {
@@ -442,8 +454,10 @@ cc_defaults {
     name: "libbinder_kernel_defaults",
     srcs: [
         "BufferedTextOutput.cpp",
+        "BackendUnifiedServiceManager.cpp",
         "IPCThreadState.cpp",
         "IServiceManager.cpp",
+        "IServiceManagerFFI.cpp",
         "ProcessState.cpp",
         "Static.cpp",
         ":libbinder_aidl",
@@ -519,7 +533,6 @@ cc_library {
         "ParcelableHolder.cpp",
         "PersistableBundle.cpp",
     ],
-
     target: {
         android: {
             // NOT static to keep the wire protocol unfrozen

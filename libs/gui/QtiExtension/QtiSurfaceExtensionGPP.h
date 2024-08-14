@@ -20,6 +20,8 @@ public:
     inline bool IsGPPEnabled() const { return mIsEnable;};
     inline bool IsGPPSupported() const { return mIsSupported && mConnectedToGpu;};
     int getUid() const { return mUID;};
+    int query(int what, int* outValue) const;
+
     struct SidebandStream
     {
        bool seted = false;
@@ -36,6 +38,7 @@ private:
     bool mConnectedToGpu;
     int mUID;
     sp<IGraphicBufferProducer> mOriginalGbp;
+    sp<IGraphicBufferProducer> mGbp;
     sp<IBinder> mHandle;
     void* mLibHandler;
     void* mFuncInit;

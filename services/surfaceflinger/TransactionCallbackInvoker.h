@@ -63,8 +63,7 @@ public:
 
 class TransactionCallbackInvoker {
 public:
-    status_t addCallbackHandles(const std::deque<sp<CallbackHandle>>& handles,
-                                const std::vector<JankData>& jankData);
+    status_t addCallbackHandles(const std::deque<sp<CallbackHandle>>& handles);
     status_t addOnCommitCallbackHandles(const std::deque<sp<CallbackHandle>>& handles,
                                              std::deque<sp<CallbackHandle>>& outRemainingHandles);
 
@@ -77,9 +76,7 @@ public:
         mCompletedTransactions.clear();
     }
 
-    status_t addCallbackHandle(const sp<CallbackHandle>& handle,
-                               const std::vector<JankData>& jankData);
-
+    status_t addCallbackHandle(const sp<CallbackHandle>& handle);
 
 private:
     status_t findOrCreateTransactionStats(const sp<IBinder>& listener,

@@ -14,9 +14,8 @@
  * limitations under the License.
  */
 
-#include <gui/TraceUtils.h>
-
 #include <common/FlagManager.h>
+#include <common/trace.h>
 #include <scheduler/FrameTargeter.h>
 #include <scheduler/IVsyncSource.h>
 
@@ -90,9 +89,9 @@ void FrameTargeter::beginFrame(const BeginFrameArgs& args, const IVsyncSource& v
         mEarliestPresentTime = computeEarliestPresentTime(minFramePeriod, args.hwcMinWorkDuration);
     }
 
-    ATRACE_FORMAT("%s %" PRId64 " vsyncIn %.2fms%s", __func__, ftl::to_underlying(args.vsyncId),
-                  ticks<std::milli, float>(mExpectedPresentTime - TimePoint::now()),
-                  mExpectedPresentTime == args.expectedVsyncTime ? "" : " (adjusted)");
+    SFTRACE_FORMAT("%s %" PRId64 " vsyncIn %.2fms%s", __func__, ftl::to_underlying(args.vsyncId),
+                   ticks<std::milli, float>(mExpectedPresentTime - TimePoint::now()),
+                   mExpectedPresentTime == args.expectedVsyncTime ? "" : " (adjusted)");
 
     const FenceTimePtr& pastPresentFence = presentFenceForPastVsync(minFramePeriod);
 
@@ -165,7 +164,7 @@ void FrameTargeter::dump(utils::Dumper& dumper) const {
 }
 
 bool FrameTargeter::isFencePending(const FenceTimePtr& fence, int graceTimeMs) {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     const status_t status = fence->wait(graceTimeMs);
 
     // This is the same as Fence::Status::Unsignaled, but it saves a call to getStatus,

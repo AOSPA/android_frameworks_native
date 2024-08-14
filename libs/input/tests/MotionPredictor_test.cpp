@@ -88,6 +88,7 @@ TEST(JerkTrackerTest, JerkReadiness) {
 
 TEST(JerkTrackerTest, JerkCalculationNormalizedDtTrue) {
     JerkTracker jerkTracker(true);
+    jerkTracker.setForgetFactor(.5);
     jerkTracker.pushSample(/*timestamp=*/0, 20, 50);
     jerkTracker.pushSample(/*timestamp=*/1, 25, 53);
     jerkTracker.pushSample(/*timestamp=*/2, 30, 60);
@@ -118,11 +119,14 @@ TEST(JerkTrackerTest, JerkCalculationNormalizedDtTrue) {
      * y'':  3 -> -15
      * y''': -18
      */
-    EXPECT_FLOAT_EQ(jerkTracker.jerkMagnitude().value(), std::hypot(-50, -18));
+    const float newJerk = (1 - jerkTracker.getForgetFactor()) * std::hypot(10, -1) +
+            jerkTracker.getForgetFactor() * std::hypot(-50, -18);
+    EXPECT_FLOAT_EQ(jerkTracker.jerkMagnitude().value(), newJerk);
 }
 
 TEST(JerkTrackerTest, JerkCalculationNormalizedDtFalse) {
     JerkTracker jerkTracker(false);
+    jerkTracker.setForgetFactor(.5);
     jerkTracker.pushSample(/*timestamp=*/0, 20, 50);
     jerkTracker.pushSample(/*timestamp=*/10, 25, 53);
     jerkTracker.pushSample(/*timestamp=*/20, 30, 60);
@@ -153,7 +157,9 @@ TEST(JerkTrackerTest, JerkCalculationNormalizedDtFalse) {
      * y'':  .03 -> -.125 (delta above, divide by 10)
      * y''': -.0155 (delta above, divide by 10)
      */
-    EXPECT_FLOAT_EQ(jerkTracker.jerkMagnitude().value(), std::hypot(-.0375, -.0155));
+    const float newJerk = (1 - jerkTracker.getForgetFactor()) * std::hypot(.01, -.001) +
+            jerkTracker.getForgetFactor() * std::hypot(-.0375, -.0155);
+    EXPECT_FLOAT_EQ(jerkTracker.jerkMagnitude().value(), newJerk);
 }
 
 TEST(JerkTrackerTest, JerkCalculationAfterReset) {
@@ -291,15 +297,19 @@ TEST_WITH_FLAGS(
     MotionPredictor predictor(/*predictionTimestampOffsetNanos=*/0,
                               []() { return true /*enable prediction*/; });
 
-    // Jerk is medium (1.05 normalized, which is halfway between LOW_JANK and HIGH_JANK)
-    predictor.record(getMotionEvent(DOWN, 0, 5.2, 20ms));
-    predictor.record(getMotionEvent(MOVE, 0, 11.5, 30ms));
-    predictor.record(getMotionEvent(MOVE, 0, 22, 40ms));
-    predictor.record(getMotionEvent(MOVE, 0, 37.75, 50ms));
-    predictor.record(getMotionEvent(MOVE, 0, 59.8, 60ms));
+    const float mediumJerk =
+            (predictor.getModelConfig().lowJerk + predictor.getModelConfig().highJerk) / 2;
+    const float a = 3; // initial acceleration
+    const float b = 4; // initial velocity
+    const float c = 5; // initial position
+    predictor.record(getMotionEvent(DOWN, 0, c, 20ms));
+    predictor.record(getMotionEvent(MOVE, 0, c + b, 30ms));
+    predictor.record(getMotionEvent(MOVE, 0, c + 2 * b + a, 40ms));
+    predictor.record(getMotionEvent(MOVE, 0, c + 3 * b + 3 * a + mediumJerk, 50ms));
+    predictor.record(getMotionEvent(MOVE, 0, c + 4 * b + 6 * a + 4 * mediumJerk, 60ms));
     std::unique_ptr<MotionEvent> predicted = predictor.predict(82 * NSEC_PER_MSEC);
     EXPECT_NE(nullptr, predicted);
-    // Halfway between LOW_JANK and HIGH_JANK means that half of the predictions
+    // Halfway between LOW_JERK and HIGH_JERK means that half of the predictions
     // will be pruned. If model prediction window is close enough to predict()
     // call time window, then half of the model predictions (5/2 -> 2) will be
     // ouputted.

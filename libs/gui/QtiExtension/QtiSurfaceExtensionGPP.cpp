@@ -15,6 +15,7 @@ using ::android::IBinder;
 
 typedef status_t (*InitFunc_t)(sp<IGraphicBufferProducer>*, const sp<IBinder>&);
 typedef void (*DeinitFunc_t)(const sp<IBinder>&);
+static constexpr uint32_t BQ_LAYER_COUNT = 1;
 
 namespace android::libguiextension {
 QtiSurfaceExtensionGPP::QtiSurfaceExtensionGPP(const sp<IBinder> handle,
@@ -23,6 +24,7 @@ QtiSurfaceExtensionGPP::QtiSurfaceExtensionGPP(const sp<IBinder> handle,
       mIsSupported(true),
       mConnectedToGpu(false),
       mOriginalGbp(*gbp),
+      mGbp(nullptr),
       mHandle(handle),
       mLibHandler(nullptr),
       mFuncInit(nullptr),
@@ -88,6 +90,7 @@ void QtiSurfaceExtensionGPP::DisableGPPinternal(sp<IGraphicBufferProducer>* gbp)
         dlclose(mLibHandler);
     }
     mLibHandler = nullptr;
+    mGbp = nullptr;
     if (mOriginalGbp != nullptr) {
         *gbp = mOriginalGbp;
         SetGraphicBufferProducer(*gbp);
@@ -106,7 +109,7 @@ bool QtiSurfaceExtensionGPP::DynamicEnableInternal(sp<IGraphicBufferProducer>* g
         int property = std::stoul(valueStr, &pos, 16);
         if (property == 0x21) {  // 0x21 dynamic off
             enable = 0;
-        } else if(property == 0x22) {  // 0x22 dynamic on
+        } else if (property == 0x22) {  // 0x22 dynamic on
             enable = 1;
         }
 
@@ -118,9 +121,10 @@ bool QtiSurfaceExtensionGPP::DynamicEnableInternal(sp<IGraphicBufferProducer>* g
                 if (err == OK) {
                     mIsEnable = true;
                     mIsSupported = true;
+                    mGbp = *gbp;
                 } else {
                     mIsEnable = false;
-                    if(err == NAME_NOT_FOUND || err == INVALID_OPERATION) {
+                    if (err == NAME_NOT_FOUND || err == INVALID_OPERATION) {
                        mIsSupported = false;
                        ALOGV("Failed to init GPP: Surface or App is not supported by GPP");
                     } else {
@@ -168,6 +172,46 @@ bool QtiSurfaceExtensionGPP::DynamicEnableInternal(sp<IGraphicBufferProducer>* g
     if (gbp != nullptr) {
         if (mSidebandStream.seted)
             gbp->setSidebandStream(mSidebandStream.stream);
+    }
+}
+
+int QtiSurfaceExtensionGPP::query(int what, int *outValue) const {
+    std::lock_guard _lock{mMutex};
+
+    if (mOriginalGbp == nullptr) {
+        ALOGE("mIsEnable = %d , mOriginalGbp must not be NULL", mIsEnable);
+        return BAD_VALUE;
+    }
+
+    if (mIsEnable == true) {
+        switch (what) {
+            case NATIVE_WINDOW_WIDTH:
+            case NATIVE_WINDOW_HEIGHT:
+            case NATIVE_WINDOW_FORMAT:
+            case NATIVE_WINDOW_CONSUMER_USAGE_BITS:
+            case NATIVE_WINDOW_STICKY_TRANSFORM:
+            case NATIVE_WINDOW_CONSUMER_RUNNING_BEHIND:
+            case NATIVE_WINDOW_DEFAULT_DATASPACE:
+            case NATIVE_WINDOW_BUFFER_AGE:
+            case NATIVE_WINDOW_CONSUMER_IS_PROTECTED:
+                // Call the mOriginalGbp directly to avoid unnecessary binder call due to those values of mGbp are the same as mOriginalGbp.
+                return mOriginalGbp->query(what, outValue);
+            case NATIVE_WINDOW_LAYER_COUNT:
+                // All BufferQueue buffers have a single layer.
+                *outValue = BQ_LAYER_COUNT;
+                return NO_ERROR;
+            case NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS:
+                if (mGbp != nullptr) {
+                    return mGbp->query(what, outValue);
+                } else {
+                    ALOGW("mGbp is NULL");
+                    return BAD_VALUE;
+                }
+            default:
+                return BAD_VALUE;
+        }
+    } else {
+        return mOriginalGbp->query(what, outValue);
     }
 }
 

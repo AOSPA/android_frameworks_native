@@ -59,7 +59,6 @@ void InputMapperUnitTest::setupAxis(int axis, bool valid, int32_t min, int32_t m
                                     int32_t resolution) {
     EXPECT_CALL(mMockEventHub, getAbsoluteAxisInfo(EVENTHUB_ID, axis))
             .WillRepeatedly(Return(valid ? std::optional<RawAbsoluteAxisInfo>{{
-                                                   .valid = true,
                                                    .minValue = min,
                                                    .maxValue = max,
                                                    .flat = 0,
@@ -86,6 +85,13 @@ void InputMapperUnitTest::setScanCodeState(KeyState state, std::set<int> scanCod
 void InputMapperUnitTest::setKeyCodeState(KeyState state, std::set<int> keyCodes) {
     for (const auto& keyCode : keyCodes) {
         EXPECT_CALL(mMockEventHub, getKeyCodeState(EVENTHUB_ID, keyCode))
+                .WillRepeatedly(testing::Return(static_cast<int>(state)));
+    }
+}
+
+void InputMapperUnitTest::setSwitchState(int32_t state, std::set<int32_t> switchCodes) {
+    for (const auto& switchCode : switchCodes) {
+        EXPECT_CALL(mMockEventHub, getSwitchState(EVENTHUB_ID, switchCode))
                 .WillRepeatedly(testing::Return(static_cast<int>(state)));
     }
 }

@@ -16,15 +16,15 @@
 
 #pragma once
 
+#include <input/InputTransport.h>
 #include <utils/Looper.h>
-#include "InputTransport.h"
 
 namespace android {
 
 /**
  * An interface to receive batched input events. Even if you don't want batching, you still have to
  * use this interface, and some of the events will be batched if your implementation is slow to
- * handle the incoming input.
+ * handle the incoming input. The events received by these callbacks are never null.
  */
 class InputConsumerCallbacks {
 public:
@@ -181,6 +181,16 @@ private:
      * `consumeBatchedInputEvents`.
      */
     std::map<DeviceId, std::queue<InputMessage>> mBatches;
+    /**
+     * Creates a MotionEvent by consuming samples from the provided queue. If one message has
+     * eventTime > frameTime, all subsequent messages in the queue will be skipped. It is assumed
+     * that messages are queued in chronological order. In other words, only events that occurred
+     * prior to the requested frameTime will be consumed.
+     * @param frameTime the time up to which to consume events
+     * @param messages the queue of messages to consume from
+     */
+    std::pair<std::unique_ptr<MotionEvent>, std::optional<uint32_t>> createBatchedMotionEvent(
+            const nsecs_t frameTime, std::queue<InputMessage>& messages);
     /**
      * A map from a single sequence number to several sequence numbers. This is needed because of
      * batching. When batching is enabled, a single MotionEvent will contain several samples. Each

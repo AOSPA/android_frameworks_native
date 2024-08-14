@@ -118,6 +118,8 @@ public:
 
     DeviceId getLastUsedInputDeviceId() override;
 
+    void notifyMouseCursorFadedOnTyping() override;
+
 protected:
     // These members are protected so they can be instrumented by test cases.
     virtual std::shared_ptr<InputDevice> createDeviceLocked(nsecs_t when, int32_t deviceId,
@@ -199,7 +201,7 @@ private:
     std::unordered_map<std::shared_ptr<InputDevice>, std::vector<int32_t> /*eventHubId*/>
             mDeviceToEventHubIdsMap GUARDED_BY(mLock);
 
-    // true if tap-to-click on touchpad currently disabled
+    // true if tap-to-click on touchpad is currently disabled
     bool mPreventingTouchpadTaps GUARDED_BY(mLock){false};
 
     // records timestamp of the last key press on the physical keyboard
@@ -218,8 +220,6 @@ private:
                                                                      const RawEvent* rawEvents,
                                                                      size_t count) REQUIRES(mLock);
     [[nodiscard]] std::list<NotifyArgs> timeoutExpiredLocked(nsecs_t when) REQUIRES(mLock);
-
-    void handleConfigurationChangedLocked(nsecs_t when) REQUIRES(mLock);
 
     int32_t mGlobalMetaState GUARDED_BY(mLock);
     void updateGlobalMetaStateLocked() REQUIRES(mLock);

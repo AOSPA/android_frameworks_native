@@ -16,13 +16,13 @@ flag {
 }
 
 flag {
-  name: "enable_gestures_library_timer_provider"
+  name: "remove_input_channel_from_windowstate"
   namespace: "input"
-  description: "Set to true to enable timer support for the touchpad Gestures library"
-  bug: "297192727"
- }
+  description: "Do not store a copy of input channel inside WindowState."
+  bug: "323450804"
+}
 
- flag {
+flag {
   name: "enable_input_event_tracing"
   namespace: "input"
   description: "Set to true to enable input event tracing, including always-on tracing on non-user builds"
@@ -84,13 +84,6 @@ flag {
   namespace: "input"
   description: "enable override key behavior permission APIs"
   bug: "309018874"
-}
-
-flag {
-  name: "remove_pointer_event_tracking_in_wm"
-  namespace: "input"
-  description: "Remove pointer event tracking in WM after the Pointer Icon Refactor"
-  bug: "315321016"
 }
 
 flag {
@@ -156,4 +149,11 @@ flag {
   namespace: "input"
   description: "Keyboard classifier that classifies all keyboards into alphabetic or non-alphabetic"
   bug: "263559234"
+}
+
+flag {
+  name: "show_pointers_for_partial_screenshare"
+  namespace: "input"
+  description: "Show touch and pointer indicators when mirroring a single task"
+  bug: "310179437"
 }

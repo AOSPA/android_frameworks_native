@@ -28,13 +28,12 @@
 
 #include <android-base/properties.h>
 #include <android-base/stringprintf.h>
+#include <common/trace.h>
 #include <ftl/enum.h>
 #include <ftl/fake_guard.h>
 #include <ftl/match.h>
 #include <ftl/unit.h>
-#include <gui/TraceUtils.h>
 #include <scheduler/FrameRateMode.h>
-#include <utils/Trace.h>
 
 #include "RefreshRateSelector.h"
 
@@ -494,7 +493,7 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
                                                     GlobalSignals signals, Fps pacesetterFps) const
         -> RankedFrameRates {
     using namespace fps_approx_ops;
-    ATRACE_CALL();
+    SFTRACE_CALL();
     ALOGV("%s: %zu layers", __func__, layers.size());
 
     const auto& activeMode = *getActiveModeLocked().modePtr;
@@ -508,8 +507,8 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
                                             });
 
         if (!ranking.empty()) {
-            ATRACE_FORMAT_INSTANT("%s (Follower display)",
-                                  to_string(ranking.front().frameRateMode.fps).c_str());
+            SFTRACE_FORMAT_INSTANT("%s (Follower display)",
+                                   to_string(ranking.front().frameRateMode.fps).c_str());
 
             return {ranking, kNoSignals, pacesetterFps};
         }
@@ -521,8 +520,8 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     if (signals.powerOnImminent) {
         ALOGV("Power On Imminent");
         const auto ranking = rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Descending);
-        ATRACE_FORMAT_INSTANT("%s (Power On Imminent)",
-                              to_string(ranking.front().frameRateMode.fps).c_str());
+        SFTRACE_FORMAT_INSTANT("%s (Power On Imminent)",
+                               to_string(ranking.front().frameRateMode.fps).c_str());
         return {ranking, GlobalSignals{.powerOnImminent = true}};
     }
 
@@ -608,8 +607,8 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     if (signals.touch && !hasExplicitVoteLayers) {
         ALOGV("Touch Boost");
         const auto ranking = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
-        ATRACE_FORMAT_INSTANT("%s (Touch Boost)",
-                              to_string(ranking.front().frameRateMode.fps).c_str());
+        SFTRACE_FORMAT_INSTANT("%s (Touch Boost)",
+                               to_string(ranking.front().frameRateMode.fps).c_str());
         return {ranking, GlobalSignals{.touch = true}};
     }
 
@@ -620,26 +619,27 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
         !(policy->primaryRangeIsSingleRate() && hasExplicitVoteLayers)) {
         ALOGV("Idle");
         const auto ranking = rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Ascending);
-        ATRACE_FORMAT_INSTANT("%s (Idle)", to_string(ranking.front().frameRateMode.fps).c_str());
+        SFTRACE_FORMAT_INSTANT("%s (Idle)", to_string(ranking.front().frameRateMode.fps).c_str());
         return {ranking, GlobalSignals{.idle = true}};
     }
 
     if (layers.empty() || noVoteLayers == layers.size()) {
         ALOGV("No layers with votes");
         const auto ranking = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
-        ATRACE_FORMAT_INSTANT("%s (No layers with votes)",
-                              to_string(ranking.front().frameRateMode.fps).c_str());
+        SFTRACE_FORMAT_INSTANT("%s (No layers with votes)",
+                               to_string(ranking.front().frameRateMode.fps).c_str());
         return {ranking, kNoSignals};
     }
 
     // If all layers are category NoPreference, use the current config.
     if (noPreferenceLayers + noVoteLayers == layers.size()) {
         ALOGV("All layers NoPreference");
-        const auto ascendingWithPreferred =
-                rankFrameRates(anchorGroup, RefreshRateOrder::Ascending, activeMode.getId());
-        ATRACE_FORMAT_INSTANT("%s (All layers NoPreference)",
-                              to_string(ascendingWithPreferred.front().frameRateMode.fps).c_str());
-        return {ascendingWithPreferred, kNoSignals};
+        constexpr float kScore = std::numeric_limits<float>::max();
+        FrameRateRanking currentMode;
+        currentMode.emplace_back(ScoredFrameRate{getActiveModeLocked(), kScore});
+        SFTRACE_FORMAT_INSTANT("%s (All layers NoPreference)",
+                              to_string(currentMode.front().frameRateMode.fps).c_str());
+        return {currentMode, kNoSignals};
     }
 
     const bool smoothSwitchOnly = categorySmoothSwitchOnlyLayers > 0;
@@ -653,8 +653,8 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
                                                 return !smoothSwitchOnly ||
                                                         mode.modePtr->getId() == activeModeId;
                                             });
-        ATRACE_FORMAT_INSTANT("%s (All layers Min)",
-                              to_string(ranking.front().frameRateMode.fps).c_str());
+        SFTRACE_FORMAT_INSTANT("%s (All layers Min)",
+                               to_string(ranking.front().frameRateMode.fps).c_str());
         return {ranking, kNoSignals};
     }
 
@@ -847,13 +847,13 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
         if (noLayerScore) {
             ALOGV("Layers not scored");
             const auto descending = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
-            ATRACE_FORMAT_INSTANT("%s (Layers not scored)",
-                                  to_string(descending.front().frameRateMode.fps).c_str());
+            SFTRACE_FORMAT_INSTANT("%s (Layers not scored)",
+                                   to_string(descending.front().frameRateMode.fps).c_str());
             return {descending, kNoSignals};
         } else {
             ALOGV("primaryRangeIsSingleRate");
-            ATRACE_FORMAT_INSTANT("%s (primaryRangeIsSingleRate)",
-                                  to_string(ranking.front().frameRateMode.fps).c_str());
+            SFTRACE_FORMAT_INSTANT("%s (primaryRangeIsSingleRate)",
+                                   to_string(ranking.front().frameRateMode.fps).c_str());
             return {ranking, kNoSignals};
         }
     }
@@ -889,8 +889,8 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
 
         if (scores.front().frameRateMode.fps < touchRefreshRates.front().frameRateMode.fps) {
             ALOGV("Touch Boost");
-            ATRACE_FORMAT_INSTANT("%s (Touch Boost [late])",
-                                  to_string(touchRefreshRates.front().frameRateMode.fps).c_str());
+            SFTRACE_FORMAT_INSTANT("%s (Touch Boost [late])",
+                                   to_string(touchRefreshRates.front().frameRateMode.fps).c_str());
             return {touchRefreshRates, GlobalSignals{.touch = true}};
         }
     }
@@ -901,13 +901,13 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
         ALOGV("preferredDisplayMode");
         const auto ascendingWithPreferred =
                 rankFrameRates(anchorGroup, RefreshRateOrder::Ascending, activeMode.getId());
-        ATRACE_FORMAT_INSTANT("%s (preferredDisplayMode)",
-                              to_string(ascendingWithPreferred.front().frameRateMode.fps).c_str());
+        SFTRACE_FORMAT_INSTANT("%s (preferredDisplayMode)",
+                               to_string(ascendingWithPreferred.front().frameRateMode.fps).c_str());
         return {ascendingWithPreferred, kNoSignals};
     }
 
     ALOGV("%s (scored)", to_string(ranking.front().frameRateMode.fps).c_str());
-    ATRACE_FORMAT_INSTANT("%s (scored)", to_string(ranking.front().frameRateMode.fps).c_str());
+    SFTRACE_FORMAT_INSTANT("%s (scored)", to_string(ranking.front().frameRateMode.fps).c_str());
     return {ranking, kNoSignals};
 }
 
@@ -949,7 +949,7 @@ auto RefreshRateSelector::getFrameRateOverrides(const std::vector<LayerRequireme
                                                 Fps displayRefreshRate,
                                                 GlobalSignals globalSignals) const
         -> UidToFrameRateOverride {
-    ATRACE_CALL();
+    SFTRACE_CALL();
     if (mConfig.enableFrameRateOverride == Config::FrameRateOverride::Disabled) {
         return {};
     }
@@ -1064,12 +1064,12 @@ auto RefreshRateSelector::getFrameRateOverrides(const std::vector<LayerRequireme
                                       return lhs < rhs && !ScoredFrameRate::scoresEqual(lhs, rhs);
                                   });
         ALOGV("%s: overriding to %s for uid=%d", __func__, to_string(overrideFps).c_str(), uid);
-        ATRACE_FORMAT_INSTANT("%s: overriding to %s for uid=%d", __func__,
-                              to_string(overrideFps).c_str(), uid);
-        if (ATRACE_ENABLED() && FlagManager::getInstance().trace_frame_rate_override()) {
+        SFTRACE_FORMAT_INSTANT("%s: overriding to %s for uid=%d", __func__,
+                               to_string(overrideFps).c_str(), uid);
+        if (SFTRACE_ENABLED() && FlagManager::getInstance().trace_frame_rate_override()) {
             std::stringstream ss;
             ss << "FrameRateOverride " << uid;
-            ATRACE_INT(ss.str().c_str(), overrideFps.getIntValue());
+            SFTRACE_INT(ss.str().c_str(), overrideFps.getIntValue());
         }
         frameRateOverrides.emplace(uid, overrideFps);
     }
@@ -1501,7 +1501,7 @@ void RefreshRateSelector::constructAvailableRefreshRates() {
             return str;
         };
         ALOGV("%s render rates: %s, isVrrDevice? %d", rangeName, stringifyModes().c_str(),
-              mIsVrrDevice);
+              mIsVrrDevice.load());
 
         return frameRateModes;
     };
@@ -1511,7 +1511,6 @@ void RefreshRateSelector::constructAvailableRefreshRates() {
 }
 
 bool RefreshRateSelector::isVrrDevice() const {
-    std::lock_guard lock(mLock);
     return mIsVrrDevice;
 }
 
