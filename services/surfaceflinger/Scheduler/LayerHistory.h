@@ -101,6 +101,7 @@ public:
     void qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes) {
       refresh_rate_votes_ = refresh_rate_votes;
     }
+    bool isGameFrameRateOverridePresent();
     /* QTI_END */
 
     // Updates the frame rate override set by game mode intervention
@@ -170,6 +171,7 @@ private:
     // If Thermal mitigation enabled, limit to thermal Fps
     float mQtiThermalFps = 0.0f;
     std::map<int, int> refresh_rate_votes_;
+    bool mQtiGameFrameRateOverridePresent = false;
     /* QTI_END */
 
     // A list to look up the game frame rate overrides
