@@ -8667,7 +8667,7 @@ bool SurfaceFlinger::layersHasProtectedLayer(const std::vector<sp<LayerFE>>& lay
         protectedLayerFound |= (layerFE->mSnapshot->isVisible &&
                                 layerFE->mSnapshot->hasProtectedContent
                                 /* QTI_BEGIN */
-                                && !qtiSecCamera && qtiSecDisplay /* QTI_END */);
+                                && !qtiSecCamera && !qtiSecDisplay /* QTI_END */);
         if (protectedLayerFound) {
             break;
         }
@@ -9897,6 +9897,10 @@ std::vector<std::pair<Layer*, LayerFE*>> SurfaceFlinger::moveSnapshotsToComposit
                     snapshot->fps = getLayerFramerate(currentTime, snapshot->sequence);
                     /* QTI_BEGIN */
                     snapshot->qtiLayerClass = legacyLayer->qtiGetLayerClass();
+                    snapshot->qtiIsSecureDisplay =
+                            legacyLayer->getCompositionState()->qtiIsSecureDisplay;
+                    snapshot->qtiIsSecureCamera =
+                            legacyLayer->getCompositionState()->qtiIsSecureCamera;
                     /* QTI_END */
                     layerFE->mSnapshot = std::move(snapshot);
                     refreshArgs.layers.push_back(layerFE);
