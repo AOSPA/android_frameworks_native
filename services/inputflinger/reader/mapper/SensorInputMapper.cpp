@@ -133,8 +133,9 @@ std::list<NotifyArgs> SensorInputMapper::reconfigure(nsecs_t when,
                           .test(InputDeviceClass::SENSOR))) {
                 continue;
             }
-            if (std::optional<RawAbsoluteAxisInfo> rawAxisInfo = getAbsoluteAxisInfo(abs);
-                rawAxisInfo) {
+            RawAbsoluteAxisInfo rawAxisInfo;
+            getAbsoluteAxisInfo(abs, &rawAxisInfo);
+            if (rawAxisInfo.valid) {
                 AxisInfo axisInfo;
                 // Axis doesn't need to be mapped, as sensor mapper doesn't generate any motion
                 // input events
@@ -145,7 +146,7 @@ std::list<NotifyArgs> SensorInputMapper::reconfigure(nsecs_t when,
                 if (ret.ok()) {
                     InputDeviceSensorType sensorType = (*ret).first;
                     int32_t sensorDataIndex = (*ret).second;
-                    const Axis& axis = createAxis(axisInfo, rawAxisInfo.value());
+                    const Axis& axis = createAxis(axisInfo, rawAxisInfo);
                     parseSensorConfiguration(sensorType, abs, sensorDataIndex, axis);
 
                     mAxes.insert({abs, axis});

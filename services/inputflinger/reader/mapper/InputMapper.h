@@ -16,8 +16,6 @@
 
 #pragma once
 
-#include <optional>
-
 #include "EventHub.h"
 #include "InputDevice.h"
 #include "InputListener.h"
@@ -128,11 +126,10 @@ protected:
     explicit InputMapper(InputDeviceContext& deviceContext,
                          const InputReaderConfiguration& readerConfig);
 
-    std::optional<RawAbsoluteAxisInfo> getAbsoluteAxisInfo(int32_t axis);
+    status_t getAbsoluteAxisInfo(int32_t axis, RawAbsoluteAxisInfo* axisInfo);
     void bumpGeneration();
 
-    static void dumpRawAbsoluteAxisInfo(std::string& dump,
-                                        const std::optional<RawAbsoluteAxisInfo>& axis,
+    static void dumpRawAbsoluteAxisInfo(std::string& dump, const RawAbsoluteAxisInfo& axis,
                                         const char* name);
     static void dumpStylusState(std::string& dump, const StylusState& state);
 };

@@ -1434,20 +1434,8 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     }
 
     if (mQtiSmomoInstances.size() > 1) {
-        if (mQtiFlinger->mLayerLifecycleManagerEnabled) {
-            FTL_FAKE_GUARD(kMainThreadContext,
-                mQtiFlinger->mLayerSnapshotBuilder.forEachVisibleSnapshot(
-                    [&](const frontend::LayerSnapshot& snapshot) FTL_FAKE_GUARD(kMainThreadContext) {
-                        auto seq = static_cast<const unsigned int>(snapshot.sequence);
-                        auto it = mQtiFlinger->mLegacyLayers.find(seq);
-                        if (it != mQtiFlinger->mLegacyLayers.end()) {
-                            it->second->qtiSetSmomoLayerStackId(snapshot.outputFilter.layerStack.id);
-                        }
-                    }));
-        } else {
-            mQtiFlinger->mDrawingState.traverse(
-                    [&](Layer* layer) { layer->qtiSetSmomoLayerStackId(0); });
-        }
+        mQtiFlinger->mDrawingState.traverse(
+                [&](Layer* layer) { layer->qtiSetSmomoLayerStackId(0); });
     }
 
     // Disable smomo if external or virtual is connected.
@@ -1555,31 +1543,20 @@ void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
         }
 
         const DisplayDevice& dispRef = *displayDevice;
-        if (!mQtiFlinger->mLayerLifecycleManagerEnabled) {
-            mQtiFlinger->mDrawingState.traverseInZOrder([&](Layer* layer) {
-                const auto outputLayer = dispRef.getCompositionDisplay()
-                                                      ->getOutputLayerForLayer(
-                                                        layer->getCompositionEngineLayerFE());
-                if (outputLayer != nullptr) {
-                    hasScreenshot |= qtiIsScreenshot(layer->getName());
-                }
-            });
-        } else {
-            FTL_FAKE_GUARD(kMainThreadContext,
-                    mQtiFlinger->mLayerSnapshotBuilder.forEachVisibleSnapshot(
-                        [&](const frontend::LayerSnapshot& snapshot)
-                                FTL_FAKE_GUARD(kMainThreadContext) {
-                            if (snapshot.hasSomethingToDraw() &&
-                                dispRef.getLayerStack() == snapshot.outputFilter.layerStack) {
-                                auto seq = static_cast<const unsigned int>(snapshot.sequence);
-                                auto it = mQtiFlinger->mLegacyLayers.find(seq);
-                                if (it != mQtiFlinger->mLegacyLayers.end() &&
-                                    snapshot.outputFilter.layerStack == dispRef.getLayerStack()) {
-                                    hasScreenshot |= qtiIsScreenshot(snapshot.debugName);
-                                }
+        FTL_FAKE_GUARD(kMainThreadContext,
+                mQtiFlinger->mLayerSnapshotBuilder.forEachVisibleSnapshot(
+                    [&](const frontend::LayerSnapshot& snapshot)
+                            FTL_FAKE_GUARD(kMainThreadContext) {
+                        if (snapshot.hasSomethingToDraw() &&
+                            dispRef.getLayerStack() == snapshot.outputFilter.layerStack) {
+                            auto seq = static_cast<const unsigned int>(snapshot.sequence);
+                            auto it = mQtiFlinger->mLegacyLayers.find(seq);
+                            if (it != mQtiFlinger->mLegacyLayers.end() &&
+                                snapshot.outputFilter.layerStack == dispRef.getLayerStack()) {
+                                hasScreenshot |= qtiIsScreenshot(snapshot.debugName);
                             }
-                        }));
-        }
+                        }
+                    }));
 
         qtiGetHwcDisplayId(displayDevice, &hwcDisplayId);
         bool mQtiHasScreenshot = (mQtiHasScreenshotSet.count(hwcDisplayId) > 0);

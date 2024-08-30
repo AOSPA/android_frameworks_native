@@ -17,6 +17,7 @@
 #define LOG_TAG "VibratorHalWrapperHidlV1_0Test"
 
 #include <aidl/android/hardware/vibrator/IVibrator.h>
+#include <android/persistable_bundle_aidl.h>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -39,6 +40,8 @@ using aidl::android::hardware::vibrator::Effect;
 using aidl::android::hardware::vibrator::EffectStrength;
 using aidl::android::hardware::vibrator::IVibrator;
 using aidl::android::hardware::vibrator::PrimitivePwle;
+using aidl::android::hardware::vibrator::VendorEffect;
+using aidl::android::os::PersistableBundle;
 
 using namespace android;
 using namespace std::chrono_literals;
@@ -313,6 +316,22 @@ TEST_F(VibratorHalWrapperHidlV1_0Test, TestPerformEffectUnsupported) {
     // Using TICK that is only available in v1.1
     auto result = mWrapper->performEffect(Effect::TICK, EffectStrength::LIGHT, callback);
     ASSERT_TRUE(result.isUnsupported());
+    // No callback is triggered.
+    ASSERT_EQ(0, *callbackCounter.get());
+}
+
+TEST_F(VibratorHalWrapperHidlV1_0Test, TestPerformVendorEffectUnsupported) {
+    PersistableBundle vendorData; // empty
+    VendorEffect vendorEffect;
+    vendorEffect.vendorData = vendorData;
+    vendorEffect.strength = EffectStrength::LIGHT;
+    vendorEffect.scale = 1.0f;
+
+    std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
+    auto callback = vibrator::TestFactory::createCountingCallback(callbackCounter.get());
+
+    ASSERT_TRUE(mWrapper->performVendorEffect(vendorEffect, callback).isUnsupported());
+
     // No callback is triggered.
     ASSERT_EQ(0, *callbackCounter.get());
 }

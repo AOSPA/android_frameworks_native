@@ -235,6 +235,16 @@ cc_defaults {
         "binder_test_defaults",
     ],
 
+    compile_multilib: "both",
+    multilib: {
+        lib32: {
+            suffix: "32",
+        },
+        lib64: {
+            suffix: "64",
+        },
+    },
+
     static_libs: [
         "libbinder_test_utils",
         "libbinder_tls_static",
@@ -267,7 +277,6 @@ cc_defaults {
     defaults: [
         "binderRpcTest_common_defaults",
     ],
-    compile_multilib: "first",
 
     srcs: [
         "binderRpcTest.cpp",

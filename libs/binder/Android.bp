@@ -450,8 +450,31 @@ cc_library_shared {
     ],
 }
 
+soong_config_module_type {
+    name: "libbinder_client_cache_config",
+    module_type: "cc_defaults",
+    config_namespace: "libbinder",
+    bool_variables: ["release_libbinder_client_cache"],
+    properties: [
+        "cflags",
+    ],
+}
+
+libbinder_client_cache_config {
+    name: "libbinder_client_cache_flag",
+    soong_config_variables: {
+        release_libbinder_client_cache: {
+            cflags: ["-DLIBBINDER_CLIENT_CACHE"],
+            conditions_default: {
+                cflags: ["-DNO_LIBBINDER_CLIENT_CACHE"],
+            },
+        },
+    },
+}
+
 cc_defaults {
     name: "libbinder_kernel_defaults",
+    defaults: ["libbinder_client_cache_flag"],
     srcs: [
         "BufferedTextOutput.cpp",
         "BackendUnifiedServiceManager.cpp",
@@ -771,9 +794,39 @@ filegroup {
         "aidl/android/os/IClientCallback.aidl",
         "aidl/android/os/IServiceCallback.aidl",
         "aidl/android/os/IServiceManager.aidl",
+        "aidl/android/os/Service.aidl",
         "aidl/android/os/ServiceDebugInfo.aidl",
+        ":libbinder_accessor_aidl",
     ],
     path: "aidl",
+}
+
+filegroup {
+    name: "libbinder_accessor_aidl",
+    srcs: [
+        "aidl/android/os/IAccessor.aidl",
+    ],
+    path: "aidl",
+}
+
+// TODO(b/353492849): Make this interface private to libbinder.
+aidl_interface {
+    name: "android.os.accessor",
+    srcs: [":libbinder_accessor_aidl"],
+    unstable: true,
+    backend: {
+        rust: {
+            enabled: true,
+            apex_available: [
+                "com.android.virt",
+            ],
+        },
+    },
+    visibility: [
+        ":__subpackages__",
+        "//system/tools/aidl:__subpackages__",
+        "//packages/modules/Virtualization:__subpackages__",
+    ],
 }
 
 aidl_interface {

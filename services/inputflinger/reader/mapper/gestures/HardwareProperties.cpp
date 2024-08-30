@@ -16,8 +16,6 @@
 
 #include "HardwareProperties.h"
 
-#include <optional>
-
 namespace android {
 
 namespace {
@@ -35,34 +33,26 @@ unsigned short getMaxTouchCount(const InputDeviceContext& context) {
 
 HardwareProperties createHardwareProperties(const InputDeviceContext& context) {
     HardwareProperties props;
-    // We can safely assume that ABS_MT_POSITION_X and _Y axes will be available, as EventHub won't
-    // classify a device as a touchpad if they're not present.
-    RawAbsoluteAxisInfo absMtPositionX = context.getAbsoluteAxisInfo(ABS_MT_POSITION_X).value();
+    RawAbsoluteAxisInfo absMtPositionX;
+    context.getAbsoluteAxisInfo(ABS_MT_POSITION_X, &absMtPositionX);
     props.left = absMtPositionX.minValue;
     props.right = absMtPositionX.maxValue;
     props.res_x = absMtPositionX.resolution;
 
-    RawAbsoluteAxisInfo absMtPositionY = context.getAbsoluteAxisInfo(ABS_MT_POSITION_Y).value();
+    RawAbsoluteAxisInfo absMtPositionY;
+    context.getAbsoluteAxisInfo(ABS_MT_POSITION_Y, &absMtPositionY);
     props.top = absMtPositionY.minValue;
     props.bottom = absMtPositionY.maxValue;
     props.res_y = absMtPositionY.resolution;
 
-    if (std::optional<RawAbsoluteAxisInfo> absMtOrientation =
-                context.getAbsoluteAxisInfo(ABS_MT_ORIENTATION);
-        absMtOrientation) {
-        props.orientation_minimum = absMtOrientation->minValue;
-        props.orientation_maximum = absMtOrientation->maxValue;
-    } else {
-        props.orientation_minimum = 0;
-        props.orientation_maximum = 0;
-    }
+    RawAbsoluteAxisInfo absMtOrientation;
+    context.getAbsoluteAxisInfo(ABS_MT_ORIENTATION, &absMtOrientation);
+    props.orientation_minimum = absMtOrientation.minValue;
+    props.orientation_maximum = absMtOrientation.maxValue;
 
-    if (std::optional<RawAbsoluteAxisInfo> absMtSlot = context.getAbsoluteAxisInfo(ABS_MT_SLOT);
-        absMtSlot) {
-        props.max_finger_cnt = absMtSlot->maxValue - absMtSlot->minValue + 1;
-    } else {
-        props.max_finger_cnt = 1;
-    }
+    RawAbsoluteAxisInfo absMtSlot;
+    context.getAbsoluteAxisInfo(ABS_MT_SLOT, &absMtSlot);
+    props.max_finger_cnt = absMtSlot.maxValue - absMtSlot.minValue + 1;
     props.max_touch_cnt = getMaxTouchCount(context);
 
     // T5R2 ("Track 5, Report 2") is a feature of some old Synaptics touchpads that could track 5
@@ -81,7 +71,9 @@ HardwareProperties createHardwareProperties(const InputDeviceContext& context) {
     // are haptic.
     props.is_haptic_pad = false;
 
-    props.reports_pressure = context.hasAbsoluteAxis(ABS_MT_PRESSURE);
+    RawAbsoluteAxisInfo absMtPressure;
+    context.getAbsoluteAxisInfo(ABS_MT_PRESSURE, &absMtPressure);
+    props.reports_pressure = absMtPressure.valid;
     return props;
 }
 

@@ -109,7 +109,6 @@ protected:
                 .WillRepeatedly([]() -> base::Result<std::vector<int32_t>> {
                     return base::ResultError("Axis not supported", NAME_NOT_FOUND);
                 });
-        createDevice();
         mMapper = createInputMapper<TouchpadInputMapper>(*mDeviceContext, mReaderConfiguration);
     }
 };

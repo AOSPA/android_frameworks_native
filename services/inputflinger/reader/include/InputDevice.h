@@ -43,7 +43,7 @@ class InputDevice {
 public:
     InputDevice(InputReaderContext* context, int32_t id, int32_t generation,
                 const InputDeviceIdentifier& identifier);
-    ~InputDevice();
+    virtual ~InputDevice();
 
     inline InputReaderContext* getContext() { return mContext; }
     inline int32_t getId() const { return mId; }
@@ -56,7 +56,7 @@ public:
     }
     inline const std::string getLocation() const { return mIdentifier.location; }
     inline ftl::Flags<InputDeviceClass> getClasses() const { return mClasses; }
-    inline uint32_t getSources() const { return mSources; }
+    inline virtual uint32_t getSources() const { return mSources; }
     inline bool hasEventHubDevices() const { return !mDevices.empty(); }
 
     inline bool isExternal() { return mIsExternal; }
@@ -132,7 +132,7 @@ public:
 
     [[nodiscard]] NotifyDeviceResetArgs notifyReset(nsecs_t when);
 
-    inline const PropertyMap& getConfiguration() { return mConfiguration; }
+    inline virtual const PropertyMap& getConfiguration() const { return mConfiguration; }
     inline EventHubInterface* getEventHub() { return mContext->getEventHub(); }
 
     std::optional<ui::LogicalDisplayId> getAssociatedDisplayId();
@@ -299,23 +299,29 @@ public:
     inline ftl::Flags<InputDeviceClass> getDeviceClasses() const {
         return mEventHub->getDeviceClasses(mId);
     }
+    inline uint32_t getDeviceSources() const { return mDevice.getSources(); }
     inline InputDeviceIdentifier getDeviceIdentifier() const {
         return mEventHub->getDeviceIdentifier(mId);
     }
     inline int32_t getDeviceControllerNumber() const {
         return mEventHub->getDeviceControllerNumber(mId);
     }
-    inline std::optional<RawAbsoluteAxisInfo> getAbsoluteAxisInfo(int32_t code) const {
+    inline status_t getAbsoluteAxisInfo(int32_t code, RawAbsoluteAxisInfo* axisInfo) const {
         std::optional<RawAbsoluteAxisInfo> info = mEventHub->getAbsoluteAxisInfo(mId, code);
+        if (!info.has_value()) {
+            axisInfo->clear();
+            return NAME_NOT_FOUND;
+        }
+        *axisInfo = *info;
 
         // Validate axis info for InputDevice.
-        if (info && info->minValue == info->maxValue) {
+        if (axisInfo->valid && axisInfo->minValue == axisInfo->maxValue) {
             // Historically, we deem axes with the same min and max values as invalid to avoid
             // dividing by zero when scaling by max - min.
             // TODO(b/291772515): Perform axis info validation on a per-axis basis when it is used.
-            return std::nullopt;
+            axisInfo->valid = false;
         }
-        return info;
+        return OK;
     }
     inline bool hasRelativeAxis(int32_t code) const {
         return mEventHub->hasRelativeAxis(mId, code);
@@ -430,7 +436,8 @@ public:
     }
 
     inline bool hasAbsoluteAxis(int32_t code) const {
-        return mEventHub->getAbsoluteAxisInfo(mId, code).has_value();
+        std::optional<RawAbsoluteAxisInfo> info = mEventHub->getAbsoluteAxisInfo(mId, code);
+        return info.has_value() && info->valid;
     }
     inline bool isKeyPressed(int32_t scanCode) const {
         return mEventHub->getScanCodeState(mId, scanCode) == AKEY_STATE_DOWN;

@@ -17,6 +17,7 @@
 #define LOG_TAG "VibratorHalWrapperAidlTest"
 
 #include <aidl/android/hardware/vibrator/IVibrator.h>
+#include <android/persistable_bundle_aidl.h>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -38,6 +39,8 @@ using aidl::android::hardware::vibrator::EffectStrength;
 using aidl::android::hardware::vibrator::IVibrator;
 using aidl::android::hardware::vibrator::IVibratorCallback;
 using aidl::android::hardware::vibrator::PrimitivePwle;
+using aidl::android::hardware::vibrator::VendorEffect;
+using aidl::android::os::PersistableBundle;
 
 using namespace android;
 using namespace std::chrono_literals;
@@ -486,6 +489,42 @@ TEST_F(VibratorHalWrapperAidlTest, TestPerformEffectWithoutCallbackSupport) {
     ASSERT_TRUE(result.isFailed());
 
     // Callback not triggered for unsupported and on failure
+    ASSERT_EQ(1, *callbackCounter.get());
+}
+
+TEST_F(VibratorHalWrapperAidlTest, TestPerformVendorEffect) {
+    PersistableBundle vendorData;
+    vendorData.putInt("key", 1);
+    VendorEffect vendorEffect;
+    vendorEffect.vendorData = vendorData;
+    vendorEffect.strength = EffectStrength::MEDIUM;
+    vendorEffect.scale = 0.5f;
+
+    {
+        InSequence seq;
+        EXPECT_CALL(*mMockHal.get(), performVendorEffect(_, _))
+                .Times(Exactly(3))
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)))
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+                .WillOnce(DoAll(WithArg<1>(vibrator::TriggerCallback()),
+                                Return(ndk::ScopedAStatus::ok())));
+    }
+
+    std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
+    auto callback = vibrator::TestFactory::createCountingCallback(callbackCounter.get());
+
+    auto result = mWrapper->performVendorEffect(vendorEffect, callback);
+    ASSERT_TRUE(result.isUnsupported());
+    // Callback not triggered on failure
+    ASSERT_EQ(0, *callbackCounter.get());
+
+    result = mWrapper->performVendorEffect(vendorEffect, callback);
+    ASSERT_TRUE(result.isFailed());
+    // Callback not triggered for unsupported
+    ASSERT_EQ(0, *callbackCounter.get());
+
+    result = mWrapper->performVendorEffect(vendorEffect, callback);
+    ASSERT_TRUE(result.isOk());
     ASSERT_EQ(1, *callbackCounter.get());
 }
 

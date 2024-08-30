@@ -61,17 +61,17 @@ static constexpr nsecs_t TOUCH_DATA_TIMEOUT = ms2ns(20);
 struct RawPointerAxes {
     RawAbsoluteAxisInfo x{};
     RawAbsoluteAxisInfo y{};
-    std::optional<RawAbsoluteAxisInfo> pressure{};
-    std::optional<RawAbsoluteAxisInfo> touchMajor{};
-    std::optional<RawAbsoluteAxisInfo> touchMinor{};
-    std::optional<RawAbsoluteAxisInfo> toolMajor{};
-    std::optional<RawAbsoluteAxisInfo> toolMinor{};
-    std::optional<RawAbsoluteAxisInfo> orientation{};
-    std::optional<RawAbsoluteAxisInfo> distance{};
-    std::optional<RawAbsoluteAxisInfo> tiltX{};
-    std::optional<RawAbsoluteAxisInfo> tiltY{};
-    std::optional<RawAbsoluteAxisInfo> trackingId{};
-    std::optional<RawAbsoluteAxisInfo> slot{};
+    RawAbsoluteAxisInfo pressure{};
+    RawAbsoluteAxisInfo touchMajor{};
+    RawAbsoluteAxisInfo touchMinor{};
+    RawAbsoluteAxisInfo toolMajor{};
+    RawAbsoluteAxisInfo toolMinor{};
+    RawAbsoluteAxisInfo orientation{};
+    RawAbsoluteAxisInfo distance{};
+    RawAbsoluteAxisInfo tiltX{};
+    RawAbsoluteAxisInfo tiltY{};
+    RawAbsoluteAxisInfo trackingId{};
+    RawAbsoluteAxisInfo slot{};
 
     inline int32_t getRawWidth() const { return x.maxValue - x.minValue + 1; }
     inline int32_t getRawHeight() const { return y.maxValue - y.minValue + 1; }

@@ -33,7 +33,6 @@ class SwitchInputMapperTest : public InputMapperUnitTest {
 protected:
     void SetUp() override {
         InputMapperUnitTest::SetUp();
-        createDevice();
         mMapper = createInputMapper<SwitchInputMapper>(*mDeviceContext,
                                                        mFakePolicy->getReaderConfiguration());
     }

@@ -22,6 +22,7 @@
 #include <vector>
 
 #include <android-base/thread_annotations.h>
+#include <scheduler/FrameTime.h>
 #include <scheduler/TimeKeeper.h>
 #include <ui/DisplayId.h>
 
@@ -77,7 +78,7 @@ public:
 
     void setRenderRate(Fps, bool applyImmediately) final EXCLUDES(mMutex);
 
-    void onFrameBegin(TimePoint expectedPresentTime, TimePoint lastConfirmedPresentTime) final
+    void onFrameBegin(TimePoint expectedPresentTime, FrameTime lastSignaledFrameTime) final
             EXCLUDES(mMutex);
     void onFrameMissed(TimePoint expectedPresentTime) final EXCLUDES(mMutex);
 

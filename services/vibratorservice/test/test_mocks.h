@@ -41,6 +41,7 @@ using aidl::android::hardware::vibrator::EffectStrength;
 using aidl::android::hardware::vibrator::IVibrator;
 using aidl::android::hardware::vibrator::IVibratorCallback;
 using aidl::android::hardware::vibrator::PrimitivePwle;
+using aidl::android::hardware::vibrator::VendorEffect;
 
 // -------------------------------------------------------------------------------------------------
 
@@ -56,6 +57,8 @@ public:
                 (Effect e, EffectStrength s, const std::shared_ptr<IVibratorCallback>& cb,
                  int32_t* ret),
                 (override));
+    MOCK_METHOD(ndk::ScopedAStatus, performVendorEffect,
+                (const VendorEffect& e, const std::shared_ptr<IVibratorCallback>& cb), (override));
     MOCK_METHOD(ndk::ScopedAStatus, getSupportedEffects, (std::vector<Effect> * ret), (override));
     MOCK_METHOD(ndk::ScopedAStatus, setAmplitude, (float amplitude), (override));
     MOCK_METHOD(ndk::ScopedAStatus, setExternalControl, (bool enabled), (override));

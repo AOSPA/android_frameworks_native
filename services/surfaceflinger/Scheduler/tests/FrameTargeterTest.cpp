@@ -57,6 +57,10 @@ public:
         return target().wouldPresentEarly(minFramePeriod);
     }
 
+    FrameTarget::FenceWithFenceTime presentFenceForPastVsync(Period minFramePeriod) const {
+        return target().presentFenceForPastVsync(minFramePeriod);
+    }
+
     struct Frame {
         Frame(FrameTargeterTestBase* testPtr, VsyncId vsyncId, TimePoint& frameBeginTime,
               Duration frameDuration, Fps refreshRate, Fps peakRefreshRate,
@@ -181,7 +185,7 @@ TEST_F(FrameTargeterTest, recallsPastVsync) {
         const auto fence = frame.end();
 
         EXPECT_EQ(target().pastVsyncTime(kPeriod), frameBeginTime + kFrameDuration - kPeriod);
-        EXPECT_EQ(target().presentFenceForPastVsync(kPeriod), fence);
+        EXPECT_EQ(presentFenceForPastVsync(kPeriod).fenceTime, fence);
     }
 }
 
@@ -200,7 +204,7 @@ TEST_F(FrameTargeterTest, recallsPastVsyncTwoVsyncsAhead) {
         const auto fence = frame.end();
 
         EXPECT_EQ(target().pastVsyncTime(kPeriod), frameBeginTime + kFrameDuration - 2 * kPeriod);
-        EXPECT_EQ(target().presentFenceForPastVsync(kPeriod), previousFence);
+        EXPECT_EQ(presentFenceForPastVsync(kPeriod).fenceTime, previousFence);
 
         previousFence = fence;
     }
@@ -222,7 +226,7 @@ TEST_F(FrameTargeterTest, recallsPastNVsyncTwoVsyncsAhead) {
 
         const auto pastVsyncTime = frameBeginTime + kFrameDuration - 2 * kPeriod;
         EXPECT_EQ(target().pastVsyncTime(kPeriod), pastVsyncTime);
-        EXPECT_EQ(target().presentFenceForPastVsync(kFrameDuration), previousFence);
+        EXPECT_EQ(presentFenceForPastVsync(kFrameDuration).fenceTime, previousFence);
 
         frameBeginTime += kPeriod;
         previousFence = fence;
@@ -248,7 +252,7 @@ TEST_F(FrameTargeterTest, recallsPastVsyncTwoVsyncsAheadVrr) {
         const auto fence = frame.end();
 
         EXPECT_EQ(target().pastVsyncTime(kPeriod), frameBeginTime + kFrameDuration - 2 * kPeriod);
-        EXPECT_EQ(target().presentFenceForPastVsync(kPeriod), previousFence);
+        EXPECT_EQ(presentFenceForPastVsync(kPeriod).fenceTime, previousFence);
 
         previousFence = fence;
     }
@@ -274,7 +278,7 @@ TEST_F(FrameTargeterTest, recallsPastNVsyncTwoVsyncsAheadVrr) {
 
         const auto pastVsyncTime = frameBeginTime + kFrameDuration - 2 * kPeriod;
         EXPECT_EQ(target().pastVsyncTime(kPeriod), pastVsyncTime);
-        EXPECT_EQ(target().presentFenceForPastVsync(kFrameDuration), previousFence);
+        EXPECT_EQ(presentFenceForPastVsync(kFrameDuration).fenceTime, previousFence);
 
         frameBeginTime += kPeriod;
         previousFence = fence;
@@ -283,7 +287,7 @@ TEST_F(FrameTargeterTest, recallsPastNVsyncTwoVsyncsAheadVrr) {
 
 TEST_F(FrameTargeterTest, doesNotDetectEarlyPresentIfNoFence) {
     constexpr Period kPeriod = (60_Hz).getPeriod();
-    EXPECT_EQ(target().presentFenceForPastVsync(kPeriod), FenceTime::NO_FENCE);
+    EXPECT_EQ(presentFenceForPastVsync(kPeriod).fenceTime, FenceTime::NO_FENCE);
     EXPECT_FALSE(wouldPresentEarly(kPeriod));
 }
 

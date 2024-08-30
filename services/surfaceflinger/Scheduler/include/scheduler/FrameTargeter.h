@@ -26,6 +26,7 @@
 #include <ui/FenceTime.h>
 
 #include <scheduler/Features.h>
+#include <scheduler/FrameTime.h>
 #include <scheduler/Time.h>
 #include <scheduler/VsyncId.h>
 #include <scheduler/interface/CompositeResult.h>
@@ -57,13 +58,6 @@ public:
     // The time of the VSYNC that preceded this frame. See `presentFenceForPastVsync` for details.
     TimePoint pastVsyncTime(Period minFramePeriod) const;
 
-    // The present fence for the frame that had targeted the most recent VSYNC before this frame.
-    // If the target VSYNC for any given frame is more than `vsyncPeriod` in the future, then the
-    // VSYNC of at least one previous frame has not yet passed. In other words, this is NOT the
-    // `presentFenceForPreviousFrame` if running N VSYNCs ahead, but the one that should have been
-    // signaled by now (unless that frame missed).
-    FenceTimePtr presentFenceForPastVsync(Period minFramePeriod) const;
-
     // Equivalent to `presentFenceForPastVsync` unless running N VSYNCs ahead.
     const FenceTimePtr& presentFenceForPreviousFrame() const {
         return mPresentFences.front().fenceTime;
@@ -72,7 +66,7 @@ public:
     bool isFramePending() const { return mFramePending; }
     bool didMissFrame() const { return mFrameMissed; }
     bool didMissHwcFrame() const { return mHwcFrameMissed && !mGpuFrameMissed; }
-    TimePoint lastSignaledFrameTime() const { return mLastSignaledFrameTime; };
+    FrameTime lastSignaledFrameTime() const { return mLastSignaledFrameTime; }
 
 protected:
     explicit FrameTarget(const std::string& displayLabel);
@@ -106,10 +100,17 @@ protected:
         FenceTimePtr fenceTime = FenceTime::NO_FENCE;
         TimePoint expectedPresentTime = TimePoint();
     };
+
+    // The present fence for the frame that had targeted the most recent VSYNC before this frame.
+    // If the target VSYNC for any given frame is more than `vsyncPeriod` in the future, then the
+    // VSYNC of at least one previous frame has not yet passed. In other words, this is NOT the
+    // `presentFenceForPreviousFrame` if running N VSYNCs ahead, but the one that should have been
+    // signaled by now (unless that frame missed).
+    FenceWithFenceTime presentFenceForPastVsync(Period minFramePeriod) const;
     std::array<FenceWithFenceTime, 2> mPresentFences;
     utils::RingBuffer<FenceWithFenceTime, 5> mFenceWithFenceTimes;
 
-    TimePoint mLastSignaledFrameTime;
+    FrameTime mLastSignaledFrameTime;
 
 private:
     friend class FrameTargeterTestBase;
@@ -120,16 +121,17 @@ private:
         return expectedFrameDuration() > (N - 1) * minFramePeriod;
     }
 
-    const FenceTimePtr pastVsyncTimePtr() const {
-        auto pastFenceTimePtr = FenceTime::NO_FENCE;
+    FenceWithFenceTime pastVsyncTimePtr() const {
+        FenceWithFenceTime pastFenceWithFenceTime;
         for (size_t i = 0; i < mFenceWithFenceTimes.size(); i++) {
-            const auto& [_, fenceTimePtr, expectedPresentTime] = mFenceWithFenceTimes[i];
-            if (expectedPresentTime > mFrameBeginTime) {
-                return pastFenceTimePtr;
+            const auto& fenceWithFenceTime = mFenceWithFenceTimes[i];
+            // TODO(b/354007767) Fix the below condition to avoid frame drop
+            if (fenceWithFenceTime.expectedPresentTime > mFrameBeginTime) {
+                return pastFenceWithFenceTime;
             }
-            pastFenceTimePtr = fenceTimePtr;
+            pastFenceWithFenceTime = fenceWithFenceTime;
         }
-        return pastFenceTimePtr;
+        return pastFenceWithFenceTime;
     }
 };
 

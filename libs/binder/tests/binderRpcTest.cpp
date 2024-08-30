@@ -19,6 +19,12 @@
 #include <aidl/IBinderRpcTest.h>
 #endif
 
+#if defined(__LP64__)
+#define TEST_FILE_SUFFIX "64"
+#else
+#define TEST_FILE_SUFFIX "32"
+#endif
+
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -259,7 +265,8 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
 
     std::string path = GetExecutableDirectory();
     auto servicePath = path + "/binder_rpc_test_service" +
-            (singleThreaded ? "_single_threaded" : "") + (noKernel ? "_no_kernel" : "");
+            (singleThreaded ? "_single_threaded" : "") + (noKernel ? "_no_kernel" : "") +
+            TEST_FILE_SUFFIX;
 
     unique_fd bootstrapClientFd, socketFd;
 

@@ -1269,6 +1269,20 @@ public:
     }
 };
 
+class TestSurfaceListener : public SurfaceListener {
+public:
+    sp<IGraphicBufferProducer> mIgbp;
+    TestSurfaceListener(const sp<IGraphicBufferProducer>& igbp) : mIgbp(igbp) {}
+    void onBufferReleased() override {
+        sp<GraphicBuffer> buffer;
+        sp<Fence> fence;
+        mIgbp->detachNextBuffer(&buffer, &fence);
+    }
+    bool needsReleaseNotify() override { return true; }
+    void onBuffersDiscarded(const std::vector<sp<GraphicBuffer>>& /*buffers*/) override {}
+    void onBufferDetached(int /*slot*/) {}
+};
+
 TEST_F(BLASTBufferQueueTest, CustomProducerListener) {
     BLASTBufferQueueHelper adapter(mSurfaceControl, mDisplayWidth, mDisplayHeight);
     sp<IGraphicBufferProducer> igbProducer = adapter.getIGraphicBufferProducer();
@@ -1327,7 +1341,7 @@ TEST_F(BLASTBufferQueueTest, TransformHint) {
     ASSERT_EQ(ui::Transform::ROT_0, static_cast<ui::Transform::RotationFlags>(transformHint));
 
     ASSERT_EQ(NO_ERROR,
-              surface->connect(NATIVE_WINDOW_API_CPU, new TestProducerListener(igbProducer)));
+              surface->connect(NATIVE_WINDOW_API_CPU, new TestSurfaceListener(igbProducer)));
 
     // After connecting to the surface, we should get the correct hint.
     surface->query(NATIVE_WINDOW_TRANSFORM_HINT, &transformHint);

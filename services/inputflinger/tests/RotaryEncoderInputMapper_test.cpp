@@ -138,7 +138,6 @@ TEST_F(RotaryEncoderInputMapperTest, ConfigureDisplayIdWithAssociatedViewport) {
     mReaderConfiguration.setDisplayViewports({primaryViewport, secondaryViewport});
 
     // Set up the secondary display as the associated viewport of the mapper.
-    createDevice();
     ViewportFakingInputDeviceContext deviceContext(*mDevice, EVENTHUB_ID, secondaryViewport);
     mMapper = createInputMapper<RotaryEncoderInputMapper>(deviceContext, mReaderConfiguration);
 
@@ -159,7 +158,6 @@ TEST_F(RotaryEncoderInputMapperTest, ConfigureDisplayIdNoAssociatedViewport) {
     mFakePolicy->addDisplayViewport(createPrimaryViewport());
 
     // Set up the mapper with no associated viewport.
-    createDevice();
     mMapper = createInputMapper<RotaryEncoderInputMapper>(*mDeviceContext, mReaderConfiguration);
 
     // Ensure input events are generated without display ID
@@ -174,7 +172,6 @@ TEST_F(RotaryEncoderInputMapperTest, ConfigureDisplayIdNoAssociatedViewport) {
 }
 
 TEST_F(RotaryEncoderInputMapperTest, ProcessRegularScroll) {
-    createDevice();
     mMapper = createInputMapper<RotaryEncoderInputMapper>(*mDeviceContext, mReaderConfiguration);
 
     std::list<NotifyArgs> args;
@@ -191,7 +188,6 @@ TEST_F(RotaryEncoderInputMapperTest, ProcessHighResScroll) {
     vd_flags::high_resolution_scroll(true);
     EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_WHEEL_HI_RES))
             .WillRepeatedly(Return(true));
-    createDevice();
     mMapper = createInputMapper<RotaryEncoderInputMapper>(*mDeviceContext, mReaderConfiguration);
 
     std::list<NotifyArgs> args;
@@ -208,7 +204,6 @@ TEST_F(RotaryEncoderInputMapperTest, HighResScrollIgnoresRegularScroll) {
     vd_flags::high_resolution_scroll(true);
     EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_WHEEL_HI_RES))
             .WillRepeatedly(Return(true));
-    createDevice();
     mMapper = createInputMapper<RotaryEncoderInputMapper>(*mDeviceContext, mReaderConfiguration);
 
     std::list<NotifyArgs> args;

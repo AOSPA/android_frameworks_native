@@ -349,6 +349,7 @@ class HalWrapper {
 public:
     using Effect = aidl::android::hardware::vibrator::Effect;
     using EffectStrength = aidl::android::hardware::vibrator::EffectStrength;
+    using VendorEffect = aidl::android::hardware::vibrator::VendorEffect;
     using CompositePrimitive = aidl::android::hardware::vibrator::CompositePrimitive;
     using CompositeEffect = aidl::android::hardware::vibrator::CompositeEffect;
     using Braking = aidl::android::hardware::vibrator::Braking;
@@ -379,6 +380,9 @@ public:
     virtual HalResult<std::chrono::milliseconds> performEffect(
             Effect effect, EffectStrength strength,
             const std::function<void()>& completionCallback) = 0;
+
+    virtual HalResult<void> performVendorEffect(const VendorEffect& effect,
+                                                const std::function<void()>& completionCallback);
 
     virtual HalResult<std::chrono::milliseconds> performComposedEffect(
             const std::vector<CompositeEffect>& primitives,
@@ -453,6 +457,10 @@ public:
 
     HalResult<std::chrono::milliseconds> performEffect(
             Effect effect, EffectStrength strength,
+            const std::function<void()>& completionCallback) override final;
+
+    HalResult<void> performVendorEffect(
+            const VendorEffect& effect,
             const std::function<void()>& completionCallback) override final;
 
     HalResult<std::chrono::milliseconds> performComposedEffect(

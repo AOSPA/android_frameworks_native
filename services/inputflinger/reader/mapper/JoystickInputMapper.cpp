@@ -117,8 +117,9 @@ std::list<NotifyArgs> JoystickInputMapper::reconfigure(nsecs_t when,
                 continue; // axis must be claimed by a different device
             }
 
-            if (std::optional<RawAbsoluteAxisInfo> rawAxisInfo = getAbsoluteAxisInfo(abs);
-                rawAxisInfo) {
+            RawAbsoluteAxisInfo rawAxisInfo;
+            getAbsoluteAxisInfo(abs, &rawAxisInfo);
+            if (rawAxisInfo.valid) {
                 // Map axis.
                 AxisInfo axisInfo;
                 const bool explicitlyMapped = !getDeviceContext().mapAxis(abs, &axisInfo);
@@ -128,7 +129,7 @@ std::list<NotifyArgs> JoystickInputMapper::reconfigure(nsecs_t when,
                     axisInfo.mode = AxisInfo::MODE_NORMAL;
                     axisInfo.axis = -1;
                 }
-                mAxes.insert({abs, createAxis(axisInfo, rawAxisInfo.value(), explicitlyMapped)});
+                mAxes.insert({abs, createAxis(axisInfo, rawAxisInfo, explicitlyMapped)});
             }
         }
 

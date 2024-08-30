@@ -487,13 +487,13 @@ Duration VSyncPredictor::ensureMinFrameDurationIsKept(TimePoint expectedPresentT
     return 0ns;
 }
 
-void VSyncPredictor::onFrameBegin(TimePoint expectedPresentTime,
-                                  TimePoint lastConfirmedPresentTime) {
+void VSyncPredictor::onFrameBegin(TimePoint expectedPresentTime, FrameTime lastSignaledFrameTime) {
     SFTRACE_NAME("VSyncPredictor::onFrameBegin");
     std::lock_guard lock(mMutex);
 
     if (!mDisplayModePtr->getVrrConfig()) return;
 
+    const auto [lastConfirmedPresentTime, lastConfirmedExpectedPresentTime] = lastSignaledFrameTime;
     if (CC_UNLIKELY(mTraceOn)) {
         SFTRACE_FORMAT_INSTANT("vsync is %.2f past last signaled fence",
                                static_cast<float>(expectedPresentTime.ns() -
@@ -517,6 +517,11 @@ void VSyncPredictor::onFrameBegin(TimePoint expectedPresentTime,
         } else {
             break;
         }
+    }
+
+    if (lastConfirmedExpectedPresentTime.ns() - lastConfirmedPresentTime.ns() > threshold) {
+        SFTRACE_FORMAT_INSTANT("lastFramePresentedEarly");
+        return;
     }
 
     const auto phase = ensureMinFrameDurationIsKept(expectedPresentTime, lastConfirmedPresentTime);

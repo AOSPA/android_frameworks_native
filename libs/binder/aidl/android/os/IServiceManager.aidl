@@ -18,6 +18,7 @@ package android.os;
 
 import android.os.IClientCallback;
 import android.os.IServiceCallback;
+import android.os.Service;
 import android.os.ServiceDebugInfo;
 import android.os.ConnectionInfo;
 
@@ -61,7 +62,7 @@ interface IServiceManager {
      * Returns null if the service does not exist.
      */
     @UnsupportedAppUsage
-    @nullable IBinder getService(@utf8InCpp String name);
+    Service getService(@utf8InCpp String name);
 
     /**
      * Retrieve an existing service called @a name from the service
@@ -69,7 +70,7 @@ interface IServiceManager {
      * exist.
      */
     @UnsupportedAppUsage
-    @nullable IBinder checkService(@utf8InCpp String name);
+    Service checkService(@utf8InCpp String name);
 
     /**
      * Place a new @a service called @a name into the service

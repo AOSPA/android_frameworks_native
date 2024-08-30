@@ -74,6 +74,16 @@ public:
     virtual bool needsReleaseNotify() = 0;
 
     virtual void onBuffersDiscarded(const std::vector<sp<GraphicBuffer>>& buffers) = 0;
+    virtual void onBufferDetached(int slot) = 0;
+};
+
+class StubSurfaceListener : public SurfaceListener {
+public:
+    virtual ~StubSurfaceListener() {}
+    virtual void onBufferReleased() override {}
+    virtual bool needsReleaseNotify() { return false; }
+    virtual void onBuffersDiscarded(const std::vector<sp<GraphicBuffer>>& /*buffers*/) override {}
+    virtual void onBufferDetached(int /*slot*/) override {}
 };
 
 /*
@@ -375,15 +385,13 @@ public:
     virtual int unlockAndPost();
     virtual int query(int what, int* value) const;
 
-    virtual int connect(int api, const sp<IProducerListener>& listener);
+    virtual int connect(int api, const sp<SurfaceListener>& listener);
 
     // When reportBufferRemoval is true, clients must call getAndFlushRemovedBuffers to fetch
     // GraphicBuffers removed from this surface after a dequeueBuffer, detachNextBuffer or
     // attachBuffer call. This allows clients with their own buffer caches to free up buffers no
     // longer in use by this surface.
-    virtual int connect(
-            int api, const sp<IProducerListener>& listener,
-            bool reportBufferRemoval);
+    virtual int connect(int api, const sp<SurfaceListener>& listener, bool reportBufferRemoval);
     virtual int detachNextBuffer(sp<GraphicBuffer>* outBuffer,
             sp<Fence>* outFence);
     virtual int attachBuffer(ANativeWindowBuffer*);
@@ -439,6 +447,8 @@ protected:
         virtual bool needsReleaseNotify() {
             return mSurfaceListener->needsReleaseNotify();
         }
+
+        virtual void onBufferDetached(int slot) { mSurfaceListener->onBufferDetached(slot); }
 
         virtual void onBuffersDiscarded(const std::vector<int32_t>& slots);
     private:

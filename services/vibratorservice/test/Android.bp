@@ -49,7 +49,7 @@ cc_test {
         "liblog",
         "libvibratorservice",
         "libutils",
-        "android.hardware.vibrator-V2-ndk",
+        "android.hardware.vibrator-V3-ndk",
         "android.hardware.vibrator@1.0",
         "android.hardware.vibrator@1.1",
         "android.hardware.vibrator@1.2",

@@ -517,10 +517,10 @@ ftl::Flags<InputDeviceClass> getAbsAxisUsage(int32_t axis,
 
 // --- RawAbsoluteAxisInfo ---
 
-std::ostream& operator<<(std::ostream& out, const std::optional<RawAbsoluteAxisInfo>& info) {
-    if (info) {
-        out << "min=" << info->minValue << ", max=" << info->maxValue << ", flat=" << info->flat
-            << ", fuzz=" << info->fuzz << ", resolution=" << info->resolution;
+std::ostream& operator<<(std::ostream& out, const RawAbsoluteAxisInfo& info) {
+    if (info.valid) {
+        out << "min=" << info.minValue << ", max=" << info.maxValue << ", flat=" << info.flat
+            << ", fuzz=" << info.fuzz << ", resolution=" << info.resolution;
     } else {
         out << "unknown range";
     }
@@ -649,6 +649,7 @@ void EventHub::Device::populateAbsoluteAxisStates() {
             continue;
         }
         auto& [axisInfo, value] = absState[axis];
+        axisInfo.valid = true;
         axisInfo.minValue = info.minimum;
         axisInfo.maxValue = info.maximum;
         axisInfo.flat = info.flat;

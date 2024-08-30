@@ -801,6 +801,14 @@ bool RpcSession::setForServer(const wp<RpcServer>& server, const wp<EventListene
     return true;
 }
 
+void RpcSession::setSessionSpecificRoot(const sp<IBinder>& sessionSpecificRoot) {
+    LOG_ALWAYS_FATAL_IF(mSessionSpecificRootObject != nullptr,
+                        "Session specific root object already set");
+    LOG_ALWAYS_FATAL_IF(mForServer != nullptr,
+                        "Session specific root object cannot be set for a server");
+    mSessionSpecificRootObject = sessionSpecificRoot;
+}
+
 sp<RpcSession::RpcConnection> RpcSession::assignIncomingConnectionToThisThread(
         std::unique_ptr<RpcTransport> rpcTransport) {
     RpcMutexLockGuard _l(mMutex);

@@ -16,7 +16,6 @@
 
 #include "CapturedTouchpadEventConverter.h"
 
-#include <optional>
 #include <sstream>
 
 #include <android-base/stringprintf.h>
@@ -54,33 +53,32 @@ CapturedTouchpadEventConverter::CapturedTouchpadEventConverter(
         mMotionAccumulator(motionAccumulator),
         mHasTouchMinor(deviceContext.hasAbsoluteAxis(ABS_MT_TOUCH_MINOR)),
         mHasToolMinor(deviceContext.hasAbsoluteAxis(ABS_MT_WIDTH_MINOR)) {
-    if (std::optional<RawAbsoluteAxisInfo> orientation =
-                deviceContext.getAbsoluteAxisInfo(ABS_MT_ORIENTATION);
-        orientation) {
-        if (orientation->maxValue > 0) {
-            mOrientationScale = M_PI_2 / orientation->maxValue;
-        } else if (orientation->minValue < 0) {
-            mOrientationScale = -M_PI_2 / orientation->minValue;
+    RawAbsoluteAxisInfo orientationInfo;
+    deviceContext.getAbsoluteAxisInfo(ABS_MT_ORIENTATION, &orientationInfo);
+    if (orientationInfo.valid) {
+        if (orientationInfo.maxValue > 0) {
+            mOrientationScale = M_PI_2 / orientationInfo.maxValue;
+        } else if (orientationInfo.minValue < 0) {
+            mOrientationScale = -M_PI_2 / orientationInfo.minValue;
         }
     }
 
     // TODO(b/275369880): support touch.pressure.calibration and .scale properties when captured.
-    if (std::optional<RawAbsoluteAxisInfo> pressure =
-                deviceContext.getAbsoluteAxisInfo(ABS_MT_PRESSURE);
-        pressure && pressure->maxValue > 0) {
-        mPressureScale = 1.0 / pressure->maxValue;
+    RawAbsoluteAxisInfo pressureInfo;
+    deviceContext.getAbsoluteAxisInfo(ABS_MT_PRESSURE, &pressureInfo);
+    if (pressureInfo.valid && pressureInfo.maxValue > 0) {
+        mPressureScale = 1.0 / pressureInfo.maxValue;
     }
 
-    std::optional<RawAbsoluteAxisInfo> touchMajor =
-            deviceContext.getAbsoluteAxisInfo(ABS_MT_TOUCH_MAJOR);
-    std::optional<RawAbsoluteAxisInfo> toolMajor =
-            deviceContext.getAbsoluteAxisInfo(ABS_MT_WIDTH_MAJOR);
-    mHasTouchMajor = touchMajor.has_value();
-    mHasToolMajor = toolMajor.has_value();
-    if (mHasTouchMajor && touchMajor->maxValue != 0) {
-        mSizeScale = 1.0f / touchMajor->maxValue;
-    } else if (mHasToolMajor && toolMajor->maxValue != 0) {
-        mSizeScale = 1.0f / toolMajor->maxValue;
+    RawAbsoluteAxisInfo touchMajorInfo, toolMajorInfo;
+    deviceContext.getAbsoluteAxisInfo(ABS_MT_TOUCH_MAJOR, &touchMajorInfo);
+    deviceContext.getAbsoluteAxisInfo(ABS_MT_WIDTH_MAJOR, &toolMajorInfo);
+    mHasTouchMajor = touchMajorInfo.valid;
+    mHasToolMajor = toolMajorInfo.valid;
+    if (mHasTouchMajor && touchMajorInfo.maxValue != 0) {
+        mSizeScale = 1.0f / touchMajorInfo.maxValue;
+    } else if (mHasToolMajor && toolMajorInfo.maxValue != 0) {
+        mSizeScale = 1.0f / toolMajorInfo.maxValue;
     }
 }
 
@@ -115,13 +113,15 @@ void CapturedTouchpadEventConverter::populateMotionRanges(InputDeviceInfo& info)
     tryAddRawMotionRange(/*byref*/ info, AMOTION_EVENT_AXIS_TOOL_MAJOR, ABS_MT_WIDTH_MAJOR);
     tryAddRawMotionRange(/*byref*/ info, AMOTION_EVENT_AXIS_TOOL_MINOR, ABS_MT_WIDTH_MINOR);
 
-    if (mDeviceContext.hasAbsoluteAxis(ABS_MT_PRESSURE)) {
+    RawAbsoluteAxisInfo pressureInfo;
+    mDeviceContext.getAbsoluteAxisInfo(ABS_MT_PRESSURE, &pressureInfo);
+    if (pressureInfo.valid) {
         info.addMotionRange(AMOTION_EVENT_AXIS_PRESSURE, SOURCE, 0, 1, 0, 0, 0);
     }
 
-    if (std::optional<RawAbsoluteAxisInfo> orientation =
-                mDeviceContext.getAbsoluteAxisInfo(ABS_MT_ORIENTATION);
-        orientation && (orientation->maxValue > 0 || orientation->minValue < 0)) {
+    RawAbsoluteAxisInfo orientationInfo;
+    mDeviceContext.getAbsoluteAxisInfo(ABS_MT_ORIENTATION, &orientationInfo);
+    if (orientationInfo.valid && (orientationInfo.maxValue > 0 || orientationInfo.minValue < 0)) {
         info.addMotionRange(AMOTION_EVENT_AXIS_ORIENTATION, SOURCE, -M_PI_2, M_PI_2, 0, 0, 0);
     }
 
@@ -133,10 +133,11 @@ void CapturedTouchpadEventConverter::populateMotionRanges(InputDeviceInfo& info)
 void CapturedTouchpadEventConverter::tryAddRawMotionRange(InputDeviceInfo& deviceInfo,
                                                           int32_t androidAxis,
                                                           int32_t evdevAxis) const {
-    std::optional<RawAbsoluteAxisInfo> info = mDeviceContext.getAbsoluteAxisInfo(evdevAxis);
-    if (info) {
-        deviceInfo.addMotionRange(androidAxis, SOURCE, info->minValue, info->maxValue, info->flat,
-                                  info->fuzz, info->resolution);
+    RawAbsoluteAxisInfo info;
+    mDeviceContext.getAbsoluteAxisInfo(evdevAxis, &info);
+    if (info.valid) {
+        deviceInfo.addMotionRange(androidAxis, SOURCE, info.minValue, info.maxValue, info.flat,
+                                  info.fuzz, info.resolution);
     }
 }
 

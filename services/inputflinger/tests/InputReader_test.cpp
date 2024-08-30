@@ -24,7 +24,6 @@
 #include <InputReader.h>
 #include <InputReaderBase.h>
 #include <InputReaderFactory.h>
-#include <JoystickInputMapper.h>
 #include <KeyboardInputMapper.h>
 #include <MultiTouchInputMapper.h>
 #include <NotifyArgsBuilders.h>
@@ -4038,6 +4037,51 @@ TEST_F(KeyboardInputMapperTest, Process_GesureEventToSetFlagKeepTouchMode) {
     process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_LEFT, 1);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
     ASSERT_EQ(AKEY_EVENT_FLAG_FROM_SYSTEM | AKEY_EVENT_FLAG_KEEP_TOUCH_MODE, args.flags);
+}
+
+/**
+ * When there is more than one KeyboardInputMapper for an InputDevice, each mapper should produce
+ * events that use the shared keyboard source across all mappers. This is to ensure that each
+ * input device generates key events in a consistent manner, regardless of which mapper produces
+ * the event.
+ */
+TEST_F(KeyboardInputMapperTest, UsesSharedKeyboardSource) {
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_HOME, 0, AKEYCODE_HOME, POLICY_FLAG_WAKE);
+
+    // Add a mapper with SOURCE_KEYBOARD
+    KeyboardInputMapper& keyboardMapper =
+            constructAndAddMapper<KeyboardInputMapper>(AINPUT_SOURCE_KEYBOARD);
+
+    process(keyboardMapper, ARBITRARY_TIME, 0, EV_KEY, KEY_HOME, 1);
+    ASSERT_NO_FATAL_FAILURE(
+            mFakeListener->assertNotifyKeyWasCalled(WithSource(AINPUT_SOURCE_KEYBOARD)));
+    process(keyboardMapper, ARBITRARY_TIME, 0, EV_KEY, KEY_HOME, 0);
+    ASSERT_NO_FATAL_FAILURE(
+            mFakeListener->assertNotifyKeyWasCalled(WithSource(AINPUT_SOURCE_KEYBOARD)));
+
+    // Add a mapper with SOURCE_DPAD
+    KeyboardInputMapper& dpadMapper =
+            constructAndAddMapper<KeyboardInputMapper>(AINPUT_SOURCE_DPAD);
+    for (auto* mapper : {&keyboardMapper, &dpadMapper}) {
+        process(*mapper, ARBITRARY_TIME, 0, EV_KEY, KEY_HOME, 1);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(
+                WithSource(AINPUT_SOURCE_KEYBOARD | AINPUT_SOURCE_DPAD)));
+        process(*mapper, ARBITRARY_TIME, 0, EV_KEY, KEY_HOME, 0);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(
+                WithSource(AINPUT_SOURCE_KEYBOARD | AINPUT_SOURCE_DPAD)));
+    }
+
+    // Add a mapper with SOURCE_GAMEPAD
+    KeyboardInputMapper& gamepadMapper =
+            constructAndAddMapper<KeyboardInputMapper>(AINPUT_SOURCE_GAMEPAD);
+    for (auto* mapper : {&keyboardMapper, &dpadMapper, &gamepadMapper}) {
+        process(*mapper, ARBITRARY_TIME, 0, EV_KEY, KEY_HOME, 1);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(
+                WithSource(AINPUT_SOURCE_KEYBOARD | AINPUT_SOURCE_DPAD | AINPUT_SOURCE_GAMEPAD)));
+        process(*mapper, ARBITRARY_TIME, 0, EV_KEY, KEY_HOME, 0);
+        ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(
+                WithSource(AINPUT_SOURCE_KEYBOARD | AINPUT_SOURCE_DPAD | AINPUT_SOURCE_GAMEPAD)));
+    }
 }
 
 // --- KeyboardInputMapperTest_ExternalAlphabeticDevice ---
@@ -10016,67 +10060,6 @@ TEST_F(MultiTouchPointerModeTest, WhenViewportActiveStatusChanged_PointerGesture
                   WithSource(AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_STYLUS),
                   WithToolType(ToolType::STYLUS))));
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasNotCalled());
-}
-
-// --- JoystickInputMapperTest ---
-
-class JoystickInputMapperTest : public InputMapperTest {
-protected:
-    static const int32_t RAW_X_MIN;
-    static const int32_t RAW_X_MAX;
-    static const int32_t RAW_Y_MIN;
-    static const int32_t RAW_Y_MAX;
-
-    void SetUp() override {
-        InputMapperTest::SetUp(InputDeviceClass::JOYSTICK | InputDeviceClass::EXTERNAL);
-    }
-    void prepareAxes() {
-        mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_X, RAW_X_MIN, RAW_X_MAX, 0, 0);
-        mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_Y, RAW_Y_MIN, RAW_Y_MAX, 0, 0);
-    }
-
-    void processAxis(JoystickInputMapper& mapper, int32_t axis, int32_t value) {
-        process(mapper, ARBITRARY_TIME, READ_TIME, EV_ABS, axis, value);
-    }
-
-    void processSync(JoystickInputMapper& mapper) {
-        process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    }
-
-    void prepareVirtualDisplay(ui::Rotation orientation) {
-        setDisplayInfoAndReconfigure(VIRTUAL_DISPLAY_ID, VIRTUAL_DISPLAY_WIDTH,
-                                     VIRTUAL_DISPLAY_HEIGHT, orientation, VIRTUAL_DISPLAY_UNIQUE_ID,
-                                     NO_PORT, ViewportType::VIRTUAL);
-    }
-};
-
-const int32_t JoystickInputMapperTest::RAW_X_MIN = -32767;
-const int32_t JoystickInputMapperTest::RAW_X_MAX = 32767;
-const int32_t JoystickInputMapperTest::RAW_Y_MIN = -32767;
-const int32_t JoystickInputMapperTest::RAW_Y_MAX = 32767;
-
-TEST_F(JoystickInputMapperTest, Configure_AssignsDisplayUniqueId) {
-    prepareAxes();
-    JoystickInputMapper& mapper = constructAndAddMapper<JoystickInputMapper>();
-
-    mFakePolicy->addInputUniqueIdAssociation(DEVICE_LOCATION, VIRTUAL_DISPLAY_UNIQUE_ID);
-
-    prepareVirtualDisplay(ui::ROTATION_0);
-
-    // Send an axis event
-    processAxis(mapper, ABS_X, 100);
-    processSync(mapper);
-
-    NotifyMotionArgs args;
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(VIRTUAL_DISPLAY_ID, args.displayId);
-
-    // Send another axis event
-    processAxis(mapper, ABS_Y, 100);
-    processSync(mapper);
-
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(VIRTUAL_DISPLAY_ID, args.displayId);
 }
 
 // --- PeripheralControllerTest ---

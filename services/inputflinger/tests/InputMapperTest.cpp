@@ -26,7 +26,9 @@
 namespace android {
 
 using testing::_;
+using testing::NiceMock;
 using testing::Return;
+using testing::ReturnRef;
 
 void InputMapperUnitTest::SetUpWithBus(int bus) {
     mFakePolicy = sp<FakeInputReaderPolicy>::make();
@@ -43,22 +45,18 @@ void InputMapperUnitTest::SetUpWithBus(int bus) {
     EXPECT_CALL(mMockEventHub, getConfiguration(EVENTHUB_ID)).WillRepeatedly([&](int32_t) {
         return mPropertyMap;
     });
-}
 
-void InputMapperUnitTest::createDevice() {
-    mDevice = std::make_unique<InputDevice>(&mMockInputReaderContext, DEVICE_ID,
-                                            /*generation=*/2, mIdentifier);
-    mDevice->addEmptyEventHubDevice(EVENTHUB_ID);
+    mDevice = std::make_unique<NiceMock<MockInputDevice>>(&mMockInputReaderContext, DEVICE_ID,
+                                                          /*generation=*/2, mIdentifier);
+    ON_CALL((*mDevice), getConfiguration).WillByDefault(ReturnRef(mPropertyMap));
     mDeviceContext = std::make_unique<InputDeviceContext>(*mDevice, EVENTHUB_ID);
-    std::list<NotifyArgs> args =
-            mDevice->configure(systemTime(), mReaderConfiguration, /*changes=*/{});
-    ASSERT_THAT(args, testing::ElementsAre(testing::VariantWith<NotifyDeviceResetArgs>(_)));
 }
 
 void InputMapperUnitTest::setupAxis(int axis, bool valid, int32_t min, int32_t max,
                                     int32_t resolution) {
     EXPECT_CALL(mMockEventHub, getAbsoluteAxisInfo(EVENTHUB_ID, axis))
             .WillRepeatedly(Return(valid ? std::optional<RawAbsoluteAxisInfo>{{
+                                                   .valid = true,
                                                    .minValue = min,
                                                    .maxValue = max,
                                                    .flat = 0,

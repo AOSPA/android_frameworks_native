@@ -44,7 +44,7 @@ void SingleTouchInputMapper::syncTouch(nsecs_t when, RawState* outState) {
 
         bool isHovering = mTouchButtonAccumulator.getToolType() != ToolType::MOUSE &&
                 (mTouchButtonAccumulator.isHovering() ||
-                 (mRawPointerAxes.pressure &&
+                 (mRawPointerAxes.pressure.valid &&
                   mSingleTouchMotionAccumulator.getAbsolutePressure() <= 0));
         outState->rawPointerData.markIdBit(0, isHovering);
 
@@ -72,15 +72,13 @@ void SingleTouchInputMapper::syncTouch(nsecs_t when, RawState* outState) {
 void SingleTouchInputMapper::configureRawPointerAxes() {
     TouchInputMapper::configureRawPointerAxes();
 
-    // We can safely assume that ABS_X and _Y axes will be available, as EventHub won't classify a
-    // device as a touch device if they're not present.
-    mRawPointerAxes.x = getAbsoluteAxisInfo(ABS_X).value();
-    mRawPointerAxes.y = getAbsoluteAxisInfo(ABS_Y).value();
-    mRawPointerAxes.pressure = getAbsoluteAxisInfo(ABS_PRESSURE);
-    mRawPointerAxes.toolMajor = getAbsoluteAxisInfo(ABS_TOOL_WIDTH);
-    mRawPointerAxes.distance = getAbsoluteAxisInfo(ABS_DISTANCE);
-    mRawPointerAxes.tiltX = getAbsoluteAxisInfo(ABS_TILT_X);
-    mRawPointerAxes.tiltY = getAbsoluteAxisInfo(ABS_TILT_Y);
+    getAbsoluteAxisInfo(ABS_X, &mRawPointerAxes.x);
+    getAbsoluteAxisInfo(ABS_Y, &mRawPointerAxes.y);
+    getAbsoluteAxisInfo(ABS_PRESSURE, &mRawPointerAxes.pressure);
+    getAbsoluteAxisInfo(ABS_TOOL_WIDTH, &mRawPointerAxes.toolMajor);
+    getAbsoluteAxisInfo(ABS_DISTANCE, &mRawPointerAxes.distance);
+    getAbsoluteAxisInfo(ABS_TILT_X, &mRawPointerAxes.tiltX);
+    getAbsoluteAxisInfo(ABS_TILT_Y, &mRawPointerAxes.tiltY);
 }
 
 bool SingleTouchInputMapper::hasStylus() const {

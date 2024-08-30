@@ -44,8 +44,8 @@ public:
     ~ServiceManager();
 
     // getService will try to start any services it cannot find
-    binder::Status getService(const std::string& name, sp<IBinder>* outBinder) override;
-    binder::Status checkService(const std::string& name, sp<IBinder>* outBinder) override;
+    binder::Status getService(const std::string& name, os::Service* outService) override;
+    binder::Status checkService(const std::string& name, os::Service* outService) override;
     binder::Status addService(const std::string& name, const sp<IBinder>& binder,
                               bool allowIsolated, int32_t dumpPriority) override;
     binder::Status listServices(int32_t dumpPriority, std::vector<std::string>* outList) override;
@@ -112,7 +112,10 @@ private:
     // this updates the iterator to the next location
     void removeClientCallback(const wp<IBinder>& who, ClientCallbackMap::iterator* it);
 
-    sp<IBinder> tryGetService(const std::string& name, bool startIfNotFound);
+    os::Service tryGetService(const std::string& name, bool startIfNotFound);
+    sp<IBinder> tryGetBinder(const std::string& name, bool startIfNotFound);
+    binder::Status canFindService(const Access::CallingContext& ctx, const std::string& name,
+                                  std::optional<std::string>* accessor);
 
     ServiceMap mNameToService;
     ServiceCallbackMap mNameToRegistrationCallback;

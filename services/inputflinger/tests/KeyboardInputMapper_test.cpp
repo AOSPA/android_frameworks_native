@@ -55,7 +55,6 @@ protected:
 
     void SetUp() override {
         InputMapperUnitTest::SetUp();
-        createDevice();
 
         // set key-codes expected in tests
         for (const auto& [scanCode, outKeycode] : mKeyCodeMap) {
@@ -65,6 +64,8 @@ protected:
 
         mFakePolicy = sp<FakeInputReaderPolicy>::make();
         EXPECT_CALL(mMockInputReaderContext, getPolicy).WillRepeatedly(Return(mFakePolicy.get()));
+
+        ON_CALL((*mDevice), getSources).WillByDefault(Return(AINPUT_SOURCE_KEYBOARD));
 
         mMapper = createInputMapper<KeyboardInputMapper>(*mDeviceContext, mReaderConfiguration,
                                                          AINPUT_SOURCE_KEYBOARD);

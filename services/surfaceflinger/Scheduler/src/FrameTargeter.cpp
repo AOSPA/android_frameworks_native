@@ -33,12 +33,12 @@ TimePoint FrameTarget::pastVsyncTime(Period minFramePeriod) const {
     return mExpectedPresentTime - Period::fromNs(minFramePeriod.ns() << shift);
 }
 
-FenceTimePtr FrameTarget::presentFenceForPastVsync(Period minFramePeriod) const {
+FrameTarget::FenceWithFenceTime FrameTarget::presentFenceForPastVsync(Period minFramePeriod) const {
     if (FlagManager::getInstance().allow_n_vsyncs_in_targeter()) {
         return pastVsyncTimePtr();
     }
     const size_t i = static_cast<size_t>(targetsVsyncsAhead<2>(minFramePeriod));
-    return mPresentFences[i].fenceTime;
+    return mPresentFences[i];
 }
 
 bool FrameTarget::wouldPresentEarly(Period minFramePeriod) const {
@@ -51,7 +51,7 @@ bool FrameTarget::wouldPresentEarly(Period minFramePeriod) const {
         return true;
     }
 
-    const auto fence = presentFenceForPastVsync(minFramePeriod);
+    const auto fence = presentFenceForPastVsync(minFramePeriod).fenceTime;
     return fence->isValid() && fence->getSignalTime() != Fence::SIGNAL_TIME_PENDING;
 }
 
@@ -93,7 +93,7 @@ void FrameTargeter::beginFrame(const BeginFrameArgs& args, const IVsyncSource& v
                    ticks<std::milli, float>(mExpectedPresentTime - TimePoint::now()),
                    mExpectedPresentTime == args.expectedVsyncTime ? "" : " (adjusted)");
 
-    const FenceTimePtr& pastPresentFence = presentFenceForPastVsync(minFramePeriod);
+    FenceWithFenceTime pastPresentFence = presentFenceForPastVsync(minFramePeriod);
 
     // In cases where the present fence is about to fire, give it a small grace period instead of
     // giving up on the frame.
@@ -105,8 +105,8 @@ void FrameTargeter::beginFrame(const BeginFrameArgs& args, const IVsyncSource& v
 
     // Pending frames may trigger backpressure propagation.
     const auto& isFencePending = *isFencePendingFuncPtr;
-    mFramePending = pastPresentFence != FenceTime::NO_FENCE &&
-            isFencePending(pastPresentFence, graceTimeForPresentFenceMs);
+    mFramePending = pastPresentFence.fenceTime != FenceTime::NO_FENCE &&
+            isFencePending(pastPresentFence.fenceTime, graceTimeForPresentFenceMs);
 
     // A frame is missed if the prior frame is still pending. If no longer pending, then we still
     // count the frame as missed if the predicted present time was further in the past than when the
@@ -114,9 +114,10 @@ void FrameTargeter::beginFrame(const BeginFrameArgs& args, const IVsyncSource& v
     // than a typical frame duration, but should not be so small that it reports reasonable drift as
     // a missed frame.
     mFrameMissed = mFramePending || [&] {
-        const nsecs_t pastPresentTime = pastPresentFence->getSignalTime();
+        const nsecs_t pastPresentTime = pastPresentFence.fenceTime->getSignalTime();
         if (pastPresentTime < 0) return false;
-        mLastSignaledFrameTime = TimePoint::fromNs(pastPresentTime);
+        mLastSignaledFrameTime = {.signalTime = TimePoint::fromNs(pastPresentTime),
+                                  .expectedPresentTime = pastPresentFence.expectedPresentTime};
         const nsecs_t frameMissedSlop = vsyncPeriod.ns() / 2;
         return lastScheduledPresentTime.ns() < pastPresentTime - frameMissedSlop;
     }();

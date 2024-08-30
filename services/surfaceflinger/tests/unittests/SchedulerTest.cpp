@@ -34,6 +34,7 @@
 #include "mock/MockSchedulerCallback.h"
 
 #include <FrontEnd/LayerHierarchy.h>
+#include <scheduler/FrameTime.h>
 
 #include <com_android_graphics_surfaceflinger_flags.h>
 #include "FpsOps.h"
@@ -607,7 +608,8 @@ TEST_F(SchedulerTest, nextFrameIntervalTest) {
                                              TimePoint::fromNs(2000)));
 
     // Not crossing the min frame period
-    vrrTracker->onFrameBegin(TimePoint::fromNs(2000), TimePoint::fromNs(1500));
+    vrrTracker->onFrameBegin(TimePoint::fromNs(2000),
+                             {TimePoint::fromNs(1500), TimePoint::fromNs(1500)});
     EXPECT_EQ(Fps::fromPeriodNsecs(1000),
               scheduler.getNextFrameInterval(kMode->getPhysicalDisplayId(),
                                              TimePoint::fromNs(2500)));

@@ -240,15 +240,14 @@ TouchpadInputMapper::TouchpadInputMapper(InputDeviceContext& deviceContext,
         mGestureConverter(*getContext(), deviceContext, getDeviceId()),
         mCapturedEventConverter(*getContext(), deviceContext, mMotionAccumulator, getDeviceId()),
         mMetricsId(metricsIdFromInputDeviceIdentifier(deviceContext.getDeviceIdentifier())) {
-    if (std::optional<RawAbsoluteAxisInfo> slotAxis =
-                deviceContext.getAbsoluteAxisInfo(ABS_MT_SLOT);
-        slotAxis && slotAxis->maxValue >= 0) {
-        mMotionAccumulator.configure(deviceContext, slotAxis->maxValue + 1, true);
-    } else {
+    RawAbsoluteAxisInfo slotAxisInfo;
+    deviceContext.getAbsoluteAxisInfo(ABS_MT_SLOT, &slotAxisInfo);
+    if (!slotAxisInfo.valid || slotAxisInfo.maxValue < 0) {
         LOG(WARNING) << "Touchpad " << deviceContext.getName()
                      << " doesn't have a valid ABS_MT_SLOT axis, and probably won't work properly.";
-        mMotionAccumulator.configure(deviceContext, 1, true);
+        slotAxisInfo.maxValue = 0;
     }
+    mMotionAccumulator.configure(deviceContext, slotAxisInfo.maxValue + 1, true);
 
     mGestureInterpreter->Initialize(GESTURES_DEVCLASS_TOUCHPAD);
     mGestureInterpreter->SetHardwareProperties(createHardwareProperties(deviceContext));

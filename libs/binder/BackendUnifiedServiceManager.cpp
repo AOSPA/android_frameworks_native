@@ -15,6 +15,9 @@
  */
 #include "BackendUnifiedServiceManager.h"
 
+#include <android/os/IAccessor.h>
+#include <binder/RpcSession.h>
+
 #if defined(__BIONIC__) && !defined(__ANDROID_VNDK__)
 #include <android-base/properties.h>
 #endif
@@ -22,6 +25,7 @@
 namespace android {
 
 using AidlServiceManager = android::os::IServiceManager;
+using IAccessor = android::os::IAccessor;
 
 BackendUnifiedServiceManager::BackendUnifiedServiceManager(const sp<AidlServiceManager>& impl)
       : mTheRealServiceManager(impl) {}
@@ -30,13 +34,57 @@ sp<AidlServiceManager> BackendUnifiedServiceManager::getImpl() {
     return mTheRealServiceManager;
 }
 binder::Status BackendUnifiedServiceManager::getService(const ::std::string& name,
-                                                        sp<IBinder>* _aidl_return) {
-    return mTheRealServiceManager->getService(name, _aidl_return);
+                                                        os::Service* _out) {
+    os::Service service;
+    binder::Status status = mTheRealServiceManager->getService(name, &service);
+    toBinderService(service, _out);
+    return status;
 }
+
 binder::Status BackendUnifiedServiceManager::checkService(const ::std::string& name,
-                                                          sp<IBinder>* _aidl_return) {
-    return mTheRealServiceManager->checkService(name, _aidl_return);
+                                                          os::Service* _out) {
+    os::Service service;
+    binder::Status status = mTheRealServiceManager->checkService(name, &service);
+    toBinderService(service, _out);
+    return status;
 }
+
+void BackendUnifiedServiceManager::toBinderService(const os::Service& in, os::Service* _out) {
+    switch (in.getTag()) {
+        case os::Service::Tag::binder: {
+            *_out = in;
+            break;
+        }
+        case os::Service::Tag::accessor: {
+            sp<IBinder> accessorBinder = in.get<os::Service::Tag::accessor>();
+            sp<IAccessor> accessor = interface_cast<IAccessor>(accessorBinder);
+            if (accessor == nullptr) {
+                ALOGE("Service#accessor doesn't have accessor. VM is maybe starting...");
+                *_out = os::Service::make<os::Service::Tag::binder>(nullptr);
+                break;
+            }
+            auto request = [=] {
+                os::ParcelFileDescriptor fd;
+                binder::Status ret = accessor->addConnection(&fd);
+                if (ret.isOk()) {
+                    return base::unique_fd(fd.release());
+                } else {
+                    ALOGE("Failed to connect to RpcSession: %s", ret.toString8().c_str());
+                    return base::unique_fd(-1);
+                }
+            };
+            auto session = RpcSession::make();
+            session->setupPreconnectedClient(base::unique_fd{}, request);
+            session->setSessionSpecificRoot(accessorBinder);
+            *_out = os::Service::make<os::Service::Tag::binder>(session->getRootObject());
+            break;
+        }
+        default: {
+            LOG_ALWAYS_FATAL("Unknown service type: %d", in.getTag());
+        }
+    }
+}
+
 binder::Status BackendUnifiedServiceManager::addService(const ::std::string& name,
                                                         const sp<IBinder>& service,
                                                         bool allowIsolated, int32_t dumpPriority) {

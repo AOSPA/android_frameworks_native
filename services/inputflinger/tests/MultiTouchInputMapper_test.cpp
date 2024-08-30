@@ -109,7 +109,6 @@ protected:
         mFakePolicy->addDisplayViewport(DISPLAY_ID, DISPLAY_WIDTH, DISPLAY_HEIGHT, ui::ROTATION_0,
                                         /*isActive=*/true, "local:0", NO_PORT,
                                         ViewportType::INTERNAL);
-        createDevice();
         mMapper = createInputMapper<MultiTouchInputMapper>(*mDeviceContext,
                                                            mFakePolicy->getReaderConfiguration());
     }

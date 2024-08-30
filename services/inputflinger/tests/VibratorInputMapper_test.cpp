@@ -36,7 +36,6 @@ class VibratorInputMapperTest : public InputMapperUnitTest {
 protected:
     void SetUp() override {
         InputMapperUnitTest::SetUp();
-        createDevice();
         EXPECT_CALL(mMockEventHub, getDeviceClasses(EVENTHUB_ID))
                 .WillRepeatedly(testing::Return(InputDeviceClass::VIBRATOR));
         EXPECT_CALL(mMockEventHub, getVibratorIds(EVENTHUB_ID))

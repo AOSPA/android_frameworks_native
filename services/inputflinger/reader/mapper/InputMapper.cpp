@@ -18,7 +18,6 @@
 
 #include "InputMapper.h"
 
-#include <optional>
 #include <sstream>
 
 #include <ftl/enum.h>
@@ -117,16 +116,15 @@ std::list<NotifyArgs> InputMapper::updateExternalStylusState(const StylusState& 
     return {};
 }
 
-std::optional<RawAbsoluteAxisInfo> InputMapper::getAbsoluteAxisInfo(int32_t axis) {
-    return getDeviceContext().getAbsoluteAxisInfo(axis);
+status_t InputMapper::getAbsoluteAxisInfo(int32_t axis, RawAbsoluteAxisInfo* axisInfo) {
+    return getDeviceContext().getAbsoluteAxisInfo(axis, axisInfo);
 }
 
 void InputMapper::bumpGeneration() {
     getDeviceContext().bumpGeneration();
 }
 
-void InputMapper::dumpRawAbsoluteAxisInfo(std::string& dump,
-                                          const std::optional<RawAbsoluteAxisInfo>& axis,
+void InputMapper::dumpRawAbsoluteAxisInfo(std::string& dump, const RawAbsoluteAxisInfo& axis,
                                           const char* name) {
     std::stringstream out;
     out << INDENT4 << name << ": " << axis << "\n";

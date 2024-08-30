@@ -29,6 +29,7 @@
 #include <thread>
 
 #if !defined(VENDORSERVICEMANAGER) && !defined(__ANDROID_RECOVERY__)
+#include "perfetto/public/protos/trace/android/android_track_event.pzc.h"
 #include "perfetto/public/te_category_macros.h"
 #include "perfetto/public/te_macros.h"
 #endif // !defined(VENDORSERVICEMANAGER) && !defined(__ANDROID_RECOVERY__)
@@ -56,6 +57,12 @@ PERFETTO_TE_CATEGORIES_DEFINE(PERFETTO_SM_CATEGORIES);
 
 #define SM_PERFETTO_TRACE_FUNC(...) \
     PERFETTO_TE_SCOPED(servicemanager, PERFETTO_TE_SLICE_BEGIN(__func__) __VA_OPT__(, ) __VA_ARGS__)
+
+constexpr uint32_t kProtoServiceName =
+        perfetto_protos_AndroidTrackEvent_binder_service_name_field_number;
+constexpr uint32_t kProtoInterfaceName =
+        perfetto_protos_AndroidTrackEvent_binder_interface_name_field_number;
+constexpr uint32_t kProtoApexName = perfetto_protos_AndroidTrackEvent_apex_name_field_number;
 
 #endif // !(defined(VENDORSERVICEMANAGER) || defined(__ANDROID_RECOVERY__))
 
@@ -112,13 +119,15 @@ struct AidlName {
     std::string iface;
     std::string instance;
 
-    static bool fill(const std::string& name, AidlName* aname) {
+    static bool fill(const std::string& name, AidlName* aname, bool logError) {
         size_t firstSlash = name.find('/');
         size_t lastDot = name.rfind('.', firstSlash);
         if (firstSlash == std::string::npos || lastDot == std::string::npos) {
-            ALOGE("VINTF HALs require names in the format type/instance (e.g. "
-                  "some.package.foo.IFoo/default) but got: %s",
-                  name.c_str());
+            if (logError) {
+                ALOGE("VINTF HALs require names in the format type/instance (e.g. "
+                      "some.package.foo.IFoo/default) but got: %s",
+                      name.c_str());
+            }
             return false;
         }
         aname->package = name.substr(0, lastDot);
@@ -151,7 +160,7 @@ static bool isVintfDeclared(const Access::CallingContext& ctx, const std::string
     }
 
     AidlName aname;
-    if (!AidlName::fill(name, &aname)) return false;
+    if (!AidlName::fill(name, &aname, true)) return false;
 
     bool found = forEachManifest([&](const ManifestWithDescription& mwd) {
         if (mwd.manifest->hasAidlInstance(aname.package, aname.iface, aname.instance)) {
@@ -209,7 +218,7 @@ static std::optional<std::string> getVintfUpdatableApex(const std::string& name)
     }
 
     AidlName aname;
-    if (!AidlName::fill(name, &aname)) return std::nullopt;
+    if (!AidlName::fill(name, &aname, true)) return std::nullopt;
 
     std::optional<std::string> updatableViaApex;
 
@@ -249,9 +258,28 @@ static std::vector<std::string> getVintfUpdatableNames(const std::string& apexNa
     return names;
 }
 
+static std::optional<std::string> getVintfAccessorName(const std::string& name) {
+    AidlName aname;
+    if (!AidlName::fill(name, &aname, false)) return std::nullopt;
+
+    std::optional<std::string> accessor;
+    forEachManifest([&](const ManifestWithDescription& mwd) {
+        mwd.manifest->forEachInstance([&](const auto& manifestInstance) {
+            if (manifestInstance.format() != vintf::HalFormat::AIDL) return true;
+            if (manifestInstance.package() != aname.package) return true;
+            if (manifestInstance.interface() != aname.iface) return true;
+            if (manifestInstance.instance() != aname.instance) return true;
+            accessor = manifestInstance.accessor();
+            return false; // break (libvintf uses opposite convention)
+        });
+        return false; // continue
+    });
+    return accessor;
+}
+
 static std::optional<ConnectionInfo> getVintfConnectionInfo(const std::string& name) {
     AidlName aname;
-    if (!AidlName::fill(name, &aname)) return std::nullopt;
+    if (!AidlName::fill(name, &aname, true)) return std::nullopt;
 
     std::optional<std::string> ip;
     std::optional<uint64_t> port;
@@ -364,24 +392,44 @@ ServiceManager::~ServiceManager() {
     }
 }
 
-Status ServiceManager::getService(const std::string& name, sp<IBinder>* outBinder) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+Status ServiceManager::getService(const std::string& name, os::Service* outService) {
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
-    *outBinder = tryGetService(name, true);
+    *outService = tryGetService(name, true);
     // returns ok regardless of result for legacy reasons
     return Status::ok();
 }
 
-Status ServiceManager::checkService(const std::string& name, sp<IBinder>* outBinder) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+Status ServiceManager::checkService(const std::string& name, os::Service* outService) {
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
-    *outBinder = tryGetService(name, false);
+    *outService = tryGetService(name, false);
     // returns ok regardless of result for legacy reasons
     return Status::ok();
 }
 
-sp<IBinder> ServiceManager::tryGetService(const std::string& name, bool startIfNotFound) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+os::Service ServiceManager::tryGetService(const std::string& name, bool startIfNotFound) {
+    std::optional<std::string> accessorName;
+#ifndef VENDORSERVICEMANAGER
+    accessorName = getVintfAccessorName(name);
+#endif
+    if (accessorName.has_value()) {
+        auto ctx = mAccess->getCallingContext();
+        if (!mAccess->canFind(ctx, name)) {
+            return os::Service::make<os::Service::Tag::accessor>(nullptr);
+        }
+        return os::Service::make<os::Service::Tag::accessor>(
+                tryGetBinder(*accessorName, startIfNotFound));
+    } else {
+        return os::Service::make<os::Service::Tag::binder>(tryGetBinder(name, startIfNotFound));
+    }
+}
+
+sp<IBinder> ServiceManager::tryGetBinder(const std::string& name, bool startIfNotFound) {
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     auto ctx = mAccess->getCallingContext();
 
@@ -421,7 +469,8 @@ sp<IBinder> ServiceManager::tryGetService(const std::string& name, bool startIfN
 }
 
 bool isValidServiceName(const std::string& name) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     if (name.size() == 0) return false;
     if (name.size() > 127) return false;
@@ -438,7 +487,8 @@ bool isValidServiceName(const std::string& name) {
 }
 
 Status ServiceManager::addService(const std::string& name, const sp<IBinder>& binder, bool allowIsolated, int32_t dumpPriority) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     auto ctx = mAccess->getCallingContext();
 
@@ -561,12 +611,16 @@ Status ServiceManager::listServices(int32_t dumpPriority, std::vector<std::strin
 
 Status ServiceManager::registerForNotifications(
         const std::string& name, const sp<IServiceCallback>& callback) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     auto ctx = mAccess->getCallingContext();
 
-    if (!mAccess->canFind(ctx, name)) {
-        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux");
+    // TODO(b/338541373): Implement the notification mechanism for services accessed via
+    // IAccessor.
+    std::optional<std::string> accessorName;
+    if (auto status = canFindService(ctx, name, &accessorName); !status.isOk()) {
+        return status;
     }
 
     // note - we could allow isolated apps to get notifications if we
@@ -609,12 +663,14 @@ Status ServiceManager::registerForNotifications(
 }
 Status ServiceManager::unregisterForNotifications(
         const std::string& name, const sp<IServiceCallback>& callback) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     auto ctx = mAccess->getCallingContext();
 
-    if (!mAccess->canFind(ctx, name)) {
-        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied.");
+    std::optional<std::string> accessorName;
+    if (auto status = canFindService(ctx, name, &accessorName); !status.isOk()) {
+        return status;
     }
 
     bool found = false;
@@ -634,12 +690,14 @@ Status ServiceManager::unregisterForNotifications(
 }
 
 Status ServiceManager::isDeclared(const std::string& name, bool* outReturn) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     auto ctx = mAccess->getCallingContext();
 
-    if (!mAccess->canFind(ctx, name)) {
-        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied.");
+    std::optional<std::string> accessorName;
+    if (auto status = canFindService(ctx, name, &accessorName); !status.isOk()) {
+        return status;
     }
 
     *outReturn = false;
@@ -651,7 +709,8 @@ Status ServiceManager::isDeclared(const std::string& name, bool* outReturn) {
 }
 
 binder::Status ServiceManager::getDeclaredInstances(const std::string& interface, std::vector<std::string>* outReturn) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("interface", interface.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoInterfaceName, interface.c_str())));
 
     auto ctx = mAccess->getCallingContext();
 
@@ -662,8 +721,10 @@ binder::Status ServiceManager::getDeclaredInstances(const std::string& interface
 
     outReturn->clear();
 
+    std::optional<std::string> _accessorName;
     for (const std::string& instance : allInstances) {
-        if (mAccess->canFind(ctx, interface + "/" + instance)) {
+        if (auto status = canFindService(ctx, interface + "/" + instance, &_accessorName);
+            status.isOk()) {
             outReturn->push_back(instance);
         }
     }
@@ -677,12 +738,14 @@ binder::Status ServiceManager::getDeclaredInstances(const std::string& interface
 
 Status ServiceManager::updatableViaApex(const std::string& name,
                                         std::optional<std::string>* outReturn) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     auto ctx = mAccess->getCallingContext();
 
-    if (!mAccess->canFind(ctx, name)) {
-        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied.");
+    std::optional<std::string> _accessorName;
+    if (auto status = canFindService(ctx, name, &_accessorName); !status.isOk()) {
+        return status;
     }
 
     *outReturn = std::nullopt;
@@ -695,7 +758,8 @@ Status ServiceManager::updatableViaApex(const std::string& name,
 
 Status ServiceManager::getUpdatableNames([[maybe_unused]] const std::string& apexName,
                                          std::vector<std::string>* outReturn) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("apexName", apexName.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoApexName, apexName.c_str())));
 
     auto ctx = mAccess->getCallingContext();
 
@@ -706,8 +770,9 @@ Status ServiceManager::getUpdatableNames([[maybe_unused]] const std::string& ape
 
     outReturn->clear();
 
+    std::optional<std::string> _accessorName;
     for (const std::string& name : apexUpdatableNames) {
-        if (mAccess->canFind(ctx, name)) {
+        if (auto status = canFindService(ctx, name, &_accessorName); status.isOk()) {
             outReturn->push_back(name);
         }
     }
@@ -720,12 +785,14 @@ Status ServiceManager::getUpdatableNames([[maybe_unused]] const std::string& ape
 
 Status ServiceManager::getConnectionInfo(const std::string& name,
                                          std::optional<ConnectionInfo>* outReturn) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     auto ctx = mAccess->getCallingContext();
 
-    if (!mAccess->canFind(ctx, name)) {
-        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied.");
+    std::optional<std::string> _accessorName;
+    if (auto status = canFindService(ctx, name, &_accessorName); !status.isOk()) {
+        return status;
     }
 
     *outReturn = std::nullopt;
@@ -804,7 +871,8 @@ void ServiceManager::tryStartService(const Access::CallingContext& ctx, const st
 
 Status ServiceManager::registerClientCallback(const std::string& name, const sp<IBinder>& service,
                                               const sp<IClientCallback>& cb) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     if (cb == nullptr) {
         return Status::fromExceptionCode(Status::EX_NULL_POINTER, "Callback null.");
@@ -966,7 +1034,8 @@ void ServiceManager::sendClientCallbackNotifications(const std::string& serviceN
 }
 
 Status ServiceManager::tryUnregisterService(const std::string& name, const sp<IBinder>& binder) {
-    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_ARG_STRING("name", name.c_str()));
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
     if (binder == nullptr) {
         return Status::fromExceptionCode(Status::EX_NULL_POINTER, "Null service.");
@@ -1029,6 +1098,23 @@ Status ServiceManager::tryUnregisterService(const std::string& name, const sp<IB
     ALOGI("%s Unregistering %s", ctx.toDebugString().c_str(), name.c_str());
     mNameToService.erase(name);
 
+    return Status::ok();
+}
+
+Status ServiceManager::canFindService(const Access::CallingContext& ctx, const std::string& name,
+                                      std::optional<std::string>* accessor) {
+    if (!mAccess->canFind(ctx, name)) {
+        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied for service.");
+    }
+#ifndef VENDORSERVICEMANAGER
+    *accessor = getVintfAccessorName(name);
+#endif
+    if (accessor->has_value()) {
+        if (!mAccess->canFind(ctx, accessor->value())) {
+            return Status::fromExceptionCode(Status::EX_SECURITY,
+                                             "SELinux denied for the accessor of the service.");
+        }
+    }
     return Status::ok();
 }
 
