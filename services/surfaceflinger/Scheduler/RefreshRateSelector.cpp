@@ -504,8 +504,9 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     const auto anchorGroup =
             seamedFocusedLayers > 0 ? activeMode.getGroup() : defaultMode->getGroup();
 
-    // Touch boost whenever possible as we opportunistically enter idle aggressively
-    if (signals.touch) {
+    // Touch boost whenever possible as we opportunistically enter idle aggressively, unless the
+    // app requires a specific refresh rate to be used.
+    if (signals.touch && !explicitExact) {
         ALOGV("Touch Boost");
         const auto ranking = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
         ATRACE_FORMAT_INSTANT("%s (Touch Boost)",
