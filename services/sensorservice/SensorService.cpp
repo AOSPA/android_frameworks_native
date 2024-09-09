@@ -682,14 +682,14 @@ status_t SensorService::dump(int fd, const Vector<String16>& args) {
                     mSensorPrivacyPolicy->isSensorPrivacyEnabled() ? "enabled" : "disabled");
 
             const auto& activeConnections = connLock.getActiveConnections();
-            result.appendFormat("%zd active connections\n", activeConnections.size());
+            result.appendFormat("%zd open event connections\n", activeConnections.size());
             for (size_t i=0 ; i < activeConnections.size() ; i++) {
                 result.appendFormat("Connection Number: %zu \n", i);
                 activeConnections[i]->dump(result);
             }
 
             const auto& directConnections = connLock.getDirectConnections();
-            result.appendFormat("%zd direct connections\n", directConnections.size());
+            result.appendFormat("%zd open direct connections\n", directConnections.size());
             for (size_t i = 0 ; i < directConnections.size() ; i++) {
                 result.appendFormat("Direct connection %zu:\n", i);
                 directConnections[i]->dump(result);
@@ -1729,7 +1729,10 @@ sp<ISensorEventConnection> SensorService::createSensorDirectConnection(
         ALOGE("SensorDevice::registerDirectChannel returns %d", channelHandle);
     } else {
         mem.handle = clone;
-        conn = new SensorDirectConnection(this, uid, &mem, channelHandle, opPackageName, deviceId);
+        IPCThreadState* thread = IPCThreadState::self();
+        pid_t pid = (thread != nullptr) ? thread->getCallingPid() : -1;
+        conn = new SensorDirectConnection(this, uid, pid, &mem, channelHandle, opPackageName,
+                                          deviceId);
     }
 
     if (conn == nullptr) {

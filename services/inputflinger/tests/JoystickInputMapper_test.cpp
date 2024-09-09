@@ -16,11 +16,13 @@
 
 #include "JoystickInputMapper.h"
 
+#include <list>
 #include <optional>
 
 #include <EventHub.h>
 #include <NotifyArgs.h>
 #include <ftl/flags.h>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <input/DisplayViewport.h>
 #include <linux/input-event-codes.h>
@@ -28,76 +30,54 @@
 
 #include "InputMapperTest.h"
 #include "TestConstants.h"
+#include "TestEventMatchers.h"
 
 namespace android {
 
-namespace {
-
 using namespace ftl::flag_operators;
+using testing::ElementsAre;
+using testing::IsEmpty;
+using testing::Return;
+using testing::VariantWith;
 
-} // namespace
-
-class JoystickInputMapperTest : public InputMapperTest {
+class JoystickInputMapperTest : public InputMapperUnitTest {
 protected:
-    static const int32_t RAW_X_MIN;
-    static const int32_t RAW_X_MAX;
-    static const int32_t RAW_Y_MIN;
-    static const int32_t RAW_Y_MAX;
-
-    static constexpr ui::LogicalDisplayId VIRTUAL_DISPLAY_ID = ui::LogicalDisplayId{1};
-    static const char* const VIRTUAL_DISPLAY_UNIQUE_ID;
-
     void SetUp() override {
-        InputMapperTest::SetUp(InputDeviceClass::JOYSTICK | InputDeviceClass::EXTERNAL);
-    }
-    void prepareAxes() {
-        mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_X, RAW_X_MIN, RAW_X_MAX, 0, 0);
-        mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_Y, RAW_Y_MIN, RAW_Y_MAX, 0, 0);
-    }
+        InputMapperUnitTest::SetUp();
+        EXPECT_CALL(mMockEventHub, getDeviceClasses(EVENTHUB_ID))
+                .WillRepeatedly(Return(InputDeviceClass::JOYSTICK | InputDeviceClass::EXTERNAL));
 
-    void processAxis(JoystickInputMapper& mapper, int32_t axis, int32_t value) {
-        process(mapper, ARBITRARY_TIME, READ_TIME, EV_ABS, axis, value);
-    }
+        // The mapper requests info on all ABS axis IDs, including ones which aren't actually used
+        // (e.g. in the range from 0x0b (ABS_BRAKE) to 0x0f (ABS_HAT0X)), so just return nullopt for
+        // all axes we don't explicitly set up below.
+        EXPECT_CALL(mMockEventHub, getAbsoluteAxisInfo(EVENTHUB_ID, testing::_))
+                .WillRepeatedly(Return(std::nullopt));
 
-    void processSync(JoystickInputMapper& mapper) {
-        process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
-    }
-
-    void prepareVirtualDisplay(ui::Rotation orientation) {
-        setDisplayInfoAndReconfigure(VIRTUAL_DISPLAY_ID, /*width=*/400, /*height=*/500, orientation,
-                                     VIRTUAL_DISPLAY_UNIQUE_ID, /*physicalPort=*/std::nullopt,
-                                     ViewportType::VIRTUAL);
+        setupAxis(ABS_X, /*valid=*/true, /*min=*/-32767, /*max=*/32767, /*resolution=*/0);
+        setupAxis(ABS_Y, /*valid=*/true, /*min=*/-32767, /*max=*/32767, /*resolution=*/0);
     }
 };
 
-const int32_t JoystickInputMapperTest::RAW_X_MIN = -32767;
-const int32_t JoystickInputMapperTest::RAW_X_MAX = 32767;
-const int32_t JoystickInputMapperTest::RAW_Y_MIN = -32767;
-const int32_t JoystickInputMapperTest::RAW_Y_MAX = 32767;
-const char* const JoystickInputMapperTest::VIRTUAL_DISPLAY_UNIQUE_ID = "virtual:1";
-
 TEST_F(JoystickInputMapperTest, Configure_AssignsDisplayUniqueId) {
-    prepareAxes();
-    JoystickInputMapper& mapper = constructAndAddMapper<JoystickInputMapper>();
+    DisplayViewport viewport;
+    viewport.displayId = ui::LogicalDisplayId{1};
+    EXPECT_CALL((*mDevice), getAssociatedViewport).WillRepeatedly(Return(viewport));
+    mMapper = createInputMapper<JoystickInputMapper>(*mDeviceContext,
+                                                     mFakePolicy->getReaderConfiguration());
 
-    mFakePolicy->addInputUniqueIdAssociation(DEVICE_LOCATION, VIRTUAL_DISPLAY_UNIQUE_ID);
-
-    prepareVirtualDisplay(ui::ROTATION_0);
+    std::list<NotifyArgs> out;
 
     // Send an axis event
-    processAxis(mapper, ABS_X, 100);
-    processSync(mapper);
-
-    NotifyMotionArgs args;
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(VIRTUAL_DISPLAY_ID, args.displayId);
+    out = process(EV_ABS, ABS_X, 100);
+    ASSERT_THAT(out, IsEmpty());
+    out = process(EV_SYN, SYN_REPORT, 0);
+    ASSERT_THAT(out, ElementsAre(VariantWith<NotifyMotionArgs>(WithDisplayId(viewport.displayId))));
 
     // Send another axis event
-    processAxis(mapper, ABS_Y, 100);
-    processSync(mapper);
-
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&args));
-    ASSERT_EQ(VIRTUAL_DISPLAY_ID, args.displayId);
+    out = process(EV_ABS, ABS_Y, 100);
+    ASSERT_THAT(out, IsEmpty());
+    out = process(EV_SYN, SYN_REPORT, 0);
+    ASSERT_THAT(out, ElementsAre(VariantWith<NotifyMotionArgs>(WithDisplayId(viewport.displayId))));
 }
 
 } // namespace android

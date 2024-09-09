@@ -210,6 +210,8 @@ public:
         // within the timeout of DisplayPowerTimer.
         bool powerOnImminent = false;
 
+        bool shouldEmitEvent() const { return !idle; }
+
         bool operator==(GlobalSignals other) const {
             return touch == other.touch && idle == other.idle &&
                     powerOnImminent == other.powerOnImminent;

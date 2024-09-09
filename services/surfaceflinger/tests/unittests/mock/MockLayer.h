@@ -24,16 +24,10 @@ namespace android::mock {
 class MockLayer : public Layer {
 public:
     MockLayer(SurfaceFlinger* flinger, std::string name)
-          : Layer(LayerCreationArgs(flinger, nullptr, std::move(name), 0, {})) {
-        EXPECT_CALL(*this, getDefaultFrameRateCompatibility())
-                .WillOnce(testing::Return(scheduler::FrameRateCompatibility::Default));
-    }
+          : Layer(LayerCreationArgs(flinger, nullptr, std::move(name), 0, {})) {}
 
     MockLayer(SurfaceFlinger* flinger, std::string name, std::optional<uint32_t> uid)
-          : Layer(LayerCreationArgs(flinger, nullptr, std::move(name), 0, {}, uid)) {
-        EXPECT_CALL(*this, getDefaultFrameRateCompatibility())
-                .WillOnce(testing::Return(scheduler::FrameRateCompatibility::Default));
-    }
+          : Layer(LayerCreationArgs(flinger, nullptr, std::move(name), 0, {}, uid)) {}
 
     explicit MockLayer(SurfaceFlinger* flinger) : MockLayer(flinger, "TestLayer") {}
 

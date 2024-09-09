@@ -693,7 +693,8 @@ std::optional<nsecs_t> getDownTime(const EventEntry& eventEntry) {
  */
 std::vector<TouchedWindow> getHoveringWindowsLocked(const TouchState* oldState,
                                                     const TouchState& newTouchState,
-                                                    const MotionEntry& entry) {
+                                                    const MotionEntry& entry,
+                                                    std::function<void()> dump) {
     const int32_t maskedAction = MotionEvent::getActionMasked(entry.action);
 
     if (maskedAction == AMOTION_EVENT_ACTION_SCROLL) {
@@ -741,6 +742,7 @@ std::vector<TouchedWindow> getHoveringWindowsLocked(const TouchState* oldState,
                     // crashing the device with FATAL.
                     severity = android::base::LogSeverity::ERROR;
                 }
+                dump();
                 LOG(severity) << "Expected ACTION_HOVER_MOVE instead of " << entry.getDescription();
             }
             touchedWindow.dispatchMode = InputTarget::DispatchMode::AS_IS;
@@ -2446,12 +2448,19 @@ InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime, const Motio
         if (isDown) {
             targets += findOutsideTargetsLocked(displayId, newTouchedWindowHandle, pointer.id);
         }
+        LOG_IF(INFO, newTouchedWindowHandle == nullptr)
+                << "No new touched window at (" << std::format("{:.1f}, {:.1f}", x, y)
+                << ") in display " << displayId;
         // Handle the case where we did not find a window.
-        if (newTouchedWindowHandle == nullptr) {
-            ALOGD("No new touched window at (%.1f, %.1f) in display %s", x, y,
-                  displayId.toString().c_str());
-            // Try to assign the pointer to the first foreground window we find, if there is one.
-            newTouchedWindowHandle = tempTouchState.getFirstForegroundWindowHandle(entry.deviceId);
+        if (!input_flags::split_all_touches()) {
+            // If we are force splitting all touches, then touches outside of the window should
+            // be dropped, even if this device already has pointers down in another window.
+            if (newTouchedWindowHandle == nullptr) {
+                // Try to assign the pointer to the first foreground window we find, if there is
+                // one.
+                newTouchedWindowHandle =
+                        tempTouchState.getFirstForegroundWindowHandle(entry.deviceId);
+            }
         }
 
         // Verify targeted injection.
@@ -2674,7 +2683,7 @@ InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime, const Motio
 
                 // Check if the wallpaper window should deliver the corresponding event.
                 slipWallpaperTouch(targetFlags, oldTouchedWindowHandle, newTouchedWindowHandle,
-                                   tempTouchState, entry.deviceId, pointer, targets);
+                                   tempTouchState, entry, targets);
                 tempTouchState.removeTouchingPointerFromWindow(entry.deviceId, pointer.id,
                                                                oldTouchedWindowHandle);
             }
@@ -2701,7 +2710,9 @@ InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime, const Motio
     // Update dispatching for hover enter and exit.
     {
         std::vector<TouchedWindow> hoveringWindows =
-                getHoveringWindowsLocked(oldState, tempTouchState, entry);
+                getHoveringWindowsLocked(oldState, tempTouchState, entry,
+                                         std::bind_front(&InputDispatcher::logDispatchStateLocked,
+                                                         this));
         // Hardcode to single hovering pointer for now.
         std::bitset<MAX_POINTER_ID + 1> pointerIds;
         pointerIds.set(entry.pointerProperties[0].id);
@@ -4869,6 +4880,10 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
                     logDispatchStateLocked();
                     LOG(ERROR) << "Inconsistent event: " << motionEvent
                                << ", reason: " << result.error();
+                    if (policyFlags & POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY) {
+                        mLock.unlock();
+                        return InputEventInjectionResult::FAILED;
+                    }
                 }
             }
 
@@ -7004,6 +7019,13 @@ void InputDispatcher::onWindowInfosChanged(const gui::WindowInfosUpdate& update)
     for (const auto& info : update.windowInfos) {
         handlesPerDisplay.emplace(info.displayId, std::vector<sp<WindowInfoHandle>>());
         handlesPerDisplay[info.displayId].push_back(sp<WindowInfoHandle>::make(info));
+        if (input_flags::split_all_touches()) {
+            handlesPerDisplay[info.displayId]
+                    .back()
+                    ->editInfo()
+                    ->setInputConfig(android::gui::WindowInfo::InputConfig::PREVENT_SPLITTING,
+                                     false);
+        }
     }
 
     { // acquire lock
@@ -7079,9 +7101,11 @@ void InputDispatcher::setMonitorDispatchingTimeoutForTest(std::chrono::nanosecon
 void InputDispatcher::slipWallpaperTouch(ftl::Flags<InputTarget::Flags> targetFlags,
                                          const sp<WindowInfoHandle>& oldWindowHandle,
                                          const sp<WindowInfoHandle>& newWindowHandle,
-                                         TouchState& state, DeviceId deviceId,
-                                         const PointerProperties& pointerProperties,
+                                         TouchState& state, const MotionEntry& entry,
                                          std::vector<InputTarget>& targets) const {
+    LOG_IF(FATAL, entry.getPointerCount() != 1) << "Entry not eligible for slip: " << entry;
+    const DeviceId deviceId = entry.deviceId;
+    const PointerProperties& pointerProperties = entry.pointerProperties[0];
     std::vector<PointerProperties> pointers{pointerProperties};
     const bool oldHasWallpaper = oldWindowHandle->getInfo()->inputConfig.test(
             gui::WindowInfo::InputConfig::DUPLICATE_TOUCH_TO_WALLPAPER);
@@ -7108,7 +7132,7 @@ void InputDispatcher::slipWallpaperTouch(ftl::Flags<InputTarget::Flags> targetFl
         state.addOrUpdateWindow(newWallpaper, InputTarget::DispatchMode::SLIPPERY_ENTER,
                                 InputTarget::Flags::WINDOW_IS_OBSCURED |
                                         InputTarget::Flags::WINDOW_IS_PARTIALLY_OBSCURED,
-                                deviceId, pointers);
+                                deviceId, pointers, entry.eventTime);
     }
 }
 

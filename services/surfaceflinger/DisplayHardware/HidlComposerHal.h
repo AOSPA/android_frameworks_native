@@ -370,6 +370,8 @@ public:
                                    Hdr*) override;
     Error setRefreshRateChangedCallbackDebugEnabled(Display, bool) override;
     Error notifyExpectedPresent(Display, nsecs_t, int32_t) override;
+    Error getDisplayLuts(Display,
+                         std::vector<aidl::android::hardware::graphics::composer3::Lut>*) override;
 
 private:
     /* QTI_BEGIN */

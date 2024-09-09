@@ -17,6 +17,8 @@
 #define LOG_TAG "InputTransport"
 #define ATRACE_TAG ATRACE_TAG_INPUT
 
+#include <chrono>
+
 #include <inttypes.h>
 
 #include <android-base/logging.h>
@@ -168,6 +170,10 @@ InputMessage createTimelineMessage(int32_t inputEventId, nsecs_t gpuCompletedTim
     return msg;
 }
 
+bool isPointerEvent(const MotionEvent& motionEvent) {
+    return (motionEvent.getSource() & AINPUT_SOURCE_CLASS_POINTER) == AINPUT_SOURCE_CLASS_POINTER;
+}
+
 } // namespace
 
 using android::base::Result;
@@ -177,8 +183,13 @@ using android::base::StringPrintf;
 
 InputConsumerNoResampling::InputConsumerNoResampling(const std::shared_ptr<InputChannel>& channel,
                                                      sp<Looper> looper,
-                                                     InputConsumerCallbacks& callbacks)
-      : mChannel(channel), mLooper(looper), mCallbacks(callbacks), mFdEvents(0) {
+                                                     InputConsumerCallbacks& callbacks,
+                                                     std::unique_ptr<Resampler> resampler)
+      : mChannel(channel),
+        mLooper(looper),
+        mCallbacks(callbacks),
+        mResampler(std::move(resampler)),
+        mFdEvents(0) {
     LOG_ALWAYS_FATAL_IF(mLooper == nullptr);
     mCallback = sp<LooperEventCallback>::make(
             std::bind(&InputConsumerNoResampling::handleReceiveCallback, this,
@@ -462,6 +473,15 @@ InputConsumerNoResampling::createBatchedMotionEvent(const nsecs_t frameTime,
             mBatchedSequenceNumbers[*firstSeqForBatch].push_back(messages.front().header.seq);
         }
         messages.pop();
+    }
+    // Check if resampling should be performed.
+    if (motionEvent != nullptr && isPointerEvent(*motionEvent) && mResampler != nullptr) {
+        InputMessage* futureSample = nullptr;
+        if (!messages.empty()) {
+            futureSample = &messages.front();
+        }
+        mResampler->resampleMotionEvent(static_cast<std::chrono::nanoseconds>(frameTime),
+                                        *motionEvent, futureSample);
     }
     return std::make_pair(std::move(motionEvent), firstSeqForBatch);
 }

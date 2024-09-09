@@ -125,6 +125,11 @@ public:
         VULKAN_DEVICE_EXTENSION = 9,
     };
 
+    enum GLTelemetryHints {
+        NO_HINT = 0,
+        SKIP_TELEMETRY = 1,
+    };
+
     GpuStatsInfo() = default;
     GpuStatsInfo(const GpuStatsInfo&) = default;
     virtual ~GpuStatsInfo() = default;

@@ -318,7 +318,7 @@ public:
     bool setBuffer(std::shared_ptr<renderengine::ExternalTexture>& /* buffer */,
                    const BufferData& /* bufferData */, nsecs_t /* postTime */,
                    nsecs_t /*desiredPresentTime*/, bool /*isAutoTimestamp*/,
-                   const FrameTimelineInfo& /*info*/);
+                   const FrameTimelineInfo& /*info*/, gui::GameMode gameMode);
     void setDesiredPresentTime(nsecs_t /*desiredPresentTime*/, bool /*isAutoTimestamp*/);
     bool setDataspace(ui::Dataspace /*dataspace*/);
     bool setExtendedRangeBrightness(float currentBufferRatio, float desiredRatio);
@@ -328,25 +328,18 @@ public:
     bool setSurfaceDamageRegion(const Region& /*surfaceDamage*/);
     bool setApi(int32_t /*api*/);
     bool setSidebandStream(const sp<NativeHandle>& /*sidebandStream*/,
-                           const FrameTimelineInfo& /* info*/, nsecs_t /* postTime */);
+                           const FrameTimelineInfo& /* info*/, nsecs_t /* postTime */,
+                           gui::GameMode gameMode);
     bool setTransactionCompletedListeners(const std::vector<sp<CallbackHandle>>& /*handles*/,
                                           bool willPresent);
     virtual bool setBackgroundColor(const half3& color, float alpha, ui::Dataspace dataspace)
             REQUIRES(mFlinger->mStateLock);
     virtual bool setColorSpaceAgnostic(const bool agnostic);
     virtual bool setDimmingEnabled(const bool dimmingEnabled);
-    virtual bool setDefaultFrameRateCompatibility(FrameRateCompatibility compatibility);
-    virtual bool setFrameRateSelectionPriority(int32_t priority);
     virtual bool setFixedTransformHint(ui::Transform::RotationFlags fixedTransformHint);
     void setAutoRefresh(bool /* autoRefresh */);
     bool setDropInputMode(gui::DropInputMode);
 
-    //  If the variable is not set on the layer, it traverses up the tree to inherit the frame
-    //  rate priority from its parent.
-    virtual int32_t getFrameRateSelectionPriority() const;
-    //
-    virtual FrameRateCompatibility getDefaultFrameRateCompatibility() const;
-    //
     ui::Dataspace getDataSpace() const;
 
     virtual bool isFrontBuffered() const;
@@ -445,7 +438,7 @@ public:
     void onCompositionPresented(const DisplayDevice*,
                                 const std::shared_ptr<FenceTime>& /*glDoneFence*/,
                                 const std::shared_ptr<FenceTime>& /*presentFence*/,
-                                const CompositorTiming&);
+                                const CompositorTiming&, gui::GameMode gameMode);
 
     // If a buffer was replaced this frame, release the former buffer
     void releasePendingBuffer(nsecs_t /*dequeueReadyTime*/);
@@ -707,7 +700,6 @@ public:
     inline const State& getDrawingState() const { return mDrawingState; }
     inline State& getDrawingState() { return mDrawingState; }
 
-    void miniDumpLegacy(std::string& result, const DisplayDevice&) const;
     void miniDump(std::string& result, const frontend::LayerSnapshot&, const DisplayDevice&) const;
     void dumpFrameStats(std::string& result) const;
     void dumpOffscreenDebugInfo(std::string& result) const;
@@ -794,15 +786,11 @@ public:
      */
     Rect getCroppedBufferSize(const Layer::State& s) const;
 
-    bool setFrameRate(FrameRate::FrameRateVote);
-    bool setFrameRateCategory(FrameRateCategory, bool smoothSwitchOnly);
-
-    bool setFrameRateSelectionStrategy(FrameRateSelectionStrategy);
-
     virtual void setFrameTimelineInfoForBuffer(const FrameTimelineInfo& /*info*/) {}
-    void setFrameTimelineVsyncForBufferTransaction(const FrameTimelineInfo& info, nsecs_t postTime);
+    void setFrameTimelineVsyncForBufferTransaction(const FrameTimelineInfo& info, nsecs_t postTime,
+                                                   gui::GameMode gameMode);
     void setFrameTimelineVsyncForBufferlessTransaction(const FrameTimelineInfo& info,
-                                                       nsecs_t postTime);
+                                                       nsecs_t postTime, gui::GameMode gameMode);
 
     void addSurfaceFrameDroppedForBuffer(std::shared_ptr<frametimeline::SurfaceFrame>& surfaceFrame,
                                          nsecs_t dropTime);
@@ -811,11 +799,12 @@ public:
             nsecs_t currentLatchTime);
 
     std::shared_ptr<frametimeline::SurfaceFrame> createSurfaceFrameForTransaction(
-            const FrameTimelineInfo& info, nsecs_t postTime);
+            const FrameTimelineInfo& info, nsecs_t postTime, gui::GameMode gameMode);
     std::shared_ptr<frametimeline::SurfaceFrame> createSurfaceFrameForBuffer(
-            const FrameTimelineInfo& info, nsecs_t queueTime, std::string debugName);
+            const FrameTimelineInfo& info, nsecs_t queueTime, std::string debugName,
+            gui::GameMode gameMode);
     void setFrameTimelineVsyncForSkippedFrames(const FrameTimelineInfo& info, nsecs_t postTime,
-                                               std::string debugName);
+                                               std::string debugName, gui::GameMode gameMode);
 
     bool setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
                                     TrustedPresentationListener const& listener);
@@ -837,13 +826,6 @@ public:
      * Returns whether this layer has an explicitly set input-info.
      */
     bool hasInputInfo() const;
-
-    // Sets the gui::GameMode for the tree rooted at this layer. A layer in the tree inherits this
-    // gui::GameMode unless it (or an ancestor) has GAME_MODE_METADATA.
-    void setGameModeForTree(gui::GameMode);
-
-    void setGameMode(gui::GameMode gameMode) { mGameMode = gameMode; }
-    gui::GameMode getGameMode() const { return mGameMode; }
 
     virtual uid_t getOwnerUid() const { return mOwnerUid; }
 
@@ -905,9 +887,6 @@ public:
     // CompositionEngine to create a single path for composing layers.
     void updateSnapshot(bool updateGeometry);
     void updateChildrenSnapshots(bool updateGeometry);
-    void updateMetadataSnapshot(const LayerMetadata& parentMetadata);
-    void updateRelativeMetadataSnapshot(const LayerMetadata& relativeLayerMetadata,
-                                        std::unordered_set<Layer*>& visited);
     sp<Layer> getClonedFrom() const {
         return mClonedFrom != nullptr ? mClonedFrom.promote() : nullptr;
     }
@@ -918,19 +897,9 @@ public:
     void callReleaseBufferCallback(const sp<ITransactionCompletedListener>& listener,
                                    const sp<GraphicBuffer>& buffer, uint64_t framenumber,
                                    const sp<Fence>& releaseFence);
-    bool setFrameRateForLayerTreeLegacy(FrameRate, nsecs_t now);
     bool setFrameRateForLayerTree(FrameRate, const scheduler::LayerProps&, nsecs_t now);
     void recordLayerHistoryBufferUpdate(const scheduler::LayerProps&, nsecs_t now);
     void recordLayerHistoryAnimationTx(const scheduler::LayerProps&, nsecs_t now);
-    auto getLayerProps() const {
-        return scheduler::LayerProps{.visible = isVisible(),
-                                     .bounds = getBounds(),
-                                     .transform = getTransform(),
-                                     .setFrameRateVote = getFrameRateForLayerTree(),
-                                     .frameRateSelectionPriority = getFrameRateSelectionPriority(),
-                                     .isSmallDirty = mSmallDirty,
-                                     .isFrontBuffered = isFrontBuffered()};
-    };
     bool hasBuffer() const { return mBufferInfo.mBuffer != nullptr; }
     void setTransformHint(std::optional<ui::Transform::RotationFlags> transformHint) {
         mTransformHint = transformHint;
@@ -1151,7 +1120,6 @@ private:
     LayerVector makeChildrenTraversalList(LayerVector::StateSet,
                                           const std::vector<Layer*>& layersInTree);
 
-    void updateTreeHasFrameRateVote();
     bool propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool overrideChildren,
                                         bool* transactionNeeded);
     void setZOrderRelativeOf(const wp<Layer>& relativeOf);

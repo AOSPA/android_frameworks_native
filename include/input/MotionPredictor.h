@@ -43,7 +43,9 @@ static inline bool isMotionPredictionEnabled() {
 class JerkTracker {
 public:
     // Initialize the tracker. If normalizedDt is true, assume that each sample pushed has dt=1.
-    JerkTracker(bool normalizedDt);
+    // alpha is the coefficient of the first-order IIR filter for jerk. A factor of 1 results
+    // in no smoothing.
+    JerkTracker(bool normalizedDt, float alpha);
 
     // Add a position to the tracker and update derivative estimates.
     void pushSample(int64_t timestamp, float xPos, float yPos);
@@ -56,15 +58,10 @@ public:
     // acceleration) and has the units of d^3p/dt^3.
     std::optional<float> jerkMagnitude() const;
 
-    // forgetFactor is the coefficient of the first-order IIR filter for jerk. A factor of 1 results
-    // in no smoothing.
-    void setForgetFactor(float forgetFactor);
-    float getForgetFactor() const;
-
 private:
     const bool mNormalizedDt;
     // Coefficient of first-order IIR filter to smooth jerk calculation.
-    float mForgetFactor = 1;
+    const float mAlpha;
 
     RingBuffer<int64_t> mTimestamps{4};
     std::array<float, 4> mXDerivatives{}; // [x, x', x'', x''']
@@ -124,11 +121,6 @@ public:
 
     bool isPredictionAvailable(int32_t deviceId, int32_t source);
 
-    /**
-     * Currently used to expose config constants in testing.
-     */
-    const TfLiteMotionPredictorModel::Config& getModelConfig();
-
 private:
     const nsecs_t mPredictionTimestampOffsetNanos;
     const std::function<bool()> mCheckMotionPredictionEnabled;
@@ -137,15 +129,17 @@ private:
 
     std::unique_ptr<TfLiteMotionPredictorBuffers> mBuffers;
     std::optional<MotionEvent> mLastEvent;
-    // mJerkTracker assumes normalized dt = 1 between recorded samples because
-    // the underlying mModel input also assumes fixed-interval samples.
-    // Normalized dt as 1 is also used to correspond with the similar Jank
-    // implementation from the JetPack MotionPredictor implementation.
-    JerkTracker mJerkTracker{true};
 
-    std::optional<MotionPredictorMetricsManager> mMetricsManager;
+    std::unique_ptr<JerkTracker> mJerkTracker;
+
+    std::unique_ptr<MotionPredictorMetricsManager> mMetricsManager;
 
     const ReportAtomFunction mReportAtomFunction;
+
+    // Initialize prediction model and associated objects.
+    // Called during lazy initialization.
+    // TODO: b/210158587 Consider removing lazy initialization.
+    void initializeObjects();
 };
 
 } // namespace android

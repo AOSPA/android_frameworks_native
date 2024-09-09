@@ -249,19 +249,6 @@ bool DisplayDevice::isPoweredOn() const {
     return mPowerMode != hal::PowerMode::OFF;
 }
 
-nsecs_t DisplayDevice::getVsyncPeriodFromHWC() const {
-    const auto physicalId = getPhysicalId();
-    if (!mHwComposer.isConnected(physicalId)) {
-        return 0;
-    }
-
-    if (const auto vsyncPeriodOpt = mHwComposer.getDisplayVsyncPeriod(physicalId).value_opt()) {
-        return *vsyncPeriodOpt;
-    }
-
-    return refreshRateSelector().getActiveMode().modePtr->getVsyncRate().getPeriodNsecs();
-}
-
 ui::Dataspace DisplayDevice::getCompositionDataSpace() const {
     return mCompositionDisplay->getState().dataspace;
 }

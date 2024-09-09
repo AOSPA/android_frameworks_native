@@ -33,10 +33,19 @@ BackendUnifiedServiceManager::BackendUnifiedServiceManager(const sp<AidlServiceM
 sp<AidlServiceManager> BackendUnifiedServiceManager::getImpl() {
     return mTheRealServiceManager;
 }
+
 binder::Status BackendUnifiedServiceManager::getService(const ::std::string& name,
-                                                        os::Service* _out) {
+                                                        sp<IBinder>* _aidl_return) {
     os::Service service;
-    binder::Status status = mTheRealServiceManager->getService(name, &service);
+    binder::Status status = getService2(name, &service);
+    *_aidl_return = service.get<os::Service::Tag::binder>();
+    return status;
+}
+
+binder::Status BackendUnifiedServiceManager::getService2(const ::std::string& name,
+                                                         os::Service* _out) {
+    os::Service service;
+    binder::Status status = mTheRealServiceManager->getService2(name, &service);
     toBinderService(service, _out);
     return status;
 }

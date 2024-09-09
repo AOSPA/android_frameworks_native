@@ -70,7 +70,7 @@ static MotionEvent getMotionEvent(int32_t action, float x, float y,
 }
 
 TEST(JerkTrackerTest, JerkReadiness) {
-    JerkTracker jerkTracker(true);
+    JerkTracker jerkTracker(/*normalizedDt=*/true, /*alpha=*/1);
     EXPECT_FALSE(jerkTracker.jerkMagnitude());
     jerkTracker.pushSample(/*timestamp=*/0, 20, 50);
     EXPECT_FALSE(jerkTracker.jerkMagnitude());
@@ -87,8 +87,8 @@ TEST(JerkTrackerTest, JerkReadiness) {
 }
 
 TEST(JerkTrackerTest, JerkCalculationNormalizedDtTrue) {
-    JerkTracker jerkTracker(true);
-    jerkTracker.setForgetFactor(.5);
+    const float alpha = .5;
+    JerkTracker jerkTracker(/*normalizedDt=*/true, alpha);
     jerkTracker.pushSample(/*timestamp=*/0, 20, 50);
     jerkTracker.pushSample(/*timestamp=*/1, 25, 53);
     jerkTracker.pushSample(/*timestamp=*/2, 30, 60);
@@ -119,14 +119,13 @@ TEST(JerkTrackerTest, JerkCalculationNormalizedDtTrue) {
      * y'':  3 -> -15
      * y''': -18
      */
-    const float newJerk = (1 - jerkTracker.getForgetFactor()) * std::hypot(10, -1) +
-            jerkTracker.getForgetFactor() * std::hypot(-50, -18);
+    const float newJerk = (1 - alpha) * std::hypot(10, -1) + alpha * std::hypot(-50, -18);
     EXPECT_FLOAT_EQ(jerkTracker.jerkMagnitude().value(), newJerk);
 }
 
 TEST(JerkTrackerTest, JerkCalculationNormalizedDtFalse) {
-    JerkTracker jerkTracker(false);
-    jerkTracker.setForgetFactor(.5);
+    const float alpha = .5;
+    JerkTracker jerkTracker(/*normalizedDt=*/false, alpha);
     jerkTracker.pushSample(/*timestamp=*/0, 20, 50);
     jerkTracker.pushSample(/*timestamp=*/10, 25, 53);
     jerkTracker.pushSample(/*timestamp=*/20, 30, 60);
@@ -157,13 +156,12 @@ TEST(JerkTrackerTest, JerkCalculationNormalizedDtFalse) {
      * y'':  .03 -> -.125 (delta above, divide by 10)
      * y''': -.0155 (delta above, divide by 10)
      */
-    const float newJerk = (1 - jerkTracker.getForgetFactor()) * std::hypot(.01, -.001) +
-            jerkTracker.getForgetFactor() * std::hypot(-.0375, -.0155);
+    const float newJerk = (1 - alpha) * std::hypot(.01, -.001) + alpha * std::hypot(-.0375, -.0155);
     EXPECT_FLOAT_EQ(jerkTracker.jerkMagnitude().value(), newJerk);
 }
 
 TEST(JerkTrackerTest, JerkCalculationAfterReset) {
-    JerkTracker jerkTracker(true);
+    JerkTracker jerkTracker(/*normalizedDt=*/true, /*alpha=*/1);
     jerkTracker.pushSample(/*timestamp=*/0, 20, 50);
     jerkTracker.pushSample(/*timestamp=*/1, 25, 53);
     jerkTracker.pushSample(/*timestamp=*/2, 30, 60);
@@ -297,8 +295,11 @@ TEST_WITH_FLAGS(
     MotionPredictor predictor(/*predictionTimestampOffsetNanos=*/0,
                               []() { return true /*enable prediction*/; });
 
+    // Create another instance of TfLiteMotionPredictorModel to read config details.
+    std::unique_ptr<TfLiteMotionPredictorModel> testTfLiteModel =
+            TfLiteMotionPredictorModel::create();
     const float mediumJerk =
-            (predictor.getModelConfig().lowJerk + predictor.getModelConfig().highJerk) / 2;
+            (testTfLiteModel->config().lowJerk + testTfLiteModel->config().highJerk) / 2;
     const float a = 3; // initial acceleration
     const float b = 4; // initial velocity
     const float c = 5; // initial position

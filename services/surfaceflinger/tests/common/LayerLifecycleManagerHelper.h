@@ -25,6 +25,7 @@
 #include <FrontEnd/LayerHierarchy.h>
 #include <FrontEnd/LayerLifecycleManager.h>
 #include <FrontEnd/LayerSnapshotBuilder.h>
+#include <Layer.h> // needed for framerate
 
 namespace android::surfaceflinger::frontend {
 
@@ -81,6 +82,15 @@ public:
         layers.emplace_back(std::make_unique<RequestedLayerState>(
                 createArgs(/*id=*/id, /*canBeRoot=*/true, /*parent=*/UNASSIGNED_LAYER_ID,
                            /*mirror=*/UNASSIGNED_LAYER_ID)));
+        mLifecycleManager.addLayers(std::move(layers));
+    }
+
+    void createRootLayerWithUid(uint32_t id, gui::Uid uid) {
+        std::vector<std::unique_ptr<RequestedLayerState>> layers;
+        auto args = createArgs(/*id=*/id, /*canBeRoot=*/true, /*parent=*/UNASSIGNED_LAYER_ID,
+                               /*mirror=*/UNASSIGNED_LAYER_ID);
+        args.ownerUid = uid.val();
+        layers.emplace_back(std::make_unique<RequestedLayerState>(args));
         mLifecycleManager.addLayers(std::move(layers));
     }
 
@@ -321,6 +331,19 @@ public:
         mLifecycleManager.applyTransactions(transactions);
     }
 
+    void setFrameRate(uint32_t id, Layer::FrameRate framerate) {
+        std::vector<TransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+
+        transactions.back().states.front().state.what = layer_state_t::eFrameRateChanged;
+        transactions.back().states.front().layerId = id;
+        transactions.back().states.front().state.frameRate = framerate.vote.rate.getValue();
+        transactions.back().states.front().state.frameRateCompatibility = 0;
+        transactions.back().states.front().state.changeFrameRateStrategy = 0;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
     void setFrameRateCategory(uint32_t id, int8_t frameRateCategory) {
         std::vector<TransactionState> transactions;
         transactions.emplace_back();
@@ -391,6 +414,14 @@ public:
                                                                 sBufferId++,
                                                                 HAL_PIXEL_FORMAT_RGBA_8888,
                                                                 GRALLOC_USAGE_PROTECTED /*usage*/));
+    }
+
+    void setFrontBuffer(uint32_t id) {
+        static uint64_t sBufferId = 1;
+        setBuffer(id,
+                  std::make_shared<renderengine::mock::FakeExternalTexture>(
+                          1U /*width*/, 1U /*height*/, sBufferId++, HAL_PIXEL_FORMAT_RGBA_8888,
+                          GRALLOC_USAGE_PROTECTED | AHARDWAREBUFFER_USAGE_FRONT_BUFFER /*usage*/));
     }
 
     void setBufferCrop(uint32_t id, const Rect& bufferCrop) {
@@ -469,6 +500,18 @@ public:
         transactions.back().states.front().state.what = layer_state_t::eDropInputModeChanged;
         transactions.back().states.front().layerId = id;
         transactions.back().states.front().state.dropInputMode = dropInputMode;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
+    void setGameMode(uint32_t id, gui::GameMode gameMode) {
+        std::vector<TransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+        transactions.back().states.front().state.what = layer_state_t::eMetadataChanged;
+        transactions.back().states.front().state.metadata = LayerMetadata();
+        transactions.back().states.front().state.metadata.setInt32(METADATA_GAME_MODE,
+                                                                   static_cast<int32_t>(gameMode));
+        transactions.back().states.front().layerId = id;
         mLifecycleManager.applyTransactions(transactions);
     }
 

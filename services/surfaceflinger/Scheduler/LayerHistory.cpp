@@ -115,12 +115,12 @@ LayerHistory::LayerHistory()
 
 LayerHistory::~LayerHistory() = default;
 
-void LayerHistory::registerLayer(Layer* layer, bool contentDetectionEnabled) {
+void LayerHistory::registerLayer(Layer* layer, bool contentDetectionEnabled,
+                                 FrameRateCompatibility frameRateCompatibility) {
     std::lock_guard lock(mLock);
     LOG_ALWAYS_FATAL_IF(findLayer(layer->getSequence()).first != LayerStatus::NotFound,
                         "%s already registered", layer->getName().c_str());
-    LayerVoteType type =
-            getVoteType(layer->getDefaultFrameRateCompatibility(), contentDetectionEnabled);
+    LayerVoteType type = getVoteType(frameRateCompatibility, contentDetectionEnabled);
     auto info = std::make_unique<LayerInfo>(layer->getName(), layer->getOwnerUid(), type);
 
     // The layer can be placed on either map, it is assumed that partitionLayers() will be called

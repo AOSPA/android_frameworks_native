@@ -101,7 +101,6 @@ void FakeEventHub::addAbsoluteAxis(int32_t deviceId, int axis, int32_t minValue,
     Device* device = getDevice(deviceId);
 
     RawAbsoluteAxisInfo info;
-    info.valid = true;
     info.minValue = minValue;
     info.maxValue = maxValue;
     info.flat = flat;

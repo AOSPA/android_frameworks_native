@@ -44,7 +44,8 @@ public:
     ~ServiceManager();
 
     // getService will try to start any services it cannot find
-    binder::Status getService(const std::string& name, os::Service* outService) override;
+    binder::Status getService(const std::string& name, sp<IBinder>* outBinder) override;
+    binder::Status getService2(const std::string& name, os::Service* outService) override;
     binder::Status checkService(const std::string& name, os::Service* outService) override;
     binder::Status addService(const std::string& name, const sp<IBinder>& binder,
                               bool allowIsolated, int32_t dumpPriority) override;
@@ -114,6 +115,8 @@ private:
 
     os::Service tryGetService(const std::string& name, bool startIfNotFound);
     sp<IBinder> tryGetBinder(const std::string& name, bool startIfNotFound);
+    binder::Status canAddService(const Access::CallingContext& ctx, const std::string& name,
+                                 std::optional<std::string>* accessor);
     binder::Status canFindService(const Access::CallingContext& ctx, const std::string& name,
                                   std::optional<std::string>* accessor);
 

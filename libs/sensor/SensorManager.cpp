@@ -73,8 +73,6 @@ int getDeviceIdForUid(uid_t uid) {
                 return deviceId;
             }
         }
-    } else {
-        ALOGW("Cannot get virtualdevice_native service");
     }
     return DEVICE_ID_DEFAULT;
 }
@@ -86,7 +84,7 @@ bool findSensorNameInList(int32_t handle, const Vector<Sensor>& sensorList,
             std::ostringstream oss;
             oss << sensor.getStringType() << ":" << sensor.getName();
             if (outString) {
-                *outString = std::move(oss.str());
+                *outString = oss.str();
             }
             return true;
         }
@@ -403,7 +401,7 @@ sp<SensorEventQueue> SensorManager::createEventQueue(
             ALOGE("createEventQueue: connection is NULL.");
             return nullptr;
         }
-        queue = new SensorEventQueue(connection, *this);
+        queue = new SensorEventQueue(connection, *this, packageName);
         break;
     }
     return queue;

@@ -48,7 +48,7 @@
     ::tracing_perfetto::traceAsyncBegin(ATRACE_TAG, name, cookie)
 #define SFTRACE_ASYNC_END(name, cookie) ::tracing_perfetto::traceAsyncEnd(ATRACE_TAG, name, cookie)
 #define SFTRACE_ASYNC_FOR_TRACK_BEGIN(track_name, name, cookie) \
-    ::tracing_perfetto::traceAsyncBeginForTrack(ATRACE_TAG, track_name, name, cookie)
+    ::tracing_perfetto::traceAsyncBeginForTrack(ATRACE_TAG, name, track_name, cookie)
 #define SFTRACE_ASYNC_FOR_TRACK_END(track_name, cookie) \
     ::tracing_perfetto::traceAsyncEndForTrack(ATRACE_TAG, track_name, cookie)
 #define SFTRACE_INSTANT(name) ::tracing_perfetto::traceInstant(ATRACE_TAG, name)

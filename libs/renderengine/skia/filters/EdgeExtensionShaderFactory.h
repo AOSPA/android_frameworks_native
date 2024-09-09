@@ -33,10 +33,12 @@ namespace android::renderengine::skia {
  */
 class EdgeExtensionShaderFactory {
 public:
+    EdgeExtensionShaderFactory();
+
     sk_sp<SkShader> createSkShader(const sk_sp<SkShader>& inputShader, const LayerSettings& layer,
-                                   const SkRect& imageBounds);
+                                   const SkRect& imageBounds) const;
 
 private:
-    std::unique_ptr<SkRuntimeShaderBuilder> mBuilder;
+    std::unique_ptr<const SkRuntimeEffect::Result> mResult;
 };
 } // namespace android::renderengine::skia

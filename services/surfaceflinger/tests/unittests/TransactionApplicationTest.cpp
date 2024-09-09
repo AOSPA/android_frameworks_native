@@ -105,7 +105,7 @@ public:
 
     void NotPlacedOnTransactionQueue(uint32_t flags) {
         ASSERT_TRUE(mFlinger.getTransactionQueue().isEmpty());
-        EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame()).Times(1);
+        EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame(_)).Times(1);
         TransactionInfo transaction;
         setupSingle(transaction, flags,
                     /*desiredPresentTime*/ systemTime(), /*isAutoTimestamp*/ true,
@@ -129,7 +129,7 @@ public:
 
     void PlaceOnTransactionQueue(uint32_t flags) {
         ASSERT_TRUE(mFlinger.getTransactionQueue().isEmpty());
-        EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame()).Times(1);
+        EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame(_)).Times(1);
 
         // first check will see desired present time has not passed,
         // but afterwards it will look like the desired present time has passed
@@ -155,7 +155,7 @@ public:
     void BlockedByPriorTransaction(uint32_t flags) {
         ASSERT_TRUE(mFlinger.getTransactionQueue().isEmpty());
         nsecs_t time = systemTime();
-        EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame()).Times(2);
+        EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame(_)).Times(2);
 
         // transaction that should go on the pending thread
         TransactionInfo transactionA;
@@ -217,7 +217,7 @@ public:
 
 TEST_F(TransactionApplicationTest, AddToPendingQueue) {
     ASSERT_TRUE(mFlinger.getTransactionQueue().isEmpty());
-    EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame()).Times(1);
+    EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame(_)).Times(1);
 
     TransactionInfo transactionA; // transaction to go on pending queue
     setupSingle(transactionA, /*flags*/ 0, /*desiredPresentTime*/ s2ns(1), false,
@@ -238,7 +238,7 @@ TEST_F(TransactionApplicationTest, AddToPendingQueue) {
 
 TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
     ASSERT_TRUE(mFlinger.getTransactionQueue().isEmpty());
-    EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame()).Times(1);
+    EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame(_)).Times(1);
 
     TransactionInfo transactionA; // transaction to go on pending queue
     setupSingle(transactionA, /*flags*/ 0, /*desiredPresentTime*/ s2ns(1), false,

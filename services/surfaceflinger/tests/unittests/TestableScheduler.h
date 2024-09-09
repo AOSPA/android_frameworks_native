@@ -62,7 +62,7 @@ public:
     }
 
     MOCK_METHOD(void, scheduleConfigure, (), (override));
-    MOCK_METHOD(void, scheduleFrame, (), (override));
+    MOCK_METHOD(void, scheduleFrame, (Duration), (override));
     MOCK_METHOD(void, postMessage, (sp<MessageHandler>&&), (override));
 
     void doFrameSignal(ICompositor& compositor, VsyncId vsyncId) {
@@ -176,6 +176,11 @@ public:
         mPolicy.idleTimer = globalSignals.idle ? TimerState::Expired : TimerState::Reset;
     }
 
+    using Scheduler::TimerState;
+
+    using Scheduler::idleTimerCallback;
+    using Scheduler::touchTimerCallback;
+
     void setContentRequirements(std::vector<RefreshRateSelector::LayerRequirement> layers) {
         std::lock_guard<std::mutex> lock(mPolicyLock);
         mPolicy.contentRequirements = std::move(layers);
@@ -188,15 +193,7 @@ public:
         return Scheduler::chooseDisplayModes();
     }
 
-    void dispatchCachedReportedMode() {
-        std::lock_guard<std::mutex> lock(mPolicyLock);
-        Scheduler::dispatchCachedReportedMode();
-    }
-
-    void clearCachedReportedMode() {
-        std::lock_guard<std::mutex> lock(mPolicyLock);
-        mPolicy.cachedModeChangedParams.reset();
-    }
+    using Scheduler::onDisplayModeChanged;
 
     void setInitialHwVsyncEnabled(PhysicalDisplayId id, bool enabled) {
         auto schedule = getVsyncSchedule(id);

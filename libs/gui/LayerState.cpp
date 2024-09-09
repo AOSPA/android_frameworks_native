@@ -17,7 +17,6 @@
 #define LOG_TAG "LayerState"
 
 #include <cinttypes>
-#include <cmath>
 
 #include <android/gui/ISurfaceComposerClient.h>
 #include <android/native_window.h>
@@ -194,6 +193,13 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeFloat, currentHdrSdrRatio);
     SAFE_PARCEL(output.writeFloat, desiredHdrSdrRatio);
     SAFE_PARCEL(output.writeInt32, static_cast<int32_t>(cachingHint));
+
+    const bool hasBufferReleaseChannel = (bufferReleaseChannel != nullptr);
+    SAFE_PARCEL(output.writeBool, hasBufferReleaseChannel);
+    if (hasBufferReleaseChannel) {
+        SAFE_PARCEL(output.writeParcelable, *bufferReleaseChannel);
+    }
+
     return NO_ERROR;
 }
 
@@ -338,6 +344,13 @@ status_t layer_state_t::read(const Parcel& input)
     int32_t tmpInt32;
     SAFE_PARCEL(input.readInt32, &tmpInt32);
     cachingHint = static_cast<gui::CachingHint>(tmpInt32);
+
+    bool hasBufferReleaseChannel;
+    SAFE_PARCEL(input.readBool, &hasBufferReleaseChannel);
+    if (hasBufferReleaseChannel) {
+        bufferReleaseChannel = std::make_shared<gui::BufferReleaseChannel::ProducerEndpoint>();
+        SAFE_PARCEL(input.readParcelable, bufferReleaseChannel.get());
+    }
 
     return NO_ERROR;
 }
@@ -718,6 +731,10 @@ void layer_state_t::merge(const layer_state_t& other) {
     if (other.what & eFlushJankData) {
         what |= eFlushJankData;
     }
+    if (other.what & eBufferReleaseChannelChanged) {
+        what |= eBufferReleaseChannelChanged;
+        bufferReleaseChannel = other.bufferReleaseChannel;
+    }
     if ((other.what & what) != other.what) {
         ALOGE("Unmerged SurfaceComposer Transaction properties. LayerState::merge needs updating? "
               "other.what=0x%" PRIX64 " what=0x%" PRIX64 " unmerged flags=0x%" PRIX64,
@@ -797,6 +814,7 @@ uint64_t layer_state_t::diff(const layer_state_t& other) const {
     CHECK_DIFF(diff, eColorChanged, other, color.rgb);
     CHECK_DIFF(diff, eColorSpaceAgnosticChanged, other, colorSpaceAgnostic);
     CHECK_DIFF(diff, eDimmingEnabledChanged, other, dimmingEnabled);
+    if (other.what & eBufferReleaseChannelChanged) diff |= eBufferReleaseChannelChanged;
     return diff;
 }
 

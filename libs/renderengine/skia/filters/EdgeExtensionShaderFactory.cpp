@@ -19,6 +19,7 @@
 #include <SkRuntimeEffect.h>
 #include <SkStream.h>
 #include <SkString.h>
+#include <com_android_graphics_libgui_flags.h>
 #include "log/log_main.h"
 
 namespace android::renderengine::skia {
@@ -56,25 +57,33 @@ static const SkString edgeShader = SkString(R"(
     }
 )");
 
+EdgeExtensionShaderFactory::EdgeExtensionShaderFactory() {
+    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
+        return;
+    }
+    mResult = std::make_unique<SkRuntimeEffect::Result>(SkRuntimeEffect::MakeForShader(edgeShader));
+    LOG_ALWAYS_FATAL_IF(!mResult->errorText.isEmpty(),
+                        "EdgeExtensionShaderFactory compilation "
+                        "failed with an unexpected error: %s",
+                        mResult->errorText.c_str());
+}
+
 sk_sp<SkShader> EdgeExtensionShaderFactory::createSkShader(const sk_sp<SkShader>& inputShader,
                                                            const LayerSettings& layer,
-                                                           const SkRect& imageBounds) {
-    if (mBuilder == nullptr) {
-        const static SkRuntimeEffect::Result instance = SkRuntimeEffect::MakeForShader(edgeShader);
-        if (!instance.errorText.isEmpty()) {
-            ALOGE("EdgeExtensionShaderFactory terminated with an error: %s",
-                  instance.errorText.c_str());
-            return nullptr;
-        }
-        mBuilder = std::make_unique<SkRuntimeShaderBuilder>(instance.effect);
-    }
-    mBuilder->child("uContentTexture") = inputShader;
+                                                           const SkRect& imageBounds) const {
+    LOG_ALWAYS_FATAL_IF(mResult == nullptr,
+                        "EdgeExtensionShaderFactory did not initialize mResult. "
+                        "This means that we unexpectedly applied the edge extension shader");
+
+    SkRuntimeShaderBuilder builder = SkRuntimeShaderBuilder(mResult->effect);
+
+    builder.child("uContentTexture") = inputShader;
     if (imageBounds.isEmpty()) {
-        mBuilder->uniform("uImgSize") = SkPoint{layer.geometry.boundaries.getWidth(),
-                                                layer.geometry.boundaries.getHeight()};
+        builder.uniform("uImgSize") = SkPoint{layer.geometry.boundaries.getWidth(),
+                                              layer.geometry.boundaries.getHeight()};
     } else {
-        mBuilder->uniform("uImgSize") = SkPoint{imageBounds.width(), imageBounds.height()};
+        builder.uniform("uImgSize") = SkPoint{imageBounds.width(), imageBounds.height()};
     }
-    return mBuilder->makeShader();
+    return builder.makeShader();
 }
 } // namespace android::renderengine::skia

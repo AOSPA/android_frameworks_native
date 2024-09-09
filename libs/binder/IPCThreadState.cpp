@@ -89,26 +89,33 @@ static const char* kReturnStrings[] = {
         "BR_FROZEN_REPLY",
         "BR_ONEWAY_SPAM_SUSPECT",
         "BR_TRANSACTION_PENDING_FROZEN",
+        "BR_FROZEN_BINDER",
+        "BR_CLEAR_FREEZE_NOTIFICATION_DONE",
 };
 
-static const char *kCommandStrings[] = {
-    "BC_TRANSACTION",
-    "BC_REPLY",
-    "BC_ACQUIRE_RESULT",
-    "BC_FREE_BUFFER",
-    "BC_INCREFS",
-    "BC_ACQUIRE",
-    "BC_RELEASE",
-    "BC_DECREFS",
-    "BC_INCREFS_DONE",
-    "BC_ACQUIRE_DONE",
-    "BC_ATTEMPT_ACQUIRE",
-    "BC_REGISTER_LOOPER",
-    "BC_ENTER_LOOPER",
-    "BC_EXIT_LOOPER",
-    "BC_REQUEST_DEATH_NOTIFICATION",
-    "BC_CLEAR_DEATH_NOTIFICATION",
-    "BC_DEAD_BINDER_DONE"
+static const char* kCommandStrings[] = {
+        "BC_TRANSACTION",
+        "BC_REPLY",
+        "BC_ACQUIRE_RESULT",
+        "BC_FREE_BUFFER",
+        "BC_INCREFS",
+        "BC_ACQUIRE",
+        "BC_RELEASE",
+        "BC_DECREFS",
+        "BC_INCREFS_DONE",
+        "BC_ACQUIRE_DONE",
+        "BC_ATTEMPT_ACQUIRE",
+        "BC_REGISTER_LOOPER",
+        "BC_ENTER_LOOPER",
+        "BC_EXIT_LOOPER",
+        "BC_REQUEST_DEATH_NOTIFICATION",
+        "BC_CLEAR_DEATH_NOTIFICATION",
+        "BC_DEAD_BINDER_DONE",
+        "BC_TRANSACTION_SG",
+        "BC_REPLY_SG",
+        "BC_REQUEST_FREEZE_NOTIFICATION",
+        "BC_CLEAR_FREEZE_NOTIFICATION",
+        "BC_FREEZE_NOTIFICATION_DONE",
 };
 
 static const int64_t kWorkSourcePropagatedBitIndex = 32;
@@ -203,6 +210,18 @@ static const void* printReturnCommand(std::ostream& out, const void* _cmd) {
             out << ": death cookie " << (void*)(uint64_t)c;
         } break;
 
+        case BR_FROZEN_BINDER: {
+            const int32_t c = *cmd++;
+            const int32_t h = *cmd++;
+            const int32_t isFrozen = *cmd++;
+            out << ": freeze cookie " << (void*)(uint64_t)c << " isFrozen: " << isFrozen;
+        } break;
+
+        case BR_CLEAR_FREEZE_NOTIFICATION_DONE: {
+            const int32_t c = *cmd++;
+            out << ": freeze cookie " << (void*)(uint64_t)c;
+        } break;
+
         default:
             // no details to show for: BR_OK, BR_DEAD_REPLY,
             // BR_TRANSACTION_COMPLETE, BR_FINISHED
@@ -270,9 +289,21 @@ static const void* printCommand(std::ostream& out, const void* _cmd) {
             out << ": handle=" << h << " (death cookie " << (void*)(uint64_t)c << ")";
         } break;
 
+        case BC_REQUEST_FREEZE_NOTIFICATION:
+        case BC_CLEAR_FREEZE_NOTIFICATION: {
+            const int32_t h = *cmd++;
+            const int32_t c = *cmd++;
+            out << ": handle=" << h << " (freeze cookie " << (void*)(uint64_t)c << ")";
+        } break;
+
         case BC_DEAD_BINDER_DONE: {
             const int32_t c = *cmd++;
             out << ": death cookie " << (void*)(uint64_t)c;
+        } break;
+
+        case BC_FREEZE_NOTIFICATION_DONE: {
+            const int32_t c = *cmd++;
+            out << ": freeze cookie " << (void*)(uint64_t)c;
         } break;
 
         default:
@@ -953,6 +984,33 @@ status_t IPCThreadState::clearDeathNotification(int32_t handle, BpBinder* proxy)
     return NO_ERROR;
 }
 
+status_t IPCThreadState::addFrozenStateChangeCallback(int32_t handle, BpBinder* proxy) {
+    static bool isSupported =
+            ProcessState::isDriverFeatureEnabled(ProcessState::DriverFeature::FREEZE_NOTIFICATION);
+    if (!isSupported) {
+        return INVALID_OPERATION;
+    }
+    proxy->getWeakRefs()->incWeak(proxy);
+    mOut.writeInt32(BC_REQUEST_FREEZE_NOTIFICATION);
+    mOut.writeInt32((int32_t)handle);
+    mOut.writePointer((uintptr_t)proxy);
+    flushCommands();
+    return NO_ERROR;
+}
+
+status_t IPCThreadState::removeFrozenStateChangeCallback(int32_t handle, BpBinder* proxy) {
+    static bool isSupported =
+            ProcessState::isDriverFeatureEnabled(ProcessState::DriverFeature::FREEZE_NOTIFICATION);
+    if (!isSupported) {
+        return INVALID_OPERATION;
+    }
+    mOut.writeInt32(BC_CLEAR_FREEZE_NOTIFICATION);
+    mOut.writeInt32((int32_t)handle);
+    mOut.writePointer((uintptr_t)proxy);
+    flushCommands();
+    return NO_ERROR;
+}
+
 IPCThreadState::IPCThreadState()
       : mProcess(ProcessState::self()),
         mServingStackPointer(nullptr),
@@ -1484,6 +1542,26 @@ status_t IPCThreadState::executeCommand(int32_t cmd)
     case BR_CLEAR_DEATH_NOTIFICATION_DONE:
         {
             BpBinder *proxy = (BpBinder*)mIn.readPointer();
+            proxy->getWeakRefs()->decWeak(proxy);
+        } break;
+
+        case BR_FROZEN_BINDER: {
+            const struct binder_frozen_state_info* data =
+                    reinterpret_cast<const struct binder_frozen_state_info*>(
+                            mIn.readInplace(sizeof(struct binder_frozen_state_info)));
+            if (data == nullptr) {
+                result = UNKNOWN_ERROR;
+                break;
+            }
+            BpBinder* proxy = (BpBinder*)data->cookie;
+            bool isFrozen = mIn.readInt32() > 0;
+            proxy->getPrivateAccessor().onFrozenStateChanged(data->is_frozen);
+            mOut.writeInt32(BC_FREEZE_NOTIFICATION_DONE);
+            mOut.writePointer(data->cookie);
+        } break;
+
+        case BR_CLEAR_FREEZE_NOTIFICATION_DONE: {
+            BpBinder* proxy = (BpBinder*)mIn.readPointer();
             proxy->getWeakRefs()->decWeak(proxy);
         } break;
 

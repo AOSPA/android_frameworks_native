@@ -55,15 +55,11 @@ public:
 
     std::optional<TimePoint> earliestPresentTime() const { return mEarliestPresentTime; }
 
-    // The time of the VSYNC that preceded this frame. See `presentFenceForPastVsync` for details.
-    TimePoint pastVsyncTime(Period minFramePeriod) const;
-
-    // Equivalent to `presentFenceForPastVsync` unless running N VSYNCs ahead.
-    const FenceTimePtr& presentFenceForPreviousFrame() const {
-        return mPresentFences.front().fenceTime;
-    }
+    // Equivalent to `expectedSignaledPresentFence` unless running N VSYNCs ahead.
+    const FenceTimePtr& presentFenceForPreviousFrame() const;
 
     bool isFramePending() const { return mFramePending; }
+    bool wouldBackpressureHwc() const { return mWouldBackpressureHwc; }
     bool didMissFrame() const { return mFrameMissed; }
     bool didMissHwcFrame() const { return mHwcFrameMissed && !mGpuFrameMissed; }
     FrameTime lastSignaledFrameTime() const { return mLastSignaledFrameTime; }
@@ -72,7 +68,7 @@ protected:
     explicit FrameTarget(const std::string& displayLabel);
     ~FrameTarget() = default;
 
-    bool wouldPresentEarly(Period minFramePeriod) const;
+    bool wouldPresentEarly(Period vsyncPeriod, Period minFramePeriod) const;
 
     // Equivalent to `pastVsyncTime` unless running N VSYNCs ahead.
     TimePoint previousFrameVsyncTime(Period minFramePeriod) const {
@@ -81,8 +77,7 @@ protected:
 
     void addFence(sp<Fence> presentFence, FenceTimePtr presentFenceTime,
                   TimePoint expectedPresentTime) {
-        mFenceWithFenceTimes.next() = {std::move(presentFence), presentFenceTime,
-                                       expectedPresentTime};
+        mPresentFences.next() = {std::move(presentFence), presentFenceTime, expectedPresentTime};
     }
 
     VsyncId mVsyncId;
@@ -94,8 +89,9 @@ protected:
     TracedOrdinal<bool> mFrameMissed;
     TracedOrdinal<bool> mHwcFrameMissed;
     TracedOrdinal<bool> mGpuFrameMissed;
+    bool mWouldBackpressureHwc = false;
 
-    struct FenceWithFenceTime {
+    struct PresentFence {
         sp<Fence> fence = Fence::NO_FENCE;
         FenceTimePtr fenceTime = FenceTime::NO_FENCE;
         TimePoint expectedPresentTime = TimePoint();
@@ -106,9 +102,10 @@ protected:
     // VSYNC of at least one previous frame has not yet passed. In other words, this is NOT the
     // `presentFenceForPreviousFrame` if running N VSYNCs ahead, but the one that should have been
     // signaled by now (unless that frame missed).
-    FenceWithFenceTime presentFenceForPastVsync(Period minFramePeriod) const;
-    std::array<FenceWithFenceTime, 2> mPresentFences;
-    utils::RingBuffer<FenceWithFenceTime, 5> mFenceWithFenceTimes;
+    std::pair<bool /* wouldBackpressure */, PresentFence> expectedSignaledPresentFence(
+            Period vsyncPeriod, Period minFramePeriod) const;
+    std::array<PresentFence, 2> mPresentFencesLegacy;
+    utils::RingBuffer<PresentFence, 5> mPresentFences;
 
     FrameTime mLastSignaledFrameTime;
 
@@ -119,19 +116,6 @@ private:
     inline bool targetsVsyncsAhead(Period minFramePeriod) const {
         static_assert(N > 1);
         return expectedFrameDuration() > (N - 1) * minFramePeriod;
-    }
-
-    FenceWithFenceTime pastVsyncTimePtr() const {
-        FenceWithFenceTime pastFenceWithFenceTime;
-        for (size_t i = 0; i < mFenceWithFenceTimes.size(); i++) {
-            const auto& fenceWithFenceTime = mFenceWithFenceTimes[i];
-            // TODO(b/354007767) Fix the below condition to avoid frame drop
-            if (fenceWithFenceTime.expectedPresentTime > mFrameBeginTime) {
-                return pastFenceWithFenceTime;
-            }
-            pastFenceWithFenceTime = fenceWithFenceTime;
-        }
-        return pastFenceWithFenceTime;
     }
 };
 
@@ -155,7 +139,7 @@ public:
 
     void beginFrame(const BeginFrameArgs&, const IVsyncSource&);
 
-    std::optional<TimePoint> computeEarliestPresentTime(Period minFramePeriod,
+    std::optional<TimePoint> computeEarliestPresentTime(Period vsyncPeriod, Period minFramePeriod,
                                                         Duration hwcMinWorkDuration);
 
     // TODO(b/241285191): Merge with FrameTargeter::endFrame.

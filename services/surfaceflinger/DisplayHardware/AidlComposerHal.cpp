@@ -51,6 +51,7 @@ using hardware::Return;
 using aidl::android::hardware::graphics::composer3::BnComposerCallback;
 using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness;
+using aidl::android::hardware::graphics::composer3::Lut;
 using aidl::android::hardware::graphics::composer3::PowerMode;
 using aidl::android::hardware::graphics::composer3::VirtualDisplay;
 
@@ -1593,6 +1594,18 @@ Error AidlComposer::getClientTargetProperty(
     if (auto reader = getReader(display)) {
         *outClientTargetProperty =
                 reader->get().takeClientTargetProperty(translate<int64_t>(display));
+    } else {
+        error = Error::BAD_DISPLAY;
+    }
+    mMutex.unlock_shared();
+    return error;
+}
+
+Error AidlComposer::getDisplayLuts(Display display, std::vector<Lut>* outLuts) {
+    Error error = Error::NONE;
+    mMutex.lock_shared();
+    if (auto reader = getReader(display)) {
+        *outLuts = reader->get().takeDisplayLuts(translate<int64_t>(display));
     } else {
         error = Error::BAD_DISPLAY;
     }

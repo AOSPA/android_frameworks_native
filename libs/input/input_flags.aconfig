@@ -37,6 +37,13 @@ flag {
 }
 
 flag {
+  name: "split_all_touches"
+  namespace: "input"
+  description: "Set FLAG_SPLIT_TOUCHES to true for all windows, regardless of what they specify. This is essentially deprecating this flag by forcefully enabling the split functionality"
+  bug: "239934827"
+}
+
+flag {
   name: "a11y_crash_on_inconsistent_event_stream"
   namespace: "accessibility"
   description: "Brings back fatal logging for inconsistent event streams originating from accessibility."

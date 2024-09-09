@@ -80,7 +80,7 @@ public:
     virtual void postMessage(sp<MessageHandler>&&) = 0;
     virtual void postMessageDelayed(sp<MessageHandler>&&, nsecs_t uptimeDelay) = 0;
     virtual void scheduleConfigure() = 0;
-    virtual void scheduleFrame() = 0;
+    virtual void scheduleFrame(Duration workDurationSlack = Duration::fromNs(0)) = 0;
 
     /* QTI_BEGIN */
     virtual void qtiScheduleFrameImmed() = 0;
@@ -163,7 +163,7 @@ public:
     void postMessageDelayed(sp<MessageHandler>&&, nsecs_t uptimeDelay) override;
 
     void scheduleConfigure() override;
-    void scheduleFrame() override;
+    void scheduleFrame(Duration workDurationSlack = Duration::fromNs(0)) override;
 
     /* QTI_BEGIN */
     void qtiScheduleFrameImmed() override;

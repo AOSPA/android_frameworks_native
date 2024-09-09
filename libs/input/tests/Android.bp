@@ -23,6 +23,7 @@ cc_test {
         "InputVerifier_test.cpp",
         "MotionPredictor_test.cpp",
         "MotionPredictorMetricsManager_test.cpp",
+        "Resampler_test.cpp",
         "RingBuffer_test.cpp",
         "TfLiteMotionPredictor_test.cpp",
         "TouchResampling_test.cpp",

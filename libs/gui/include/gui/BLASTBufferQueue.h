@@ -23,9 +23,10 @@
 #ifndef ANDROID_GUI_BLAST_BUFFER_QUEUE_H
 #define ANDROID_GUI_BLAST_BUFFER_QUEUE_H
 
+#include <com_android_graphics_libgui_flags.h>
 #include <gui/BufferItem.h>
 #include <gui/BufferItemConsumer.h>
-
+#include <gui/IGraphicBufferConsumer.h>
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/SurfaceComposerClient.h>
 
@@ -34,7 +35,6 @@
 #include <utils/RefBase.h>
 
 #include <system/window.h>
-#include <thread>
 #include <queue>
 
 #include <com_android_graphics_libgui_flags.h>
@@ -56,12 +56,20 @@ class BufferItemConsumer;
 
 class BLASTBufferItemConsumer : public BufferItemConsumer {
 public:
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+    BLASTBufferItemConsumer(const sp<IGraphicBufferProducer>& producer,
+                            const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
+                            int bufferCount, bool controlledByApp, wp<BLASTBufferQueue> bbq)
+          : BufferItemConsumer(producer, consumer, consumerUsage, bufferCount, controlledByApp),
+#else
     BLASTBufferItemConsumer(const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
                             int bufferCount, bool controlledByApp, wp<BLASTBufferQueue> bbq)
           : BufferItemConsumer(consumer, consumerUsage, bufferCount, controlledByApp),
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
             mBLASTBufferQueue(std::move(bbq)),
             mCurrentlyConnected(false),
-            mPreviouslyConnected(false) {}
+            mPreviouslyConnected(false) {
+    }
 
     void onDisconnect() override EXCLUDES(mMutex);
     void addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
@@ -157,6 +165,8 @@ public:
 
     virtual ~BLASTBufferQueue();
 
+    void onFirstRef() override;
+
 private:
     friend class BLASTBufferQueueHelper;
     friend class BBQBufferQueueProducer;
@@ -201,8 +211,16 @@ private:
 
     // BufferQueue internally allows 1 more than
     // the max to be acquired
-    int32_t mMaxAcquiredBuffers = 1;
+    int32_t mMaxAcquiredBuffers GUARDED_BY(mMutex) = 1;
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
+    int32_t mMaxDequeuedBuffers GUARDED_BY(mMutex) = 1;
+    static constexpr int32_t kMaxBufferCount = BufferQueueDefs::NUM_BUFFER_SLOTS;
 
+    bool mAsyncMode GUARDED_BY(mMutex) = false;
+    bool mSharedBufferMode GUARDED_BY(mMutex) = false;
+
+    int32_t mNumDequeued GUARDED_BY(mMutex) = 0;
+#endif
     /* QTI_BEGIN */
     int mQtiNumUndequeued = 0;
     /* QTI_END */

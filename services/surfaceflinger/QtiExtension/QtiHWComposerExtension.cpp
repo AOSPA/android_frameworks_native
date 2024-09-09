@@ -71,10 +71,6 @@ status_t QtiHWComposerExtension::qtiSetDisplayElapseTime(HalDisplayId displayId,
 }
 
 status_t QtiHWComposerExtension::qtiSetLayerType(HWC2::Layer* layer, uint32_t type) {
-    if (type == mQtiType) {
-        return NO_ERROR;
-    }
-
     if (!mQtiComposerHalExtn) {
         return NO_ERROR;
     }
@@ -92,7 +88,6 @@ status_t QtiHWComposerExtension::qtiSetLayerType(HWC2::Layer* layer, uint32_t ty
         return BAD_VALUE;
     }
 
-    mQtiType = type;
     return NO_ERROR;
 }
 

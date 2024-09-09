@@ -76,6 +76,7 @@
 #include "compat/SkiaGpuContext.h"
 #include "filters/BlurFilter.h"
 #include "filters/GaussianBlurFilter.h"
+#include "filters/KawaseBlurDualFilter.h"
 #include "filters/KawaseBlurFilter.h"
 #include "filters/LinearEffect.h"
 #include "filters/MouriMap.h"
@@ -283,6 +284,11 @@ SkiaRenderEngine::SkiaRenderEngine(Threaded threaded, PixelFormat pixelFormat,
         case BlurAlgorithm::KAWASE: {
             ALOGD("Background Blurs Enabled (Kawase algorithm)");
             mBlurFilter = new KawaseBlurFilter();
+            break;
+        }
+        case BlurAlgorithm::KAWASE_DUAL_FILTER: {
+            ALOGD("Background Blurs Enabled (Kawase dual-filtering algorithm)");
+            mBlurFilter = new KawaseBlurDualFilter();
             break;
         }
         default: {

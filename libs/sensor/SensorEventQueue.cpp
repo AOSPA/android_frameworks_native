@@ -42,10 +42,11 @@ namespace android {
 // ----------------------------------------------------------------------------
 
 SensorEventQueue::SensorEventQueue(const sp<ISensorEventConnection>& connection,
-                                   SensorManager& sensorManager)
+                                   SensorManager& sensorManager, String8 packageName)
       : mSensorEventConnection(connection),
         mRecBuffer(nullptr),
         mSensorManager(sensorManager),
+        mPackageName(packageName),
         mAvailable(0),
         mConsumed(0),
         mNumAcksToSend(0) {
@@ -92,8 +93,11 @@ ssize_t SensorEventQueue::read(ASensorEvent* events, size_t numEvents) {
                     mSensorManager.getSensorNameByHandle(events->sensor);
             if (sensorName.has_value()) {
                 char buffer[UINT8_MAX];
-                std::snprintf(buffer, sizeof(buffer), "Sensor event from %s",
-                              sensorName.value().data());
+                IPCThreadState* thread = IPCThreadState::self();
+                pid_t pid = (thread != nullptr) ? thread->getCallingPid() : -1;
+                std::snprintf(buffer, sizeof(buffer),
+                              "Sensor event from %s to %s PID: %d (%zu/%zu)",
+                              sensorName.value().data(), mPackageName.c_str(), pid, i, count);
                 ATRACE_INSTANT_FOR_TRACK(LOG_TAG, buffer);
             }
         }

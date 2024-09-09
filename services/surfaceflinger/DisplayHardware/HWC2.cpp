@@ -41,6 +41,7 @@ using aidl::android::hardware::graphics::composer3::Color;
 using aidl::android::hardware::graphics::composer3::Composition;
 using AidlCapability = aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
+using aidl::android::hardware::graphics::composer3::Lut;
 using aidl::android::hardware::graphics::composer3::OverlayProperties;
 
 namespace android {
@@ -613,6 +614,18 @@ Error Display::getClientTargetProperty(
         aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness*
                 outClientTargetProperty) {
     const auto error = mComposer.getClientTargetProperty(mId, outClientTargetProperty);
+    return static_cast<Error>(error);
+}
+
+Error Display::getDisplayLuts(std::vector<Lut>* outLuts) {
+    std::vector<Lut> tmpLuts;
+    const auto error = mComposer.getDisplayLuts(mId, &tmpLuts);
+    for (Lut& lut : tmpLuts) {
+        if (lut.pfd.get() >= 0) {
+            outLuts->push_back(
+                    {lut.layer, ndk::ScopedFileDescriptor(lut.pfd.release()), lut.lutProperties});
+        }
+    }
     return static_cast<Error>(error);
 }
 

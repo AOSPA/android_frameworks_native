@@ -306,6 +306,6 @@ private:
             mDeathCallbacks;
 };
 
-}; // namespace android
+} // namespace android
 
 #endif // ANDROID_GRAPHIC_BUFFER_H

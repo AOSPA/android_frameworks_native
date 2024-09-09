@@ -131,6 +131,7 @@ public:
         NONE,
         GAUSSIAN,
         KAWASE,
+        KAWASE_DUAL_FILTER,
     };
 
     static std::unique_ptr<RenderEngine> create(const RenderEngineCreationArgs& args);

@@ -198,6 +198,7 @@ public:
           : InputDevice(context, id, generation, identifier) {}
 
     MOCK_METHOD(uint32_t, getSources, (), (const, override));
+    MOCK_METHOD(std::optional<DisplayViewport>, getAssociatedViewport, (), (const));
     MOCK_METHOD(bool, isEnabled, (), ());
 
     MOCK_METHOD(void, dump, (std::string& dump, const std::string& eventHubDevStr), ());

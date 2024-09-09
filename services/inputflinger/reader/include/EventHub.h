@@ -71,18 +71,14 @@ struct RawEvent {
 
 /* Describes an absolute axis. */
 struct RawAbsoluteAxisInfo {
-    bool valid{false}; // true if the information is valid, false otherwise
-
     int32_t minValue{};   // minimum value
     int32_t maxValue{};   // maximum value
     int32_t flat{};       // center flat position, eg. flat == 8 means center is between -8 and 8
     int32_t fuzz{};       // error tolerance, eg. fuzz == 4 means value is +/- 4 due to noise
     int32_t resolution{}; // resolution in units per mm or radians per mm
-
-    inline void clear() { *this = RawAbsoluteAxisInfo(); }
 };
 
-std::ostream& operator<<(std::ostream& out, const RawAbsoluteAxisInfo& info);
+std::ostream& operator<<(std::ostream& out, const std::optional<RawAbsoluteAxisInfo>& info);
 
 /*
  * Input device classes.

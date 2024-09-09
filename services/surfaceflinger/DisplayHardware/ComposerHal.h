@@ -41,6 +41,7 @@
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayConfiguration.h>
 #include <aidl/android/hardware/graphics/composer3/IComposerCallback.h>
+#include <aidl/android/hardware/graphics/composer3/Lut.h>
 #include <aidl/android/hardware/graphics/composer3/OverlayProperties.h>
 
 #include <aidl/android/hardware/graphics/common/Transform.h>
@@ -303,6 +304,7 @@ public:
     virtual Error setRefreshRateChangedCallbackDebugEnabled(Display, bool) = 0;
     virtual Error notifyExpectedPresent(Display, nsecs_t expectedPresentTime,
                                         int32_t frameIntervalNs) = 0;
+    virtual Error getDisplayLuts(Display display, std::vector<V3_0::Lut>* outLuts) = 0;
 };
 
 } // namespace Hwc2

@@ -6675,15 +6675,27 @@ INSTANTIATE_TEST_SUITE_P(TouchscreenPrecisionTests, TouchscreenPrecisionTestsFix
 
 class ExternalStylusFusionTest : public SingleTouchInputMapperTest {
 public:
-    SingleTouchInputMapper& initializeInputMapperWithExternalStylus() {
+    void SetUp() override {
+        SingleTouchInputMapperTest::SetUp();
+        mExternalStylusDeviceInfo = {};
+        mStylusState = {};
+    }
+
+    SingleTouchInputMapper& initializeInputMapperWithExternalStylus(bool supportsPressure = true) {
         addConfigurationProperty("touch.deviceType", "touchScreen");
         prepareDisplay(ui::ROTATION_0);
         prepareButtons();
         prepareAxes(POSITION);
         auto& mapper = constructAndAddMapper<SingleTouchInputMapper>();
 
+        if (supportsPressure) {
+            mExternalStylusDeviceInfo.addMotionRange(AMOTION_EVENT_AXIS_PRESSURE,
+                                                     AINPUT_SOURCE_STYLUS, 0.0f, 1.0f, 0.0f, 0.0f,
+                                                     0.0f);
+            mStylusState.pressure = 0.f;
+        }
+
         mStylusState.when = ARBITRARY_TIME;
-        mStylusState.pressure = 0.f;
         mStylusState.toolType = ToolType::STYLUS;
         mReader->getContext()->setExternalStylusDevices({mExternalStylusDeviceInfo});
         configureDevice(InputReaderConfiguration::Change::EXTERNAL_STYLUS_PRESENCE);
@@ -6791,9 +6803,15 @@ private:
     InputDeviceInfo mExternalStylusDeviceInfo{};
 };
 
-TEST_F(ExternalStylusFusionTest, UsesBluetoothStylusSource) {
+TEST_F(ExternalStylusFusionTest, UsesBluetoothStylusSourceWithPressure) {
     SingleTouchInputMapper& mapper = initializeInputMapperWithExternalStylus();
     ASSERT_EQ(STYLUS_FUSION_SOURCE, mapper.getSources());
+}
+
+TEST_F(ExternalStylusFusionTest, DoesNotUseBluetoothStylusSourceWithoutPressure) {
+    SingleTouchInputMapper& mapper =
+            initializeInputMapperWithExternalStylus(/*supportsPressure=*/false);
+    ASSERT_EQ(AINPUT_SOURCE_TOUCHSCREEN, mapper.getSources());
 }
 
 TEST_F(ExternalStylusFusionTest, UnsuccessfulFusion) {

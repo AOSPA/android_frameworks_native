@@ -1566,6 +1566,13 @@ static void DumpstateLimitedOnly() {
                CommandOptions::WithTimeout(90).Build(), SEC_TO_MSEC(10));
 
     printf("========================================================\n");
+    printf("== Networking Policy\n");
+    printf("========================================================\n");
+
+    RunDumpsys("DUMPSYS NETWORK POLICY", {"netpolicy"}, CommandOptions::WithTimeout(90).Build(),
+               SEC_TO_MSEC(10));
+
+    printf("========================================================\n");
     printf("== Dropbox crashes\n");
     printf("========================================================\n");
 

@@ -38,7 +38,8 @@
   <low-jerk>1.5</low-jerk>
   <high-jerk>2.0</high-jerk>
 
-  <!-- The forget factor in the first-order IIR filter for jerk smoothing -->
-  <jerk-forget-factor>0.25</jerk-forget-factor>
+  <!-- The alpha in the first-order IIR filter for jerk smoothing. An alpha
+       of 1 results in no smoothing.-->
+  <jerk-alpha>0.25</jerk-alpha>
 </motion-predictor>
 

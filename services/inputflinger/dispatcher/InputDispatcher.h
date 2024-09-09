@@ -709,11 +709,23 @@ private:
 
     sp<InputReporterInterface> mReporter;
 
+    /**
+     * Slip the wallpaper touch if necessary.
+     *
+     * @param targetFlags the target flags
+     * @param oldWindowHandle the old window that the touch slipped out of
+     * @param newWindowHandle the new window that the touch is slipping into
+     * @param state the current touch state. This will be updated if necessary to reflect the new
+     *        windows that are receiving touch.
+     * @param deviceId the device id of the current motion being processed
+     * @param pointerProperties the pointer properties of the current motion being processed
+     * @param targets the current targets to add the walpaper ones to
+     * @param eventTime the new downTime for the wallpaper target
+     */
     void slipWallpaperTouch(ftl::Flags<InputTarget::Flags> targetFlags,
                             const sp<android::gui::WindowInfoHandle>& oldWindowHandle,
                             const sp<android::gui::WindowInfoHandle>& newWindowHandle,
-                            TouchState& state, DeviceId deviceId,
-                            const PointerProperties& pointerProperties,
+                            TouchState& state, const MotionEntry& entry,
                             std::vector<InputTarget>& targets) const REQUIRES(mLock);
     void transferWallpaperTouch(ftl::Flags<InputTarget::Flags> oldTargetFlags,
                                 ftl::Flags<InputTarget::Flags> newTargetFlags,

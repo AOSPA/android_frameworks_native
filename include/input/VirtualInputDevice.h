@@ -17,14 +17,30 @@
 #pragma once
 
 #include <android-base/unique_fd.h>
+#include <input/Input.h>
+#include <map>
 
 namespace android {
+
+enum class DeviceType {
+    KEYBOARD,
+    MOUSE,
+    TOUCHSCREEN,
+    DPAD,
+    STYLUS,
+    ROTARY_ENCODER,
+};
+
+android::base::unique_fd openUinput(const char* readableName, int32_t vendorId, int32_t productId,
+                                    const char* phys, DeviceType deviceType, int32_t screenHeight,
+                                    int32_t screenWidth);
 
 enum class UinputAction {
     RELEASE = 0,
     PRESS = 1,
     MOVE = 2,
     CANCEL = 3,
+    ftl_last = CANCEL,
 };
 
 class VirtualInputDevice {

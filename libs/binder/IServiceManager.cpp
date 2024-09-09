@@ -143,7 +143,7 @@ protected:
     // mUnifiedServiceManager->getService so that it can be overridden in ServiceManagerHostShim.
     virtual Status realGetService(const std::string& name, sp<IBinder>* _aidl_return) {
         Service service;
-        Status status = mUnifiedServiceManager->getService(name, &service);
+        Status status = mUnifiedServiceManager->getService2(name, &service);
         *_aidl_return = service.get<Service::Tag::binder>();
         return status;
     }
@@ -253,8 +253,11 @@ bool checkPermission(const String16& permission, pid_t pid, uid_t uid, bool logP
     }
 }
 
+#endif //__ANDROID_VNDK__
+
 void* openDeclaredPassthroughHal(const String16& interface, const String16& instance, int flag) {
-#if defined(__ANDROID__) && !defined(__ANDROID_RECOVERY__) && !defined(__ANDROID_NATIVE_BRIDGE__)
+#if defined(__ANDROID__) && !defined(__ANDROID_VENDOR__) && !defined(__ANDROID_RECOVERY__) && \
+        !defined(__ANDROID_NATIVE_BRIDGE__)
     sp<IServiceManager> sm = defaultServiceManager();
     String16 name = interface + String16("/") + instance;
     if (!sm->isDeclared(name)) {
@@ -273,8 +276,6 @@ void* openDeclaredPassthroughHal(const String16& interface, const String16& inst
     return nullptr;
 #endif
 }
-
-#endif //__ANDROID_VNDK__
 
 // ----------------------------------------------------------------------
 

@@ -320,11 +320,8 @@ void updateMetadata(LayerSnapshot& snapshot, const RequestedLayerState& requeste
 void updateMetadataAndGameMode(LayerSnapshot& snapshot, const RequestedLayerState& requested,
                                const LayerSnapshotBuilder::Args& args,
                                const LayerSnapshot& parentSnapshot) {
-    if (snapshot.changes.test(RequestedLayerState::Changes::GameMode)) {
-        snapshot.gameMode = requested.metadata.has(gui::METADATA_GAME_MODE)
-                ? requested.gameMode
-                : parentSnapshot.gameMode;
-    }
+    snapshot.gameMode = requested.metadata.has(gui::METADATA_GAME_MODE) ? requested.gameMode
+                                                                        : parentSnapshot.gameMode;
     updateMetadata(snapshot, requested, args);
     if (args.includeMetadata) {
         snapshot.layerMetadata = parentSnapshot.layerMetadata;
@@ -564,6 +561,7 @@ const LayerSnapshot& LayerSnapshotBuilder::updateSnapshotsInHierarchy(
         updateSnapshot(*snapshot, args, *layer, parentSnapshot, traversalPath);
     }
 
+    bool childHasValidFrameRate = false;
     for (auto& [childHierarchy, variant] : hierarchy.mChildren) {
         LayerHierarchy::ScopedAddToTraversalPath addChildToPath(traversalPath,
                                                                 childHierarchy->getLayer()->id,
@@ -571,7 +569,8 @@ const LayerSnapshot& LayerSnapshotBuilder::updateSnapshotsInHierarchy(
         const LayerSnapshot& childSnapshot =
                 updateSnapshotsInHierarchy(args, *childHierarchy, traversalPath, *snapshot,
                                            depth + 1);
-        updateFrameRateFromChildSnapshot(*snapshot, childSnapshot, args);
+        updateFrameRateFromChildSnapshot(*snapshot, childSnapshot, *childHierarchy->getLayer(),
+                                         args, &childHasValidFrameRate);
     }
 
     return *snapshot;
@@ -678,9 +677,10 @@ void LayerSnapshotBuilder::updateRelativeState(LayerSnapshot& snapshot,
     }
 }
 
-void LayerSnapshotBuilder::updateFrameRateFromChildSnapshot(LayerSnapshot& snapshot,
-                                                            const LayerSnapshot& childSnapshot,
-                                                            const Args& args) {
+void LayerSnapshotBuilder::updateFrameRateFromChildSnapshot(
+        LayerSnapshot& snapshot, const LayerSnapshot& childSnapshot,
+        const RequestedLayerState& /* requestedChildState */, const Args& args,
+        bool* outChildHasValidFrameRate) {
     if (args.forceUpdate == ForceUpdateFlags::NONE &&
         !args.layerLifecycleManager.getGlobalChanges().any(
                 RequestedLayerState::Changes::Hierarchy) &&
@@ -690,7 +690,7 @@ void LayerSnapshotBuilder::updateFrameRateFromChildSnapshot(LayerSnapshot& snaps
     }
 
     using FrameRateCompatibility = scheduler::FrameRateCompatibility;
-    if (snapshot.frameRate.isValid()) {
+    if (snapshot.inheritedFrameRate.isValid() || *outChildHasValidFrameRate) {
         // we already have a valid framerate.
         return;
     }
@@ -707,13 +707,18 @@ void LayerSnapshotBuilder::updateFrameRateFromChildSnapshot(LayerSnapshot& snaps
     const auto layerVotedWithExactCompatibility = childSnapshot.frameRate.vote.rate.isValid() &&
             childSnapshot.frameRate.vote.type == FrameRateCompatibility::Exact;
 
-    bool childHasValidFrameRate = layerVotedWithDefaultCompatibility || layerVotedWithNoVote ||
+    *outChildHasValidFrameRate |= layerVotedWithDefaultCompatibility || layerVotedWithNoVote ||
             layerVotedWithCategory || layerVotedWithExactCompatibility;
 
     // If we don't have a valid frame rate, but the children do, we set this
     // layer as NoVote to allow the children to control the refresh rate
-    if (childHasValidFrameRate) {
-        snapshot.frameRate = scheduler::LayerInfo::FrameRate(Fps(), FrameRateCompatibility::NoVote);
+    static const auto noVote =
+            scheduler::LayerInfo::FrameRate(Fps(), FrameRateCompatibility::NoVote);
+    if (*outChildHasValidFrameRate) {
+        snapshot.frameRate = noVote;
+        snapshot.changes |= RequestedLayerState::Changes::FrameRate;
+    } else if (snapshot.frameRate != snapshot.inheritedFrameRate) {
+        snapshot.frameRate = snapshot.inheritedFrameRate;
         snapshot.changes |= RequestedLayerState::Changes::FrameRate;
     }
 }
@@ -780,7 +785,8 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
         }
         if (forceUpdate ||
             (args.includeMetadata &&
-             snapshot.changes.test(RequestedLayerState::Changes::Metadata))) {
+             snapshot.changes.any(RequestedLayerState::Changes::Metadata |
+                                  RequestedLayerState::Changes::Geometry))) {
             updateMetadataAndGameMode(snapshot, requested, args, parentSnapshot);
         }
         return;
@@ -848,7 +854,9 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
         }
     }
 
-    if (forceUpdate || snapshot.changes.test(RequestedLayerState::Changes::Metadata)) {
+    if (forceUpdate ||
+        snapshot.changes.any(RequestedLayerState::Changes::Metadata |
+                             RequestedLayerState::Changes::Hierarchy)) {
         updateMetadataAndGameMode(snapshot, requested, args, parentSnapshot);
     }
 

@@ -42,6 +42,9 @@ cc_test {
     defaults: ["binder_test_defaults"],
     header_libs: ["libbinder_headers"],
     srcs: ["binderDriverInterfaceTest.cpp"],
+    shared_libs: [
+        "libbinder",
+    ],
     test_suites: [
         "device-tests",
         "vts",
@@ -127,6 +130,7 @@ cc_test {
         "libbase",
         "libbinder",
         "liblog",
+        "libprocessgroup",
         "libutils",
     ],
     static_libs: [

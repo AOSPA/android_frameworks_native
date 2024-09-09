@@ -1384,8 +1384,8 @@ TEST(BinderRpc, Java) {
     sp<IServiceManager> sm = defaultServiceManager();
     ASSERT_NE(nullptr, sm);
     // Any Java service with non-empty getInterfaceDescriptor() would do.
-    // Let's pick batteryproperties.
-    auto binder = sm->checkService(String16("batteryproperties"));
+    // Let's pick activity.
+    auto binder = sm->checkService(String16("activity"));
     ASSERT_NE(nullptr, binder);
     auto descriptor = binder->getInterfaceDescriptor();
     ASSERT_GE(descriptor.size(), 0u);

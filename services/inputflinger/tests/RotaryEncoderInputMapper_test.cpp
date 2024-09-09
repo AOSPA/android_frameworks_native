@@ -78,36 +78,6 @@ DisplayViewport createSecondaryViewport() {
     return v;
 }
 
-/**
- * A fake InputDeviceContext that allows the associated viewport to be specified for the mapper.
- *
- * This is currently necessary because InputMapperUnitTest doesn't register the mappers it creates
- * with the InputDevice object, meaning that InputDevice::isIgnored becomes true, and the input
- * device doesn't set its associated viewport when it's configured.
- *
- * TODO(b/319217713): work out a way to avoid this fake.
- */
-class ViewportFakingInputDeviceContext : public InputDeviceContext {
-public:
-    ViewportFakingInputDeviceContext(InputDevice& device, int32_t eventHubId,
-                                     std::optional<DisplayViewport> viewport)
-          : InputDeviceContext(device, eventHubId), mAssociatedViewport(viewport) {}
-
-    ViewportFakingInputDeviceContext(InputDevice& device, int32_t eventHubId)
-          : ViewportFakingInputDeviceContext(device, eventHubId, createPrimaryViewport()) {}
-
-    std::optional<DisplayViewport> getAssociatedViewport() const override {
-        return mAssociatedViewport;
-    }
-
-    void setViewport(const std::optional<DisplayViewport>& viewport) {
-        mAssociatedViewport = viewport;
-    }
-
-private:
-    std::optional<DisplayViewport> mAssociatedViewport;
-};
-
 } // namespace
 
 namespace vd_flags = android::companion::virtualdevice::flags;
@@ -138,8 +108,8 @@ TEST_F(RotaryEncoderInputMapperTest, ConfigureDisplayIdWithAssociatedViewport) {
     mReaderConfiguration.setDisplayViewports({primaryViewport, secondaryViewport});
 
     // Set up the secondary display as the associated viewport of the mapper.
-    ViewportFakingInputDeviceContext deviceContext(*mDevice, EVENTHUB_ID, secondaryViewport);
-    mMapper = createInputMapper<RotaryEncoderInputMapper>(deviceContext, mReaderConfiguration);
+    EXPECT_CALL((*mDevice), getAssociatedViewport).WillRepeatedly(Return(secondaryViewport));
+    mMapper = createInputMapper<RotaryEncoderInputMapper>(*mDeviceContext, mReaderConfiguration);
 
     std::list<NotifyArgs> args;
     // Ensure input events are generated for the secondary display.

@@ -27,6 +27,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <android-base/logging.h>
 #include <android-base/properties.h>
 #include <android-base/result-gmock.h>
 #include <binder/Binder.h>
@@ -39,6 +40,8 @@
 #include <binder/RpcSession.h>
 #include <binder/Status.h>
 #include <binder/unique_fd.h>
+#include <input/BlockingQueue.h>
+#include <processgroup/processgroup.h>
 #include <utils/Flattenable.h>
 
 #include <linux/sched.h>
@@ -57,6 +60,7 @@ using namespace std::chrono_literals;
 using android::base::testing::HasValue;
 using android::binder::Status;
 using android::binder::unique_fd;
+using std::chrono_literals::operator""ms;
 using testing::ExplainMatchResult;
 using testing::Matcher;
 using testing::Not;
@@ -115,6 +119,8 @@ enum BinderLibTestTranscationCode {
     BINDER_LIB_TEST_NOP_TRANSACTION_WAIT,
     BINDER_LIB_TEST_GETPID,
     BINDER_LIB_TEST_GETUID,
+    BINDER_LIB_TEST_LISTEN_FOR_FROZEN_STATE_CHANGE,
+    BINDER_LIB_TEST_CONSUME_STATE_CHANGE_EVENTS,
     BINDER_LIB_TEST_ECHO_VECTOR,
     BINDER_LIB_TEST_GET_NON_BLOCKING_FD,
     BINDER_LIB_TEST_REJECT_OBJECTS,
@@ -247,6 +253,43 @@ class BinderLibTestEnv : public ::testing::Environment {
         sp<IBinder> m_server;
 };
 
+class TestFrozenStateChangeCallback : public IBinder::FrozenStateChangeCallback {
+public:
+    BlockingQueue<std::pair<const wp<IBinder>, State>> events;
+
+    virtual void onStateChanged(const wp<IBinder>& who, State state) {
+        events.push(std::make_pair(who, state));
+    }
+
+    void ensureFrozenEventReceived() {
+        auto event = events.popWithTimeout(500ms);
+        ASSERT_TRUE(event.has_value());
+        EXPECT_EQ(State::FROZEN, event->second); // isFrozen should be true
+        EXPECT_EQ(0u, events.size());
+    }
+
+    void ensureUnfrozenEventReceived() {
+        auto event = events.popWithTimeout(500ms);
+        ASSERT_TRUE(event.has_value());
+        EXPECT_EQ(State::UNFROZEN, event->second); // isFrozen should be false
+        EXPECT_EQ(0u, events.size());
+    }
+
+    std::vector<bool> getAllAndClear() {
+        std::vector<bool> results;
+        while (true) {
+            auto event = events.popWithTimeout(0ms);
+            if (!event.has_value()) {
+                break;
+            }
+            results.push_back(event->second == State::FROZEN);
+        }
+        return results;
+    }
+
+    sp<IBinder> binder;
+};
+
 class BinderLibTest : public ::testing::Test {
     public:
         virtual void SetUp() {
@@ -289,6 +332,51 @@ class BinderLibTest : public ::testing::Test {
             pfd.events = POLLIN;
             ret = poll(&pfd, 1, timeout_ms);
             EXPECT_EQ(1, ret);
+        }
+
+        bool checkFreezeSupport() {
+            std::ifstream freezer_file("/sys/fs/cgroup/uid_0/cgroup.freeze");
+            // Pass test on devices where the cgroup v2 freezer is not supported
+            if (freezer_file.fail()) {
+                return false;
+            }
+            return IPCThreadState::self()->freeze(getpid(), false, 0) == NO_ERROR;
+        }
+
+        bool checkFreezeAndNotificationSupport() {
+            if (!checkFreezeSupport()) {
+                return false;
+            }
+            return ProcessState::isDriverFeatureEnabled(
+                    ProcessState::DriverFeature::FREEZE_NOTIFICATION);
+        }
+
+        bool getBinderPid(int32_t* pid, sp<IBinder> server) {
+            Parcel data, replypid;
+            if (server->transact(BINDER_LIB_TEST_GETPID, data, &replypid) != NO_ERROR) {
+                ALOGE("BINDER_LIB_TEST_GETPID failed");
+                return false;
+            }
+            *pid = replypid.readInt32();
+            if (*pid <= 0) {
+                ALOGE("pid should be greater than zero");
+                return false;
+            }
+            return true;
+        }
+
+        void freezeProcess(int32_t pid) {
+            EXPECT_EQ(NO_ERROR, IPCThreadState::self()->freeze(pid, true, 1000));
+        }
+
+        void unfreezeProcess(int32_t pid) {
+            EXPECT_EQ(NO_ERROR, IPCThreadState::self()->freeze(pid, false, 0));
+        }
+
+        void removeCallbackAndValidateNoEvent(sp<IBinder> binder,
+                                              sp<TestFrozenStateChangeCallback> callback) {
+            EXPECT_THAT(binder->removeFrozenStateChangeCallback(callback), StatusEq(NO_ERROR));
+            EXPECT_EQ(0u, callback->events.size());
         }
 
         sp<IBinder> m_server;
@@ -516,29 +604,18 @@ TEST_F(BinderLibTest, NopTransactionClear) {
 }
 
 TEST_F(BinderLibTest, Freeze) {
-    Parcel data, reply, replypid;
-    std::ifstream freezer_file("/sys/fs/cgroup/uid_0/cgroup.freeze");
-
-    // Pass test on devices where the cgroup v2 freezer is not supported
-    if (freezer_file.fail()) {
-        GTEST_SKIP();
+    if (!checkFreezeSupport()) {
+        GTEST_SKIP() << "Skipping test for kernels that do not support proceess freezing";
         return;
     }
-
+    Parcel data, reply, replypid;
     EXPECT_THAT(m_server->transact(BINDER_LIB_TEST_GETPID, data, &replypid), StatusEq(NO_ERROR));
     int32_t pid = replypid.readInt32();
     for (int i = 0; i < 10; i++) {
         EXPECT_EQ(NO_ERROR, m_server->transact(BINDER_LIB_TEST_NOP_TRANSACTION_WAIT, data, &reply, TF_ONE_WAY));
     }
 
-    // Pass test on devices where BINDER_FREEZE ioctl is not supported
-    int ret = IPCThreadState::self()->freeze(pid, false, 0);
-    if (ret == -EINVAL) {
-        GTEST_SKIP();
-        return;
-    }
-    EXPECT_EQ(NO_ERROR, ret);
-
+    EXPECT_EQ(NO_ERROR, IPCThreadState::self()->freeze(pid, false, 0));
     EXPECT_EQ(-EAGAIN, IPCThreadState::self()->freeze(pid, true, 0));
 
     // b/268232063 - succeeds ~0.08% of the time
@@ -833,6 +910,199 @@ TEST_F(BinderLibTest, DeathNotificationThread)
 
     EXPECT_THAT(callback->waitEvent(5), StatusEq(NO_ERROR));
     EXPECT_THAT(callback->getResult(), StatusEq(NO_ERROR));
+}
+
+TEST_F(BinderLibTest, ReturnErrorIfKernelDoesNotSupportFreezeNotification) {
+    if (ProcessState::isDriverFeatureEnabled(ProcessState::DriverFeature::FREEZE_NOTIFICATION)) {
+        GTEST_SKIP() << "Skipping test for kernels that support FREEZE_NOTIFICATION";
+        return;
+    }
+    sp<TestFrozenStateChangeCallback> callback = sp<TestFrozenStateChangeCallback>::make();
+    sp<IBinder> binder = addServer();
+    ASSERT_NE(nullptr, binder);
+    ASSERT_EQ(nullptr, binder->localBinder());
+    EXPECT_THAT(binder->addFrozenStateChangeCallback(callback), StatusEq(INVALID_OPERATION));
+}
+
+TEST_F(BinderLibTest, FrozenStateChangeNotificatiion) {
+    if (!checkFreezeAndNotificationSupport()) {
+        GTEST_SKIP() << "Skipping test for kernels that do not support FREEZE_NOTIFICATION";
+        return;
+    }
+    sp<TestFrozenStateChangeCallback> callback = sp<TestFrozenStateChangeCallback>::make();
+    sp<IBinder> binder = addServer();
+    ASSERT_NE(nullptr, binder);
+    int32_t pid;
+    ASSERT_TRUE(getBinderPid(&pid, binder));
+
+    EXPECT_THAT(binder->addFrozenStateChangeCallback(callback), StatusEq(NO_ERROR));
+    // Expect current state (unfrozen) to be delivered immediately.
+    callback->ensureUnfrozenEventReceived();
+    // Check that the process hasn't died otherwise there's a risk of freezing
+    // the wrong process.
+    EXPECT_EQ(OK, binder->pingBinder());
+    freezeProcess(pid);
+    callback->ensureFrozenEventReceived();
+    unfreezeProcess(pid);
+    callback->ensureUnfrozenEventReceived();
+    removeCallbackAndValidateNoEvent(binder, callback);
+}
+
+TEST_F(BinderLibTest, AddFrozenCallbackWhenFrozen) {
+    if (!checkFreezeAndNotificationSupport()) {
+        GTEST_SKIP() << "Skipping test for kernels that do not support FREEZE_NOTIFICATION";
+        return;
+    }
+    sp<TestFrozenStateChangeCallback> callback = sp<TestFrozenStateChangeCallback>::make();
+    sp<IBinder> binder = addServer();
+    ASSERT_NE(nullptr, binder);
+    int32_t pid;
+    ASSERT_TRUE(getBinderPid(&pid, binder));
+
+    // Check that the process hasn't died otherwise there's a risk of freezing
+    // the wrong process.
+    EXPECT_EQ(OK, binder->pingBinder());
+    freezeProcess(pid);
+    // Add the callback while the target process is frozen.
+    EXPECT_THAT(binder->addFrozenStateChangeCallback(callback), StatusEq(NO_ERROR));
+    callback->ensureFrozenEventReceived();
+    unfreezeProcess(pid);
+    callback->ensureUnfrozenEventReceived();
+    removeCallbackAndValidateNoEvent(binder, callback);
+
+    // Check that the process hasn't died otherwise there's a risk of freezing
+    // the wrong process.
+    EXPECT_EQ(OK, binder->pingBinder());
+    freezeProcess(pid);
+    unfreezeProcess(pid);
+    // Make sure no callback happens since the listener has been removed.
+    EXPECT_EQ(0u, callback->events.size());
+}
+
+TEST_F(BinderLibTest, NoFrozenNotificationAfterCallbackRemoval) {
+    if (!checkFreezeAndNotificationSupport()) {
+        GTEST_SKIP() << "Skipping test for kernels that do not support FREEZE_NOTIFICATION";
+        return;
+    }
+    sp<TestFrozenStateChangeCallback> callback = sp<TestFrozenStateChangeCallback>::make();
+    sp<IBinder> binder = addServer();
+    ASSERT_NE(nullptr, binder);
+    int32_t pid;
+    ASSERT_TRUE(getBinderPid(&pid, binder));
+
+    EXPECT_THAT(binder->addFrozenStateChangeCallback(callback), StatusEq(NO_ERROR));
+    callback->ensureUnfrozenEventReceived();
+    removeCallbackAndValidateNoEvent(binder, callback);
+
+    // Make sure no callback happens after the listener is removed.
+    freezeProcess(pid);
+    unfreezeProcess(pid);
+    EXPECT_EQ(0u, callback->events.size());
+}
+
+TEST_F(BinderLibTest, MultipleFrozenStateChangeCallbacks) {
+    if (!checkFreezeAndNotificationSupport()) {
+        GTEST_SKIP() << "Skipping test for kernels that do not support FREEZE_NOTIFICATION";
+        return;
+    }
+    sp<TestFrozenStateChangeCallback> callback1 = sp<TestFrozenStateChangeCallback>::make();
+    sp<TestFrozenStateChangeCallback> callback2 = sp<TestFrozenStateChangeCallback>::make();
+    sp<IBinder> binder = addServer();
+    ASSERT_NE(nullptr, binder);
+    int32_t pid;
+    ASSERT_TRUE(getBinderPid(&pid, binder));
+
+    EXPECT_THAT(binder->addFrozenStateChangeCallback(callback1), StatusEq(NO_ERROR));
+    // Expect current state (unfrozen) to be delivered immediately.
+    callback1->ensureUnfrozenEventReceived();
+
+    EXPECT_THAT(binder->addFrozenStateChangeCallback(callback2), StatusEq(NO_ERROR));
+    // Expect current state (unfrozen) to be delivered immediately.
+    callback2->ensureUnfrozenEventReceived();
+
+    freezeProcess(pid);
+    callback1->ensureFrozenEventReceived();
+    callback2->ensureFrozenEventReceived();
+
+    removeCallbackAndValidateNoEvent(binder, callback1);
+    unfreezeProcess(pid);
+    EXPECT_EQ(0u, callback1->events.size());
+    callback2->ensureUnfrozenEventReceived();
+    removeCallbackAndValidateNoEvent(binder, callback2);
+
+    freezeProcess(pid);
+    EXPECT_EQ(0u, callback2->events.size());
+}
+
+TEST_F(BinderLibTest, RemoveThenAddFrozenStateChangeCallbacks) {
+    if (!checkFreezeAndNotificationSupport()) {
+        GTEST_SKIP() << "Skipping test for kernels that do not support FREEZE_NOTIFICATION";
+        return;
+    }
+    sp<TestFrozenStateChangeCallback> callback = sp<TestFrozenStateChangeCallback>::make();
+    sp<IBinder> binder = addServer();
+    ASSERT_NE(nullptr, binder);
+    int32_t pid;
+    ASSERT_TRUE(getBinderPid(&pid, binder));
+
+    EXPECT_THAT(binder->addFrozenStateChangeCallback(callback), StatusEq(NO_ERROR));
+    // Expect current state (unfrozen) to be delivered immediately.
+    callback->ensureUnfrozenEventReceived();
+    removeCallbackAndValidateNoEvent(binder, callback);
+
+    EXPECT_THAT(binder->addFrozenStateChangeCallback(callback), StatusEq(NO_ERROR));
+    callback->ensureUnfrozenEventReceived();
+}
+
+TEST_F(BinderLibTest, CoalesceFreezeCallbacksWhenListenerIsFrozen) {
+    if (!checkFreezeAndNotificationSupport()) {
+        GTEST_SKIP() << "Skipping test for kernels that do not support FREEZE_NOTIFICATION";
+        return;
+    }
+    sp<IBinder> binder = addServer();
+    sp<IBinder> listener = addServer();
+    ASSERT_NE(nullptr, binder);
+    ASSERT_NE(nullptr, listener);
+    int32_t pid, listenerPid;
+    ASSERT_TRUE(getBinderPid(&pid, binder));
+    ASSERT_TRUE(getBinderPid(&listenerPid, listener));
+
+    // Ask the listener process to register for state change callbacks.
+    {
+        Parcel data, reply;
+        data.writeStrongBinder(binder);
+        ASSERT_THAT(listener->transact(BINDER_LIB_TEST_LISTEN_FOR_FROZEN_STATE_CHANGE, data,
+                                       &reply),
+                    StatusEq(NO_ERROR));
+    }
+    // Freeze the listener process.
+    freezeProcess(listenerPid);
+    createProcessGroup(getuid(), listenerPid);
+    ASSERT_TRUE(SetProcessProfiles(getuid(), listenerPid, {"Frozen"}));
+    // Repeatedly flip the target process between frozen and unfrozen states.
+    for (int i = 0; i < 1000; i++) {
+        usleep(50);
+        unfreezeProcess(pid);
+        usleep(50);
+        freezeProcess(pid);
+    }
+    // Unfreeze the listener process. Now it should receive the frozen state
+    // change notifications.
+    ASSERT_TRUE(SetProcessProfiles(getuid(), listenerPid, {"Unfrozen"}));
+    unfreezeProcess(listenerPid);
+    // Wait for 500ms to give the process enough time to wake up and handle
+    // notifications.
+    usleep(500 * 1000);
+    {
+        std::vector<bool> events;
+        Parcel data, reply;
+        ASSERT_THAT(listener->transact(BINDER_LIB_TEST_CONSUME_STATE_CHANGE_EVENTS, data, &reply),
+                    StatusEq(NO_ERROR));
+        reply.readBoolVector(&events);
+        // There should only be one single state change notifications delievered.
+        ASSERT_EQ(1u, events.size());
+        EXPECT_TRUE(events[0]);
+    }
 }
 
 TEST_F(BinderLibTest, PassFile) {
@@ -1981,6 +2251,26 @@ public:
                 reply->writeInt32(param.sched_priority);
                 return NO_ERROR;
             }
+            case BINDER_LIB_TEST_LISTEN_FOR_FROZEN_STATE_CHANGE: {
+                sp<IBinder> binder = data.readStrongBinder();
+                frozenStateChangeCallback = sp<TestFrozenStateChangeCallback>::make();
+                // Hold an strong pointer to the binder object so it doesn't go
+                // away.
+                frozenStateChangeCallback->binder = binder;
+                int ret = binder->addFrozenStateChangeCallback(frozenStateChangeCallback);
+                if (ret != NO_ERROR) {
+                    return ret;
+                }
+                auto event = frozenStateChangeCallback->events.popWithTimeout(10ms);
+                if (!event.has_value()) {
+                    return NOT_ENOUGH_DATA;
+                }
+                return NO_ERROR;
+            }
+            case BINDER_LIB_TEST_CONSUME_STATE_CHANGE_EVENTS: {
+                reply->writeBoolVector(frozenStateChangeCallback->getAllAndClear());
+                return NO_ERROR;
+            }
             case BINDER_LIB_TEST_ECHO_VECTOR: {
                 std::vector<uint64_t> vector;
                 auto err = data.readUint64Vector(&vector);
@@ -2067,6 +2357,7 @@ private:
     sp<IBinder> m_callback;
     bool m_exitOnDestroy;
     std::mutex m_blockMutex;
+    sp<TestFrozenStateChangeCallback> frozenStateChangeCallback;
 };
 
 int run_server(int index, int readypipefd, bool usePoll)

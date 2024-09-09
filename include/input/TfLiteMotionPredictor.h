@@ -112,7 +112,7 @@ public:
         float highJerk = 0;
 
         // Coefficient for the first-order IIR filter for jerk calculation.
-        float jerkForgetFactor = 1;
+        float jerkAlpha = 1;
     };
 
     // Creates a model from an encoded Flatbuffer model.

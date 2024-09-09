@@ -255,6 +255,7 @@ filegroup {
         "BitTube.cpp",
         "BLASTBufferQueue.cpp",
         "BufferItemConsumer.cpp",
+        "BufferReleaseChannel.cpp",
         "Choreographer.cpp",
         "CompositorTiming.cpp",
         "ConsumerBase.cpp",

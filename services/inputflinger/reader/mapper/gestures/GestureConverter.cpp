@@ -66,10 +66,11 @@ GestureConverter::GestureConverter(InputReaderContext& readerContext,
                                    const InputDeviceContext& deviceContext, int32_t deviceId)
       : mDeviceId(deviceId),
         mReaderContext(readerContext),
-        mEnableFlingStop(input_flags::enable_touchpad_fling_stop()) {
-    deviceContext.getAbsoluteAxisInfo(ABS_MT_POSITION_X, &mXAxisInfo);
-    deviceContext.getAbsoluteAxisInfo(ABS_MT_POSITION_Y, &mYAxisInfo);
-}
+        mEnableFlingStop(input_flags::enable_touchpad_fling_stop()),
+        // We can safely assume that ABS_MT_POSITION_X and _Y axes will be available, as EventHub
+        // won't classify a device as a touchpad if they're not present.
+        mXAxisInfo(deviceContext.getAbsoluteAxisInfo(ABS_MT_POSITION_X).value()),
+        mYAxisInfo(deviceContext.getAbsoluteAxisInfo(ABS_MT_POSITION_Y).value()) {}
 
 std::string GestureConverter::dump() const {
     std::stringstream out;

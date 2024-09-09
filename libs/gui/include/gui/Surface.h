@@ -24,6 +24,7 @@
 #define ANDROID_GUI_SURFACE_H
 
 #include <android/gui/FrameTimelineInfo.h>
+#include <com_android_graphics_libgui_flags.h>
 #include <gui/BufferQueueDefs.h>
 #include <gui/HdrMetadata.h>
 #include <gui/IGraphicBufferProducer.h>
@@ -39,6 +40,8 @@
 #include <shared_mutex>
 #include <unordered_set>
 
+#include <com_android_graphics_libgui_flags.h>
+
 /* QTI_BEGIN */
 #include "../../QtiExtension/QtiSurfaceExtension.h"
 #include "../../QtiExtension/QtiSurfaceExtensionGPP.h"
@@ -52,6 +55,8 @@ class QtiSurfaceExtension;
 class QtiSurfaceExtensionGPP;
 };
 /* QTI_END */
+
+class GraphicBuffer;
 
 namespace gui {
 class ISurfaceComposer;
@@ -75,6 +80,10 @@ public:
 
     virtual void onBuffersDiscarded(const std::vector<sp<GraphicBuffer>>& buffers) = 0;
     virtual void onBufferDetached(int slot) = 0;
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_CONSUMER_ATTACH_CALLBACK)
+    virtual void onBufferAttached() {}
+    virtual bool needsAttachNotify() { return false; }
+#endif
 };
 
 class StubSurfaceListener : public SurfaceListener {
@@ -182,6 +191,11 @@ public:
      */
     virtual void allocateBuffers();
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+    // See IGraphicBufferProducer::allowAllocation
+    status_t allowAllocation(bool allowAllocation);
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+
     /* Sets the generation number on the IGraphicBufferProducer and updates the
      * generation number on any buffers attached to the Surface after this call.
      * See IGBP::setGenerationNumber for more information. */
@@ -197,6 +211,14 @@ public:
      * See NATIVE_WINDOW_SET_SCALING_MODE and its parameters
      * in <system/window.h>. */
     int setScalingMode(int mode);
+
+    virtual int setBuffersTimestamp(int64_t timestamp);
+    virtual int setBuffersDataSpace(ui::Dataspace dataSpace);
+    virtual int setCrop(Rect const* rect);
+    virtual int setBuffersTransform(uint32_t transform);
+    virtual int setBuffersStickyTransform(uint32_t transform);
+    virtual int setBuffersFormat(PixelFormat format);
+    virtual int setUsage(uint64_t reqUsage);
 
     // See IGraphicBufferProducer::setDequeueTimeout
     status_t setDequeueTimeout(nsecs_t timeout);
@@ -358,16 +380,9 @@ protected:
     virtual int connect(int api);
     virtual int setBufferCount(int bufferCount);
     virtual int setBuffersUserDimensions(uint32_t width, uint32_t height);
-    virtual int setBuffersFormat(PixelFormat format);
-    virtual int setBuffersTransform(uint32_t transform);
-    virtual int setBuffersStickyTransform(uint32_t transform);
-    virtual int setBuffersTimestamp(int64_t timestamp);
-    virtual int setBuffersDataSpace(ui::Dataspace dataSpace);
     virtual int setBuffersSmpte2086Metadata(const android_smpte2086_metadata* metadata);
     virtual int setBuffersCta8613Metadata(const android_cta861_3_metadata* metadata);
     virtual int setBuffersHdr10PlusMetadata(const size_t size, const uint8_t* metadata);
-    virtual int setCrop(Rect const* rect);
-    virtual int setUsage(uint64_t reqUsage);
     virtual void setSurfaceDamage(android_native_rect_t* rects, size_t numRects);
 
 public:
@@ -385,20 +400,15 @@ public:
     virtual int unlockAndPost();
     virtual int query(int what, int* value) const;
 
-    virtual int connect(int api, const sp<SurfaceListener>& listener);
-
     // When reportBufferRemoval is true, clients must call getAndFlushRemovedBuffers to fetch
     // GraphicBuffers removed from this surface after a dequeueBuffer, detachNextBuffer or
     // attachBuffer call. This allows clients with their own buffer caches to free up buffers no
     // longer in use by this surface.
-    virtual int connect(int api, const sp<SurfaceListener>& listener, bool reportBufferRemoval);
-    virtual int detachNextBuffer(sp<GraphicBuffer>* outBuffer,
-            sp<Fence>* outFence);
+    virtual int connect(int api, const sp<SurfaceListener>& listener,
+                        bool reportBufferRemoval = false);
+    virtual int detachNextBuffer(sp<GraphicBuffer>* outBuffer, sp<Fence>* outFence);
     virtual int attachBuffer(ANativeWindowBuffer*);
 
-    virtual int connect(
-            int api, bool reportBufferRemoval,
-            const sp<SurfaceListener>& sListener);
     virtual void destroy();
 
     // When client connects to Surface with reportBufferRemoval set to true, any buffers removed
@@ -412,6 +422,20 @@ public:
 
     static status_t attachAndQueueBufferWithDataspace(Surface* surface, sp<GraphicBuffer> buffer,
                                                       ui::Dataspace dataspace);
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+    // Dequeues a buffer and its outFence, which must be signalled before the buffer can be used.
+    status_t dequeueBuffer(sp<GraphicBuffer>* buffer, sp<Fence>* outFence);
+
+    // Queues a buffer, with an optional fd fence that captures pending work on the buffer. This
+    // buffer must have been returned by dequeueBuffer or associated with this Surface via an
+    // attachBuffer operation.
+    status_t queueBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& fd = Fence::NO_FENCE);
+
+    // Detaches this buffer, dissociating it from this Surface. This buffer must have been returned
+    // by queueBuffer or associated with this Surface via an attachBuffer operation.
+    status_t detachBuffer(const sp<GraphicBuffer>& buffer);
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
 
     // Batch version of dequeueBuffer, cancelBuffer and queueBuffer
     // Note that these batched operations are not supported when shared buffer mode is being used.
@@ -451,6 +475,15 @@ protected:
         virtual void onBufferDetached(int slot) { mSurfaceListener->onBufferDetached(slot); }
 
         virtual void onBuffersDiscarded(const std::vector<int32_t>& slots);
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_CONSUMER_ATTACH_CALLBACK)
+        virtual void onBufferAttached() {
+            mSurfaceListener->onBufferAttached();
+        }
+
+        virtual bool needsAttachNotify() {
+            return mSurfaceListener->needsAttachNotify();
+        }
+#endif
     private:
         wp<Surface> mParent;
         sp<SurfaceListener> mSurfaceListener;

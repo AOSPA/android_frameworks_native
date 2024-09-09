@@ -56,7 +56,6 @@ void InputMapperUnitTest::setupAxis(int axis, bool valid, int32_t min, int32_t m
                                     int32_t resolution) {
     EXPECT_CALL(mMockEventHub, getAbsoluteAxisInfo(EVENTHUB_ID, axis))
             .WillRepeatedly(Return(valid ? std::optional<RawAbsoluteAxisInfo>{{
-                                                   .valid = true,
                                                    .minValue = min,
                                                    .maxValue = max,
                                                    .flat = 0,

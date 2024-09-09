@@ -373,6 +373,28 @@ void ASurfaceTransaction_setColor(ASurfaceTransaction* _Nonnull transaction,
                                   float b, float alpha, enum ADataSpace dataspace)
         __INTRODUCED_IN(29);
 
+// These APIs (setGeometry and setCrop) were originally written in a
+// C-incompatible form using references instead of pointers, and the OS shipped
+// that version for years before it was noticed. Fortunately the compiled code
+// for callers is the same regardless of whether it's a pointer or a reference,
+// so we can declare this as a nonnull pointer for C and keep the existing C++
+// decl and definition.
+//
+// We could alternatively change the decl and the definition to both be a
+// pointer (with an inline definition using references to preserve source compat
+// for existing C++ callers), but that requires changing the definition of an
+// API that has been in the OS for years. It's theoretically a safe change, but
+// without being able to prove it that's a very big risk to take. By keeping the
+// C-compatibility hack in the header, we can be sure that we haven't changed
+// anything for existing callers. By definition there were no C users of the
+// reference-based decl; if there were any C callers of the API at all, they were
+// using the same workaround that is now used below.
+//
+// Even if this workaround turns out to not work for C, there's no permanent
+// damage done to the platform (unlike if we were to change the definition). At
+// worst it continues to work for C++ (since the preprocessed header as seen by
+// C++ hasn't changed, nor has the definition) and continues to not work for C.
+
 /**
  * \param source The sub-rect within the buffer's content to be rendered inside the surface's area
  * The surface's source rect is clipped by the bounds of its current buffer. The source rect's width
@@ -383,7 +405,7 @@ void ASurfaceTransaction_setColor(ASurfaceTransaction* _Nonnull transaction,
  * clipped by the bounds of its parent. The destination rect's width and height must be > 0.
  *
  * \param transform The transform applied after the source rect is applied to the buffer. This
- * parameter should be set to 0 for no transform. To specify a transfrom use the
+ * parameter should be set to 0 for no transform. To specify a transform use the
  * NATIVE_WINDOW_TRANSFORM_* enum.
  *
  * Available since API level 29.
@@ -394,9 +416,14 @@ void ASurfaceTransaction_setColor(ASurfaceTransaction* _Nonnull transaction,
  * properties at once.
  */
 void ASurfaceTransaction_setGeometry(ASurfaceTransaction* _Nonnull transaction,
-                                     ASurfaceControl* _Nonnull surface_control, const ARect& source,
-                                     const ARect& destination, int32_t transform)
-        __INTRODUCED_IN(29);
+                                     ASurfaceControl* _Nonnull surface_control,
+#if defined(__cplusplus)
+                                     const ARect& source, const ARect& destination,
+#else
+                                     const ARect* _Nonnull source,
+                                     const ARect* _Nonnull destination,
+#endif
+                                     int32_t transform) __INTRODUCED_IN(29);
 
 /**
  * Bounds the surface and its children to the bounds specified. The crop and buffer size will be
@@ -408,7 +435,12 @@ void ASurfaceTransaction_setGeometry(ASurfaceTransaction* _Nonnull transaction,
  * Available since API level 31.
  */
 void ASurfaceTransaction_setCrop(ASurfaceTransaction* _Nonnull transaction,
-                                 ASurfaceControl* _Nonnull surface_control, const ARect& crop)
+                                 ASurfaceControl* _Nonnull surface_control,
+#if defined(__cplusplus)
+                                 const ARect& crop)
+#else
+                                 const ARect* _Nonnull crop)
+#endif
         __INTRODUCED_IN(31);
 
 /**

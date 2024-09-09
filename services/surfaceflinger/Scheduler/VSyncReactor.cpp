@@ -140,7 +140,9 @@ void VSyncReactor::onDisplayModeChanged(ftl::NonNull<DisplayModePtr> modePtr, bo
     std::lock_guard lock(mMutex);
     mLastHwVsync.reset();
 
-    if (!mSupportKernelIdleTimer && mTracker.isCurrentMode(modePtr) && !force) {
+    // kernel idle timer is not applicable for VRR
+    const bool supportKernelIdleTimer = mSupportKernelIdleTimer && !modePtr->getVrrConfig();
+    if (!supportKernelIdleTimer && mTracker.isCurrentMode(modePtr) && !force) {
         endPeriodTransition();
         setIgnorePresentFencesInternal(false);
         mMoreSamplesNeeded = false;

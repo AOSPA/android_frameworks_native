@@ -50,7 +50,6 @@ protected:
     void setupValidAxis(int axis, int32_t min, int32_t max, int32_t resolution) {
         EXPECT_CALL(mMockEventHub, getAbsoluteAxisInfo(EVENTHUB_ID, axis))
                 .WillRepeatedly(Return(std::optional<RawAbsoluteAxisInfo>{{
-                        .valid = true,
                         .minValue = min,
                         .maxValue = max,
                         .flat = 0,

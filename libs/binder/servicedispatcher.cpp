@@ -118,7 +118,12 @@ int Dispatch(const char* name, const ServiceRetriever& serviceRetriever,
 class ServiceManagerProxyToNative : public android::os::BnServiceManager {
 public:
     ServiceManagerProxyToNative(const sp<android::os::IServiceManager>& impl) : mImpl(impl) {}
-    android::binder::Status getService(const std::string&, android::os::Service*) override {
+    android::binder::Status getService(const std::string&,
+                                       android::sp<android::IBinder>*) override {
+        // We can't send BpBinder for regular binder over RPC.
+        return android::binder::Status::fromStatusT(android::INVALID_OPERATION);
+    }
+    android::binder::Status getService2(const std::string&, android::os::Service*) override {
         // We can't send BpBinder for regular binder over RPC.
         return android::binder::Status::fromStatusT(android::INVALID_OPERATION);
     }

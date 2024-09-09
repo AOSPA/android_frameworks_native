@@ -34,6 +34,7 @@
 #include <android/gui/TrustedOverlay.h>
 
 #include <ftl/flags.h>
+#include <gui/BufferReleaseChannel.h>
 #include <gui/DisplayCaptureArgs.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/LayerCaptureArgs.h>
@@ -224,6 +225,7 @@ struct layer_state_t {
         eDropInputModeChanged = 0x8000'00000000,
         eExtendedRangeBrightnessChanged = 0x10000'00000000,
         eEdgeExtensionChanged = 0x20000'00000000,
+        eBufferReleaseChannelChanged = 0x40000'00000000,
     };
 
     layer_state_t();
@@ -416,6 +418,8 @@ struct layer_state_t {
 
     TrustedPresentationThresholds trustedPresentationThresholds;
     TrustedPresentationListener trustedPresentationListener;
+
+    std::shared_ptr<gui::BufferReleaseChannel::ProducerEndpoint> bufferReleaseChannel;
 };
 
 class ComposerState {

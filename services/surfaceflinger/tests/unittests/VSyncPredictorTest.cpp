@@ -1055,6 +1055,36 @@ TEST_F(VSyncPredictorTest, timelineNotAdjustedForEarlyPresent) {
     EXPECT_EQ(2000, vrrTracker.nextAnticipatedVSyncTimeFrom(1400, 1000));
     EXPECT_EQ(3000, vrrTracker.nextAnticipatedVSyncTimeFrom(2000, 1000));
 }
+
+TEST_F(VSyncPredictorTest, adjustsOnlyMinFrameViolatingVrrTimeline) {
+    const auto refreshRate = Fps::fromPeriodNsecs(500);
+    auto minFrameRate = Fps::fromPeriodNsecs(1000);
+    hal::VrrConfig vrrConfig{.minFrameIntervalNs =
+                                     static_cast<int32_t>(minFrameRate.getPeriodNsecs())};
+    ftl::NonNull<DisplayModePtr> mode =
+            ftl::as_non_null(createVrrDisplayMode(DisplayModeId(0), refreshRate, vrrConfig));
+    VSyncPredictor vrrTracker{std::make_unique<ClockWrapper>(mClock), mode, kHistorySize,
+                              kMinimumSamplesForPrediction, kOutlierTolerancePercent};
+    vrrTracker.setRenderRate(minFrameRate, /*applyImmediately*/ false);
+    vrrTracker.addVsyncTimestamp(0);
+
+    EXPECT_EQ(1000, vrrTracker.nextAnticipatedVSyncTimeFrom(700));
+    EXPECT_EQ(2000, vrrTracker.nextAnticipatedVSyncTimeFrom(1000));
+    auto lastConfirmedSignalTime = TimePoint::fromNs(1500);
+    auto lastConfirmedExpectedPresentTime = TimePoint::fromNs(1000);
+    vrrTracker.onFrameBegin(TimePoint::fromNs(2000),
+                            {lastConfirmedSignalTime, lastConfirmedExpectedPresentTime});
+    EXPECT_EQ(3500, vrrTracker.nextAnticipatedVSyncTimeFrom(3000, 1500));
+
+    minFrameRate = Fps::fromPeriodNsecs(2000);
+    vrrTracker.setRenderRate(minFrameRate, /*applyImmediately*/ false);
+    lastConfirmedSignalTime = TimePoint::fromNs(2500);
+    lastConfirmedExpectedPresentTime = TimePoint::fromNs(2500);
+    vrrTracker.onFrameBegin(TimePoint::fromNs(3000),
+                            {lastConfirmedSignalTime, lastConfirmedExpectedPresentTime});
+    // Enough time without adjusting vsync to present with new rate on time, no need of adjustment
+    EXPECT_EQ(5500, vrrTracker.nextAnticipatedVSyncTimeFrom(4000, 3500));
+}
 } // namespace android::scheduler
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues

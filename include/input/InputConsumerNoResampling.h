@@ -17,6 +17,7 @@
 #pragma once
 
 #include <input/InputTransport.h>
+#include <input/Resampler.h>
 #include <utils/Looper.h>
 
 namespace android {
@@ -47,13 +48,13 @@ public:
 /**
  * Consumes input events from an input channel.
  *
- * This is a re-implementation of InputConsumer that does not have resampling at the current moment.
- * A lot of the higher-level logic has been folded into this class, to make it easier to use.
- * In the legacy class, InputConsumer, the consumption logic was partially handled in the jni layer,
- * as well as various actions like adding the fd to the Choreographer.
+ * This is a re-implementation of InputConsumer. At the moment it only supports resampling for
+ * single pointer events. A lot of the higher-level logic has been folded into this class, to make
+ * it easier to use. In the legacy class, InputConsumer, the consumption logic was partially handled
+ * in the jni layer, as well as various actions like adding the fd to the Choreographer.
  *
  * TODO(b/297226446): use this instead of "InputConsumer":
- * - Add resampling to this class
+ * - Add resampling for multiple pointer events.
  * - Allow various resampling strategies to be specified
  * - Delete the old "InputConsumer" and use this class instead, renaming it to "InputConsumer".
  * - Add tracing
@@ -64,8 +65,18 @@ public:
  */
 class InputConsumerNoResampling final {
 public:
+    /**
+     * @param callbacks are used to interact with InputConsumerNoResampling. They're called whenever
+     * the event is ready to consume.
+     * @param looper needs to be sp and not shared_ptr because it inherits from
+     * RefBase
+     * @param resampler the resampling strategy to use. If null, no resampling will be
+     * performed.
+     */
     explicit InputConsumerNoResampling(const std::shared_ptr<InputChannel>& channel,
-                                       sp<Looper> looper, InputConsumerCallbacks& callbacks);
+                                       sp<Looper> looper, InputConsumerCallbacks& callbacks,
+                                       std::unique_ptr<Resampler> resampler);
+
     ~InputConsumerNoResampling();
 
     /**
@@ -99,6 +110,7 @@ private:
     std::shared_ptr<InputChannel> mChannel;
     sp<Looper> mLooper;
     InputConsumerCallbacks& mCallbacks;
+    std::unique_ptr<Resampler> mResampler;
 
     // Looper-related infrastructure
     /**

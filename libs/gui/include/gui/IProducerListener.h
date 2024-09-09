@@ -25,6 +25,8 @@
 #include <hidl/HybridInterface.h>
 #include <utils/RefBase.h>
 
+#include <com_android_graphics_libgui_flags.h>
+
 namespace android {
 
 // ProducerListener is the interface through which the BufferQueue notifies the
@@ -55,6 +57,16 @@ public:
     // This is called without any lock held and can be called concurrently by
     // multiple threads.
     virtual void onBufferDetached(int /*slot*/) {} // Asynchronous
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_CONSUMER_ATTACH_CALLBACK)
+    // onBufferAttached is called from IGraphicBufferConsumer::attachBuffer to
+    // notify the producer that a buffer is attached.
+    //
+    // This is called without any lock held and can be called concurrently by
+    // multiple threads. This callback is enabled only when needsAttachNotify()
+    // returns {@code true}.
+    virtual void onBufferAttached() {} // Asynchronous
+    virtual bool needsAttachNotify() { return false; }
+#endif
 };
 
 #ifndef NO_BINDER

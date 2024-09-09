@@ -392,7 +392,16 @@ ServiceManager::~ServiceManager() {
     }
 }
 
-Status ServiceManager::getService(const std::string& name, os::Service* outService) {
+Status ServiceManager::getService(const std::string& name, sp<IBinder>* outBinder) {
+    SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
+            PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
+
+    *outBinder = tryGetBinder(name, true);
+    // returns ok regardless of result for legacy reasons
+    return Status::ok();
+}
+
+Status ServiceManager::getService2(const std::string& name, os::Service* outService) {
     SM_PERFETTO_TRACE_FUNC(PERFETTO_TE_PROTO_FIELDS(
             PERFETTO_TE_PROTO_FIELD_CSTR(kProtoServiceName, name.c_str())));
 
@@ -496,8 +505,9 @@ Status ServiceManager::addService(const std::string& name, const sp<IBinder>& bi
         return Status::fromExceptionCode(Status::EX_SECURITY, "App UIDs cannot add services.");
     }
 
-    if (!mAccess->canAdd(ctx, name)) {
-        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied.");
+    std::optional<std::string> accessorName;
+    if (auto status = canAddService(ctx, name, &accessorName); !status.isOk()) {
+        return status;
     }
 
     if (binder == nullptr) {
@@ -879,8 +889,9 @@ Status ServiceManager::registerClientCallback(const std::string& name, const sp<
     }
 
     auto ctx = mAccess->getCallingContext();
-    if (!mAccess->canAdd(ctx, name)) {
-        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied.");
+    std::optional<std::string> accessorName;
+    if (auto status = canAddService(ctx, name, &accessorName); !status.isOk()) {
+        return status;
     }
 
     auto serviceIt = mNameToService.find(name);
@@ -1042,8 +1053,9 @@ Status ServiceManager::tryUnregisterService(const std::string& name, const sp<IB
     }
 
     auto ctx = mAccess->getCallingContext();
-    if (!mAccess->canAdd(ctx, name)) {
-        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied.");
+    std::optional<std::string> accessorName;
+    if (auto status = canAddService(ctx, name, &accessorName); !status.isOk()) {
+        return status;
     }
 
     auto serviceIt = mNameToService.find(name);
@@ -1098,6 +1110,23 @@ Status ServiceManager::tryUnregisterService(const std::string& name, const sp<IB
     ALOGI("%s Unregistering %s", ctx.toDebugString().c_str(), name.c_str());
     mNameToService.erase(name);
 
+    return Status::ok();
+}
+
+Status ServiceManager::canAddService(const Access::CallingContext& ctx, const std::string& name,
+                                     std::optional<std::string>* accessor) {
+    if (!mAccess->canAdd(ctx, name)) {
+        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied for service.");
+    }
+#ifndef VENDORSERVICEMANAGER
+    *accessor = getVintfAccessorName(name);
+#endif
+    if (accessor->has_value()) {
+        if (!mAccess->canAdd(ctx, accessor->value())) {
+            return Status::fromExceptionCode(Status::EX_SECURITY,
+                                             "SELinux denied for the accessor of the service.");
+        }
+    }
     return Status::ok();
 }
 

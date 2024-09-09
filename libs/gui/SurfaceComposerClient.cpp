@@ -835,7 +835,6 @@ SurfaceComposerClient::Transaction::Transaction() {
 
 SurfaceComposerClient::Transaction::Transaction(const Transaction& other)
       : mId(other.mId),
-        mTransactionNestCount(other.mTransactionNestCount),
         mAnimation(other.mAnimation),
         mEarlyWakeupStart(other.mEarlyWakeupStart),
         mEarlyWakeupEnd(other.mEarlyWakeupEnd),
@@ -875,7 +874,6 @@ SurfaceComposerClient::Transaction::createFromParcel(const Parcel* parcel) {
 
 status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel) {
     const uint64_t transactionId = parcel->readUint64();
-    const uint32_t transactionNestCount = parcel->readUint32();
     const bool animation = parcel->readBool();
     const bool earlyWakeupStart = parcel->readBool();
     const bool earlyWakeupEnd = parcel->readBool();
@@ -972,7 +970,6 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
 
     // Parsing was successful. Update the object.
     mId = transactionId;
-    mTransactionNestCount = transactionNestCount;
     mAnimation = animation;
     mEarlyWakeupStart = earlyWakeupStart;
     mEarlyWakeupEnd = earlyWakeupEnd;
@@ -1004,7 +1001,6 @@ status_t SurfaceComposerClient::Transaction::writeToParcel(Parcel* parcel) const
     const_cast<SurfaceComposerClient::Transaction*>(this)->cacheBuffers();
 
     parcel->writeUint64(mId);
-    parcel->writeUint32(mTransactionNestCount);
     parcel->writeBool(mAnimation);
     parcel->writeBool(mEarlyWakeupStart);
     parcel->writeBool(mEarlyWakeupEnd);
@@ -1156,7 +1152,6 @@ void SurfaceComposerClient::Transaction::clear() {
     mInputWindowCommands.clear();
     mUncacheBuffers.clear();
     mMayContainBuffer = false;
-    mTransactionNestCount = 0;
     mAnimation = false;
     mEarlyWakeupStart = false;
     mEarlyWakeupEnd = false;
@@ -2414,6 +2409,22 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setDropI
 
     s->what |= layer_state_t::eDropInputModeChanged;
     s->dropInputMode = mode;
+
+    registerSurfaceControlForCallback(sc);
+    return *this;
+}
+
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBufferReleaseChannel(
+        const sp<SurfaceControl>& sc,
+        const std::shared_ptr<gui::BufferReleaseChannel::ProducerEndpoint>& channel) {
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+
+    s->what |= layer_state_t::eBufferReleaseChannelChanged;
+    s->bufferReleaseChannel = channel;
 
     registerSurfaceControlForCallback(sc);
     return *this;

@@ -109,6 +109,8 @@ public:
     MOCK_METHOD(hal::Error, getOverlaySupport,
                 (aidl::android::hardware::graphics::composer3::OverlayProperties *),
                 (const override));
+    MOCK_METHOD(hal::Error, getDisplayLuts,
+                (std::vector<aidl::android::hardware::graphics::composer3::Lut>*), (override));
 };
 
 class Layer : public HWC2::Layer {

@@ -64,14 +64,15 @@ std::pair<uint32_t, uint32_t> getDisplaySize() {
     return std::pair<uint32_t, uint32_t>(width, height);
 }
 
-static std::unique_ptr<RenderEngine> createRenderEngine(RenderEngine::Threaded threaded,
-                                                        RenderEngine::GraphicsApi graphicsApi) {
+static std::unique_ptr<RenderEngine> createRenderEngine(
+        RenderEngine::Threaded threaded, RenderEngine::GraphicsApi graphicsApi,
+        RenderEngine::BlurAlgorithm blurAlgorithm = RenderEngine::BlurAlgorithm::KAWASE) {
     auto args = RenderEngineCreationArgs::Builder()
                         .setPixelFormat(static_cast<int>(ui::PixelFormat::RGBA_8888))
                         .setImageCacheSize(1)
                         .setEnableProtectedContext(true)
                         .setPrecacheToneMapperShaderOnly(false)
-                        .setBlurAlgorithm(renderengine::RenderEngine::BlurAlgorithm::KAWASE)
+                        .setBlurAlgorithm(blurAlgorithm)
                         .setContextPriority(RenderEngine::ContextPriority::REALTIME)
                         .setThreaded(threaded)
                         .setGraphicsApi(graphicsApi)
@@ -180,7 +181,8 @@ template <class... Args>
 void BM_blur(benchmark::State& benchState, Args&&... args) {
     auto args_tuple = std::make_tuple(std::move(args)...);
     auto re = createRenderEngine(static_cast<RenderEngine::Threaded>(std::get<0>(args_tuple)),
-                                 static_cast<RenderEngine::GraphicsApi>(std::get<1>(args_tuple)));
+                                 static_cast<RenderEngine::GraphicsApi>(std::get<1>(args_tuple)),
+                                 static_cast<RenderEngine::BlurAlgorithm>(std::get<2>(args_tuple)));
 
     // Initially use cpu access so we can decode into it with AImageDecoder.
     auto [width, height] = getDisplaySize();
@@ -224,5 +226,11 @@ void BM_blur(benchmark::State& benchState, Args&&... args) {
     benchDrawLayers(*re, layers, benchState, "blurred");
 }
 
-BENCHMARK_CAPTURE(BM_blur, SkiaGLThreaded, RenderEngine::Threaded::YES,
-                  RenderEngine::GraphicsApi::GL);
+BENCHMARK_CAPTURE(BM_blur, gaussian, RenderEngine::Threaded::YES, RenderEngine::GraphicsApi::GL,
+                  RenderEngine::BlurAlgorithm::GAUSSIAN);
+
+BENCHMARK_CAPTURE(BM_blur, kawase, RenderEngine::Threaded::YES, RenderEngine::GraphicsApi::GL,
+                  RenderEngine::BlurAlgorithm::KAWASE);
+
+BENCHMARK_CAPTURE(BM_blur, kawase_dual_filter, RenderEngine::Threaded::YES,
+                  RenderEngine::GraphicsApi::GL, RenderEngine::BlurAlgorithm::KAWASE_DUAL_FILTER);

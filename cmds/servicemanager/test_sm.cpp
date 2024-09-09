@@ -155,8 +155,11 @@ TEST(AddService, OverwriteExistingService) {
         IServiceManager::DUMP_FLAG_PRIORITY_DEFAULT).isOk());
 
     Service outA;
-    EXPECT_TRUE(sm->getService("foo", &outA).isOk());
+    EXPECT_TRUE(sm->getService2("foo", &outA).isOk());
     EXPECT_EQ(serviceA, outA.get<Service::Tag::binder>());
+    sp<IBinder> outBinderA;
+    EXPECT_TRUE(sm->getService("foo", &outBinderA).isOk());
+    EXPECT_EQ(serviceA, outBinderA);
 
     // serviceA should be overwritten by serviceB
     sp<IBinder> serviceB = getBinder();
@@ -164,8 +167,11 @@ TEST(AddService, OverwriteExistingService) {
         IServiceManager::DUMP_FLAG_PRIORITY_DEFAULT).isOk());
 
     Service outB;
-    EXPECT_TRUE(sm->getService("foo", &outB).isOk());
+    EXPECT_TRUE(sm->getService2("foo", &outB).isOk());
     EXPECT_EQ(serviceB, outB.get<Service::Tag::binder>());
+    sp<IBinder> outBinderB;
+    EXPECT_TRUE(sm->getService("foo", &outBinderB).isOk());
+    EXPECT_EQ(serviceB, outBinderB);
 }
 
 TEST(AddService, NoPermissions) {
@@ -188,16 +194,22 @@ TEST(GetService, HappyHappy) {
         IServiceManager::DUMP_FLAG_PRIORITY_DEFAULT).isOk());
 
     Service out;
-    EXPECT_TRUE(sm->getService("foo", &out).isOk());
+    EXPECT_TRUE(sm->getService2("foo", &out).isOk());
     EXPECT_EQ(service, out.get<Service::Tag::binder>());
+    sp<IBinder> outBinder;
+    EXPECT_TRUE(sm->getService("foo", &outBinder).isOk());
+    EXPECT_EQ(service, outBinder);
 }
 
 TEST(GetService, NonExistant) {
     auto sm = getPermissiveServiceManager();
 
     Service out;
-    EXPECT_TRUE(sm->getService("foo", &out).isOk());
+    EXPECT_TRUE(sm->getService2("foo", &out).isOk());
     EXPECT_EQ(nullptr, out.get<Service::Tag::binder>());
+    sp<IBinder> outBinder;
+    EXPECT_TRUE(sm->getService("foo", &outBinder).isOk());
+    EXPECT_EQ(nullptr, outBinder);
 }
 
 TEST(GetService, NoPermissionsForGettingService) {
@@ -205,7 +217,7 @@ TEST(GetService, NoPermissionsForGettingService) {
 
     EXPECT_CALL(*access, getCallingContext()).WillRepeatedly(Return(Access::CallingContext{}));
     EXPECT_CALL(*access, canAdd(_, _)).WillOnce(Return(true));
-    EXPECT_CALL(*access, canFind(_, _)).WillOnce(Return(false));
+    EXPECT_CALL(*access, canFind(_, _)).WillRepeatedly(Return(false));
 
     sp<ServiceManager> sm = sp<NiceMock<MockServiceManager>>::make(std::move(access));
 
@@ -214,22 +226,28 @@ TEST(GetService, NoPermissionsForGettingService) {
 
     Service out;
     // returns nullptr but has OK status for legacy compatibility
-    EXPECT_TRUE(sm->getService("foo", &out).isOk());
+    EXPECT_TRUE(sm->getService2("foo", &out).isOk());
     EXPECT_EQ(nullptr, out.get<Service::Tag::binder>());
+    sp<IBinder> outBinder;
+    EXPECT_TRUE(sm->getService("foo", &outBinder).isOk());
+    EXPECT_EQ(nullptr, outBinder);
 }
 
 TEST(GetService, AllowedFromIsolated) {
     std::unique_ptr<MockAccess> access = std::make_unique<NiceMock<MockAccess>>();
 
     EXPECT_CALL(*access, getCallingContext())
-        // something adds it
-        .WillOnce(Return(Access::CallingContext{}))
-        // next call is from isolated app
-        .WillOnce(Return(Access::CallingContext{
-            .uid = AID_ISOLATED_START,
-        }));
+            // something adds it
+            .WillOnce(Return(Access::CallingContext{}))
+            // next calls is from isolated app
+            .WillOnce(Return(Access::CallingContext{
+                    .uid = AID_ISOLATED_START,
+            }))
+            .WillOnce(Return(Access::CallingContext{
+                    .uid = AID_ISOLATED_START,
+            }));
     EXPECT_CALL(*access, canAdd(_, _)).WillOnce(Return(true));
-    EXPECT_CALL(*access, canFind(_, _)).WillOnce(Return(true));
+    EXPECT_CALL(*access, canFind(_, _)).WillRepeatedly(Return(true));
 
     sp<ServiceManager> sm = sp<NiceMock<MockServiceManager>>::make(std::move(access));
 
@@ -238,20 +256,26 @@ TEST(GetService, AllowedFromIsolated) {
         IServiceManager::DUMP_FLAG_PRIORITY_DEFAULT).isOk());
 
     Service out;
-    EXPECT_TRUE(sm->getService("foo", &out).isOk());
+    EXPECT_TRUE(sm->getService2("foo", &out).isOk());
     EXPECT_EQ(service, out.get<Service::Tag::binder>());
+    sp<IBinder> outBinder;
+    EXPECT_TRUE(sm->getService("foo", &outBinder).isOk());
+    EXPECT_EQ(service, outBinder);
 }
 
 TEST(GetService, NotAllowedFromIsolated) {
     std::unique_ptr<MockAccess> access = std::make_unique<NiceMock<MockAccess>>();
 
     EXPECT_CALL(*access, getCallingContext())
-        // something adds it
-        .WillOnce(Return(Access::CallingContext{}))
-        // next call is from isolated app
-        .WillOnce(Return(Access::CallingContext{
-            .uid = AID_ISOLATED_START,
-        }));
+            // something adds it
+            .WillOnce(Return(Access::CallingContext{}))
+            // next calls is from isolated app
+            .WillOnce(Return(Access::CallingContext{
+                    .uid = AID_ISOLATED_START,
+            }))
+            .WillOnce(Return(Access::CallingContext{
+                    .uid = AID_ISOLATED_START,
+            }));
     EXPECT_CALL(*access, canAdd(_, _)).WillOnce(Return(true));
 
     // TODO(b/136023468): when security check is first, this should be called first
@@ -264,8 +288,11 @@ TEST(GetService, NotAllowedFromIsolated) {
 
     Service out;
     // returns nullptr but has OK status for legacy compatibility
-    EXPECT_TRUE(sm->getService("foo", &out).isOk());
+    EXPECT_TRUE(sm->getService2("foo", &out).isOk());
     EXPECT_EQ(nullptr, out.get<Service::Tag::binder>());
+    sp<IBinder> outBinder;
+    EXPECT_TRUE(sm->getService("foo", &outBinder).isOk());
+    EXPECT_EQ(nullptr, outBinder);
 }
 
 TEST(ListServices, NoPermissions) {

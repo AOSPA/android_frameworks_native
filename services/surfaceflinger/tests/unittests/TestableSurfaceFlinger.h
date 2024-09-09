@@ -584,8 +584,6 @@ public:
         return mFlinger->mirrorLayer(args, mirrorFromHandle, outResult);
     }
 
-    void updateLayerMetadataSnapshot() { mFlinger->updateLayerMetadataSnapshot(); }
-
     void getDynamicDisplayInfoFromToken(const sp<IBinder>& displayToken,
                                         ui::DynamicDisplayInfo* dynamicDisplayInfo) {
         mFlinger->getDynamicDisplayInfoFromToken(displayToken, dynamicDisplayInfo);

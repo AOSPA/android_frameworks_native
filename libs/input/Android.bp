@@ -232,6 +232,7 @@ cc_library {
         "MotionPredictorMetricsManager.cpp",
         "PrintTools.cpp",
         "PropertyMap.cpp",
+        "Resampler.cpp",
         "TfLiteMotionPredictor.cpp",
         "TouchVideoFrame.cpp",
         "VelocityControl.cpp",

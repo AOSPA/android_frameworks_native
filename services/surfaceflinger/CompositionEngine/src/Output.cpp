@@ -1129,10 +1129,10 @@ void Output::prepareFrame() {
 }
 
 ftl::Future<std::monostate> Output::presentFrameAndReleaseLayersAsync(bool flushEvenWhenDisabled) {
-    return ftl::Future<bool>(std::move(mHwComposerAsyncWorker->send([this, flushEvenWhenDisabled]() {
+    return ftl::Future<bool>(mHwComposerAsyncWorker->send([this, flushEvenWhenDisabled]() {
                presentFrameAndReleaseLayers(flushEvenWhenDisabled);
                return true;
-           })))
+           }))
             .then([](bool) { return std::monostate{}; });
 }
 

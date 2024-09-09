@@ -127,7 +127,7 @@ public:
         return *this;
     }
 
-    MotionEvent build() {
+    MotionEvent build() const {
         std::vector<PointerProperties> pointerProperties;
         std::vector<PointerCoords> pointerCoords;
         for (const PointerBuilder& pointer : mPointers) {
@@ -135,20 +135,22 @@ public:
             pointerCoords.push_back(pointer.buildCoords());
         }
 
+        auto [xCursorPosition, yCursorPosition] =
+                std::make_pair(mRawXCursorPosition, mRawYCursorPosition);
         // Set mouse cursor position for the most common cases to avoid boilerplate.
         if (mSource == AINPUT_SOURCE_MOUSE &&
-            !MotionEvent::isValidCursorPosition(mRawXCursorPosition, mRawYCursorPosition)) {
-            mRawXCursorPosition = pointerCoords[0].getX();
-            mRawYCursorPosition = pointerCoords[0].getY();
+            !MotionEvent::isValidCursorPosition(xCursorPosition, yCursorPosition)) {
+            xCursorPosition = pointerCoords[0].getX();
+            yCursorPosition = pointerCoords[0].getY();
         }
 
         MotionEvent event;
         event.initialize(InputEvent::nextId(), mDeviceId, mSource, mDisplayId, INVALID_HMAC,
                          mAction, mActionButton, mFlags, /*edgeFlags=*/0, AMETA_NONE, mButtonState,
                          MotionClassification::NONE, mTransform,
-                         /*xPrecision=*/0, /*yPrecision=*/0, mRawXCursorPosition,
-                         mRawYCursorPosition, mRawTransform, mDownTime, mEventTime,
-                         mPointers.size(), pointerProperties.data(), pointerCoords.data());
+                         /*xPrecision=*/0, /*yPrecision=*/0, xCursorPosition, yCursorPosition,
+                         mRawTransform, mDownTime, mEventTime, mPointers.size(),
+                         pointerProperties.data(), pointerCoords.data());
         return event;
     }
 

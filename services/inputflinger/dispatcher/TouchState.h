@@ -47,7 +47,7 @@ struct TouchState {
             const sp<android::gui::WindowInfoHandle>& windowHandle,
             InputTarget::DispatchMode dispatchMode, ftl::Flags<InputTarget::Flags> targetFlags,
             DeviceId deviceId, const std::vector<PointerProperties>& touchingPointers,
-            std::optional<nsecs_t> firstDownTimeInTarget = std::nullopt);
+            std::optional<nsecs_t> firstDownTimeInTarget);
     void addHoveringPointerToWindow(const sp<android::gui::WindowInfoHandle>& windowHandle,
                                     DeviceId deviceId, const PointerProperties& pointer);
     void removeHoveringPointer(DeviceId deviceId, int32_t pointerId);

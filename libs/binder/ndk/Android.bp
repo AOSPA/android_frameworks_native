@@ -255,6 +255,9 @@ ndk_headers {
         "include_cpp/android/*.h",
     ],
     license: "NOTICE",
+    // These are intentionally not C. It's a mistake that they're in the NDK.
+    // See the bug above.
+    skip_verification: true,
 }
 
 ndk_library {

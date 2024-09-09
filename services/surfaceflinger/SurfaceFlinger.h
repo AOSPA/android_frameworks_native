@@ -287,7 +287,7 @@ public:
     enum class FrameHint { kNone, kActive };
 
     // Schedule commit of transactions on the main thread ahead of the next VSYNC.
-    void scheduleCommit(FrameHint);
+    void scheduleCommit(FrameHint, Duration workDurationSlack = Duration::fromNs(0));
     // As above, but also force composite regardless if transactions were committed.
     void scheduleComposite(FrameHint);
     // As above, but also force dirty geometry to repaint.
@@ -327,7 +327,6 @@ public:
     // Disables expensive rendering for all displays
     // This is scheduled on the main thread
     void disableExpensiveRendering();
-    FloatRect getMaxDisplayBounds();
 
     // If set, composition engine tries to predict the composition strategy provided by HWC
     // based on the previous frame. If the strategy can be predicted, gpu composition will
@@ -722,7 +721,6 @@ private:
     void requestHardwareVsync(PhysicalDisplayId, bool) override;
     void requestDisplayModes(std::vector<display::DisplayModeRequest>) override;
     void kernelTimerChanged(bool expired) override;
-    void triggerOnFrameRateOverridesChanged() override;
     void onChoreographerAttached() override;
     void onExpectedPresentTimePosted(TimePoint expectedPresentTime, ftl::NonNull<DisplayModePtr>,
                                      Fps renderRate) override;
@@ -733,22 +731,13 @@ private:
     // ICEPowerCallback overrides:
     void notifyCpuLoadUp() override;
 
-    // Toggles the kernel idle timer on or off depending the policy decisions around refresh rates.
-    void toggleKernelIdleTimer() REQUIRES(mStateLock);
-
     using KernelIdleTimerController = scheduler::RefreshRateSelector::KernelIdleTimerController;
 
     // Get the controller and timeout that will help decide how the kernel idle timer will be
     // configured and what value to use as the timeout.
     std::pair<std::optional<KernelIdleTimerController>, std::chrono::milliseconds>
             getKernelIdleTimerProperties(PhysicalDisplayId) REQUIRES(mStateLock);
-    // Updates the kernel idle timer either through HWC or through sysprop
-    // depending on which controller is provided
-    void updateKernelIdleTimer(std::chrono::milliseconds timeoutMs, KernelIdleTimerController,
-                               PhysicalDisplayId) REQUIRES(mStateLock);
-    // Keeps track of whether the kernel idle timer is currently enabled, so we don't have to
-    // make calls to sys prop each time.
-    bool mKernelIdleTimerEnabled = false;
+
     // Show spinner with refresh rate overlay
     bool mRefreshRateOverlaySpinner = false;
     // Show render rate with refresh rate overlay
@@ -788,17 +777,11 @@ private:
                                             const scheduler::RefreshRateSelector&)
             REQUIRES(mStateLock, kMainThreadContext);
 
-    void commitTransactionsLegacy() EXCLUDES(mStateLock) REQUIRES(kMainThreadContext);
     void commitTransactions() REQUIRES(kMainThreadContext, mStateLock);
     void commitTransactionsLocked(uint32_t transactionFlags)
             REQUIRES(mStateLock, kMainThreadContext);
     void doCommitTransactions() REQUIRES(mStateLock);
 
-    // Returns whether a new buffer has been latched.
-    bool latchBuffers();
-
-    void updateLayerGeometry();
-    void updateLayerMetadataSnapshot();
     std::vector<std::pair<Layer*, LayerFE*>> moveSnapshotsToCompositionArgs(
             compositionengine::CompositionRefreshArgs& refreshArgs, bool cursorOnly)
             REQUIRES(kMainThreadContext);
@@ -806,13 +789,9 @@ private:
                                           const std::vector<std::pair<Layer*, LayerFE*>>& layers)
             REQUIRES(kMainThreadContext);
     // Return true if we must composite this frame
-    bool updateLayerSnapshotsLegacy(VsyncId vsyncId, nsecs_t frameTimeNs, bool transactionsFlushed,
-                                    bool& out) REQUIRES(kMainThreadContext);
-    // Return true if we must composite this frame
     bool updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs, bool transactionsFlushed,
                               bool& out) REQUIRES(kMainThreadContext);
     void updateLayerHistory(nsecs_t now) REQUIRES(kMainThreadContext);
-    frontend::Update flushLifecycleUpdates() REQUIRES(kMainThreadContext);
 
     void updateInputFlinger(VsyncId vsyncId, TimePoint frameTime) REQUIRES(kMainThreadContext);
     void persistDisplayBrightness(bool needsComposite) REQUIRES(kMainThreadContext);
@@ -857,9 +836,6 @@ private:
             const TransactionHandler::TransactionFlushState& flushState)
             REQUIRES(kMainThreadContext);
 
-    uint32_t setClientStateLocked(const FrameTimelineInfo&, ResolvedComposerState&,
-                                  int64_t desiredPresentTime, bool isAutoTimestamp,
-                                  int64_t postTime, uint64_t transactionId) REQUIRES(mStateLock);
     uint32_t updateLayerCallbacksAndStats(const FrameTimelineInfo&, ResolvedComposerState&,
                                           int64_t desiredPresentTime, bool isAutoTimestamp,
                                           int64_t postTime, uint64_t transactionId)
@@ -908,9 +884,6 @@ private:
     status_t addClientLayer(LayerCreationArgs& args, const sp<IBinder>& handle,
                             const sp<Layer>& layer, const wp<Layer>& parentLayer,
                             uint32_t* outTransformHint);
-
-    // Traverse through all the layers and compute and cache its bounds.
-    void computeLayerBounds();
 
     // Creates a promise for a future release fence for a layer. This allows for
     // the layer to keep track of when its buffer can be released.
@@ -1006,18 +979,12 @@ private:
         return nullptr;
     }
 
-    // Returns the primary display or (for foldables) the active display, assuming that the inner
-    // and outer displays have mutually exclusive power states.
+    // Returns the primary display or (for foldables) the active display.
     sp<const DisplayDevice> getDefaultDisplayDeviceLocked() const REQUIRES(mStateLock) {
         return const_cast<SurfaceFlinger*>(this)->getDefaultDisplayDeviceLocked();
     }
 
     sp<DisplayDevice> getDefaultDisplayDeviceLocked() REQUIRES(mStateLock) {
-        if (const auto display = getDisplayDeviceLocked(mActiveDisplayId)) {
-            return display;
-        }
-        // The active display is outdated, so fall back to the primary display.
-        mActiveDisplayId = getPrimaryDisplayIdLocked();
         return getDisplayDeviceLocked(mActiveDisplayId);
     }
 
@@ -1118,13 +1085,6 @@ private:
                                const DisplayDeviceState& currentState,
                                const DisplayDeviceState& drawingState)
             REQUIRES(mStateLock, kMainThreadContext);
-
-    void dispatchDisplayModeChangeEvent(PhysicalDisplayId, const scheduler::FrameRateMode&);
-
-    /*
-     * VSYNC
-     */
-    nsecs_t getVsyncPeriodFromHWC() const REQUIRES(mStateLock);
 
     /*
      * Display identification
@@ -1319,18 +1279,20 @@ private:
     bool mForceTransactionDisplayChange = false;
     bool mUpdateAttachedChoreographer = false;
 
-    // Set if LayerMetadata has changed since the last LayerMetadata snapshot.
-    bool mLayerMetadataSnapshotNeeded = false;
+    struct LayerIntHash {
+        size_t operator()(const std::pair<sp<Layer>, gui::GameMode>& k) const {
+            return std::hash<Layer*>()(k.first.get()) ^
+                    std::hash<int32_t>()(static_cast<int32_t>(k.second));
+        }
+    };
 
     // TODO(b/238781169) validate these on composition
     // Tracks layers that have pending frames which are candidates for being
     // latched.
-    std::unordered_set<sp<Layer>, SpHash<Layer>> mLayersWithQueuedFrames;
+    std::unordered_set<std::pair<sp<Layer>, gui::GameMode>, LayerIntHash> mLayersWithQueuedFrames;
     std::unordered_set<sp<Layer>, SpHash<Layer>> mLayersWithBuffersRemoved;
     std::unordered_set<uint32_t> mLayersIdsWithQueuedFrames;
 
-    // Tracks layers that need to update a display's dirty region.
-    std::vector<sp<Layer>> mLayersPendingRefresh;
     // Sorted list of layers that were composed during previous frame. This is used to
     // avoid an expensive traversal of the layer hierarchy when there are no
     // visible region changes. Because this is a list of strong pointers, this will
@@ -1358,7 +1320,7 @@ private:
 
     display::PhysicalDisplays mPhysicalDisplays GUARDED_BY(mStateLock);
 
-    // The inner or outer display for foldables, assuming they have mutually exclusive power states.
+    // The inner or outer display for foldables, while unfolded or folded, respectively.
     std::atomic<PhysicalDisplayId> mActiveDisplayId;
 
     display::DisplayModeController mDisplayModeController;
@@ -1475,21 +1437,7 @@ private:
     // A temporay pool that store the created layers and will be added to current state in main
     // thread.
     std::vector<LayerCreatedState> mCreatedLayers GUARDED_BY(mCreatedLayersLock);
-    bool commitCreatedLayers(VsyncId, std::vector<LayerCreatedState>& createdLayers);
     void handleLayerCreatedLocked(const LayerCreatedState&, VsyncId) REQUIRES(mStateLock);
-
-    mutable std::mutex mMirrorDisplayLock;
-    struct MirrorDisplayState {
-        MirrorDisplayState(ui::LayerStack layerStack, sp<IBinder>& rootHandle,
-                           const sp<Client>& client)
-              : layerStack(layerStack), rootHandle(rootHandle), client(client) {}
-
-        ui::LayerStack layerStack;
-        sp<IBinder> rootHandle;
-        const sp<Client> client;
-    };
-    std::vector<MirrorDisplayState> mMirrorDisplays GUARDED_BY(mMirrorDisplayLock);
-    bool commitMirrorDisplays(VsyncId);
 
     std::atomic<ui::Transform::RotationFlags> mActiveDisplayTransformHint;
 

@@ -202,12 +202,13 @@ void MessageQueue::scheduleConfigure() {
     postMessage(sp<ConfigureHandler>::make(mCompositor));
 }
 
-void MessageQueue::scheduleFrame() {
+void MessageQueue::scheduleFrame(Duration workDurationSlack) {
     SFTRACE_CALL();
 
     std::lock_guard lock(mVsync.mutex);
+    const auto workDuration = Duration(mVsync.workDuration.get() - workDurationSlack);
     mVsync.scheduledFrameTimeOpt =
-            mVsync.registration->schedule({.workDuration = mVsync.workDuration.get().count(),
+            mVsync.registration->schedule({.workDuration = workDuration.ns(),
                                            .readyDuration = 0,
                                            .lastVsync = mVsync.lastCallbackTime.ns()});
 }

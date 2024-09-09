@@ -409,14 +409,20 @@ void Scheduler::enableSyntheticVsync(bool enable) {
     eventThreadFor(Cycle::Render).enableSyntheticVsync(enable);
 }
 
-void Scheduler::onFrameRateOverridesChanged(Cycle cycle, PhysicalDisplayId displayId) {
-    const bool supportsFrameRateOverrideByContent =
-            pacesetterSelectorPtr()->supportsAppFrameRateOverrideByContent();
+void Scheduler::onFrameRateOverridesChanged() {
+    const auto [pacesetterId, supportsFrameRateOverrideByContent] = [this] {
+        std::scoped_lock lock(mDisplayLock);
+        const auto pacesetterOpt = pacesetterDisplayLocked();
+        LOG_ALWAYS_FATAL_IF(!pacesetterOpt);
+        const Display& pacesetter = *pacesetterOpt;
+        return std::make_pair(FTL_FAKE_GUARD(kMainThreadContext, *mPacesetterDisplayId),
+                              pacesetter.selectorPtr->supportsAppFrameRateOverrideByContent());
+    }();
 
     std::vector<FrameRateOverride> overrides =
             mFrameRateOverrideMappings.getAllFrameRateOverrides(supportsFrameRateOverrideByContent);
 
-    eventThreadFor(cycle).onFrameRateOverridesChanged(displayId, std::move(overrides));
+    eventThreadFor(Cycle::Render).onFrameRateOverridesChanged(pacesetterId, std::move(overrides));
 }
 
 void Scheduler::onHdcpLevelsChanged(Cycle cycle, PhysicalDisplayId displayId,
@@ -424,50 +430,49 @@ void Scheduler::onHdcpLevelsChanged(Cycle cycle, PhysicalDisplayId displayId,
     eventThreadFor(cycle).onHdcpLevelsChanged(displayId, connectedLevel, maxLevel);
 }
 
-void Scheduler::onPrimaryDisplayModeChanged(Cycle cycle, const FrameRateMode& mode) {
-    {
+bool Scheduler::onDisplayModeChanged(PhysicalDisplayId displayId, const FrameRateMode& mode) {
+    const bool isPacesetter =
+            FTL_FAKE_GUARD(kMainThreadContext,
+                           (std::scoped_lock(mDisplayLock), displayId == mPacesetterDisplayId));
+
+    if (isPacesetter) {
         std::lock_guard<std::mutex> lock(mPolicyLock);
-        // Cache the last reported modes for primary display.
-        mPolicy.cachedModeChangedParams = {cycle, mode};
+        mPolicy.emittedModeOpt = mode;
 
         // Invalidate content based refresh rate selection so it could be calculated
         // again for the new refresh rate.
         mPolicy.contentRequirements.clear();
     }
-    onNonPrimaryDisplayModeChanged(cycle, mode);
-}
 
-void Scheduler::dispatchCachedReportedMode() {
-    // Check optional fields first.
-    if (!mPolicy.modeOpt) {
-        ALOGW("No mode ID found, not dispatching cached mode.");
-        return;
-    }
-    if (!mPolicy.cachedModeChangedParams) {
-        ALOGW("No mode changed params found, not dispatching cached mode.");
-        return;
-    }
-
-    // If the mode is not the current mode, this means that a
-    // mode change is in progress. In that case we shouldn't dispatch an event
-    // as it will be dispatched when the current mode changes.
-    if (pacesetterSelectorPtr()->getActiveMode() != mPolicy.modeOpt) {
-        return;
-    }
-
-    // If there is no change from cached mode, there is no need to dispatch an event
-    if (*mPolicy.modeOpt == mPolicy.cachedModeChangedParams->mode) {
-        return;
-    }
-
-    mPolicy.cachedModeChangedParams->mode = *mPolicy.modeOpt;
-    onNonPrimaryDisplayModeChanged(mPolicy.cachedModeChangedParams->cycle,
-                                   mPolicy.cachedModeChangedParams->mode);
-}
-
-void Scheduler::onNonPrimaryDisplayModeChanged(Cycle cycle, const FrameRateMode& mode) {
     if (hasEventThreads()) {
-        eventThreadFor(cycle).onModeChanged(mode);
+        eventThreadFor(Cycle::Render).onModeChanged(mode);
+    }
+
+    return isPacesetter;
+}
+
+void Scheduler::emitModeChangeIfNeeded() {
+    if (!mPolicy.modeOpt || !mPolicy.emittedModeOpt) {
+        ALOGW("No mode change to emit");
+        return;
+    }
+
+    const auto& mode = *mPolicy.modeOpt;
+
+    if (mode != pacesetterSelectorPtr()->getActiveMode()) {
+        // A mode change is pending. The event will be emitted when the mode becomes active.
+        return;
+    }
+
+    if (mode == *mPolicy.emittedModeOpt) {
+        // The event was already emitted.
+        return;
+    }
+
+    mPolicy.emittedModeOpt = mode;
+
+    if (hasEventThreads()) {
+        eventThreadFor(Cycle::Render).onModeChanged(mode);
     }
 }
 
@@ -665,11 +670,12 @@ void Scheduler::addPresentFence(PhysicalDisplayId id, std::shared_ptr<FenceTime>
     }
 }
 
-void Scheduler::registerLayer(Layer* layer) {
+void Scheduler::registerLayer(Layer* layer, FrameRateCompatibility frameRateCompatibility) {
     // If the content detection feature is off, we still keep the layer history,
     // since we use it for other features (like Frame Rate API), so layers
     // still need to be registered.
-    mLayerHistory.registerLayer(layer, mFeatures.test(Feature::kContentDetection));
+    mLayerHistory.registerLayer(layer, mFeatures.test(Feature::kContentDetection),
+                                frameRateCompatibility);
 }
 
 void Scheduler::deregisterLayer(Layer* layer) {
@@ -877,22 +883,19 @@ void Scheduler::dump(utils::Dumper& dumper) const {
     mRefreshRateStats->dump(dumper.out());
     dumper.eol();
 
-    {
-        utils::Dumper::Section section(dumper, "Frame Targeting"sv);
+    std::scoped_lock lock(mDisplayLock);
+    ftl::FakeGuard guard(kMainThreadContext);
 
-        std::scoped_lock lock(mDisplayLock);
-        ftl::FakeGuard guard(kMainThreadContext);
+    for (const auto& [id, display] : mDisplays) {
+        utils::Dumper::Section
+                section(dumper,
+                        id == mPacesetterDisplayId
+                                ? ftl::Concat("Pacesetter Display ", id.value).c_str()
+                                : ftl::Concat("Follower Display ", id.value).c_str());
 
-        for (const auto& [id, display] : mDisplays) {
-            utils::Dumper::Section
-                    section(dumper,
-                            id == mPacesetterDisplayId
-                                    ? ftl::Concat("Pacesetter Display ", id.value).c_str()
-                                    : ftl::Concat("Follower Display ", id.value).c_str());
-
-            display.targeterPtr->dump(dumper);
-            dumper.eol();
-        }
+        display.selectorPtr->dump(dumper);
+        display.targeterPtr->dump(dumper);
+        dumper.eol();
     }
 }
 
@@ -913,9 +916,13 @@ void Scheduler::dumpVsync(std::string& out) const {
     }
 }
 
-bool Scheduler::updateFrameRateOverrides(GlobalSignals consideredSignals, Fps displayRefreshRate) {
-    std::scoped_lock lock(mPolicyLock);
-    return updateFrameRateOverridesLocked(consideredSignals, displayRefreshRate);
+void Scheduler::updateFrameRateOverrides(GlobalSignals consideredSignals, Fps displayRefreshRate) {
+    const bool changed = (std::scoped_lock(mPolicyLock),
+                          updateFrameRateOverridesLocked(consideredSignals, displayRefreshRate));
+
+    if (changed) {
+        onFrameRateOverridesChanged();
+    }
 }
 
 bool Scheduler::updateFrameRateOverridesLocked(GlobalSignals consideredSignals,
@@ -1135,7 +1142,8 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
         for (auto& [id, choice] : modeChoices) {
             modeRequests.emplace_back(
                     display::DisplayModeRequest{.mode = std::move(choice.mode),
-                                                .emitEvent = !choice.consideredSignals.idle});
+                                                .emitEvent = choice.consideredSignals
+                                                                     .shouldEmitEvent()});
         }
 
         if (!FlagManager::getInstance().vrr_bugfix_dropped_frame()) {
@@ -1153,12 +1161,10 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
 
             mPolicy.modeOpt = modeOpt;
             refreshRateChanged = true;
-        } else {
-            // We don't need to change the display mode, but we might need to send an event
-            // about a mode change, since it was suppressed if previously considered idle.
-            if (!consideredSignals.idle) {
-                dispatchCachedReportedMode();
-            }
+        } else if (consideredSignals.shouldEmitEvent()) {
+            // The mode did not change, but we may need to emit if DisplayModeRequest::emitEvent was
+            // previously false.
+            emitModeChangeIfNeeded();
         }
     }
     if (refreshRateChanged) {
@@ -1171,7 +1177,7 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
                 updateFrameRateOverridesLocked(consideredSignals, mPolicy.modeOpt->fps);
     }
     if (frameRateOverridesChanged) {
-        mSchedulerCallback.triggerOnFrameRateOverridesChanged();
+        onFrameRateOverridesChanged();
     }
     return consideredSignals;
 }
@@ -1271,6 +1277,8 @@ void Scheduler::setGameModeFrameRateForUid(FrameRateOverride frameRateOverride) 
     } else {
         mFrameRateOverrideMappings.setGameModeRefreshRateForUid(frameRateOverride);
     }
+
+    onFrameRateOverridesChanged();
 }
 
 void Scheduler::setGameDefaultFrameRateForUid(FrameRateOverride frameRateOverride) {
@@ -1289,6 +1297,7 @@ void Scheduler::setPreferredRefreshRateForUid(FrameRateOverride frameRateOverrid
     }
 
     mFrameRateOverrideMappings.setPreferredRefreshRateForUid(frameRateOverride);
+    onFrameRateOverridesChanged();
 }
 
 void Scheduler::updateSmallAreaDetection(

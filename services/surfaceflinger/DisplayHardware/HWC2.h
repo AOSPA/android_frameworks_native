@@ -45,6 +45,7 @@
 #include <aidl/android/hardware/graphics/composer3/Color.h>
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
+#include <aidl/android/hardware/graphics/composer3/Lut.h>
 #include <aidl/android/hardware/graphics/composer3/OverlayProperties.h>
 #include <aidl/android/hardware/graphics/composer3/RefreshRateChangedDebugData.h>
 
@@ -178,6 +179,8 @@ public:
     [[nodiscard]] virtual hal::Error getClientTargetProperty(
             aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness*
                     outClientTargetProperty) = 0;
+    [[nodiscard]] virtual hal::Error getDisplayLuts(
+            std::vector<aidl::android::hardware::graphics::composer3::Lut>* outLuts) = 0;
     [[nodiscard]] virtual hal::Error getDisplayDecorationSupport(
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) = 0;
@@ -261,6 +264,8 @@ public:
     hal::Error getClientTargetProperty(
             aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness*
                     outClientTargetProperty) override;
+    hal::Error getDisplayLuts(
+            std::vector<aidl::android::hardware::graphics::composer3::Lut>* outLuts) override;
     hal::Error getDisplayDecorationSupport(
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) override;

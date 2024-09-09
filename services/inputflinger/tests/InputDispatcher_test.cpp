@@ -4168,6 +4168,7 @@ TEST_F(InputDispatcherTest, SplitTouchesSendCorrectActionDownTime) {
  * the event routing because the first window prevents splitting.
  */
 TEST_F(InputDispatcherTest, SplitTouchesSendCorrectActionDownTimeForNewWindow) {
+    SCOPED_FLAG_OVERRIDE(split_all_touches, false);
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window1 =
             sp<FakeWindowHandle>::make(application, mDispatcher, "Window1", DISPLAY_ID);
@@ -4225,6 +4226,7 @@ TEST_F(InputDispatcherTest, SplitTouchesSendCorrectActionDownTimeForNewWindow) {
  * (and the touch occurred outside of the bounds of window1).
  */
 TEST_F(InputDispatcherTest, SplitTouchesDropsEventForNonSplittableSecondWindow) {
+    SCOPED_FLAG_OVERRIDE(split_all_touches, false);
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window1 =
             sp<FakeWindowHandle>::make(application, mDispatcher, "Window1", DISPLAY_ID);
@@ -4600,6 +4602,7 @@ class SpyThatPreventsSplittingWithApplicationFixture : public InputDispatcherTes
  * This test attempts to reproduce a crash in the dispatcher.
  */
 TEST_P(SpyThatPreventsSplittingWithApplicationFixture, SpyThatPreventsSplittingWithApplication) {
+    SCOPED_FLAG_OVERRIDE(split_all_touches, false);
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
 
     sp<FakeWindowHandle> spyWindow = sp<FakeWindowHandle>::make(application, mDispatcher, "Spy",
@@ -5031,6 +5034,54 @@ TEST_F_WITH_FLAGS(InputDispatcherTest, InvalidA11yHoverStreamDoesNotCrash,
               injectMotionEvent(*mDispatcher, hoverEnterBuilder.build()));
     window->consumeMotionEvent(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_ENTER));
     window->consumeMotionEvent(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_ENTER));
+}
+
+/**
+ * Invalid events injected by input filter are rejected.
+ */
+TEST_F(InputDispatcherTest, InvalidA11yEventsGetRejected) {
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher, "Window",
+                                                             ui::LogicalDisplayId::DEFAULT);
+
+    mDispatcher->setFocusedApplication(ui::LogicalDisplayId::DEFAULT, application);
+
+    mDispatcher->onWindowInfosChanged({{*window->getInfo()}, {}, 0, 0});
+
+    // a11y sets 'POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY' policy flag during injection, so define
+    // a custom injection function here for convenience.
+    auto injectFromAccessibility = [&](int32_t action, float x, float y) {
+        MotionEvent event = MotionEventBuilder(action, AINPUT_SOURCE_TOUCHSCREEN)
+                                    .pointer(PointerBuilder(0, ToolType::FINGER).x(x).y(y))
+                                    .addFlag(AMOTION_EVENT_FLAG_IS_ACCESSIBILITY_EVENT)
+                                    .build();
+        return injectMotionEvent(*mDispatcher, event, 100ms,
+                                 InputEventInjectionSync::WAIT_FOR_RESULT, /*targetUid=*/{},
+                                 POLICY_FLAG_PASS_TO_USER | POLICY_FLAG_FILTERED |
+                                         POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY);
+    };
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectFromAccessibility(ACTION_DOWN, /*x=*/300, /*y=*/400));
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectFromAccessibility(ACTION_MOVE, /*x=*/310, /*y=*/420));
+    window->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+    window->consumeMotionEvent(WithMotionAction(ACTION_MOVE));
+    // finger is still down, so a new DOWN event should be rejected!
+    ASSERT_EQ(InputEventInjectionResult::FAILED,
+              injectFromAccessibility(ACTION_DOWN, /*x=*/340, /*y=*/410));
+
+    // if the gesture is correctly finished, new down event will succeed
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectFromAccessibility(ACTION_MOVE, /*x=*/320, /*y=*/430));
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectFromAccessibility(ACTION_UP, /*x=*/320, /*y=*/430));
+    window->consumeMotionEvent(WithMotionAction(ACTION_MOVE));
+    window->consumeMotionEvent(WithMotionAction(ACTION_UP));
+
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              injectFromAccessibility(ACTION_DOWN, /*x=*/350, /*y=*/460));
+    window->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
 }
 
 /**
@@ -5583,6 +5634,7 @@ TEST_F(InputDispatcherTest, OnWindowInfosChanged_RemoveAllWindowsOnDisplay) {
 }
 
 TEST_F(InputDispatcherTest, NonSplitTouchableWindowReceivesMultiTouch) {
+    SCOPED_FLAG_OVERRIDE(split_all_touches, false);
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window =
             sp<FakeWindowHandle>::make(application, mDispatcher, "Fake Window",
@@ -5628,6 +5680,7 @@ TEST_F(InputDispatcherTest, NonSplitTouchableWindowReceivesMultiTouch) {
  * "incomplete" gestures.
  */
 TEST_F(InputDispatcherTest, SplittableAndNonSplittableWindows) {
+    SCOPED_FLAG_OVERRIDE(split_all_touches, false);
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> leftWindow =
             sp<FakeWindowHandle>::make(application, mDispatcher, "Left splittable Window",
@@ -5658,6 +5711,273 @@ TEST_F(InputDispatcherTest, SplittableAndNonSplittableWindows) {
 }
 
 /**
+ * Three windows:
+ * 1) A window on the left, with flag dup_to_wallpaper
+ * 2) A window on the right, with flag slippery
+ * 3) A wallpaper window  under the left window
+ * When touch slips from right window to left, the wallpaper should receive a similar slippery
+ * enter event. Later on, when another device becomes active, the wallpaper should receive
+ * consistent streams from the new device, and also from the old device.
+ * This test attempts to reproduce a crash in the dispatcher where the wallpaper target's downTime
+ * was not getting set during slippery entrance.
+ */
+TEST_F(InputDispatcherTest, WallpaperWindowWhenSlipperyAndMultiWindowMultiTouch) {
+    SCOPED_FLAG_OVERRIDE(enable_multi_device_same_window_stream, true);
+    std::shared_ptr<FakeApplicationHandle> application1 = std::make_shared<FakeApplicationHandle>();
+    std::shared_ptr<FakeApplicationHandle> application2 = std::make_shared<FakeApplicationHandle>();
+    std::shared_ptr<FakeApplicationHandle> application3 = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> wallpaper =
+            sp<FakeWindowHandle>::make(application1, mDispatcher, "wallpaper",
+                                       ui::LogicalDisplayId::DEFAULT);
+    wallpaper->setIsWallpaper(true);
+    wallpaper->setPreventSplitting(true);
+    wallpaper->setTouchable(false);
+
+    sp<FakeWindowHandle> leftWindow = sp<FakeWindowHandle>::make(application2, mDispatcher, "Left",
+                                                                 ui::LogicalDisplayId::DEFAULT);
+    leftWindow->setTouchableRegion(Region{{0, 0, 100, 100}});
+    leftWindow->setDupTouchToWallpaper(true);
+
+    sp<FakeWindowHandle> rightWindow =
+            sp<FakeWindowHandle>::make(application3, mDispatcher, "Right",
+                                       ui::LogicalDisplayId::DEFAULT);
+    rightWindow->setTouchableRegion(Region{{100, 0, 200, 100}});
+    rightWindow->setSlippery(true);
+    rightWindow->setWatchOutsideTouch(true);
+    rightWindow->setTrustedOverlay(true);
+
+    mDispatcher->onWindowInfosChanged(
+            {{*rightWindow->getInfo(), *leftWindow->getInfo(), *wallpaper->getInfo()}, {}, 0, 0});
+
+    const DeviceId deviceA = 3;
+    const DeviceId deviceB = 9;
+
+    // First finger from device A into right window
+    NotifyMotionArgs deviceADownArgs =
+            MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(0, ToolType::FINGER).x(150).y(50))
+                    .deviceId(deviceA)
+                    .build();
+
+    mDispatcher->notifyMotion(deviceADownArgs);
+    rightWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // Move the finger of device A from right window into left window. It should slip.
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(80).y(50))
+                                      .deviceId(deviceA)
+                                      .downTime(deviceADownArgs.downTime)
+                                      .build());
+
+    leftWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+    rightWindow->consumeMotionEvent(WithMotionAction(ACTION_CANCEL));
+    wallpaper->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // Finger from device B down into left window
+    NotifyMotionArgs deviceBDownArgs =
+            MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(0, ToolType::FINGER).x(40).y(40))
+                    .deviceId(deviceB)
+                    .build();
+    mDispatcher->notifyMotion(deviceBDownArgs);
+    leftWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_DOWN)));
+    wallpaper->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_DOWN)));
+
+    rightWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_OUTSIDE)));
+
+    // Move finger from device B, still keeping it in the left window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(40).y(50))
+                                      .deviceId(deviceB)
+                                      .downTime(deviceBDownArgs.downTime)
+                                      .build());
+    leftWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_MOVE)));
+    wallpaper->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_MOVE)));
+
+    // Lift the finger from device B
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(40).y(50))
+                                      .deviceId(deviceB)
+                                      .downTime(deviceBDownArgs.downTime)
+                                      .build());
+    leftWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_UP)));
+    wallpaper->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_UP)));
+
+    // Move the finger of device A, keeping it in the left window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(70).y(50))
+                                      .deviceId(deviceA)
+                                      .downTime(deviceADownArgs.downTime)
+                                      .build());
+
+    leftWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_MOVE)));
+    wallpaper->consumeMotionEvent(AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_MOVE)));
+
+    // Second finger down from device A, into the right window. It should be split into:
+    // MOVE for the left window (due to existing implementation) + a DOWN into the right window
+    // Wallpaper will not receive this new pointer, and it will only get the MOVE event.
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(70).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(140).y(50))
+                                      .deviceId(deviceA)
+                                      .downTime(deviceADownArgs.downTime)
+                                      .build());
+    auto firstFingerMoveFromDeviceA = AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_MOVE),
+                                            WithPointerCount(1), WithPointerId(0, 0));
+    leftWindow->consumeMotionEvent(firstFingerMoveFromDeviceA);
+    wallpaper->consumeMotionEvent(firstFingerMoveFromDeviceA);
+    rightWindow->consumeMotionEvent(
+            AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_DOWN), WithPointerId(0, 1)));
+
+    // Lift up the second finger.
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(70).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(140).y(50))
+                                      .deviceId(deviceA)
+                                      .downTime(deviceADownArgs.downTime)
+                                      .build());
+
+    rightWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_UP)));
+    leftWindow->consumeMotionEvent(firstFingerMoveFromDeviceA);
+    wallpaper->consumeMotionEvent(firstFingerMoveFromDeviceA);
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(70).y(50))
+                                      .deviceId(deviceA)
+                                      .downTime(deviceADownArgs.downTime)
+                                      .build());
+
+    leftWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_UP)));
+    wallpaper->consumeMotionEvent(AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_UP)));
+    rightWindow->assertNoEvents();
+}
+
+/**
+ * Same test as above, but with enable_multi_device_same_window_stream flag set to false.
+ */
+TEST_F(InputDispatcherTest, WallpaperWindowWhenSlipperyAndMultiWindowMultiTouch_legacy) {
+    SCOPED_FLAG_OVERRIDE(enable_multi_device_same_window_stream, false);
+    std::shared_ptr<FakeApplicationHandle> application1 = std::make_shared<FakeApplicationHandle>();
+    std::shared_ptr<FakeApplicationHandle> application2 = std::make_shared<FakeApplicationHandle>();
+    std::shared_ptr<FakeApplicationHandle> application3 = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> wallpaper =
+            sp<FakeWindowHandle>::make(application1, mDispatcher, "wallpaper",
+                                       ui::LogicalDisplayId::DEFAULT);
+    wallpaper->setIsWallpaper(true);
+    wallpaper->setPreventSplitting(true);
+    wallpaper->setTouchable(false);
+
+    sp<FakeWindowHandle> leftWindow = sp<FakeWindowHandle>::make(application2, mDispatcher, "Left",
+                                                                 ui::LogicalDisplayId::DEFAULT);
+    leftWindow->setTouchableRegion(Region{{0, 0, 100, 100}});
+    leftWindow->setDupTouchToWallpaper(true);
+
+    sp<FakeWindowHandle> rightWindow =
+            sp<FakeWindowHandle>::make(application3, mDispatcher, "Right",
+                                       ui::LogicalDisplayId::DEFAULT);
+    rightWindow->setTouchableRegion(Region{{100, 0, 200, 100}});
+    rightWindow->setSlippery(true);
+    rightWindow->setWatchOutsideTouch(true);
+    rightWindow->setTrustedOverlay(true);
+
+    mDispatcher->onWindowInfosChanged(
+            {{*rightWindow->getInfo(), *leftWindow->getInfo(), *wallpaper->getInfo()}, {}, 0, 0});
+
+    const DeviceId deviceA = 3;
+    const DeviceId deviceB = 9;
+
+    // First finger from device A into right window
+    NotifyMotionArgs deviceADownArgs =
+            MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(0, ToolType::FINGER).x(150).y(50))
+                    .deviceId(deviceA)
+                    .build();
+
+    mDispatcher->notifyMotion(deviceADownArgs);
+    rightWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // Move the finger of device A from right window into left window. It should slip.
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(80).y(50))
+                                      .deviceId(deviceA)
+                                      .downTime(deviceADownArgs.downTime)
+                                      .build());
+
+    leftWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+    rightWindow->consumeMotionEvent(WithMotionAction(ACTION_CANCEL));
+    wallpaper->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // Finger from device B down into left window
+    NotifyMotionArgs deviceBDownArgs =
+            MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(PointerBuilder(0, ToolType::FINGER).x(40).y(40))
+                    .deviceId(deviceB)
+                    .build();
+    mDispatcher->notifyMotion(deviceBDownArgs);
+    leftWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_CANCEL)));
+    leftWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_DOWN)));
+    wallpaper->consumeMotionEvent(AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_CANCEL)));
+    wallpaper->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_DOWN)));
+
+    rightWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_OUTSIDE)));
+
+    // Move finger from device B, still keeping it in the left window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(40).y(50))
+                                      .deviceId(deviceB)
+                                      .downTime(deviceBDownArgs.downTime)
+                                      .build());
+    leftWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_MOVE)));
+    wallpaper->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_MOVE)));
+
+    // Lift the finger from device B
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(40).y(50))
+                                      .deviceId(deviceB)
+                                      .downTime(deviceBDownArgs.downTime)
+                                      .build());
+    leftWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_UP)));
+    wallpaper->consumeMotionEvent(AllOf(WithDeviceId(deviceB), WithMotionAction(ACTION_UP)));
+
+    // Move the finger of device A, keeping it in the left window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(70).y(50))
+                                      .deviceId(deviceA)
+                                      .downTime(deviceADownArgs.downTime)
+                                      .build());
+    // This device was already canceled, so MOVE events will not be arriving to the windows from it.
+
+    // Second finger down from device A, into the right window. It should be split into:
+    // MOVE for the left window (due to existing implementation) + a DOWN into the right window
+    // Wallpaper will not receive this new pointer, and it will only get the MOVE event.
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(70).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(140).y(50))
+                                      .deviceId(deviceA)
+                                      .downTime(deviceADownArgs.downTime)
+                                      .build());
+    rightWindow->consumeMotionEvent(
+            AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_DOWN), WithPointerId(0, 1)));
+
+    // Lift up the second finger.
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(70).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(140).y(50))
+                                      .deviceId(deviceA)
+                                      .downTime(deviceADownArgs.downTime)
+                                      .build());
+
+    rightWindow->consumeMotionEvent(AllOf(WithDeviceId(deviceA), WithMotionAction(ACTION_UP)));
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(70).y(50))
+                                      .deviceId(deviceA)
+                                      .downTime(deviceADownArgs.downTime)
+                                      .build());
+    rightWindow->assertNoEvents();
+}
+
+/**
  * Two windows: left and right. The left window has PREVENT_SPLITTING input config. Device A sends a
  * down event to the right window. Device B sends a down event to the left window, and then a
  * POINTER_DOWN event to the right window. However, since the left window prevents splitting, the
@@ -5665,6 +5985,7 @@ TEST_F(InputDispatcherTest, SplittableAndNonSplittableWindows) {
  * This test attempts to reproduce a crash.
  */
 TEST_F(InputDispatcherTest, MultiDeviceTwoWindowsPreventSplitting) {
+    SCOPED_FLAG_OVERRIDE(split_all_touches, false);
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> leftWindow =
             sp<FakeWindowHandle>::make(application, mDispatcher, "Left window (prevent splitting)",
@@ -8411,6 +8732,7 @@ TEST_F(InputDispatcherTest, HoverEnterExitSynthesisUsesNewEventId) {
  * the previous window should receive this event and not be dropped.
  */
 TEST_F(InputDispatcherMultiDeviceTest, SingleDevicePointerDownEventRetentionWithoutWindowTarget) {
+    SCOPED_FLAG_OVERRIDE(split_all_touches, false);
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher, "Window",
                                                              ui::LogicalDisplayId::DEFAULT);

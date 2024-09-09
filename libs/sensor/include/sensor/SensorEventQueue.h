@@ -20,9 +20,10 @@
 #include <sys/types.h>
 
 #include <utils/Errors.h>
-#include <utils/RefBase.h>
-#include <utils/Timers.h>
 #include <utils/Mutex.h>
+#include <utils/RefBase.h>
+#include <utils/String8.h>
+#include <utils/Timers.h>
 
 #include <sensor/BitTube.h>
 
@@ -67,7 +68,7 @@ public:
     static constexpr int32_t SENSOR_DELAY_NORMAL = 200000;
 
     explicit SensorEventQueue(const sp<ISensorEventConnection>& connection,
-                              SensorManager& sensorManager);
+                              SensorManager& sensorManager, String8 packageName);
     virtual ~SensorEventQueue();
     virtual void onFirstRef();
 
@@ -110,6 +111,7 @@ private:
     mutable sp<Looper> mLooper;
     ASensorEvent* mRecBuffer;
     SensorManager& mSensorManager;
+    String8 mPackageName;
     size_t mAvailable;
     size_t mConsumed;
     uint32_t mNumAcksToSend;

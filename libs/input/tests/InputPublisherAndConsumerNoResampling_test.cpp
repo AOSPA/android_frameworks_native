@@ -396,8 +396,9 @@ void InputPublisherAndConsumerNoResamplingTest::handleMessage(const Message& mes
             break;
         }
         case LooperMessage::CREATE_CONSUMER: {
-            mConsumer = std::make_unique<InputConsumerNoResampling>(std::move(mClientChannel),
-                                                                    mLooper, *this);
+            mConsumer =
+                    std::make_unique<InputConsumerNoResampling>(std::move(mClientChannel), mLooper,
+                                                                *this, /*resampler=*/nullptr);
             break;
         }
         case LooperMessage::DESTROY_CONSUMER: {
