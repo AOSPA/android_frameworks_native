@@ -1265,6 +1265,12 @@ void LayerSnapshotBuilder::forEachSnapshot(const Visitor& visitor,
     }
 }
 
+void LayerSnapshotBuilder::forEachSnapshot(const ConstVisitor& visitor) const {
+    for (auto& snapshot : mSnapshots) {
+        visitor(*snapshot);
+    }
+}
+
 void LayerSnapshotBuilder::forEachInputSnapshot(const ConstVisitor& visitor) const {
     for (int i = mNumInterestingSnapshots - 1; i >= 0; i--) {
         LayerSnapshot& snapshot = *mSnapshots[(size_t)i];

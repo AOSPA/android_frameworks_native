@@ -117,6 +117,10 @@ public:
         return reader->getSensors(deviceId);
     }
 
+    std::optional<HardwareProperties> getTouchpadHardwareProperties(int32_t deviceId) {
+        return reader->getTouchpadHardwareProperties(deviceId);
+    }
+
     bool canDispatchToDisplay(int32_t deviceId, ui::LogicalDisplayId displayId) {
         return reader->canDispatchToDisplay(deviceId, displayId);
     }

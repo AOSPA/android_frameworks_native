@@ -35,6 +35,7 @@
 
 #include "PointerControllerInterface.h"
 #include "VibrationElement.h"
+#include "include/gestures.h"
 
 // Maximum supported size of a vibration pattern.
 // Must be at least 2.
@@ -227,6 +228,9 @@ struct InputReaderConfiguration {
     // True to enable tap dragging on touchpads.
     bool touchpadTapDraggingEnabled;
 
+    // True if hardware state update notifications should be sent to the policy.
+    bool shouldNotifyTouchpadHardwareState;
+
     // True to enable a zone on the right-hand side of touchpads where clicks will be turned into
     // context (a.k.a. "right") clicks.
     bool touchpadRightClickZoneEnabled;
@@ -268,6 +272,7 @@ struct InputReaderConfiguration {
             touchpadNaturalScrollingEnabled(true),
             touchpadTapToClickEnabled(true),
             touchpadTapDraggingEnabled(false),
+            shouldNotifyTouchpadHardwareState(false),
             touchpadRightClickZoneEnabled(false),
             stylusButtonMotionEventsEnabled(true),
             stylusPointerIconEnabled(false) {}
@@ -362,6 +367,8 @@ public:
     virtual std::vector<InputDeviceLightInfo> getLights(int32_t deviceId) = 0;
 
     virtual std::vector<InputDeviceSensorInfo> getSensors(int32_t deviceId) = 0;
+
+    virtual std::optional<HardwareProperties> getTouchpadHardwareProperties(int32_t deviceId) = 0;
 
     /* Return true if the device can send input events to the specified display. */
     virtual bool canDispatchToDisplay(int32_t deviceId, ui::LogicalDisplayId displayId) = 0;

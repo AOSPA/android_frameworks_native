@@ -167,7 +167,7 @@ void applyHapticScale(float* buffer, size_t length, HapticScale scale) {
             }
         }
 
-        if (adaptiveScaleFactor != 1.0f) {
+        if (adaptiveScaleFactor >= 0 && adaptiveScaleFactor != 1.0f) {
             buffer[i] *= adaptiveScaleFactor;
         }
     }

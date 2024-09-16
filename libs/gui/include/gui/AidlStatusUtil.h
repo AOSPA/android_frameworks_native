@@ -16,9 +16,11 @@
 
 #pragma once
 
+#include <android/gui/ARect.h>
 #include <binder/Status.h>
+#include <ui/Rect.h>
 
-// Extracted from frameworks/av/media/libaudioclient/include/media/AidlConversionUtil.h
+// Originally extracted from frameworks/av/media/libaudioclient/include/media/AidlConversionUtil.h
 namespace android::gui::aidl_utils {
 
 /**
@@ -109,6 +111,28 @@ static inline ::android::binder::Status binderStatusFromStatusT(
 
     // throw a ServiceSpecificException.
     return Status::fromServiceSpecificError(status, emptyIfNull);
+}
+
+static inline Rect fromARect(ARect rect) {
+    return Rect(rect.left, rect.top, rect.right, rect.bottom);
+}
+
+static inline ARect toARect(Rect rect) {
+    ARect aRect;
+
+    aRect.left = rect.left;
+    aRect.top = rect.top;
+    aRect.right = rect.right;
+    aRect.bottom = rect.bottom;
+    return aRect;
+}
+
+static inline ARect toARect(int32_t left, int32_t top, int32_t right, int32_t bottom) {
+    return toARect(Rect(left, top, right, bottom));
+}
+
+static inline ARect toARect(int32_t width, int32_t height) {
+    return toARect(Rect(width, height));
 }
 
 } // namespace android::gui::aidl_utils

@@ -141,6 +141,8 @@ public:
 
     size_t getMapperCount();
 
+    std::optional<HardwareProperties> getTouchpadHardwareProperties();
+
     // construct and add a mapper to the input device
     template <class T, typename... Args>
     T& addMapper(int32_t eventHubId, Args... args) {

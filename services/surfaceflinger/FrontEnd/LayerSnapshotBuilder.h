@@ -91,6 +91,9 @@ public:
     // snapshots in z-order
     void forEachSnapshot(const Visitor& visitor, const ConstPredicate& predicate);
 
+    // Visit each snapshot
+    void forEachSnapshot(const ConstVisitor& visitor) const;
+
     // Visit each snapshot interesting to input reverse z-order
     void forEachInputSnapshot(const ConstVisitor& visitor) const;
 

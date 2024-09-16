@@ -126,6 +126,14 @@ flag {
 } # override_trusted_overlay
 
 flag {
+    name: "view_set_requested_frame_rate_mrr"
+    namespace: "core_graphics"
+    description: "Enable to use frame rate category NoPreference with fixed frame rate vote on MRR devices"
+    bug: "352206100"
+    is_fixed_read_only: true
+} # view_set_requested_frame_rate_mrr
+
+flag {
   name: "vrr_bugfix_24q4"
   namespace: "core_graphics"
   description: "bug fixes for VRR"

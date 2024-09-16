@@ -15,6 +15,7 @@
  */
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
+#include "gui/AidlStatusUtil.h"
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
 
@@ -64,7 +65,7 @@ TEST_P(LayerTypeTransactionTest, SetRelativeZNegative) {
     // only layerB is in this range
     LayerCaptureArgs captureArgs;
     captureArgs.layerHandle = parent->getHandle();
-    captureArgs.sourceCrop = {0, 0, 32, 32};
+    captureArgs.captureArgs.sourceCrop = gui::aidl_utils::toARect(32, 32);
     ScreenCapture::captureLayers(&screenshot, captureArgs);
     screenshot->expectColor(Rect(0, 0, 32, 32), Color::BLUE);
 }

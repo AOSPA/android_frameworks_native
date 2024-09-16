@@ -892,6 +892,50 @@ TEST_F(LayerHistoryIntegrationTest, oneLayerExplicitCategory) {
     EXPECT_EQ(FrameRateCategory::High, summarizeLayerHistory(time)[0].frameRateCategory);
 }
 
+TEST_F(LayerHistoryIntegrationTest, oneLayerExplicitVoteWithFixedSourceAndNoPreferenceCategory) {
+    SET_FLAG_FOR_TEST(flags::frame_rate_category_mrr, false);
+    SET_FLAG_FOR_TEST(flags::view_set_requested_frame_rate_mrr, true);
+
+    auto layer = createLegacyAndFrontedEndLayer(1);
+    setFrameRate(1, (45.6_Hz).getValue(), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                 ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
+    setFrameRateCategory(1, ANATIVEWINDOW_FRAME_RATE_CATEGORY_NO_PREFERENCE);
+
+    EXPECT_EQ(1u, layerCount());
+    EXPECT_EQ(0u, activeLayerCount());
+
+    nsecs_t time = systemTime();
+    updateLayerSnapshotsAndLayerHistory(time);
+    for (size_t i = 0; i < PRESENT_TIME_HISTORY_SIZE; i++) {
+        setBufferWithPresentTime(layer, time);
+        time += HI_FPS_PERIOD;
+    }
+
+    // There are 2 LayerRequirement's due to the frame rate category.
+    ASSERT_EQ(2u, summarizeLayerHistory(time).size());
+    EXPECT_EQ(1u, activeLayerCount());
+    EXPECT_EQ(1, frequentLayerCount(time));
+    // First LayerRequirement is the layer's category specification
+    EXPECT_EQ(LayerHistory::LayerVoteType::ExplicitCategory, summarizeLayerHistory(time)[0].vote);
+    EXPECT_EQ(0_Hz, summarizeLayerHistory(time)[0].desiredRefreshRate);
+    EXPECT_EQ(FrameRateCategory::NoPreference, summarizeLayerHistory(time)[0].frameRateCategory);
+
+    // Second LayerRequirement is the frame rate specification
+    EXPECT_EQ(LayerHistory::LayerVoteType::ExplicitExactOrMultiple,
+              summarizeLayerHistory(time)[1].vote);
+    EXPECT_EQ(45.6_Hz, summarizeLayerHistory(time)[1].desiredRefreshRate);
+    EXPECT_EQ(FrameRateCategory::Default, summarizeLayerHistory(time)[1].frameRateCategory);
+
+    // layer became infrequent, but the vote stays
+    time += MAX_ACTIVE_LAYER_PERIOD_NS.count();
+    ASSERT_EQ(2u, summarizeLayerHistory(time).size());
+    EXPECT_EQ(1u, activeLayerCount());
+    EXPECT_EQ(0, frequentLayerCount(time));
+    EXPECT_EQ(LayerHistory::LayerVoteType::ExplicitCategory, summarizeLayerHistory(time)[0].vote);
+    EXPECT_EQ(0_Hz, summarizeLayerHistory(time)[0].desiredRefreshRate);
+    EXPECT_EQ(FrameRateCategory::NoPreference, summarizeLayerHistory(time)[0].frameRateCategory);
+}
+
 TEST_F(LayerHistoryIntegrationTest, multipleLayers) {
     auto layer1 = createLegacyAndFrontedEndLayer(1);
     auto layer2 = createLegacyAndFrontedEndLayer(2);

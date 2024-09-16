@@ -232,9 +232,16 @@ private:
     // latch stale buffers and that we don't wait on barriers from an old producer.
     uint32_t mProducerId = 0;
 
+    class BLASTBufferItem : public BufferItem {
+    public:
+        // True if BBQBufferQueueProducer is disconnected after the buffer is acquried but
+        // before it is released.
+        bool disconnectedAfterAcquired{false};
+    };
+
     // Keep a reference to the submitted buffers so we can release when surfaceflinger drops the
     // buffer or the buffer has been presented and a new buffer is ready to be presented.
-    std::unordered_map<ReleaseCallbackId, BufferItem, ReleaseBufferCallbackIdHash> mSubmitted
+    std::unordered_map<ReleaseCallbackId, BLASTBufferItem, ReleaseBufferCallbackIdHash> mSubmitted
             GUARDED_BY(mMutex);
 
     // Keep a queue of the released buffers instead of immediately releasing

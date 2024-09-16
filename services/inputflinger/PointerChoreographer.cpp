@@ -511,8 +511,9 @@ void PointerChoreographer::dump(std::string& dump) {
     std::scoped_lock _l(mLock);
 
     dump += "PointerChoreographer:\n";
-    dump += StringPrintf("show touches: %s\n", mShowTouchesEnabled ? "true" : "false");
-    dump += StringPrintf("stylus pointer icon enabled: %s\n",
+    dump += StringPrintf(INDENT "Show Touches Enabled: %s\n",
+                         mShowTouchesEnabled ? "true" : "false");
+    dump += StringPrintf(INDENT "Stylus PointerIcon Enabled: %s\n",
                          mStylusPointerIconEnabled ? "true" : "false");
 
     dump += INDENT "MousePointerControllers:\n";

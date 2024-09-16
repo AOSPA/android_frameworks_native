@@ -229,7 +229,8 @@ protected:
                                                  ISurfaceComposerClient::eFXSurfaceBufferState,
                                                  /*parent*/ mRootSurfaceControl->getHandle());
 
-        mCaptureArgs.sourceCrop = Rect(ui::Size(mDisplayWidth, mDisplayHeight));
+        mCaptureArgs.captureArgs.sourceCrop =
+                gui::aidl_utils::toARect(mDisplayWidth, mDisplayHeight);
         mCaptureArgs.layerHandle = mRootSurfaceControl->getHandle();
     }
 

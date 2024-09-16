@@ -188,9 +188,19 @@ TEST_F_WITH_FLAGS(
 }
 
 TEST_F_WITH_FLAGS(
+        ExternalVibrationUtilsTest, TestScaleV2ToScaleFactorUndefinedUsesHapticLevel,
+        // Value of fix_audio_coupled_haptics_scaling is not important, should work with either
+        REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(FLAG_NS, haptics_scale_v2_enabled))) {
+    constexpr float adaptiveScaleNone = 1.0f;
+    float expectedVeryHigh[TEST_BUFFER_LENGTH] = {1, -1, 0.8f, -0.38f};
+    scaleBuffer(HapticScale(HapticLevel::VERY_HIGH, -1.0f /* scaleFactor */, adaptiveScaleNone));
+    EXPECT_FLOATS_NEARLY_EQ(expectedVeryHigh, mBuffer, TEST_BUFFER_LENGTH, TEST_TOLERANCE);
+}
+
+TEST_F_WITH_FLAGS(
         ExternalVibrationUtilsTest, TestScaleV2ToScaleFactorIgnoresLevel,
-    // Value of fix_audio_coupled_haptics_scaling is not important, should work with either
-    REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(FLAG_NS, haptics_scale_v2_enabled))) {
+        // Value of fix_audio_coupled_haptics_scaling is not important, should work with either
+        REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(FLAG_NS, haptics_scale_v2_enabled))) {
     constexpr float adaptiveScaleNone = 1.0f;
 
     float expectedVeryHigh[TEST_BUFFER_LENGTH] = { 1, -1, 1, -0.55f };
@@ -210,9 +220,23 @@ TEST_F_WITH_FLAGS(
     EXPECT_FLOATS_NEARLY_EQ(expectedVeryLow, mBuffer, TEST_BUFFER_LENGTH, TEST_TOLERANCE);
 }
 
+TEST_F_WITH_FLAGS(ExternalVibrationUtilsTest, TestAdaptiveScaleFactorUndefinedIsIgnoredLegacyScale,
+                  REQUIRES_FLAGS_DISABLED(ACONFIG_FLAG(FLAG_NS, fix_audio_coupled_haptics_scaling),
+                                          ACONFIG_FLAG(FLAG_NS, haptics_scale_v2_enabled))) {
+    float expectedVeryHigh[TEST_BUFFER_LENGTH] = {1, -1, 0.79f, -0.39f};
+    scaleBuffer(HapticLevel::VERY_HIGH, -1.0f /* adaptiveScaleFactor */);
+    EXPECT_FLOATS_NEARLY_EQ(expectedVeryHigh, mBuffer, TEST_BUFFER_LENGTH, TEST_TOLERANCE);
+}
+
 TEST_F_WITH_FLAGS(ExternalVibrationUtilsTest, TestAdaptiveScaleFactorAppliedAfterLegacyScale,
                   REQUIRES_FLAGS_DISABLED(ACONFIG_FLAG(FLAG_NS, fix_audio_coupled_haptics_scaling),
                                           ACONFIG_FLAG(FLAG_NS, haptics_scale_v2_enabled))) {
+    // Adaptive scale mutes vibration
+    float expectedMuted[TEST_BUFFER_LENGTH];
+    std::fill(std::begin(expectedMuted), std::end(expectedMuted), 0);
+    scaleBuffer(HapticLevel::VERY_HIGH, 0.0f /* adaptiveScaleFactor */);
+    EXPECT_FLOATS_NEARLY_EQ(expectedMuted, mBuffer, TEST_BUFFER_LENGTH, TEST_TOLERANCE);
+
     // Haptic level scale up then adaptive scale down
     float expectedVeryHigh[TEST_BUFFER_LENGTH] = { 0.2, -0.2, 0.16f, -0.13f };
     scaleBuffer(HapticLevel::VERY_HIGH, 0.2f /* adaptiveScaleFactor */);
@@ -234,9 +258,23 @@ TEST_F_WITH_FLAGS(ExternalVibrationUtilsTest, TestAdaptiveScaleFactorAppliedAfte
     EXPECT_FLOATS_NEARLY_EQ(expectedVeryLow, mBuffer, TEST_BUFFER_LENGTH, TEST_TOLERANCE);
 }
 
+TEST_F_WITH_FLAGS(ExternalVibrationUtilsTest, TestAdaptiveScaleFactorUndefinedIgnoredFixedScale,
+                  REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(FLAG_NS, fix_audio_coupled_haptics_scaling)),
+                  REQUIRES_FLAGS_DISABLED(ACONFIG_FLAG(FLAG_NS, haptics_scale_v2_enabled))) {
+    float expectedVeryHigh[TEST_BUFFER_LENGTH] = {1, -1, 0.79f, -0.39f};
+    scaleBuffer(HapticLevel::VERY_HIGH, -1.0f /* adaptiveScaleFactor */);
+    EXPECT_FLOATS_NEARLY_EQ(expectedVeryHigh, mBuffer, TEST_BUFFER_LENGTH, TEST_TOLERANCE);
+}
+
 TEST_F_WITH_FLAGS(ExternalVibrationUtilsTest, TestAdaptiveScaleFactorAppliedAfterFixedScale,
                   REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(FLAG_NS, fix_audio_coupled_haptics_scaling)),
                   REQUIRES_FLAGS_DISABLED(ACONFIG_FLAG(FLAG_NS, haptics_scale_v2_enabled))) {
+    // Adaptive scale mutes vibration
+    float expectedMuted[TEST_BUFFER_LENGTH];
+    std::fill(std::begin(expectedMuted), std::end(expectedMuted), 0);
+    scaleBuffer(HapticLevel::VERY_HIGH, 0.0f /* adaptiveScaleFactor */);
+    EXPECT_FLOATS_NEARLY_EQ(expectedMuted, mBuffer, TEST_BUFFER_LENGTH, TEST_TOLERANCE);
+
     // Haptic level scale up then adaptive scale down
     float expectedVeryHigh[TEST_BUFFER_LENGTH] = { 0.2, -0.2, 0.16f, -0.07f };
     scaleBuffer(HapticLevel::VERY_HIGH, 0.2f /* adaptiveScaleFactor */);
@@ -259,9 +297,24 @@ TEST_F_WITH_FLAGS(ExternalVibrationUtilsTest, TestAdaptiveScaleFactorAppliedAfte
 }
 
 TEST_F_WITH_FLAGS(
+        ExternalVibrationUtilsTest, TestAdaptiveScaleFactorUndefinedIgnoredScaleV2,
+        // Value of fix_audio_coupled_haptics_scaling is not important, should work with either
+        REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(FLAG_NS, haptics_scale_v2_enabled))) {
+    float expectedVeryHigh[TEST_BUFFER_LENGTH] = {1, -1, 0.8f, -0.38f};
+    scaleBuffer(HapticLevel::VERY_HIGH, -1.0f /* adaptiveScaleFactor */);
+    EXPECT_FLOATS_NEARLY_EQ(expectedVeryHigh, mBuffer, TEST_BUFFER_LENGTH, TEST_TOLERANCE);
+}
+
+TEST_F_WITH_FLAGS(
         ExternalVibrationUtilsTest, TestAdaptiveScaleFactorAppliedAfterScaleV2,
         // Value of fix_audio_coupled_haptics_scaling is not important, should work with either
         REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(FLAG_NS, haptics_scale_v2_enabled))) {
+    // Adaptive scale mutes vibration
+    float expectedMuted[TEST_BUFFER_LENGTH];
+    std::fill(std::begin(expectedMuted), std::end(expectedMuted), 0);
+    scaleBuffer(HapticLevel::VERY_HIGH, 0.0f /* adaptiveScaleFactor */);
+    EXPECT_FLOATS_NEARLY_EQ(expectedMuted, mBuffer, TEST_BUFFER_LENGTH, TEST_TOLERANCE);
+
     // Haptic level scale up then adaptive scale down
     float expectedVeryHigh[TEST_BUFFER_LENGTH] = { 0.2, -0.2, 0.15f, -0.07f };
     scaleBuffer(HapticLevel::VERY_HIGH, 0.2f /* adaptiveScaleFactor */);

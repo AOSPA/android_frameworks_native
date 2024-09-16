@@ -122,6 +122,8 @@ public:
     virtual std::optional<ui::LogicalDisplayId> getAssociatedDisplayId() { return std::nullopt; }
     virtual void updateLedState(bool reset) {}
 
+    virtual std::optional<HardwareProperties> getTouchpadHardwareProperties();
+
 protected:
     InputDeviceContext& mDeviceContext;
 

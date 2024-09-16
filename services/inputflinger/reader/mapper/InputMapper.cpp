@@ -140,4 +140,7 @@ void InputMapper::dumpStylusState(std::string& dump, const StylusState& state) {
     dump += StringPrintf(INDENT4 "Tool Type: %s\n", ftl::enum_string(state.toolType).c_str());
 }
 
+std::optional<HardwareProperties> InputMapper::getTouchpadHardwareProperties() {
+    return std::nullopt;
+}
 } // namespace android

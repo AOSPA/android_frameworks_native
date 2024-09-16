@@ -57,7 +57,9 @@ bool isScaleNone() const {
     return (mLevel == HapticLevel::NONE || mScaleFactor == 1.0f) && mAdaptiveScaleFactor == 1.0f;
 }
 
-bool isScaleMute() const { return mLevel == HapticLevel::MUTE || mScaleFactor == 0; }
+bool isScaleMute() const {
+    return mLevel == HapticLevel::MUTE || mScaleFactor == 0 || mAdaptiveScaleFactor == 0;
+}
 
 std::string toString() const {
     std::ostringstream os;

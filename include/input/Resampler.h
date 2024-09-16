@@ -18,6 +18,7 @@
 
 #include <chrono>
 #include <optional>
+#include <vector>
 
 #include <input/Input.h>
 #include <input/InputTransport.h>
@@ -44,7 +45,7 @@ struct Resampler {
      * samples by the end of the resampling. No other field of motionEvent should be modified.
      * - If resampling does not occur, then motionEvent must not be modified in any way.
      */
-    virtual void resampleMotionEvent(const std::chrono::nanoseconds resampleTime,
+    virtual void resampleMotionEvent(std::chrono::nanoseconds resampleTime,
                                      MotionEvent& motionEvent,
                                      const InputMessage* futureSample) = 0;
 };
@@ -60,7 +61,7 @@ public:
      * data, LegacyResampler will extrapolate. Otherwise, no resampling takes place and
      * `motionEvent` is unmodified.
      */
-    void resampleMotionEvent(const std::chrono::nanoseconds resampleTime, MotionEvent& motionEvent,
+    void resampleMotionEvent(std::chrono::nanoseconds resampleTime, MotionEvent& motionEvent,
                              const InputMessage* futureSample) override;
 
 private:
@@ -71,11 +72,15 @@ private:
 
     struct Sample {
         std::chrono::nanoseconds eventTime;
-        Pointer pointer;
+        std::vector<Pointer> pointers;
 
-        Sample(const std::chrono::nanoseconds eventTime, const PointerProperties& properties,
-               const PointerCoords& coords)
-              : eventTime{eventTime}, pointer{properties, coords} {}
+        std::vector<PointerCoords> asPointerCoords() const {
+            std::vector<PointerCoords> pointersCoords;
+            for (const Pointer& pointer : pointers) {
+                pointersCoords.push_back(pointer.coords);
+            }
+            return pointersCoords;
+        }
     };
 
     /**
@@ -92,24 +97,50 @@ private:
     RingBuffer<Sample> mLatestSamples{/*capacity=*/2};
 
     /**
-     * Adds up to mLatestSamples.capacity() of motionEvent's latest samples to mLatestSamples. (If
+     * Adds up to mLatestSamples.capacity() of motionEvent's latest samples to mLatestSamples. If
      * motionEvent has fewer samples than mLatestSamples.capacity(), then the available samples are
-     * added to mLatestSamples.)
+     * added to mLatestSamples.
      */
     void updateLatestSamples(const MotionEvent& motionEvent);
 
-    /**
-     * May add a sample at the end of motionEvent with eventTime equal to resampleTime, and
-     * interpolated coordinates between the latest motionEvent sample and futureSample.
-     */
-    void interpolate(const std::chrono::nanoseconds resampleTime, MotionEvent& motionEvent,
-                     const InputMessage& futureSample) const;
+    static Sample messageToSample(const InputMessage& message);
 
     /**
-     * May add a sample at the end of motionEvent by extrapolating from the latest two samples. The
-     * added sample either has eventTime equal to resampleTime, or an earlier time if resampleTime
-     * is too far in the future.
+     * Checks if auxiliary sample has the same pointer properties of target sample. That is,
+     * auxiliary pointer IDs must appear in the same order as target pointer IDs, their toolType
+     * must match and be resampleable.
      */
-    void extrapolate(const std::chrono::nanoseconds resampleTime, MotionEvent& motionEvent) const;
+    static bool pointerPropertiesResampleable(const Sample& target, const Sample& auxiliary);
+
+    /**
+     * Checks if there are necessary conditions to interpolate. For example, interpolation cannot
+     * take place if samples are too far apart in time. mLatestSamples must have at least one sample
+     * when canInterpolate is invoked.
+     */
+    bool canInterpolate(const InputMessage& futureSample) const;
+
+    /**
+     * Returns a sample interpolated between the latest sample of mLatestSamples and futureSample,
+     * if the conditions from canInterpolate are satisfied. Otherwise, returns nullopt.
+     * mLatestSamples must have at least one sample when attemptInterpolation is called.
+     */
+    std::optional<Sample> attemptInterpolation(std::chrono::nanoseconds resampleTime,
+                                               const InputMessage& futureSample) const;
+
+    /**
+     * Checks if there are necessary conditions to extrapolate. That is, there are at least two
+     * samples in mLatestSamples, and delta is bounded within a time interval.
+     */
+    bool canExtrapolate() const;
+
+    /**
+     * Returns a sample extrapolated from the two samples of mLatestSamples, if the conditions from
+     * canExtrapolate are satisfied. The returned sample either has eventTime equal to resampleTime,
+     * or an earlier time if resampleTime is too far in the future. If canExtrapolate returns false,
+     * this function returns nullopt.
+     */
+    std::optional<Sample> attemptExtrapolation(std::chrono::nanoseconds resampleTime) const;
+
+    inline static void addSampleToMotionEvent(const Sample& sample, MotionEvent& motionEvent);
 };
 } // namespace android

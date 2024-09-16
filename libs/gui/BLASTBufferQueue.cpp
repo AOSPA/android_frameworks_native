@@ -539,7 +539,7 @@ void BLASTBufferQueue::releaseBuffer(const ReleaseCallbackId& callbackId,
         return;
     }
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
-    if (!it->second.mIsStale) {
+    if (!it->second.disconnectedAfterAcquired) {
         mNumAcquired--;
     }
 #else
@@ -598,7 +598,7 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
         applyTransaction = false;
     }
 
-    BufferItem bufferItem;
+    BLASTBufferItem bufferItem;
 
     status_t status =
             mBufferItemConsumer->acquireBuffer(&bufferItem, 0 /* expectedPresent */, false);
@@ -1170,9 +1170,9 @@ public:
 // can be non-blocking when the producer is in the client process.
 class BBQBufferQueueProducer : public BufferQueueProducer {
 public:
-    BBQBufferQueueProducer(const sp<BufferQueueCore>& core, wp<BLASTBufferQueue> bbq)
+    BBQBufferQueueProducer(const sp<BufferQueueCore>& core, const wp<BLASTBufferQueue>& bbq)
           : BufferQueueProducer(core, false /* consumerIsSurfaceFlinger*/),
-            mBLASTBufferQueue(std::move(bbq)) {}
+            mBLASTBufferQueue(bbq) {}
 
     status_t connect(const sp<IProducerListener>& listener, int api, bool producerControlledByApp,
                      QueueBufferOutput* output) override {
@@ -1196,10 +1196,19 @@ public:
             return status;
         }
 
+        // We need to reset dequeued and acquired counts because BufferQueueProducer::disconnect
+        // calls BufferQueueCore::freeAllBuffersLocked which frees all dequeued and acquired
+        // buffers. We don't reset mNumFrameAvailable because these buffers are still available
+        // in BufferItemConsumer.
         bbq->mNumDequeued = 0;
         bbq->mNumAcquired = 0;
+        // SurfaceFlinger sends release callbacks for buffers that have been acquired after a
+        // disconnect. We set disconnectedAfterAcquired to true so that we can ignore any stale
+        // releases that come in after the producer is disconnected. Otherwise, releaseBuffer will
+        // decrement mNumAcquired for a buffer that was acquired before we reset mNumAcquired to
+        // zero.
         for (auto& [releaseId, bufferItem] : bbq->mSubmitted) {
-            bufferItem.mIsStale = true;
+            bufferItem.disconnectedAfterAcquired = true;
         }
 
         return OK;

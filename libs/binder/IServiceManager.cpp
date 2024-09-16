@@ -79,10 +79,9 @@ IServiceManager::IServiceManager() {}
 IServiceManager::~IServiceManager() {}
 
 // From the old libbinder IServiceManager interface to IServiceManager.
-class ServiceManagerShim : public IServiceManager
-{
+class CppBackendShim : public IServiceManager {
 public:
-    explicit ServiceManagerShim (const sp<AidlServiceManager>& impl);
+    explicit CppBackendShim(const sp<BackendUnifiedServiceManager>& impl);
 
     sp<IBinder> getService(const String16& name) const override;
     sp<IBinder> checkService(const String16& name) const override;
@@ -136,11 +135,11 @@ protected:
                                           sp<RegistrationWaiter>* waiter);
 
     // Directly get the service in a way that, for lazy services, requests the service to be started
-    // if it is not currently started. This way, calls directly to ServiceManagerShim::getService
+    // if it is not currently started. This way, calls directly to CppBackendShim::getService
     // will still have the 5s delay that is expected by a large amount of Android code.
     //
-    // When implementing ServiceManagerShim, use realGetService instead of
-    // mUnifiedServiceManager->getService so that it can be overridden in ServiceManagerHostShim.
+    // When implementing CppBackendShim, use realGetService instead of
+    // mUnifiedServiceManager->getService so that it can be overridden in CppServiceManagerHostShim.
     virtual Status realGetService(const std::string& name, sp<IBinder>* _aidl_return) {
         Service service;
         Status status = mUnifiedServiceManager->getService2(name, &service);
@@ -155,7 +154,7 @@ protected:
 sp<IServiceManager> defaultServiceManager()
 {
     std::call_once(gSmOnce, []() {
-        gDefaultServiceManager = sp<ServiceManagerShim>::make(getBackendUnifiedServiceManager());
+        gDefaultServiceManager = sp<CppBackendShim>::make(getBackendUnifiedServiceManager());
     });
 
     return gDefaultServiceManager;
@@ -279,16 +278,14 @@ void* openDeclaredPassthroughHal(const String16& interface, const String16& inst
 
 // ----------------------------------------------------------------------
 
-ServiceManagerShim::ServiceManagerShim(const sp<AidlServiceManager>& impl) {
-    mUnifiedServiceManager = sp<BackendUnifiedServiceManager>::make(impl);
-}
+CppBackendShim::CppBackendShim(const sp<BackendUnifiedServiceManager>& impl)
+      : mUnifiedServiceManager(impl) {}
 
 // This implementation could be simplified and made more efficient by delegating
 // to waitForService. However, this changes the threading structure in some
 // cases and could potentially break prebuilts. Once we have higher logistical
 // complexity, this could be attempted.
-sp<IBinder> ServiceManagerShim::getService(const String16& name) const
-{
+sp<IBinder> CppBackendShim::getService(const String16& name) const {
     static bool gSystemBootCompleted = false;
 
     sp<IBinder> svc = checkService(name);
@@ -332,8 +329,7 @@ sp<IBinder> ServiceManagerShim::getService(const String16& name) const
     return nullptr;
 }
 
-sp<IBinder> ServiceManagerShim::checkService(const String16& name) const
-{
+sp<IBinder> CppBackendShim::checkService(const String16& name) const {
     Service ret;
     if (!mUnifiedServiceManager->checkService(String8(name).c_str(), &ret).isOk()) {
         return nullptr;
@@ -341,16 +337,14 @@ sp<IBinder> ServiceManagerShim::checkService(const String16& name) const
     return ret.get<Service::Tag::binder>();
 }
 
-status_t ServiceManagerShim::addService(const String16& name, const sp<IBinder>& service,
-                                        bool allowIsolated, int dumpsysPriority)
-{
+status_t CppBackendShim::addService(const String16& name, const sp<IBinder>& service,
+                                    bool allowIsolated, int dumpsysPriority) {
     Status status = mUnifiedServiceManager->addService(String8(name).c_str(), service,
                                                        allowIsolated, dumpsysPriority);
     return status.exceptionCode();
 }
 
-Vector<String16> ServiceManagerShim::listServices(int dumpsysPriority)
-{
+Vector<String16> CppBackendShim::listServices(int dumpsysPriority) {
     std::vector<std::string> ret;
     if (!mUnifiedServiceManager->listServices(dumpsysPriority, &ret).isOk()) {
         return {};
@@ -364,8 +358,7 @@ Vector<String16> ServiceManagerShim::listServices(int dumpsysPriority)
     return res;
 }
 
-sp<IBinder> ServiceManagerShim::waitForService(const String16& name16)
-{
+sp<IBinder> CppBackendShim::waitForService(const String16& name16) {
     class Waiter : public android::os::BnServiceCallback {
         Status onRegistration(const std::string& /*name*/,
                               const sp<IBinder>& binder) override {
@@ -454,7 +447,7 @@ sp<IBinder> ServiceManagerShim::waitForService(const String16& name16)
     }
 }
 
-bool ServiceManagerShim::isDeclared(const String16& name) {
+bool CppBackendShim::isDeclared(const String16& name) {
     bool declared;
     if (Status status = mUnifiedServiceManager->isDeclared(String8(name).c_str(), &declared);
         !status.isOk()) {
@@ -465,7 +458,7 @@ bool ServiceManagerShim::isDeclared(const String16& name) {
     return declared;
 }
 
-Vector<String16> ServiceManagerShim::getDeclaredInstances(const String16& interface) {
+Vector<String16> CppBackendShim::getDeclaredInstances(const String16& interface) {
     std::vector<std::string> out;
     if (Status status =
                 mUnifiedServiceManager->getDeclaredInstances(String8(interface).c_str(), &out);
@@ -483,7 +476,7 @@ Vector<String16> ServiceManagerShim::getDeclaredInstances(const String16& interf
     return res;
 }
 
-std::optional<String16> ServiceManagerShim::updatableViaApex(const String16& name) {
+std::optional<String16> CppBackendShim::updatableViaApex(const String16& name) {
     std::optional<std::string> declared;
     if (Status status = mUnifiedServiceManager->updatableViaApex(String8(name).c_str(), &declared);
         !status.isOk()) {
@@ -494,7 +487,7 @@ std::optional<String16> ServiceManagerShim::updatableViaApex(const String16& nam
     return declared ? std::optional<String16>(String16(declared.value().c_str())) : std::nullopt;
 }
 
-Vector<String16> ServiceManagerShim::getUpdatableNames(const String16& apexName) {
+Vector<String16> CppBackendShim::getUpdatableNames(const String16& apexName) {
     std::vector<std::string> out;
     if (Status status = mUnifiedServiceManager->getUpdatableNames(String8(apexName).c_str(), &out);
         !status.isOk()) {
@@ -511,7 +504,7 @@ Vector<String16> ServiceManagerShim::getUpdatableNames(const String16& apexName)
     return res;
 }
 
-std::optional<IServiceManager::ConnectionInfo> ServiceManagerShim::getConnectionInfo(
+std::optional<IServiceManager::ConnectionInfo> CppBackendShim::getConnectionInfo(
         const String16& name) {
     std::optional<os::ConnectionInfo> connectionInfo;
     if (Status status =
@@ -526,8 +519,8 @@ std::optional<IServiceManager::ConnectionInfo> ServiceManagerShim::getConnection
             : std::nullopt;
 }
 
-status_t ServiceManagerShim::registerForNotifications(const String16& name,
-                                                      const sp<AidlRegistrationCallback>& cb) {
+status_t CppBackendShim::registerForNotifications(const String16& name,
+                                                  const sp<AidlRegistrationCallback>& cb) {
     if (cb == nullptr) {
         ALOGE("%s: null cb passed", __FUNCTION__);
         return BAD_VALUE;
@@ -546,9 +539,9 @@ status_t ServiceManagerShim::registerForNotifications(const String16& name,
     return OK;
 }
 
-void ServiceManagerShim::removeRegistrationCallbackLocked(const sp<AidlRegistrationCallback>& cb,
-                                                          ServiceCallbackMap::iterator* it,
-                                                          sp<RegistrationWaiter>* waiter) {
+void CppBackendShim::removeRegistrationCallbackLocked(const sp<AidlRegistrationCallback>& cb,
+                                                      ServiceCallbackMap::iterator* it,
+                                                      sp<RegistrationWaiter>* waiter) {
     std::vector<LocalRegistrationAndWaiter>& localRegistrationAndWaiters = (*it)->second;
     for (auto lit = localRegistrationAndWaiters.begin();
          lit != localRegistrationAndWaiters.end();) {
@@ -567,8 +560,8 @@ void ServiceManagerShim::removeRegistrationCallbackLocked(const sp<AidlRegistrat
     }
 }
 
-status_t ServiceManagerShim::unregisterForNotifications(const String16& name,
-                                                        const sp<AidlRegistrationCallback>& cb) {
+status_t CppBackendShim::unregisterForNotifications(const String16& name,
+                                                    const sp<AidlRegistrationCallback>& cb) {
     if (cb == nullptr) {
         ALOGE("%s: null cb passed", __FUNCTION__);
         return BAD_VALUE;
@@ -597,7 +590,7 @@ status_t ServiceManagerShim::unregisterForNotifications(const String16& name,
     return OK;
 }
 
-std::vector<IServiceManager::ServiceDebugInfo> ServiceManagerShim::getServiceDebugInfo() {
+std::vector<IServiceManager::ServiceDebugInfo> CppBackendShim::getServiceDebugInfo() {
     std::vector<os::ServiceDebugInfo> serviceDebugInfos;
     std::vector<IServiceManager::ServiceDebugInfo> ret;
     if (Status status = mUnifiedServiceManager->getServiceDebugInfo(&serviceDebugInfos);
@@ -615,21 +608,21 @@ std::vector<IServiceManager::ServiceDebugInfo> ServiceManagerShim::getServiceDeb
 }
 
 #ifndef __ANDROID__
-// ServiceManagerShim for host. Implements the old libbinder android::IServiceManager API.
+// CppBackendShim for host. Implements the old libbinder android::IServiceManager API.
 // The internal implementation of the AIDL interface android::os::IServiceManager calls into
 // on-device service manager.
-class ServiceManagerHostShim : public ServiceManagerShim {
+class CppServiceManagerHostShim : public CppBackendShim {
 public:
-    ServiceManagerHostShim(const sp<AidlServiceManager>& impl,
-                           const RpcDelegateServiceManagerOptions& options)
-          : ServiceManagerShim(impl), mOptions(options) {}
-    // ServiceManagerShim::getService is based on checkService, so no need to override it.
+    CppServiceManagerHostShim(const sp<AidlServiceManager>& impl,
+                              const RpcDelegateServiceManagerOptions& options)
+          : CppBackendShim(sp<BackendUnifiedServiceManager>::make(impl)), mOptions(options) {}
+    // CppBackendShim::getService is based on checkService, so no need to override it.
     sp<IBinder> checkService(const String16& name) const override {
         return getDeviceService({String8(name).c_str()}, mOptions);
     }
 
 protected:
-    // Override realGetService for ServiceManagerShim::waitForService.
+    // Override realGetService for CppBackendShim::waitForService.
     Status realGetService(const std::string& name, sp<IBinder>* _aidl_return) override {
         *_aidl_return = getDeviceService({"-g", name}, mOptions);
         return Status::ok();
@@ -650,7 +643,7 @@ sp<IServiceManager> createRpcDelegateServiceManager(
         ALOGE("getDeviceService(\"manager\") returns non service manager");
         return nullptr;
     }
-    return sp<ServiceManagerHostShim>::make(interface, options);
+    return sp<CppServiceManagerHostShim>::make(interface, options);
 }
 #endif
 
