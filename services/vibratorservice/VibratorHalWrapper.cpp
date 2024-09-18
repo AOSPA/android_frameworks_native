@@ -32,6 +32,8 @@ using aidl::android::hardware::vibrator::CompositePrimitive;
 using aidl::android::hardware::vibrator::Effect;
 using aidl::android::hardware::vibrator::EffectStrength;
 using aidl::android::hardware::vibrator::PrimitivePwle;
+using aidl::android::hardware::vibrator::PwleV2OutputMapEntry;
+using aidl::android::hardware::vibrator::PwleV2Primitive;
 using aidl::android::hardware::vibrator::VendorEffect;
 
 using std::chrono::milliseconds;
@@ -111,6 +113,12 @@ HalResult<milliseconds> HalWrapper::performComposedEffect(const std::vector<Comp
 HalResult<void> HalWrapper::performPwleEffect(const std::vector<PrimitivePwle>&,
                                               const std::function<void()>&) {
     ALOGV("Skipped performPwleEffect because it's not available in Vibrator HAL");
+    return HalResult<void>::unsupported();
+}
+
+HalResult<void> HalWrapper::composePwleV2(const std::vector<PwleV2Primitive>&,
+                                          const std::function<void()>&) {
+    ALOGV("Skipped composePwleV2 because it's not available in Vibrator HAL");
     return HalResult<void>::unsupported();
 }
 
@@ -311,6 +319,13 @@ HalResult<void> AidlHalWrapper::performPwleEffect(const std::vector<PrimitivePwl
     // This method should always support callbacks, so no need to double check.
     auto cb = ndk::SharedRefBase::make<HalCallbackWrapper>(completionCallback);
     return HalResultFactory::fromStatus(getHal()->composePwle(primitives, cb));
+}
+
+HalResult<void> AidlHalWrapper::composePwleV2(const std::vector<PwleV2Primitive>& composite,
+                                              const std::function<void()>& completionCallback) {
+    // This method should always support callbacks, so no need to double check.
+    auto cb = ndk::SharedRefBase::make<HalCallbackWrapper>(completionCallback);
+    return HalResultFactory::fromStatus(getHal()->composePwleV2(composite, cb));
 }
 
 HalResult<Capabilities> AidlHalWrapper::getCapabilitiesInternal() {

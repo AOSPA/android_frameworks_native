@@ -335,14 +335,12 @@ static std::optional<SurfaceControlStats> findMatchingStat(
     return std::nullopt;
 }
 
-static void transactionCommittedCallbackThunk(void* context, nsecs_t latchTime,
-                                              const sp<Fence>& presentFence,
-                                              const std::vector<SurfaceControlStats>& stats) {
-    if (context == nullptr) {
-        return;
-    }
-    sp<BLASTBufferQueue> bq = static_cast<BLASTBufferQueue*>(context);
-    bq->transactionCommittedCallback(latchTime, presentFence, stats);
+TransactionCompletedCallbackTakesContext BLASTBufferQueue::makeTransactionCommittedCallbackThunk() {
+    return [bbq = sp<BLASTBufferQueue>::fromExisting(
+                    this)](void* /*context*/, nsecs_t latchTime, const sp<Fence>& presentFence,
+                           const std::vector<SurfaceControlStats>& stats) {
+        bbq->transactionCommittedCallback(latchTime, presentFence, stats);
+    };
 }
 
 void BLASTBufferQueue::transactionCommittedCallback(nsecs_t /*latchTime*/,
@@ -375,18 +373,15 @@ void BLASTBufferQueue::transactionCommittedCallback(nsecs_t /*latchTime*/,
             BQA_LOGE("No matching SurfaceControls found: mSurfaceControlsWithPendingCallback was "
                      "empty.");
         }
-        decStrong((void*)transactionCommittedCallbackThunk);
     }
 }
 
-static void transactionCallbackThunk(void* context, nsecs_t latchTime,
-                                     const sp<Fence>& presentFence,
-                                     const std::vector<SurfaceControlStats>& stats) {
-    if (context == nullptr) {
-        return;
-    }
-    sp<BLASTBufferQueue> bq = static_cast<BLASTBufferQueue*>(context);
-    bq->transactionCallback(latchTime, presentFence, stats);
+TransactionCompletedCallbackTakesContext BLASTBufferQueue::makeTransactionCallbackThunk() {
+    return [bbq = sp<BLASTBufferQueue>::fromExisting(
+                    this)](void* /*context*/, nsecs_t latchTime, const sp<Fence>& presentFence,
+                           const std::vector<SurfaceControlStats>& stats) {
+        bbq->transactionCallback(latchTime, presentFence, stats);
+    };
 }
 
 void BLASTBufferQueue::transactionCallback(nsecs_t /*latchTime*/, const sp<Fence>& /*presentFence*/,
@@ -442,8 +437,6 @@ void BLASTBufferQueue::transactionCallback(nsecs_t /*latchTime*/, const sp<Fence
             BQA_LOGE("No matching SurfaceControls found: mSurfaceControlsWithPendingCallback was "
                      "empty.");
         }
-
-        decStrong((void*)transactionCallbackThunk);
     }
 }
 
@@ -451,15 +444,17 @@ void BLASTBufferQueue::transactionCallback(nsecs_t /*latchTime*/, const sp<Fence
 // BBQ. This is because if the BBQ is destroyed, then the buffers will be released by the client.
 // So we pass in a weak pointer to the BBQ and if it still alive, then we release the buffer.
 // Otherwise, this is a no-op.
-static void releaseBufferCallbackThunk(wp<BLASTBufferQueue> context, const ReleaseCallbackId& id,
-                                       const sp<Fence>& releaseFence,
-                                       std::optional<uint32_t> currentMaxAcquiredBufferCount) {
-    sp<BLASTBufferQueue> blastBufferQueue = context.promote();
-    if (blastBufferQueue) {
-        blastBufferQueue->releaseBufferCallback(id, releaseFence, currentMaxAcquiredBufferCount);
-    } else {
-        ALOGV("releaseBufferCallbackThunk %s blastBufferQueue is dead", id.to_string().c_str());
-    }
+ReleaseBufferCallback BLASTBufferQueue::makeReleaseBufferCallbackThunk() {
+    return [weakBbq = wp<BLASTBufferQueue>::fromExisting(
+                    this)](const ReleaseCallbackId& id, const sp<Fence>& releaseFence,
+                           std::optional<uint32_t> currentMaxAcquiredBufferCount) {
+        sp<BLASTBufferQueue> bbq = weakBbq.promote();
+        if (!bbq) {
+            ALOGV("releaseBufferCallbackThunk %s blastBufferQueue is dead", id.to_string().c_str());
+            return;
+        }
+        bbq->releaseBufferCallback(id, releaseFence, currentMaxAcquiredBufferCount);
+    };
 }
 
 void BLASTBufferQueue::flushShadowQueue() {
@@ -642,9 +637,6 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
         t->notifyProducerDisconnect(mSurfaceControl);
     }
 
-    // Ensure BLASTBufferQueue stays alive until we receive the transaction complete callback.
-    incStrong((void*)transactionCallbackThunk);
-
     // Only update mSize for destination bounds if the incoming buffer matches the requested size.
     // Otherwise, it could cause stretching since the destination bounds will update before the
     // buffer with the new size is acquired.
@@ -657,9 +649,7 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
                            bufferItem.mGraphicBuffer->getHeight(), bufferItem.mTransform,
                            bufferItem.mScalingMode, crop);
 
-    auto releaseBufferCallback =
-            std::bind(releaseBufferCallbackThunk, wp<BLASTBufferQueue>(this) /* callbackContext */,
-                      std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
+    auto releaseBufferCallback = makeReleaseBufferCallbackThunk();
     sp<Fence> fence = bufferItem.mFence ? new Fence(bufferItem.mFence->dup()) : Fence::NO_FENCE;
 
     nsecs_t dequeueTime = -1;
@@ -677,7 +667,7 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
     t->setDataspace(mSurfaceControl, static_cast<ui::Dataspace>(bufferItem.mDataSpace));
     t->setHdrMetadata(mSurfaceControl, bufferItem.mHdrMetadata);
     t->setSurfaceDamageRegion(mSurfaceControl, bufferItem.mSurfaceDamage);
-    t->addTransactionCompletedCallback(transactionCallbackThunk, static_cast<void*>(this));
+    t->addTransactionCompletedCallback(makeTransactionCallbackThunk(), nullptr);
 
     mSurfaceControlsWithPendingCallback.push(mSurfaceControl);
 
@@ -842,9 +832,9 @@ void BLASTBufferQueue::onFrameAvailable(const BufferItem& item) {
 
             // Only need a commit callback when syncing to ensure the buffer that's synced has been
             // sent to SF
-            incStrong((void*)transactionCommittedCallbackThunk);
-            mSyncTransaction->addTransactionCommittedCallback(transactionCommittedCallbackThunk,
-                                                              static_cast<void*>(this));
+            mSyncTransaction
+                    ->addTransactionCommittedCallback(makeTransactionCommittedCallbackThunk(),
+                                                      nullptr);
             if (mAcquireSingleBuffer) {
                 prevCallback = mTransactionReadyCallback;
                 prevTransaction = mSyncTransaction;

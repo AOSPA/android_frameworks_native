@@ -20,7 +20,7 @@
 
 #include <android-base/properties.h>
 #include <common/FlagManager.h>
-#include <gui/AidlStatusUtil.h>
+#include <gui/AidlUtil.h>
 #include <private/android_filesystem_config.h>
 #include "LayerTransactionTest.h"
 #include "utils/TransactionUtils.h"

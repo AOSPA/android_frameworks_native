@@ -28,6 +28,7 @@
 #include "accumulator/TouchButtonAccumulator.h"
 #include "include/TouchpadHardwareState.h"
 
+#include "TouchpadHardwareState.h"
 #include "include/gestures.h"
 
 namespace android {

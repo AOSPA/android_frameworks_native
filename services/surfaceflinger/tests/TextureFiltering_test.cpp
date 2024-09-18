@@ -17,7 +17,7 @@
 #include <android/gui/DisplayCaptureArgs.h>
 #include <android/gui/ISurfaceComposerClient.h>
 #include <gtest/gtest.h>
-#include <gui/AidlStatusUtil.h>
+#include <gui/AidlUtil.h>
 #include <ui/GraphicTypes.h>
 #include <ui/Rect.h>
 

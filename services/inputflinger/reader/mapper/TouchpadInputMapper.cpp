@@ -36,6 +36,7 @@
 #include <log/log_main.h>
 #include <stats_pull_atom_callback.h>
 #include <statslog.h>
+#include "InputReaderBase.h"
 #include "TouchCursorInputMapperCommon.h"
 #include "TouchpadInputMapper.h"
 #include "gestures/HardwareProperties.h"
@@ -424,10 +425,8 @@ std::list<NotifyArgs> TouchpadInputMapper::process(const RawEvent& rawEvent) {
     std::optional<SelfContainedHardwareState> state = mStateConverter.processRawEvent(rawEvent);
     if (state) {
         if (mTouchpadHardwareStateNotificationsEnabled) {
-            // TODO(b/286551975): Notify policy of the touchpad hardware state.
-            LOG(DEBUG) << "Notify touchpad hardware state here!";
+            getPolicy()->notifyTouchpadHardwareState(*state, rawEvent.deviceId);
         }
-
         updatePalmDetectionMetrics();
         return sendHardwareState(rawEvent.when, rawEvent.readTime, *state);
     } else {

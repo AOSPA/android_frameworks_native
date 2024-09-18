@@ -15,10 +15,10 @@
  */
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
-#include "gui/AidlStatusUtil.h"
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
 
+#include <gui/AidlUtil.h>
 #include <gui/BufferItemConsumer.h>
 #include <private/android_filesystem_config.h>
 #include "TransactionTestHarnesses.h"

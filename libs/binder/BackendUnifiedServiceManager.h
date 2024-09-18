@@ -57,8 +57,6 @@ public:
         return mTheRealServiceManager->getInterfaceDescriptor();
     }
 
-    IBinder* onAsBinder() override { return IInterface::asBinder(mTheRealServiceManager).get(); }
-
 private:
     sp<os::IServiceManager> mTheRealServiceManager;
     void toBinderService(const os::Service& in, os::Service* _out);

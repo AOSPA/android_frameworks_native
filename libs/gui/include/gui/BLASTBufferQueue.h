@@ -129,15 +129,21 @@ public:
     void onFrameDequeued(const uint64_t) override;
     void onFrameCancelled(const uint64_t) override;
 
+    TransactionCompletedCallbackTakesContext makeTransactionCommittedCallbackThunk();
     void transactionCommittedCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
                                       const std::vector<SurfaceControlStats>& stats);
+
+    TransactionCompletedCallbackTakesContext makeTransactionCallbackThunk();
     virtual void transactionCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
                                      const std::vector<SurfaceControlStats>& stats);
+
+    ReleaseBufferCallback makeReleaseBufferCallbackThunk();
     void releaseBufferCallback(const ReleaseCallbackId& id, const sp<Fence>& releaseFence,
                                std::optional<uint32_t> currentMaxAcquiredBufferCount);
     void releaseBufferCallbackLocked(const ReleaseCallbackId& id, const sp<Fence>& releaseFence,
                                      std::optional<uint32_t> currentMaxAcquiredBufferCount,
                                      bool fakeRelease) REQUIRES(mMutex);
+
     bool syncNextTransaction(std::function<void(SurfaceComposerClient::Transaction*)> callback,
                              bool acquireSingleBuffer = true);
     void stopContinuousSyncTransaction();

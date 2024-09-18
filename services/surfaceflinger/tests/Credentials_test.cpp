@@ -20,7 +20,7 @@
 
 #include <android/gui/ISurfaceComposer.h>
 #include <gtest/gtest.h>
-#include <gui/AidlStatusUtil.h>
+#include <gui/AidlUtil.h>
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
 #include <private/android_filesystem_config.h>

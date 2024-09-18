@@ -354,6 +354,8 @@ public:
     using CompositeEffect = aidl::android::hardware::vibrator::CompositeEffect;
     using Braking = aidl::android::hardware::vibrator::Braking;
     using PrimitivePwle = aidl::android::hardware::vibrator::PrimitivePwle;
+    using PwleV2Primitive = aidl::android::hardware::vibrator::PwleV2Primitive;
+    using PwleV2OutputMapEntry = aidl::android::hardware::vibrator::PwleV2OutputMapEntry;
 
     explicit HalWrapper(std::shared_ptr<CallbackScheduler> scheduler)
           : mCallbackScheduler(std::move(scheduler)) {}
@@ -390,6 +392,9 @@ public:
 
     virtual HalResult<void> performPwleEffect(const std::vector<PrimitivePwle>& primitives,
                                               const std::function<void()>& completionCallback);
+
+    virtual HalResult<void> composePwleV2(const std::vector<PwleV2Primitive>& composite,
+                                          const std::function<void()>& completionCallback);
 
 protected:
     // Shared pointer to allow CallbackScheduler to outlive this wrapper.
@@ -470,6 +475,9 @@ public:
     HalResult<void> performPwleEffect(
             const std::vector<PrimitivePwle>& primitives,
             const std::function<void()>& completionCallback) override final;
+
+    HalResult<void> composePwleV2(const std::vector<PwleV2Primitive>& composite,
+                                  const std::function<void()>& completionCallback) override final;
 
 protected:
     HalResult<Capabilities> getCapabilitiesInternal() override final;

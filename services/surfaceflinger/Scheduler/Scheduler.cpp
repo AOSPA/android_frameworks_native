@@ -133,7 +133,7 @@ void Scheduler::setPacesetterDisplay(PhysicalDisplayId pacesetterId) {
     mVsyncModulator->cancelRefreshRateChange();
 
     mVsyncConfiguration->reset();
-    updatePhaseConfiguration(pacesetterSelectorPtr()->getActiveMode().fps);
+    updatePhaseConfiguration(pacesetterId, pacesetterSelectorPtr()->getActiveMode().fps);
 }
 
 void Scheduler::registerDisplay(PhysicalDisplayId displayId, RefreshRateSelectorPtr selectorPtr,
@@ -493,7 +493,12 @@ void Scheduler::setDuration(Cycle cycle, std::chrono::nanoseconds workDuration,
     }
 }
 
-void Scheduler::updatePhaseConfiguration(Fps refreshRate) {
+void Scheduler::updatePhaseConfiguration(PhysicalDisplayId displayId, Fps refreshRate) {
+    const bool isPacesetter =
+            FTL_FAKE_GUARD(kMainThreadContext,
+                           (std::scoped_lock(mDisplayLock), displayId == mPacesetterDisplayId));
+    if (!isPacesetter) return;
+
     mRefreshRateStats->setRefreshRate(refreshRate);
     mVsyncConfiguration->setRefreshRateFps(refreshRate);
     setVsyncConfig(mVsyncModulator->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs()),

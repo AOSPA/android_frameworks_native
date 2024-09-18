@@ -70,7 +70,7 @@ static inline status_t statusTFromExceptionCode(int32_t exceptionCode) {
  *
  * return_type method(type0 param0, ...)
  */
-static inline status_t statusTFromBinderStatus(const ::android::binder::Status &status) {
+static inline status_t statusTFromBinderStatus(const ::android::binder::Status& status) {
     return status.isOk() ? OK // check OK,
         : status.serviceSpecificErrorCode() // service-side error, not standard Java exception
                                             // (fromServiceSpecificError)
@@ -86,8 +86,8 @@ static inline status_t statusTFromBinderStatus(const ::android::binder::Status &
  * where Java callers expect an exception, not an integer return value.
  */
 static inline ::android::binder::Status binderStatusFromStatusT(
-        status_t status, const char *optionalMessage = nullptr) {
-    const char *const emptyIfNull = optionalMessage == nullptr ? "" : optionalMessage;
+        status_t status, const char* optionalMessage = nullptr) {
+    const char* const emptyIfNull = optionalMessage == nullptr ? "" : optionalMessage;
     // From binder::Status instructions:
     //  Prefer a generic exception code when possible, then a service specific
     //  code, and finally a status_t for low level failures or legacy support.

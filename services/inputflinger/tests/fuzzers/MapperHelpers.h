@@ -281,6 +281,8 @@ public:
     FuzzInputReaderPolicy(std::shared_ptr<ThreadSafeFuzzedDataProvider> mFdp) : mFdp(mFdp) {}
     void getReaderConfiguration(InputReaderConfiguration* outConfig) override {}
     void notifyInputDevicesChanged(const std::vector<InputDeviceInfo>& inputDevices) override {}
+    void notifyTouchpadHardwareState(const SelfContainedHardwareState& schs,
+                                     int32_t deviceId) override {}
     std::shared_ptr<KeyCharacterMap> getKeyboardLayoutOverlay(
             const InputDeviceIdentifier& identifier,
             const std::optional<KeyboardLayoutInfo> layoutInfo) override {

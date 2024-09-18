@@ -70,22 +70,18 @@ struct InputSample {
 };
 
 InputSample::operator InputMessage() const {
-    InputMessage message;
-    message.header.type = InputMessage::Type::MOTION;
-    message.body.motion.pointerCount = pointers.size();
-    message.body.motion.eventTime = static_cast<std::chrono::nanoseconds>(eventTime).count();
-    message.body.motion.source = AINPUT_SOURCE_CLASS_POINTER;
-    message.body.motion.downTime = 0;
+    InputMessageBuilder messageBuilder =
+            InputMessageBuilder{InputMessage::Type::MOTION, /*seq=*/0}
+                    .eventTime(std::chrono::nanoseconds{eventTime}.count())
+                    .source(AINPUT_SOURCE_TOUCHSCREEN)
+                    .downTime(0);
 
-    const uint32_t pointerCount = message.body.motion.pointerCount;
-    for (uint32_t i = 0; i < pointerCount; ++i) {
-        message.body.motion.pointers[i].properties.id = pointers[i].id;
-        message.body.motion.pointers[i].properties.toolType = pointers[i].toolType;
-        message.body.motion.pointers[i].coords.setAxisValue(AMOTION_EVENT_AXIS_X, pointers[i].x);
-        message.body.motion.pointers[i].coords.setAxisValue(AMOTION_EVENT_AXIS_Y, pointers[i].y);
-        message.body.motion.pointers[i].coords.isResampled = pointers[i].isResampled;
+    for (const Pointer& pointer : pointers) {
+        messageBuilder.pointer(
+                PointerBuilder{pointer.id, pointer.toolType}.x(pointer.x).y(pointer.y).isResampled(
+                        pointer.isResampled));
     }
-    return message;
+    return messageBuilder.build();
 }
 
 struct InputStream {

@@ -46,7 +46,7 @@ cc_test {
         "libbinder",
     ],
     test_suites: [
-        "device-tests",
+        "general-tests",
         "vts",
     ],
 }
@@ -137,7 +137,7 @@ cc_test {
         "libgmock",
     ],
     test_suites: [
-        "device-tests",
+        "general-tests",
         "vts",
     ],
     require_root: true,
@@ -705,7 +705,7 @@ cc_test {
         "libutils",
     ],
     test_suites: [
-        "device-tests",
+        "general-tests",
         "vts",
     ],
     require_root: true,
@@ -762,7 +762,7 @@ cc_test {
     ],
 
     test_suites: [
-        "device-tests",
+        "general-tests",
         "vts",
     ],
     require_root: true,

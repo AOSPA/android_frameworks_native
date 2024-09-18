@@ -65,6 +65,17 @@ void FakeInputReaderPolicy::assertStylusGestureNotNotified() {
     ASSERT_FALSE(mDeviceIdOfNotifiedStylusGesture);
 }
 
+void FakeInputReaderPolicy::assertTouchpadHardwareStateNotified() {
+    std::unique_lock lock(mLock);
+    base::ScopedLockAssertion assumeLocked(mLock);
+
+    const bool success =
+            mTouchpadHardwareStateNotified.wait_for(lock, WAIT_TIMEOUT, [this]() REQUIRES(mLock) {
+                return mTouchpadHardwareState.has_value();
+            });
+    ASSERT_TRUE(success) << "Timed out waiting for hardware state to be notified";
+}
+
 void FakeInputReaderPolicy::clearViewports() {
     mViewports.clear();
     mConfig.setDisplayViewports(mViewports);
@@ -232,6 +243,13 @@ void FakeInputReaderPolicy::notifyInputDevicesChanged(
     mInputDevices = inputDevices;
     mInputDevicesChanged = true;
     mDevicesChangedCondition.notify_all();
+}
+
+void FakeInputReaderPolicy::notifyTouchpadHardwareState(const SelfContainedHardwareState& schs,
+                                                        int32_t deviceId) {
+    std::scoped_lock lock(mLock);
+    mTouchpadHardwareState = schs;
+    mTouchpadHardwareStateNotified.notify_all();
 }
 
 std::shared_ptr<KeyCharacterMap> FakeInputReaderPolicy::getKeyboardLayoutOverlay(

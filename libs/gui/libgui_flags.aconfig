@@ -91,3 +91,11 @@ flag {
   bug: "342197847"
   is_fixed_read_only: true
 } # wb_ring_buffer
+
+flag {
+  name: "wb_camera3_and_processors"
+  namespace: "core_graphics"
+  description: "Remove usage of IGBPs in the *Processor and Camera3*"
+  bug: "342199002"
+  is_fixed_read_only: true
+} # wb_camera3_and_processors

@@ -39,6 +39,7 @@ using aidl::android::hardware::vibrator::EffectStrength;
 using aidl::android::hardware::vibrator::IVibrator;
 using aidl::android::hardware::vibrator::IVibratorCallback;
 using aidl::android::hardware::vibrator::PrimitivePwle;
+using aidl::android::hardware::vibrator::PwleV2Primitive;
 using aidl::android::hardware::vibrator::VendorEffect;
 using aidl::android::os::PersistableBundle;
 
@@ -678,6 +679,41 @@ TEST_F(VibratorHalWrapperAidlTest, TestPerformPwleEffect) {
     ASSERT_EQ(0, *callbackCounter.get());
 
     result = mWrapper->performPwleEffect(multiplePrimitives, callback);
+    ASSERT_TRUE(result.isOk());
+    ASSERT_EQ(1, *callbackCounter.get());
+}
+
+TEST_F(VibratorHalWrapperAidlTest, TestComposePwleV2) {
+    auto pwleEffect = {
+            PwleV2Primitive(/*amplitude=*/0.2, /*frequency=*/50, /*time=*/100),
+            PwleV2Primitive(/*amplitude=*/0.5, /*frequency=*/150, /*time=*/100),
+            PwleV2Primitive(/*amplitude=*/0.8, /*frequency=*/250, /*time=*/100),
+    };
+
+    {
+        InSequence seq;
+        EXPECT_CALL(*mMockHal.get(), composePwleV2(_, _))
+                .Times(Exactly(3))
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)))
+                .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+                .WillOnce(DoAll(WithArg<1>(vibrator::TriggerCallback()),
+                                Return(ndk::ScopedAStatus::ok())));
+    }
+
+    std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
+    auto callback = vibrator::TestFactory::createCountingCallback(callbackCounter.get());
+
+    auto result = mWrapper->composePwleV2(pwleEffect, callback);
+    ASSERT_TRUE(result.isUnsupported());
+    // Callback not triggered on failure
+    ASSERT_EQ(0, *callbackCounter.get());
+
+    result = mWrapper->composePwleV2(pwleEffect, callback);
+    ASSERT_TRUE(result.isFailed());
+    // Callback not triggered for unsupported
+    ASSERT_EQ(0, *callbackCounter.get());
+
+    result = mWrapper->composePwleV2(pwleEffect, callback);
     ASSERT_TRUE(result.isOk());
     ASSERT_EQ(1, *callbackCounter.get());
 }

@@ -20,7 +20,7 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
 
-#include <gui/AidlStatusUtil.h>
+#include <gui/AidlUtil.h>
 #include <private/android_filesystem_config.h>
 #include <ui/DisplayState.h>
 

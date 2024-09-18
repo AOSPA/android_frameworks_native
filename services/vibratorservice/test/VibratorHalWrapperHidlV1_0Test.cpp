@@ -40,6 +40,7 @@ using aidl::android::hardware::vibrator::Effect;
 using aidl::android::hardware::vibrator::EffectStrength;
 using aidl::android::hardware::vibrator::IVibrator;
 using aidl::android::hardware::vibrator::PrimitivePwle;
+using aidl::android::hardware::vibrator::PwleV2Primitive;
 using aidl::android::hardware::vibrator::VendorEffect;
 using aidl::android::os::PersistableBundle;
 
@@ -365,6 +366,22 @@ TEST_F(VibratorHalWrapperHidlV1_0Test, TestPerformPwleEffectUnsupported) {
 
     ASSERT_TRUE(mWrapper->performPwleEffect(emptyPrimitives, callback).isUnsupported());
     ASSERT_TRUE(mWrapper->performPwleEffect(multiplePrimitives, callback).isUnsupported());
+
+    // No callback is triggered.
+    ASSERT_EQ(0, *callbackCounter.get());
+}
+
+TEST_F(VibratorHalWrapperHidlV1_0Test, TestComposePwleV2Unsupported) {
+    auto pwleEffect = {
+            PwleV2Primitive(/*amplitude=*/0.2, /*frequency=*/50, /*time=*/100),
+            PwleV2Primitive(/*amplitude=*/0.5, /*frequency=*/150, /*time=*/100),
+            PwleV2Primitive(/*amplitude=*/0.8, /*frequency=*/250, /*time=*/100),
+    };
+
+    std::unique_ptr<int32_t> callbackCounter = std::make_unique<int32_t>();
+    auto callback = vibrator::TestFactory::createCountingCallback(callbackCounter.get());
+
+    ASSERT_TRUE(mWrapper->composePwleV2(pwleEffect, callback).isUnsupported());
 
     // No callback is triggered.
     ASSERT_EQ(0, *callbackCounter.get());

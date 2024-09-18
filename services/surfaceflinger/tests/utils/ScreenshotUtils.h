@@ -15,7 +15,7 @@
  */
 #pragma once
 
-#include <gui/AidlStatusUtil.h>
+#include <gui/AidlUtil.h>
 #include <gui/SyncScreenCaptureListener.h>
 #include <private/gui/ComposerServiceAIDL.h>
 #include <ui/FenceResult.h>

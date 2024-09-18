@@ -24,7 +24,7 @@
 #include <binder/ProcessState.h>
 #include <com_android_graphics_libgui_flags.h>
 #include <configstore/Utils.h>
-#include <gui/AidlStatusUtil.h>
+#include <gui/AidlUtil.h>
 #include <gui/BufferItemConsumer.h>
 #include <gui/BufferQueue.h>
 #include <gui/CpuConsumer.h>

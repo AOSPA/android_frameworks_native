@@ -42,6 +42,7 @@ public:
     void assertInputDevicesNotChanged();
     void assertStylusGestureNotified(int32_t deviceId);
     void assertStylusGestureNotNotified();
+    void assertTouchpadHardwareStateNotified();
 
     virtual void clearViewports();
     std::optional<DisplayViewport> getDisplayViewportByUniqueId(const std::string& uniqueId) const;
@@ -82,6 +83,8 @@ public:
 private:
     void getReaderConfiguration(InputReaderConfiguration* outConfig) override;
     void notifyInputDevicesChanged(const std::vector<InputDeviceInfo>& inputDevices) override;
+    void notifyTouchpadHardwareState(const SelfContainedHardwareState& schs,
+                                     int32_t deviceId) override;
     std::shared_ptr<KeyCharacterMap> getKeyboardLayoutOverlay(
             const InputDeviceIdentifier&, const std::optional<KeyboardLayoutInfo>) override;
     std::string getDeviceAlias(const InputDeviceIdentifier&) override;
@@ -100,6 +103,9 @@ private:
 
     std::condition_variable mStylusGestureNotifiedCondition;
     std::optional<DeviceId> mDeviceIdOfNotifiedStylusGesture GUARDED_BY(mLock){};
+
+    std::condition_variable mTouchpadHardwareStateNotified;
+    std::optional<SelfContainedHardwareState> mTouchpadHardwareState GUARDED_BY(mLock){};
 
     uint32_t mNextPointerCaptureSequenceNumber{0};
 };

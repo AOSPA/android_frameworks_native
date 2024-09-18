@@ -301,7 +301,8 @@ TEST_P(BinderRpc, CannotSendRegularBinderOverSocketBinder) {
 
     auto proc = createRpcTestSocketServerProcess({});
 
-    sp<IBinder> someRealBinder = IInterface::asBinder(defaultServiceManager());
+    sp<IBinder> someRealBinder = defaultServiceManager()->getService(String16("activity"));
+    ASSERT_NE(someRealBinder, nullptr);
     sp<IBinder> outBinder;
     EXPECT_EQ(INVALID_OPERATION,
               proc.rootIface->repeatBinder(someRealBinder, &outBinder).transactionError());

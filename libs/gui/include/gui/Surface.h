@@ -84,6 +84,16 @@ public:
     virtual void onBufferAttached() {}
     virtual bool needsAttachNotify() { return false; }
 #endif
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+    // Called if this Surface is connected to a remote implementation and it
+    // dies or becomes unavailable.
+    virtual void onRemoteDied() {}
+
+    // Clients will overwrite this if they want to receive a notification
+    // via onRemoteDied. This should return a constant value.
+    virtual bool needsDeathNotify() { return false; }
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
 };
 
 class StubSurfaceListener : public SurfaceListener {
@@ -94,6 +104,15 @@ public:
     virtual void onBuffersDiscarded(const std::vector<sp<GraphicBuffer>>& /*buffers*/) override {}
     virtual void onBufferDetached(int /*slot*/) override {}
 };
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+// Contains additional data from the queueBuffer operation.
+struct SurfaceQueueBufferOutput {
+    // True if this queueBuffer caused a buffer to be replaced in the queue
+    // (and therefore not will not be acquired)
+    bool bufferReplaced = false;
+};
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
 
 /*
  * An implementation of ANativeWindow that feeds graphics buffers into a
@@ -371,7 +390,12 @@ private:
 protected:
     virtual int dequeueBuffer(ANativeWindowBuffer** buffer, int* fenceFd);
     virtual int cancelBuffer(ANativeWindowBuffer* buffer, int fenceFd);
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+    virtual int queueBuffer(ANativeWindowBuffer* buffer, int fenceFd,
+                            SurfaceQueueBufferOutput* surfaceOutput = nullptr);
+#else
     virtual int queueBuffer(ANativeWindowBuffer* buffer, int fenceFd);
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
     virtual int perform(int operation, va_list args);
     virtual int setSwapInterval(int interval);
 
@@ -430,7 +454,8 @@ public:
     // Queues a buffer, with an optional fd fence that captures pending work on the buffer. This
     // buffer must have been returned by dequeueBuffer or associated with this Surface via an
     // attachBuffer operation.
-    status_t queueBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& fd = Fence::NO_FENCE);
+    status_t queueBuffer(const sp<GraphicBuffer>& buffer, const sp<Fence>& fd = Fence::NO_FENCE,
+                         SurfaceQueueBufferOutput* output = nullptr);
 
     // Detaches this buffer, dissociating it from this Surface. This buffer must have been returned
     // by queueBuffer or associated with this Surface via an attachBuffer operation.
@@ -451,8 +476,13 @@ public:
         int fenceFd = -1;
         nsecs_t timestamp = NATIVE_WINDOW_TIMESTAMP_AUTO;
     };
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+    virtual int queueBuffers(const std::vector<BatchQueuedBuffer>& buffers,
+                             std::vector<SurfaceQueueBufferOutput>* queueBufferOutputs = nullptr);
+#else
     virtual int queueBuffers(
             const std::vector<BatchQueuedBuffer>& buffers);
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
 
 protected:
     enum { NUM_BUFFER_SLOTS = BufferQueueDefs::NUM_BUFFER_SLOTS };
@@ -489,6 +519,21 @@ protected:
         sp<SurfaceListener> mSurfaceListener;
     };
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+    class ProducerDeathListenerProxy : public IBinder::DeathRecipient {
+    public:
+        ProducerDeathListenerProxy(wp<SurfaceListener> surfaceListener);
+        ProducerDeathListenerProxy(ProducerDeathListenerProxy&) = delete;
+
+        // IBinder::DeathRecipient
+        virtual void binderDied(const wp<IBinder>&) override;
+
+    private:
+        wp<SurfaceListener> mSurfaceListener;
+    };
+    friend class ProducerDeathListenerProxy;
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+
     void querySupportedTimestampsLocked() const;
 
     void freeAllBuffers();
@@ -524,6 +569,13 @@ protected:
     // interactions with the server using this interface.
     // TODO: rename to mBufferProducer
     sp<IGraphicBufferProducer> mGraphicBufferProducer;
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+    // mSurfaceDeathListener gets registered as mGraphicBufferProducer's
+    // DeathRecipient when SurfaceListener::needsDeathNotify returns true and
+    // gets notified when it dies.
+    sp<ProducerDeathListenerProxy> mSurfaceDeathListener;
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
 
     // mSlots stores the buffers that have been allocated for each buffer slot.
     // It is initialized to null pointers, and gets filled in with the result of
