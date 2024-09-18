@@ -1215,8 +1215,15 @@ VkResult GetPhysicalDeviceSurfaceFormats2KHR(
                             surfaceCompressionProps
                                 ->imageCompressionFixedRateFlags =
                                 compressionProps.imageCompressionFixedRateFlags;
-                        } else {
+                        } else if (compressionRes ==
+                                       VK_ERROR_OUT_OF_HOST_MEMORY ||
+                                   compressionRes ==
+                                       VK_ERROR_OUT_OF_DEVICE_MEMORY) {
                             return compressionRes;
+                        } else {
+                            // For any of the *_NOT_SUPPORTED errors we continue
+                            // onto the next format
+                            continue;
                         }
                     }
                 } break;
