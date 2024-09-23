@@ -1,4 +1,22 @@
 {
-  "comments": [],
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "fe24d606_e2595a53",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000579
+      },
+      "writtenOn": "2024-09-23T05:02:00Z",
+      "side": 1,
+      "message": "abandoned in favour of 41410: compat: Add CAF version of libgui_vendor | https://gerrit.aospa.co/c/AOSPA/android_hardware_lineage_compat/+/41410\n\nbetter fix that doesn\u0027t touch upstream repos",
+      "revId": "36ad00116012b219ceab2ec09734e7254f6b3e7e",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ],
   "submitRequirementResults": []
 }
