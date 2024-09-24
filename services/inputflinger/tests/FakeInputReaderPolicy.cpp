@@ -32,19 +32,23 @@ static const int HW_TIMEOUT_MULTIPLIER = base::GetIntProperty("ro.hw_timeout_mul
 } // namespace
 
 void FakeInputReaderPolicy::assertInputDevicesChanged() {
-    waitForInputDevices([](bool devicesChanged) {
-        if (!devicesChanged) {
-            FAIL() << "Timed out waiting for notifyInputDevicesChanged() to be called.";
-        }
-    });
+    waitForInputDevices(
+            [](bool devicesChanged) {
+                if (!devicesChanged) {
+                    FAIL() << "Timed out waiting for notifyInputDevicesChanged() to be called.";
+                }
+            },
+            ADD_INPUT_DEVICE_TIMEOUT);
 }
 
 void FakeInputReaderPolicy::assertInputDevicesNotChanged() {
-    waitForInputDevices([](bool devicesChanged) {
-        if (devicesChanged) {
-            FAIL() << "Expected notifyInputDevicesChanged() to not be called.";
-        }
-    });
+    waitForInputDevices(
+            [](bool devicesChanged) {
+                if (devicesChanged) {
+                    FAIL() << "Expected notifyInputDevicesChanged() to not be called.";
+                }
+            },
+            INPUT_DEVICES_DIDNT_CHANGE_TIMEOUT);
 }
 
 void FakeInputReaderPolicy::assertStylusGestureNotified(int32_t deviceId) {
@@ -261,13 +265,13 @@ std::string FakeInputReaderPolicy::getDeviceAlias(const InputDeviceIdentifier&) 
     return "";
 }
 
-void FakeInputReaderPolicy::waitForInputDevices(std::function<void(bool)> processDevicesChanged) {
+void FakeInputReaderPolicy::waitForInputDevices(std::function<void(bool)> processDevicesChanged,
+                                                std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(mLock);
     base::ScopedLockAssertion assumeLocked(mLock);
 
     const bool devicesChanged =
-            mDevicesChangedCondition.wait_for(lock,
-                                              ADD_INPUT_DEVICE_TIMEOUT * HW_TIMEOUT_MULTIPLIER,
+            mDevicesChangedCondition.wait_for(lock, timeout * HW_TIMEOUT_MULTIPLIER,
                                               [this]() REQUIRES(mLock) {
                                                   return mInputDevicesChanged;
                                               });

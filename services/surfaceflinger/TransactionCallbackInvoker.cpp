@@ -149,6 +149,13 @@ status_t TransactionCallbackInvoker::addCallbackHandle(const sp<CallbackHandle>&
                                                     handle->transformHint,
                                                     handle->currentMaxAcquiredBufferCount,
                                                     eventStats, handle->previousReleaseCallbackId);
+        if (handle->bufferReleaseChannel &&
+            handle->previousReleaseCallbackId != ReleaseCallbackId::INVALID_ID) {
+            mBufferReleases.emplace_back(handle->bufferReleaseChannel,
+                                         handle->previousReleaseCallbackId,
+                                         handle->previousReleaseFence,
+                                         handle->currentMaxAcquiredBufferCount);
+        }
     }
     return NO_ERROR;
 }
@@ -158,6 +165,12 @@ void TransactionCallbackInvoker::addPresentFence(sp<Fence> presentFence) {
 }
 
 void TransactionCallbackInvoker::sendCallbacks(bool onCommitOnly) {
+    for (const auto& bufferRelease : mBufferReleases) {
+        bufferRelease.channel->writeReleaseFence(bufferRelease.callbackId, bufferRelease.fence,
+                                                 bufferRelease.currentMaxAcquiredBufferCount);
+    }
+    mBufferReleases.clear();
+
     // For each listener
     auto completedTransactionsItr = mCompletedTransactions.begin();
     ftl::SmallVector<ListenerStats, 10> listenerStatsToSend;

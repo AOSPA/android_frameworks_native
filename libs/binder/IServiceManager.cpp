@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <sys/socket.h>
 #define LOG_TAG "ServiceManagerCppClient"
 
 #include <binder/IServiceManager.h>
@@ -24,14 +25,19 @@
 #include <chrono>
 #include <condition_variable>
 
+#include <FdTrigger.h>
+#include <RpcSocketAddress.h>
 #include <android-base/properties.h>
+#include <android/os/BnAccessor.h>
 #include <android/os/BnServiceCallback.h>
+#include <android/os/BnServiceManager.h>
 #include <android/os/IAccessor.h>
 #include <android/os/IServiceManager.h>
 #include <binder/IPCThreadState.h>
 #include <binder/Parcel.h>
+#include <binder/RpcSession.h>
 #include <utils/String8.h>
-
+#include <variant>
 #ifndef __ANDROID_VNDK__
 #include <binder/IPermissionController.h>
 #endif
@@ -148,8 +154,141 @@ protected:
     }
 };
 
+class AccessorProvider {
+public:
+    AccessorProvider(RpcAccessorProvider&& provider) : mProvider(provider) {}
+    sp<IBinder> provide(const String16& name) { return mProvider(name); }
+
+private:
+    AccessorProvider() = delete;
+
+    RpcAccessorProvider mProvider;
+};
+
+class AccessorProviderEntry {
+public:
+    AccessorProviderEntry(std::shared_ptr<AccessorProvider>&& provider) : mProvider(provider) {}
+    std::shared_ptr<AccessorProvider> mProvider;
+
+private:
+    AccessorProviderEntry() = delete;
+};
+
 [[clang::no_destroy]] static std::once_flag gSmOnce;
 [[clang::no_destroy]] static sp<IServiceManager> gDefaultServiceManager;
+[[clang::no_destroy]] static std::mutex gAccessorProvidersMutex;
+[[clang::no_destroy]] static std::vector<AccessorProviderEntry> gAccessorProviders;
+
+class LocalAccessor : public android::os::BnAccessor {
+public:
+    LocalAccessor(const String16& instance, RpcSocketAddressProvider&& connectionInfoProvider)
+          : mInstance(instance), mConnectionInfoProvider(connectionInfoProvider) {
+        LOG_ALWAYS_FATAL_IF(!mConnectionInfoProvider,
+                            "LocalAccessor object needs a valid connection info provider");
+    }
+
+    ~LocalAccessor() {
+        if (mOnDelete) mOnDelete();
+    }
+
+    ::android::binder::Status addConnection(::android::os::ParcelFileDescriptor* outFd) {
+        using android::os::IAccessor;
+        sockaddr_storage addrStorage;
+        std::unique_ptr<FdTrigger> trigger = FdTrigger::make();
+        RpcTransportFd fd;
+        status_t status =
+                mConnectionInfoProvider(mInstance, reinterpret_cast<sockaddr*>(&addrStorage),
+                                        sizeof(addrStorage));
+        if (status != OK) {
+            const std::string error = "The connection info provider was unable to provide "
+                                      "connection info for instance " +
+                    std::string(String8(mInstance).c_str()) +
+                    " with status: " + statusToString(status);
+            ALOGE("%s", error.c_str());
+            return Status::fromServiceSpecificError(IAccessor::ERROR_CONNECTION_INFO_NOT_FOUND,
+                                                    error.c_str());
+        }
+        if (addrStorage.ss_family == AF_VSOCK) {
+            sockaddr_vm* addr = reinterpret_cast<sockaddr_vm*>(&addrStorage);
+            status = singleSocketConnection(VsockSocketAddress(addr->svm_cid, addr->svm_port),
+                                            trigger, &fd);
+        } else if (addrStorage.ss_family == AF_UNIX) {
+            sockaddr_un* addr = reinterpret_cast<sockaddr_un*>(&addrStorage);
+            status = singleSocketConnection(UnixSocketAddress(addr->sun_path), trigger, &fd);
+        } else if (addrStorage.ss_family == AF_INET) {
+            sockaddr_in* addr = reinterpret_cast<sockaddr_in*>(&addrStorage);
+            status = singleSocketConnection(InetSocketAddress(reinterpret_cast<sockaddr*>(addr),
+                                                              sizeof(sockaddr_in),
+                                                              inet_ntoa(addr->sin_addr),
+                                                              ntohs(addr->sin_port)),
+                                            trigger, &fd);
+        } else {
+            const std::string error =
+                    "Unsupported socket family type or the ConnectionInfoProvider failed to find a "
+                    "valid address. Family type: " +
+                    std::to_string(addrStorage.ss_family);
+            ALOGE("%s", error.c_str());
+            return Status::fromServiceSpecificError(IAccessor::ERROR_UNSUPPORTED_SOCKET_FAMILY,
+                                                    error.c_str());
+        }
+        if (status != OK) {
+            const std::string error = "Failed to connect to socket for " +
+                    std::string(String8(mInstance).c_str()) +
+                    " with status: " + statusToString(status);
+            ALOGE("%s", error.c_str());
+            int err = 0;
+            if (status == -EACCES) {
+                err = IAccessor::ERROR_FAILED_TO_CONNECT_EACCES;
+            } else {
+                err = IAccessor::ERROR_FAILED_TO_CONNECT_TO_SOCKET;
+            }
+            return Status::fromServiceSpecificError(err, error.c_str());
+        }
+        *outFd = os::ParcelFileDescriptor(std::move(fd.fd));
+        return Status::ok();
+    }
+
+    ::android::binder::Status getInstanceName(String16* instance) {
+        *instance = mInstance;
+        return Status::ok();
+    }
+
+private:
+    LocalAccessor() = delete;
+    String16 mInstance;
+    RpcSocketAddressProvider mConnectionInfoProvider;
+    std::function<void()> mOnDelete;
+};
+
+android::binder::Status getInjectedAccessor(const std::string& name,
+                                            android::os::Service* service) {
+    std::vector<AccessorProviderEntry> copiedProviders;
+    {
+        std::lock_guard<std::mutex> lock(gAccessorProvidersMutex);
+        copiedProviders.insert(copiedProviders.begin(), gAccessorProviders.begin(),
+                               gAccessorProviders.end());
+    }
+
+    // Unlocked to call the providers. This requires the providers to be
+    // threadsafe and not contain any references to objects that could be
+    // deleted.
+    for (const auto& provider : copiedProviders) {
+        sp<IBinder> binder = provider.mProvider->provide(String16(name.c_str()));
+        if (binder == nullptr) continue;
+        status_t status = validateAccessor(String16(name.c_str()), binder);
+        if (status != OK) {
+            ALOGE("A provider returned a binder that is not an IAccessor for instance %s. Status: "
+                  "%s",
+                  name.c_str(), statusToString(status).c_str());
+            return android::binder::Status::fromStatusT(android::INVALID_OPERATION);
+        }
+        *service = os::Service::make<os::Service::Tag::accessor>(binder);
+        return android::binder::Status::ok();
+    }
+
+    *service = os::Service::make<os::Service::Tag::accessor>(nullptr);
+    return android::binder::Status::ok();
+}
 
 sp<IServiceManager> defaultServiceManager()
 {
@@ -170,6 +309,75 @@ void setDefaultServiceManager(const sp<IServiceManager>& sm) {
     if (!called) {
         LOG_ALWAYS_FATAL("setDefaultServiceManager() called after defaultServiceManager().");
     }
+}
+
+std::weak_ptr<AccessorProvider> addAccessorProvider(RpcAccessorProvider&& providerCallback) {
+    std::lock_guard<std::mutex> lock(gAccessorProvidersMutex);
+    std::shared_ptr<AccessorProvider> provider =
+            std::make_shared<AccessorProvider>(std::move(providerCallback));
+    gAccessorProviders.push_back(AccessorProviderEntry(std::move(provider)));
+
+    return provider;
+}
+
+status_t removeAccessorProvider(std::weak_ptr<AccessorProvider> wProvider) {
+    std::shared_ptr<AccessorProvider> provider = wProvider.lock();
+    if (provider == nullptr) {
+        ALOGE("The provider supplied to removeAccessorProvider has already been removed.");
+        return NAME_NOT_FOUND;
+    }
+    std::lock_guard<std::mutex> lock(gAccessorProvidersMutex);
+    size_t sizeBefore = gAccessorProviders.size();
+    gAccessorProviders.erase(std::remove_if(gAccessorProviders.begin(), gAccessorProviders.end(),
+                                            [&](AccessorProviderEntry entry) {
+                                                return entry.mProvider == provider;
+                                            }),
+                             gAccessorProviders.end());
+    if (sizeBefore == gAccessorProviders.size()) {
+        ALOGE("Failed to find an AccessorProvider for removeAccessorProvider");
+        return NAME_NOT_FOUND;
+    }
+
+    return OK;
+}
+
+status_t validateAccessor(const String16& instance, const sp<IBinder>& binder) {
+    if (binder == nullptr) {
+        ALOGE("Binder is null");
+        return BAD_VALUE;
+    }
+    sp<IAccessor> accessor = interface_cast<IAccessor>(binder);
+    if (accessor == nullptr) {
+        ALOGE("This binder for %s is not an IAccessor binder", String8(instance).c_str());
+        return BAD_TYPE;
+    }
+    String16 reportedInstance;
+    Status status = accessor->getInstanceName(&reportedInstance);
+    if (!status.isOk()) {
+        ALOGE("Failed to validate the binder being used to create a new ARpc_Accessor for %s with "
+              "status: %s",
+              String8(instance).c_str(), status.toString8().c_str());
+        return NAME_NOT_FOUND;
+    }
+    if (reportedInstance != instance) {
+        ALOGE("Instance %s doesn't match the Accessor's instance of %s", String8(instance).c_str(),
+              String8(reportedInstance).c_str());
+        return NAME_NOT_FOUND;
+    }
+    return OK;
+}
+
+sp<IBinder> createAccessor(const String16& instance,
+                           RpcSocketAddressProvider&& connectionInfoProvider) {
+    // Try to create a new accessor
+    if (!connectionInfoProvider) {
+        ALOGE("Could not find an Accessor for %s and no ConnectionInfoProvider provided to "
+              "create a new one",
+              String8(instance).c_str());
+        return nullptr;
+    }
+    sp<IBinder> binder = sp<LocalAccessor>::make(instance, std::move(connectionInfoProvider));
+    return binder;
 }
 
 #if !defined(__ANDROID_VNDK__)

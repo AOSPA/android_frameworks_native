@@ -1725,7 +1725,9 @@ status_t Parcel::writeBlob(size_t len, bool mutableCopy, WritableBlob* outBlob)
                 }
             }
         }
-        ::munmap(ptr, len);
+        if (::munmap(ptr, len) == -1) {
+            ALOGW("munmap() failed: %s", strerror(errno));
+        }
     }
     ::close(fd);
     return status;
@@ -3332,7 +3334,9 @@ Parcel::Blob::~Blob() {
 
 void Parcel::Blob::release() {
     if (mFd != -1 && mData) {
-        ::munmap(mData, mSize);
+        if (::munmap(mData, mSize) == -1) {
+            ALOGW("munmap() failed: %s", strerror(errno));
+        }
     }
     clear();
 }

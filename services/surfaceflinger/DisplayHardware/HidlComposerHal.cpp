@@ -52,6 +52,7 @@ using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness;
 using aidl::android::hardware::graphics::composer3::DimmingStage;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
+using aidl::android::hardware::graphics::composer3::DisplayLuts;
 using aidl::android::hardware::graphics::composer3::Lut;
 using aidl::android::hardware::graphics::composer3::OverlayProperties;
 
@@ -1487,7 +1488,11 @@ Error HidlComposer::getClientTargetProperty(
     return Error::NONE;
 }
 
-Error HidlComposer::getDisplayLuts(Display, std::vector<Lut>*) {
+Error HidlComposer::getRequestedLuts(Display, std::vector<DisplayLuts::LayerLut>*) {
+    return Error::NONE;
+}
+
+Error HidlComposer::setLayerLuts(Display, Layer, std::vector<Lut>&) {
     return Error::NONE;
 }
 

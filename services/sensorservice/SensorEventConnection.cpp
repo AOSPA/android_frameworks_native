@@ -172,7 +172,7 @@ bool SensorService::SensorEventConnection::addSensor(int32_t handle) {
 
 bool SensorService::SensorEventConnection::removeSensor(int32_t handle) {
     Mutex::Autolock _l(mConnectionLock);
-    if (mSensorInfo.erase(handle) >= 0) {
+    if (mSensorInfo.erase(handle) > 0) {
         return true;
     }
     return false;

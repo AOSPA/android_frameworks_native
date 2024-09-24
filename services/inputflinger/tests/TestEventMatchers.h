@@ -654,6 +654,15 @@ MATCHER_P2(WithRelativeMotion, x, y, "InputEvent with specified relative motion"
     return argX == x && argY == y;
 }
 
+MATCHER_P3(WithPointerRelativeMotion, pointer, x, y,
+           "InputEvent with specified relative motion for pointer") {
+    const auto argX = arg.pointerCoords[pointer].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X);
+    const auto argY = arg.pointerCoords[pointer].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y);
+    *result_listener << "expected pointer " << pointer << " to have relative motion (" << x << ", "
+                     << y << "), but got (" << argX << ", " << argY << ")";
+    return argX == x && argY == y;
+}
+
 MATCHER_P3(WithGestureOffset, dx, dy, epsilon,
            "InputEvent with specified touchpad gesture offset") {
     const auto argGestureX = arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_GESTURE_X_OFFSET);

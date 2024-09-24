@@ -884,7 +884,6 @@ TEST_F(AttachedChoreographerTest, removedWhenLayerIsGone) {
             mScheduler->createDisplayEventConnection(Cycle::Render, {}, layer->getHandle());
 
     layer.clear();
-    mFlinger.mutableLayersPendingRemoval().clear();
     EXPECT_TRUE(mScheduler->mutableAttachedChoreographers().empty());
 }
 

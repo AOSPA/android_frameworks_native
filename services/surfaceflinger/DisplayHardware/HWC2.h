@@ -179,8 +179,9 @@ public:
     [[nodiscard]] virtual hal::Error getClientTargetProperty(
             aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness*
                     outClientTargetProperty) = 0;
-    [[nodiscard]] virtual hal::Error getDisplayLuts(
-            std::vector<aidl::android::hardware::graphics::composer3::Lut>* outLuts) = 0;
+    [[nodiscard]] virtual hal::Error getRequestedLuts(
+            std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*
+                    outLuts) = 0;
     [[nodiscard]] virtual hal::Error getDisplayDecorationSupport(
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) = 0;
@@ -264,8 +265,9 @@ public:
     hal::Error getClientTargetProperty(
             aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness*
                     outClientTargetProperty) override;
-    hal::Error getDisplayLuts(
-            std::vector<aidl::android::hardware::graphics::composer3::Lut>* outLuts) override;
+    hal::Error getRequestedLuts(
+            std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*
+                    outLuts) override;
     hal::Error getDisplayDecorationSupport(
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) override;
@@ -359,6 +361,8 @@ public:
     // AIDL HAL
     [[nodiscard]] virtual hal::Error setBrightness(float brightness) = 0;
     [[nodiscard]] virtual hal::Error setBlockingRegion(const android::Region& region) = 0;
+    [[nodiscard]] virtual hal::Error setLuts(
+            std::vector<aidl::android::hardware::graphics::composer3::Lut>& luts) = 0;
 };
 
 namespace impl {
@@ -415,6 +419,8 @@ public:
     // AIDL HAL
     hal::Error setBrightness(float brightness) override;
     hal::Error setBlockingRegion(const android::Region& region) override;
+    hal::Error setLuts(
+            std::vector<aidl::android::hardware::graphics::composer3::Lut>& luts) override;
 
 private:
     // These are references to data owned by HWComposer, which will outlive

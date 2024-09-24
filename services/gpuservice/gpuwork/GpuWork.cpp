@@ -118,6 +118,9 @@ GpuWork::~GpuWork() {
 }
 
 void GpuWork::initialize() {
+    // Workaround b/347947040 by allowing time for statsd / bpf setup.
+    std::this_thread::sleep_for(std::chrono::seconds(30));
+
     // Make sure BPF programs are loaded.
     bpf::waitForProgsLoaded();
 

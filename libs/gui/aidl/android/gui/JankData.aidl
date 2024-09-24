@@ -29,7 +29,17 @@ parcelable JankData {
   int jankType;
 
   /**
-   * Expected duration in nanoseconds of this frame.
+   * Time between frames in nanoseconds.
    */
   long frameIntervalNs;
+
+  /**
+   * Time allocated to the application to render this frame.
+   */
+  long scheduledAppFrameTimeNs;
+
+  /**
+   * Time taken by the application to render this frame.
+   */
+  long actualAppFrameTimeNs;
 }

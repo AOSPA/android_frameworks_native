@@ -93,6 +93,7 @@ public:
     bool force_compile_graphite_renderengine() const;
     bool single_hop_screenshot() const;
     bool trace_frame_rate_override() const;
+    bool true_hdr_screenshots() const;
 
 protected:
     // overridden for unit tests

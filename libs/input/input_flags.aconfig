@@ -164,3 +164,24 @@ flag {
   description: "Show touch and pointer indicators when mirroring a single task"
   bug: "310179437"
 }
+
+flag {
+  name: "include_relative_axis_values_for_captured_touchpads"
+  namespace: "input"
+  description: "Include AXIS_RELATIVE_X and AXIS_RELATIVE_Y values when reporting touches from captured touchpads."
+  bug: "330522990"
+}
+
+flag {
+  name: "enable_per_device_input_latency_metrics"
+  namespace: "input"
+  description: "Capture input latency metrics on a per device granular level using histograms."
+  bug: "270049345"
+}
+
+flag {
+  name: "collect_palm_rejection_quality_metrics"
+  namespace: "input"
+  description: "Collect quality metrics on framework palm rejection."
+  bug: "341717757"
+}

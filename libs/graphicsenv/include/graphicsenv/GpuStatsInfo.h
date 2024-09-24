@@ -141,7 +141,6 @@ public:
     std::string appPackageName = "";
     int32_t vulkanVersion = 0;
     Driver glDriverToLoad = Driver::NONE;
-    Driver glDriverFallback = Driver::NONE;
     Driver vkDriverToLoad = Driver::NONE;
     Driver vkDriverFallback = Driver::NONE;
     bool glDriverToSend = false;

@@ -705,6 +705,23 @@ void SurfaceFrame::onPresent(nsecs_t presentTime, int32_t displayFrameJankType, 
         jd.jankType = mJankType;
         jd.frameIntervalNs =
                 (mRenderRate ? *mRenderRate : mDisplayFrameRenderRate).getPeriodNsecs();
+
+        if (mPredictionState == PredictionState::Valid) {
+            jd.scheduledAppFrameTimeNs = mPredictions.endTime - mPredictions.startTime;
+
+            // Using expected start, rather than actual, to measure the entire frame time. That is
+            // if the application starts the frame later than scheduled, include that delay in the
+            // frame time, as it usually means main thread being busy with non-rendering work.
+            if (mPresentState == PresentState::Dropped) {
+                jd.actualAppFrameTimeNs = mDropTime - mPredictions.startTime;
+            } else {
+                jd.actualAppFrameTimeNs = mActuals.endTime - mPredictions.startTime;
+            }
+        } else {
+            jd.scheduledAppFrameTimeNs = 0;
+            jd.actualAppFrameTimeNs = 0;
+        }
+
         JankTracker::onJankData(mLayerId, jd);
     }
 }

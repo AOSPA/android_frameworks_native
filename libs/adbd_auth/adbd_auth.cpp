@@ -390,13 +390,16 @@ public:
         }
     }
 
-    static constexpr const char* key_paths[] = {"/adb_keys", "/data/misc/adb/adb_keys"};
+    static constexpr std::pair<const char*, bool> key_paths[] = {
+        {"/adb_keys",               true  /* follow symlinks */       },
+        {"/data/misc/adb/adb_keys", false /* don't follow symlinks */ },
+    };
     void IteratePublicKeys(bool (*callback)(void*, const char*, size_t), void* opaque) {
-        for (const auto& path : key_paths) {
+        for (const auto& [path, follow_symlinks] : key_paths) {
             if (access(path, R_OK) == 0) {
                 LOG(INFO) << "adbd_auth: loading keys from " << path;
                 std::string content;
-                if (!android::base::ReadFileToString(path, &content)) {
+                if (!android::base::ReadFileToString(path, &content, follow_symlinks)) {
                     PLOG(ERROR) << "adbd_auth: couldn't read " << path;
                     continue;
                 }

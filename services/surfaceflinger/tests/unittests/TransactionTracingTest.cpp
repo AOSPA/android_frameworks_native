@@ -20,6 +20,7 @@
 #include <gui/SurfaceComposerClient.h>
 #include <cstdint>
 #include "Client.h"
+#include "Layer.h"
 
 #include <layerproto/LayerProtoHeader.h>
 #include "FrontEnd/LayerCreationArgs.h"

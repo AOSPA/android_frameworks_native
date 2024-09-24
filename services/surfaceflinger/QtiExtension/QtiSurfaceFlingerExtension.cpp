@@ -1434,8 +1434,8 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     }
 
     if (mQtiSmomoInstances.size() > 1) {
-        mQtiFlinger->mDrawingState.traverse(
-                [&](Layer* layer) { layer->qtiSetSmomoLayerStackId(0); });
+          FTL_FAKE_GUARD(kMainThreadContext, mQtiFlinger->traverseLegacyLayers(
+                  [&](Layer* layer) { layer->qtiSetSmomoLayerStackId(0); }));
     }
 
     // Disable smomo if external or virtual is connected.

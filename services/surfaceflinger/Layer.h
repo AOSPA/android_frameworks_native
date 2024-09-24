@@ -256,8 +256,6 @@ public:
     // true if this layer is visible, false otherwise
     virtual bool isVisible() const;
 
-    virtual sp<Layer> createClone();
-
     // Set a 2x2 transformation matrix on the layer. This transform
     // will be applied after parent transforms, but before any final
     // producer specified transform.
@@ -303,7 +301,6 @@ public:
 
     virtual bool setMetadata(const LayerMetadata& data);
     virtual void setChildrenDrawingParent(const sp<Layer>&);
-    virtual bool reparent(const sp<IBinder>& newParentHandle) REQUIRES(mFlinger->mStateLock);
     virtual bool setColorTransform(const mat4& matrix);
     virtual mat4 getColorTransform() const;
     virtual bool hasColorTransform() const;
@@ -332,8 +329,6 @@ public:
                            gui::GameMode gameMode);
     bool setTransactionCompletedListeners(const std::vector<sp<CallbackHandle>>& /*handles*/,
                                           bool willPresent);
-    virtual bool setBackgroundColor(const half3& color, float alpha, ui::Dataspace dataspace)
-            REQUIRES(mFlinger->mStateLock);
     virtual bool setColorSpaceAgnostic(const bool agnostic);
     virtual bool setDimmingEnabled(const bool dimmingEnabled);
     virtual bool setFixedTransformHint(ui::Transform::RotationFlags fixedTransformHint);
@@ -432,7 +427,6 @@ public:
 
     // from graphics API
     static ui::Dataspace translateDataspace(ui::Dataspace dataspace);
-    void updateCloneBufferInfo();
     uint64_t mPreviousFrameNumber = 0;
 
     void onCompositionPresented(const DisplayDevice*,
@@ -549,6 +543,7 @@ public:
     };
 
     BufferInfo mBufferInfo;
+    std::shared_ptr<gui::BufferReleaseChannel::ProducerEndpoint> mBufferReleaseChannel;
 
     // implements compositionengine::LayerFE
     const compositionengine::LayerFECompositionState* getCompositionState() const;
@@ -644,8 +639,6 @@ public:
         return {getLayerStack(), isInternalDisplayOverlay()};
     }
 
-    bool isRemovedFromCurrentState() const;
-
     perfetto::protos::LayerProto* writeToProto(perfetto::protos::LayersProto& layersProto,
                                                uint32_t traceFlags);
     void writeCompositionStateToProto(perfetto::protos::LayerProto* layerProto,
@@ -663,8 +656,6 @@ public:
 
     gui::WindowInfo::Type getWindowType() const { return mWindowType; }
 
-    bool updateMirrorInfo(const std::deque<Layer*>& cloneRootsPendingUpdates);
-
     /*
      * doTransaction - process the transaction. This is a good place to figure
      * out which attributes of the surface have changed.
@@ -676,22 +667,6 @@ public:
      * provided layer tree.
      */
     void removeRelativeZ(const std::vector<Layer*>& layersInTree);
-
-    /*
-     * Remove from current state and mark for removal.
-     */
-    void removeFromCurrentState() REQUIRES(mFlinger->mStateLock);
-
-    /*
-     * called with the state lock from a binder thread when the layer is
-     * removed from the current list to the pending removal list
-     */
-    void onRemovedFromCurrentState() REQUIRES(mFlinger->mStateLock);
-
-    /*
-     * Called when the layer is added back to the current state list.
-     */
-    void addToCurrentState();
 
     inline const State& getDrawingState() const { return mDrawingState; }
     inline State& getDrawingState() { return mDrawingState; }
@@ -721,57 +696,9 @@ public:
     // is ready to acquire a buffer.
     ui::Transform::RotationFlags getFixedTransformHint() const;
 
-    /**
-     * Traverse this layer and it's hierarchy of children directly. Unlike traverseInZOrder
-     * which will not emit children who have relativeZOrder to another layer, this method
-     * just directly emits all children. It also emits them in no particular order.
-     * So this method is not suitable for graphical operations, as it doesn't represent
-     * the scene state, but it's also more efficient than traverseInZOrder and so useful for
-     * book-keeping.
-     */
-    void traverse(LayerVector::StateSet, const LayerVector::Visitor&);
-    void traverseInReverseZOrder(LayerVector::StateSet, const LayerVector::Visitor&);
-    void traverseInZOrder(LayerVector::StateSet, const LayerVector::Visitor&);
-    void traverseChildren(const LayerVector::Visitor&);
-
-    /**
-     * Traverse only children in z order, ignoring relative layers that are not children of the
-     * parent.
-     */
-    void traverseChildrenInZOrder(LayerVector::StateSet, const LayerVector::Visitor&);
-
-    size_t getDescendantCount() const;
-    size_t getChildrenCount() const { return mDrawingChildren.size(); }
     bool isHandleAlive() const { return mHandleAlive; }
     bool onHandleDestroyed() { return mHandleAlive = false; }
-
-    // ONLY CALL THIS FROM THE LAYER DTOR!
-    // See b/141111965.  We need to add current children to offscreen layers in
-    // the layer dtor so as not to dangle layers.  Since the layer has not
-    // committed its transaction when the layer is destroyed, we must add
-    // current children.  This is safe in the dtor as we will no longer update
-    // the current state, but should not be called anywhere else!
-    LayerVector& getCurrentChildren() { return mCurrentChildren; }
-
-    void addChild(const sp<Layer>&);
-    // Returns index if removed, or negative value otherwise
-    // for symmetry with Vector::remove
-    ssize_t removeChild(const sp<Layer>& layer);
-    sp<Layer> getParent() const { return mCurrentParent.promote(); }
-
-    // Should be called with the surfaceflinger statelock held
-    bool isAtRoot() const { return mIsAtRoot; }
-    void setIsAtRoot(bool isAtRoot) { mIsAtRoot = isAtRoot; }
-
-    bool hasParent() const { return getParent() != nullptr; }
     Rect getScreenBounds(bool reduceTransparentRegion = true) const;
-    bool setChildLayer(const sp<Layer>& childLayer, int32_t z);
-    bool setChildRelativeLayer(const sp<Layer>& childLayer,
-            const sp<IBinder>& relativeToHandle, int32_t relativeZ);
-
-    // Copy the current list of children to the drawing state. Called by
-    // SurfaceFlinger to complete a transaction.
-    void commitChildList();
     int32_t getZ(LayerVector::StateSet) const;
 
     /**
@@ -804,6 +731,8 @@ public:
 
     bool setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
                                     TrustedPresentationListener const& listener);
+    void setBufferReleaseChannel(
+            const std::shared_ptr<gui::BufferReleaseChannel::ProducerEndpoint>& channel);
 
     // Creates a new handle each time, so we only expect
     // this to be called once.
@@ -829,15 +758,6 @@ public:
 
     int32_t getOwnerAppId() { return mOwnerAppId; }
 
-    // This layer is not a clone, but it's the parent to the cloned hierarchy. The
-    // variable mClonedChild represents the top layer that will be cloned so this
-    // layer will be the parent of mClonedChild.
-    // The layers in the cloned hierarchy will match the lifetime of the real layers. That is
-    // if the real layer is destroyed, then the clone layer will also be destroyed.
-    sp<Layer> mClonedChild;
-    bool mHadClonedChild = false;
-    void setClonedChild(const sp<Layer>& mClonedChild);
-
     mutable bool contentDirty{false};
     Region surfaceDamageRegion;
 
@@ -861,7 +781,6 @@ public:
     }
 
     bool setStretchEffect(const StretchEffect& effect);
-    StretchEffect getStretchEffect() const;
 
     bool setBufferCrop(const Rect& /* bufferCrop */);
     bool setDestinationFrame(const Rect& /* destinationFrame */);
@@ -883,10 +802,6 @@ public:
     // CompositionEngine to create a single path for composing layers.
     void updateSnapshot(bool updateGeometry);
     void updateChildrenSnapshots(bool updateGeometry);
-    sp<Layer> getClonedFrom() const {
-        return mClonedFrom != nullptr ? mClonedFrom.promote() : nullptr;
-    }
-    bool isClone() { return mClonedFrom != nullptr; }
 
     bool willPresentCurrentTransaction() const;
 
@@ -957,16 +872,6 @@ protected:
     void preparePerFrameBufferCompositionState();
     void preparePerFrameEffectsCompositionState();
     void gatherBufferInfo();
-
-    bool isClonedFromAlive() { return getClonedFrom() != nullptr; }
-
-    void cloneDrawingState(const Layer* from);
-    void updateClonedDrawingState(std::map<sp<Layer>, sp<Layer>>& clonedLayersMap);
-    void updateClonedChildren(const sp<Layer>& mirrorRoot,
-                              std::map<sp<Layer>, sp<Layer>>& clonedLayersMap);
-    void updateClonedRelatives(const std::map<sp<Layer>, sp<Layer>>& clonedLayersMap);
-    void addChildToDrawing(const sp<Layer>&);
-    void updateClonedInputInfo(const std::map<sp<Layer>, sp<Layer>>& clonedLayersMap);
 
     void prepareBasicGeometryCompositionState();
     void prepareGeometryCompositionState();
@@ -1102,19 +1007,6 @@ private:
             const DisplayDevice&) const;
     aidl::android::hardware::graphics::composer3::Composition getCompositionType(
             const compositionengine::OutputLayer*) const;
-    /**
-     * Returns an unsorted vector of all layers that are part of this tree.
-     * That includes the current layer and all its descendants.
-     */
-    std::vector<Layer*> getLayersInTree(LayerVector::StateSet);
-    /**
-     * Traverses layers that are part of this tree in the correct z order.
-     * layersInTree must be sorted before calling this method.
-     */
-    void traverseChildrenInZOrderInner(const std::vector<Layer*>& layersInTree,
-                                       LayerVector::StateSet, const LayerVector::Visitor&);
-    LayerVector makeChildrenTraversalList(LayerVector::StateSet,
-                                          const std::vector<Layer*>& layersInTree);
 
     bool propagateFrameRateForLayerTree(FrameRate parentFrameRate, bool overrideChildren,
                                         bool* transactionNeeded);
@@ -1122,10 +1014,6 @@ private:
     bool isTrustedOverlay() const;
     gui::DropInputMode getDropInputMode() const;
     void handleDropInputMode(gui::WindowInfo& info) const;
-
-    // Find the root of the cloned hierarchy, this means the first non cloned parent.
-    // This will return null if first non cloned parent is not found.
-    sp<Layer> getClonedRoot();
 
     // Finds the top most layer in the hierarchy. This will find the root Layer where the parent is
     // null.
@@ -1200,12 +1088,6 @@ private:
     FloatRect mScreenBounds;
 
     bool mGetHandleCalled = false;
-
-    // The current layer is a clone of mClonedFrom. This means that this layer will update it's
-    // properties based on mClonedFrom. When mClonedFrom latches a new buffer for BufferLayers,
-    // this layer will update it's buffer. When mClonedFrom updates it's drawing state, children,
-    // and relatives, this layer will update as well.
-    wp<Layer> mClonedFrom;
 
     // The inherited shadow radius after taking into account the layer hierarchy. This is the
     // final shadow radius for this layer. If a shadow is specified for a layer, then effective

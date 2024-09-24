@@ -888,6 +888,7 @@ cc_defaults {
             enabled: false,
         },
     },
+    corpus: ["corpus/*"],
     fuzz_config: {
         cc: [
             "smoreland@google.com",

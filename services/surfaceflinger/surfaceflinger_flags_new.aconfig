@@ -114,6 +114,14 @@ flag {
   }
  } # single_hop_screenshot
 
+flag {
+    name: "true_hdr_screenshots"
+    namespace: "core_graphics"
+    description: "Enables screenshotting display content in HDR, sans tone mapping"
+    bug: "329470026"
+    is_fixed_read_only: true
+} # true_hdr_screenshots
+
  flag {
   name: "override_trusted_overlay"
   namespace: "window_surfaces"

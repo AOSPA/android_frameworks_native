@@ -257,9 +257,13 @@ public:
     Error setRefreshRateChangedCallbackDebugEnabled(Display, bool) override;
     Error notifyExpectedPresent(Display, nsecs_t expectedPresentTime,
                                 int32_t frameIntervalNs) override;
-    Error getDisplayLuts(
+    Error getRequestedLuts(
             Display display,
-            std::vector<aidl::android::hardware::graphics::composer3::Lut>* outLuts) override;
+            std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*
+                    outLuts) override;
+    Error setLayerLuts(
+            Display display, Layer layer,
+            std::vector<aidl::android::hardware::graphics::composer3::Lut>& luts) override;
 
 private:
     /* QTI_BEGIN */

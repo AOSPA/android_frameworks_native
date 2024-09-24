@@ -24,7 +24,8 @@ mod keyboard_classifier;
 
 pub use data_store::{DataStore, DefaultFileReaderWriter};
 pub use input::{
-    DeviceClass, DeviceId, InputDevice, ModifierState, MotionAction, MotionFlags, Source,
+    DeviceClass, DeviceId, InputDevice, KeyboardType, ModifierState, MotionAction, MotionFlags,
+    Source,
 };
 pub use input_verifier::InputVerifier;
 pub use keyboard_classifier::KeyboardClassifier;

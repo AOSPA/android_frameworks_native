@@ -401,18 +401,10 @@ void GraphicsEnv::setDriverToLoad(GpuStatsInfo::Driver driver) {
     switch (driver) {
         case GpuStatsInfo::Driver::GL:
         case GpuStatsInfo::Driver::GL_UPDATED:
-        case GpuStatsInfo::Driver::ANGLE: {
-            if (mGpuStats.glDriverToLoad == GpuStatsInfo::Driver::NONE ||
-                mGpuStats.glDriverToLoad == GpuStatsInfo::Driver::GL) {
-                mGpuStats.glDriverToLoad = driver;
-                break;
-            }
-
-            if (mGpuStats.glDriverFallback == GpuStatsInfo::Driver::NONE) {
-                mGpuStats.glDriverFallback = driver;
-            }
+        case GpuStatsInfo::Driver::ANGLE:
+            mGpuStats.glDriverToLoad = driver;
             break;
-        }
+
         case GpuStatsInfo::Driver::VULKAN:
         case GpuStatsInfo::Driver::VULKAN_UPDATED: {
             if (mGpuStats.vkDriverToLoad == GpuStatsInfo::Driver::NONE ||
@@ -561,8 +553,7 @@ void GraphicsEnv::sendGpuStatsLocked(GpuStatsInfo::Api api, bool isDriverLoaded,
     bool isIntendedDriverLoaded = false;
     if (api == GpuStatsInfo::Api::API_GL) {
         driver = mGpuStats.glDriverToLoad;
-        isIntendedDriverLoaded =
-                isDriverLoaded && (mGpuStats.glDriverFallback == GpuStatsInfo::Driver::NONE);
+        isIntendedDriverLoaded = isDriverLoaded;
     } else {
         driver = mGpuStats.vkDriverToLoad;
         isIntendedDriverLoaded =

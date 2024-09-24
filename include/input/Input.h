@@ -251,6 +251,8 @@ enum class InputEventType {
     TOUCH_MODE = AINPUT_EVENT_TYPE_TOUCH_MODE,
     ftl_first = KEY,
     ftl_last = TOUCH_MODE,
+    // Used by LatencyTracker fuzzer
+    kMaxValue = ftl_last
 };
 
 std::string inputEventSourceToString(int32_t source);

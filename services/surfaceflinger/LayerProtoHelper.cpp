@@ -263,7 +263,7 @@ void LayerProtoHelper::readFromProto(const perfetto::protos::BlurRegion& proto,
     outRegion.bottom = proto.bottom();
 }
 
-perfetto::protos::LayersProto LayerProtoFromSnapshotGenerator::generate(
+LayerProtoFromSnapshotGenerator& LayerProtoFromSnapshotGenerator::with(
         const frontend::LayerHierarchy& root) {
     mLayersProto.clear_layers();
     mVisitedLayers.clear();
@@ -305,9 +305,40 @@ perfetto::protos::LayersProto LayerProtoFromSnapshotGenerator::generate(
         }
     }
 
-    mDefaultSnapshots.clear();
-    mChildToRelativeParent.clear();
-    return std::move(mLayersProto);
+    return *this;
+}
+
+LayerProtoFromSnapshotGenerator& LayerProtoFromSnapshotGenerator::withOffscreenLayers(
+        const frontend::LayerHierarchy& offscreenRoot) {
+    // Add a fake invisible root layer to the proto output and parent all the offscreen layers to
+    // it.
+    perfetto::protos::LayerProto* rootProto = mLayersProto.add_layers();
+    const int32_t offscreenRootLayerId = INT32_MAX - 2;
+    rootProto->set_id(offscreenRootLayerId);
+    rootProto->set_name("Offscreen Root");
+    rootProto->set_parent(-1);
+
+    perfetto::protos::LayersProto offscreenLayers =
+            LayerProtoFromSnapshotGenerator(mSnapshotBuilder, mDisplayInfos, mLegacyLayers,
+                                            mTraceFlags)
+                    .with(offscreenRoot)
+                    .generate();
+
+    for (int i = 0; i < offscreenLayers.layers_size(); i++) {
+        perfetto::protos::LayerProto* layerProto = offscreenLayers.mutable_layers()->Mutable(i);
+        if (layerProto->parent() == -1) {
+            layerProto->set_parent(offscreenRootLayerId);
+            // Add layer as child of the fake root
+            rootProto->add_children(layerProto->id());
+        }
+    }
+
+    mLayersProto.mutable_layers()->Reserve(mLayersProto.layers_size() +
+                                           offscreenLayers.layers_size());
+    std::copy(offscreenLayers.layers().begin(), offscreenLayers.layers().end(),
+              RepeatedFieldBackInserter(mLayersProto.mutable_layers()));
+
+    return *this;
 }
 
 frontend::LayerSnapshot* LayerProtoFromSnapshotGenerator::getSnapshot(
