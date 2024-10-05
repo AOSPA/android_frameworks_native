@@ -241,12 +241,18 @@ inline void LegacyResampler::addSampleToMotionEvent(const Sample& sample,
                           motionEvent.getId());
 }
 
-void LegacyResampler::resampleMotionEvent(nanoseconds resampleTime, MotionEvent& motionEvent,
+nanoseconds LegacyResampler::getResampleLatency() const {
+    return RESAMPLE_LATENCY;
+}
+
+void LegacyResampler::resampleMotionEvent(nanoseconds frameTime, MotionEvent& motionEvent,
                                           const InputMessage* futureSample) {
     if (mPreviousDeviceId && *mPreviousDeviceId != motionEvent.getDeviceId()) {
         mLatestSamples.clear();
     }
     mPreviousDeviceId = motionEvent.getDeviceId();
+
+    const nanoseconds resampleTime = frameTime - RESAMPLE_LATENCY;
 
     updateLatestSamples(motionEvent);
 

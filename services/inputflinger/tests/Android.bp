@@ -126,4 +126,5 @@ cc_test {
     cflags: [
         "-Wno-error=ambiguous-reversed-operator",
     ],
+    native_coverage: false,
 }

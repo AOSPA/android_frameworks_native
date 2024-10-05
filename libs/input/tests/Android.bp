@@ -16,6 +16,7 @@ cc_test {
         "BlockingQueue_test.cpp",
         "IdGenerator_test.cpp",
         "InputChannel_test.cpp",
+        "InputConsumer_test.cpp",
         "InputDevice_test.cpp",
         "InputEvent_test.cpp",
         "InputPublisherAndConsumer_test.cpp",
@@ -25,6 +26,8 @@ cc_test {
         "MotionPredictorMetricsManager_test.cpp",
         "Resampler_test.cpp",
         "RingBuffer_test.cpp",
+        "TestInputChannel.cpp",
+        "TestLooper.cpp",
         "TfLiteMotionPredictor_test.cpp",
         "TouchResampling_test.cpp",
         "TouchVideoFrame_test.cpp",
@@ -92,6 +95,7 @@ cc_test {
             },
         },
     },
+    native_coverage: false,
 }
 
 // NOTE: This is a compile time test, and does not need to be

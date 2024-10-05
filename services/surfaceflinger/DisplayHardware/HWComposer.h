@@ -146,7 +146,8 @@ public:
     // supported by the HWC can be queried in advance, but allocation may fail for other reasons.
     virtual bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*) = 0;
 
-    virtual void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId) = 0;
+    virtual void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId,
+                                         std::optional<ui::Size> physicalSize) = 0;
 
     // Attempts to create a new layer on this display
     virtual std::shared_ptr<HWC2::Layer> createLayer(HalDisplayId) = 0;
@@ -361,7 +362,8 @@ public:
     bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*) override;
 
     // Called from SurfaceFlinger, when the state for a new physical display needs to be recreated.
-    void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId) override;
+    void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId,
+                                 std::optional<ui::Size> physicalSize) override;
 
     // Attempts to create a new layer on this display
     std::shared_ptr<HWC2::Layer> createLayer(HalDisplayId) override;
@@ -548,6 +550,13 @@ private:
     std::optional<DisplayIdentificationInfo> onHotplugDisconnect(hal::HWDisplayId);
     bool shouldIgnoreHotplugConnect(hal::HWDisplayId, bool hasDisplayIdentificationData) const;
 
+    aidl::android::hardware::graphics::composer3::DisplayConfiguration::Dpi
+    getEstimatedDotsPerInchFromSize(uint64_t hwcDisplayId, const HWCDisplayMode& hwcMode) const;
+
+    aidl::android::hardware::graphics::composer3::DisplayConfiguration::Dpi correctedDpiIfneeded(
+            aidl::android::hardware::graphics::composer3::DisplayConfiguration::Dpi dpi,
+            aidl::android::hardware::graphics::composer3::DisplayConfiguration::Dpi estimatedDpi)
+            const;
     std::vector<HWCDisplayMode> getModesFromDisplayConfigurations(uint64_t hwcDisplayId,
                                                                   int32_t maxFrameIntervalNs) const;
     std::vector<HWCDisplayMode> getModesFromLegacyDisplayConfigs(uint64_t hwcDisplayId) const;

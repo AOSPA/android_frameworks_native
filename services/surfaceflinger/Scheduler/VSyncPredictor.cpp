@@ -695,9 +695,12 @@ std::optional<TimePoint> VSyncPredictor::VsyncTimeline::nextAnticipatedVSyncTime
         if (lastFrameMissed) {
             // If the last frame missed is the last vsync, we already shifted the timeline. Depends
             // on whether we skipped the frame (onFrameMissed) or not (onFrameBegin) we apply a
-            // different fixup. There is no need to to shift the vsync timeline again.
-            vsyncTime += missedVsync.fixup.ns();
-            SFTRACE_FORMAT_INSTANT("lastFrameMissed");
+            // different fixup if we are violating the minFramePeriod.
+            // There is no need to shift the vsync timeline again.
+            if (vsyncTime - missedVsync.vsync.ns() < minFramePeriodOpt->ns()) {
+                vsyncTime += missedVsync.fixup.ns();
+                SFTRACE_FORMAT_INSTANT("lastFrameMissed");
+            }
         } else if (mightBackpressure && lastVsyncOpt) {
             if (!FlagManager::getInstance().vrr_bugfix_24q4()) {
                 // lastVsyncOpt does not need to be corrected with the new rate, and

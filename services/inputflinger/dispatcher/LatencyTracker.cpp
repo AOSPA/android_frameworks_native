@@ -70,7 +70,7 @@ LatencyTracker::LatencyTracker(InputEventTimelineProcessor* processor)
 void LatencyTracker::trackListener(int32_t inputEventId, nsecs_t eventTime, nsecs_t readTime,
                                    DeviceId deviceId,
                                    const std::set<InputDeviceUsageSource>& sources,
-                                   int inputEventAction, InputEventType inputEventType) {
+                                   int32_t inputEventAction, InputEventType inputEventType) {
     reportAndPruneMatureRecords(eventTime);
     const auto it = mTimelines.find(inputEventId);
     if (it != mTimelines.end()) {
@@ -105,7 +105,7 @@ void LatencyTracker::trackListener(int32_t inputEventId, nsecs_t eventTime, nsec
     const InputEventActionType inputEventActionType = [&]() {
         switch (inputEventType) {
             case InputEventType::MOTION: {
-                switch (inputEventAction) {
+                switch (MotionEvent::getActionMasked(inputEventAction)) {
                     case AMOTION_EVENT_ACTION_DOWN:
                         return InputEventActionType::MOTION_ACTION_DOWN;
                     case AMOTION_EVENT_ACTION_MOVE:
@@ -134,10 +134,8 @@ void LatencyTracker::trackListener(int32_t inputEventId, nsecs_t eventTime, nsec
         }
     }();
 
-    bool isDown = inputEventType == InputEventType::MOTION &&
-            inputEventAction == AMOTION_EVENT_ACTION_DOWN;
     mTimelines.emplace(inputEventId,
-                       InputEventTimeline(isDown, eventTime, readTime, identifier->vendor,
+                       InputEventTimeline(eventTime, readTime, identifier->vendor,
                                           identifier->product, sources, inputEventActionType));
     mEventTimes.emplace(eventTime, inputEventId);
 }

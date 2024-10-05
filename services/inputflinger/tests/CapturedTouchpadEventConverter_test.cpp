@@ -755,7 +755,7 @@ TEST_F(CapturedTouchpadEventConverterTest, TwoFingers_motionReportedCorrectly) {
                                     WithMotionAction(AMOTION_EVENT_ACTION_UP))));
     EXPECT_THAT(args,
                 Each(VariantWith<NotifyMotionArgs>(AllOf(WithPointerCount(1u), WithCoords(255, 202),
-                                                         WithPointerRelativeMotion(1, 0, 0),
+                                                         WithRelativeMotion(0, 0),
                                                          WithToolType(ToolType::FINGER)))));
 }
 

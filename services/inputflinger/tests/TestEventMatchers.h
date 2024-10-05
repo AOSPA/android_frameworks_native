@@ -615,7 +615,12 @@ public:
     explicit WithPointerIdMatcher(size_t index, int32_t pointerId)
           : mIndex(index), mPointerId(pointerId) {}
 
-    bool MatchAndExplain(const NotifyMotionArgs& args, std::ostream*) const {
+    bool MatchAndExplain(const NotifyMotionArgs& args, std::ostream* os) const {
+        if (mIndex >= args.pointerCoords.size()) {
+            *os << "Pointer index " << mIndex << " is out of bounds";
+            return false;
+        }
+
         return args.pointerProperties[mIndex].id == mPointerId;
     }
 
@@ -646,21 +651,51 @@ MATCHER_P2(WithCursorPosition, x, y, "InputEvent with specified cursor position"
     return (isnan(x) ? isnan(argX) : x == argX) && (isnan(y) ? isnan(argY) : y == argY);
 }
 
-MATCHER_P2(WithRelativeMotion, x, y, "InputEvent with specified relative motion") {
-    const auto argX = arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X);
-    const auto argY = arg.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y);
-    *result_listener << "expected relative motion (" << x << ", " << y << "), but got (" << argX
-                     << ", " << argY << ")";
-    return argX == x && argY == y;
+/// Relative motion matcher
+class WithRelativeMotionMatcher {
+public:
+    using is_gtest_matcher = void;
+    explicit WithRelativeMotionMatcher(size_t pointerIndex, float relX, float relY)
+          : mPointerIndex(pointerIndex), mRelX(relX), mRelY(relY) {}
+
+    bool MatchAndExplain(const NotifyMotionArgs& event, std::ostream* os) const {
+        if (mPointerIndex >= event.pointerCoords.size()) {
+            *os << "Pointer index " << mPointerIndex << " is out of bounds";
+            return false;
+        }
+
+        const PointerCoords& coords = event.pointerCoords[mPointerIndex];
+        bool matches = mRelX == coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X) &&
+                mRelY == coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y);
+        if (!matches) {
+            *os << "expected relative motion (" << mRelX << ", " << mRelY << ") at pointer index "
+                << mPointerIndex << ", but got ("
+                << coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X) << ", "
+                << coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y) << ")";
+        }
+        return matches;
+    }
+
+    void DescribeTo(std::ostream* os) const {
+        *os << "with relative motion (" << mRelX << ", " << mRelY << ") at pointer index "
+            << mPointerIndex;
+    }
+
+    void DescribeNegationTo(std::ostream* os) const { *os << "wrong relative motion"; }
+
+private:
+    const size_t mPointerIndex;
+    const float mRelX;
+    const float mRelY;
+};
+
+inline WithRelativeMotionMatcher WithRelativeMotion(float relX, float relY) {
+    return WithRelativeMotionMatcher(0, relX, relY);
 }
 
-MATCHER_P3(WithPointerRelativeMotion, pointer, x, y,
-           "InputEvent with specified relative motion for pointer") {
-    const auto argX = arg.pointerCoords[pointer].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X);
-    const auto argY = arg.pointerCoords[pointer].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y);
-    *result_listener << "expected pointer " << pointer << " to have relative motion (" << x << ", "
-                     << y << "), but got (" << argX << ", " << argY << ")";
-    return argX == x && argY == y;
+inline WithRelativeMotionMatcher WithPointerRelativeMotion(size_t pointerIndex, float relX,
+                                                           float relY) {
+    return WithRelativeMotionMatcher(pointerIndex, relX, relY);
 }
 
 MATCHER_P3(WithGestureOffset, dx, dy, epsilon,
@@ -767,10 +802,14 @@ MATCHER_P(WithToolType, toolType, "InputEvent with specified tool type") {
     return argToolType == toolType;
 }
 
-MATCHER_P2(WithPointerToolType, pointer, toolType,
+MATCHER_P2(WithPointerToolType, pointerIndex, toolType,
            "InputEvent with specified tool type for pointer") {
-    const auto argToolType = arg.pointerProperties[pointer].toolType;
-    *result_listener << "expected pointer " << pointer << " to have tool type "
+    if (std::cmp_greater_equal(pointerIndex, arg.getPointerCount())) {
+        *result_listener << "Pointer index " << pointerIndex << " is out of bounds";
+        return false;
+    }
+    const auto argToolType = arg.pointerProperties[pointerIndex].toolType;
+    *result_listener << "expected pointer " << pointerIndex << " to have tool type "
                      << ftl::enum_string(toolType) << ", but got " << ftl::enum_string(argToolType);
     return argToolType == toolType;
 }

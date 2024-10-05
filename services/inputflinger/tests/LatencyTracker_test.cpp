@@ -61,7 +61,6 @@ const std::chrono::duration ANR_TIMEOUT = std::chrono::milliseconds(
 
 InputEventTimeline getTestTimeline() {
     InputEventTimeline t(
-            /*isDown=*/false,
             /*eventTime=*/2,
             /*readTime=*/3,
             /*vendorId=*/0,
@@ -174,7 +173,7 @@ TEST_F(LatencyTrackerTest, TrackListener_DoesNotTriggerReporting) {
                             AMOTION_EVENT_ACTION_CANCEL, InputEventType::MOTION);
     triggerEventReporting(/*eventTime=*/2);
     assertReceivedTimeline(
-            InputEventTimeline{/*isDown=*/false, /*eventTime=*/2,
+            InputEventTimeline{/*eventTime=*/2,
                                /*readTime=*/3, /*vendorId=*/0, /*productID=*/0,
                                /*sources=*/{InputDeviceUsageSource::UNKNOWN},
                                /*inputEventActionType=*/InputEventActionType::UNKNOWN_INPUT_EVENT});
@@ -226,7 +225,6 @@ TEST_F(LatencyTrackerTest, TrackAllParameters_ReportsFullTimeline) {
 TEST_F(LatencyTrackerTest, WhenDuplicateEventsAreReported_DoesNotCrash) {
     constexpr nsecs_t inputEventId = 1;
     constexpr nsecs_t readTime = 3; // does not matter for this test
-    constexpr bool isDown = false;  // does not matter for this test
 
     // In the following 2 calls to trackListener, the inputEventId's are the same, but event times
     // are different.
@@ -246,7 +244,6 @@ TEST_F(LatencyTrackerTest, WhenDuplicateEventsAreReported_DoesNotCrash) {
 TEST_F(LatencyTrackerTest, MultipleEvents_AreReportedConsistently) {
     constexpr int32_t inputEventId1 = 1;
     InputEventTimeline timeline1(
-            /*isDown*/ false,
             /*eventTime*/ 2,
             /*readTime*/ 3,
             /*vendorId=*/0,
@@ -264,7 +261,6 @@ TEST_F(LatencyTrackerTest, MultipleEvents_AreReportedConsistently) {
 
     constexpr int32_t inputEventId2 = 10;
     InputEventTimeline timeline2(
-            /*isDown=*/false,
             /*eventTime=*/20,
             /*readTime=*/30,
             /*vendorId=*/0,
@@ -317,9 +313,9 @@ TEST_F(LatencyTrackerTest, IncompleteEvents_AreHandledConsistently) {
                                 /*deviceId=*/DEVICE_ID,
                                 /*sources=*/{InputDeviceUsageSource::UNKNOWN},
                                 AMOTION_EVENT_ACTION_CANCEL, InputEventType::MOTION);
-        expectedTimelines.push_back(InputEventTimeline{timeline.isDown, timeline.eventTime,
-                                                       timeline.readTime, timeline.vendorId,
-                                                       timeline.productId, timeline.sources,
+        expectedTimelines.push_back(InputEventTimeline{timeline.eventTime, timeline.readTime,
+                                                       timeline.vendorId, timeline.productId,
+                                                       timeline.sources,
                                                        timeline.inputEventActionType});
     }
     // Now, complete the first event that was sent.
@@ -350,10 +346,9 @@ TEST_F(LatencyTrackerTest, EventsAreTracked_WhenTrackListenerIsCalledFirst) {
                             {InputDeviceUsageSource::UNKNOWN}, AMOTION_EVENT_ACTION_CANCEL,
                             InputEventType::MOTION);
     triggerEventReporting(expected.eventTime);
-    assertReceivedTimeline(InputEventTimeline{expected.isDown, expected.eventTime,
-                                              expected.readTime, expected.vendorId,
-                                              expected.productId, expected.sources,
-                                              expected.inputEventActionType});
+    assertReceivedTimeline(InputEventTimeline{expected.eventTime, expected.readTime,
+                                              expected.vendorId, expected.productId,
+                                              expected.sources, expected.inputEventActionType});
 }
 
 /**
@@ -364,7 +359,7 @@ TEST_F(LatencyTrackerTest, EventsAreTracked_WhenTrackListenerIsCalledFirst) {
 TEST_F(LatencyTrackerTest, TrackListenerCheck_DeviceInfoFieldsInputEventTimeline) {
     constexpr int32_t inputEventId = 1;
     InputEventTimeline timeline(
-            /*isDown*/ false, /*eventTime*/ 2, /*readTime*/ 3,
+            /*eventTime*/ 2, /*readTime*/ 3,
             /*vendorId=*/50, /*productId=*/60,
             /*sources=*/
             {InputDeviceUsageSource::TOUCHSCREEN, InputDeviceUsageSource::STYLUS_DIRECT},
@@ -390,37 +385,37 @@ TEST_F(LatencyTrackerTest, TrackListenerCheck_InputEventActionTypeFieldInputEven
     constexpr int32_t inputEventId = 1;
     // Create timelines for different event types (Motion, Key)
     InputEventTimeline motionDownTimeline(
-            /*isDown*/ true, /*eventTime*/ 2, /*readTime*/ 3,
+            /*eventTime*/ 2, /*readTime*/ 3,
             /*vendorId*/ 0, /*productId*/ 0,
             /*sources*/ {InputDeviceUsageSource::UNKNOWN},
             /*inputEventActionType*/ InputEventActionType::MOTION_ACTION_DOWN);
 
     InputEventTimeline motionMoveTimeline(
-            /*isDown*/ false, /*eventTime*/ 4, /*readTime*/ 5,
+            /*eventTime*/ 4, /*readTime*/ 5,
             /*vendorId*/ 0, /*productId*/ 0,
             /*sources*/ {InputDeviceUsageSource::UNKNOWN},
             /*inputEventActionType*/ InputEventActionType::MOTION_ACTION_MOVE);
 
     InputEventTimeline motionUpTimeline(
-            /*isDown*/ false, /*eventTime*/ 6, /*readTime*/ 7,
+            /*eventTime*/ 6, /*readTime*/ 7,
             /*vendorId*/ 0, /*productId*/ 0,
             /*sources*/ {InputDeviceUsageSource::UNKNOWN},
             /*inputEventActionType*/ InputEventActionType::MOTION_ACTION_UP);
 
     InputEventTimeline keyDownTimeline(
-            /*isDown*/ false, /*eventTime*/ 8, /*readTime*/ 9,
+            /*eventTime*/ 8, /*readTime*/ 9,
             /*vendorId*/ 0, /*productId*/ 0,
             /*sources*/ {InputDeviceUsageSource::UNKNOWN},
             /*inputEventActionType*/ InputEventActionType::KEY);
 
     InputEventTimeline keyUpTimeline(
-            /*isDown*/ false, /*eventTime*/ 10, /*readTime*/ 11,
+            /*eventTime*/ 10, /*readTime*/ 11,
             /*vendorId*/ 0, /*productId*/ 0,
             /*sources*/ {InputDeviceUsageSource::UNKNOWN},
             /*inputEventActionType*/ InputEventActionType::KEY);
 
     InputEventTimeline unknownTimeline(
-            /*isDown*/ false, /*eventTime*/ 12, /*readTime*/ 13,
+            /*eventTime*/ 12, /*readTime*/ 13,
             /*vendorId*/ 0, /*productId*/ 0,
             /*sources*/ {InputDeviceUsageSource::UNKNOWN},
             /*inputEventActionType*/ InputEventActionType::UNKNOWN_INPUT_EVENT);

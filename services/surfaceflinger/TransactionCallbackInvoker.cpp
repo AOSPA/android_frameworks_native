@@ -30,6 +30,7 @@
 #include <binder/IInterface.h>
 #include <common/FlagManager.h>
 #include <common/trace.h>
+#include <ftl/concat.h>
 #include <utils/RefBase.h>
 
 namespace android {
@@ -129,6 +130,9 @@ status_t TransactionCallbackInvoker::addCallbackHandle(const sp<CallbackHandle>&
 
         if (FlagManager::getInstance().ce_fence_promise()) {
             for (auto& future : handle->previousReleaseFences) {
+                SFTRACE_NAME(ftl::Concat("Merging fence for layer: ",
+                                         ftl::truncated<20>(handle->name.c_str()))
+                                     .c_str());
                 mergeFence(handle->name.c_str(), future.get().value_or(Fence::NO_FENCE), prevFence);
             }
         } else {

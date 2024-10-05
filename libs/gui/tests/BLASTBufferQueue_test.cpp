@@ -186,6 +186,10 @@ public:
         mBlastBufferQueueAdapter->mergeWithNextTransaction(merge, frameNumber);
     }
 
+    void setApplyToken(sp<IBinder> applyToken) {
+        mBlastBufferQueueAdapter->setApplyToken(std::move(applyToken));
+    }
+
 private:
     sp<TestBLASTBufferQueue> mBlastBufferQueueAdapter;
 };
@@ -509,6 +513,69 @@ TEST_F(BLASTBufferQueueTest, TripleBuffering) {
         igbProducer->queueBuffer(slot, input, &qbOutput);
     }
     adapter.waitForCallbacks();
+}
+
+class WaitForCommittedCallback {
+public:
+    WaitForCommittedCallback() = default;
+    ~WaitForCommittedCallback() = default;
+
+    void wait() {
+        std::unique_lock lock(mMutex);
+        cv.wait(lock, [this] { return mCallbackReceived; });
+    }
+
+    void notify() {
+        std::unique_lock lock(mMutex);
+        mCallbackReceived = true;
+        cv.notify_one();
+        mCallbackReceivedTimeStamp = std::chrono::system_clock::now();
+    }
+    auto getCallback() {
+        return [this](void* /* unused context */, nsecs_t /* latchTime */,
+                      const sp<Fence>& /* presentFence */,
+                      const std::vector<SurfaceControlStats>& /* stats */) { notify(); };
+    }
+    std::chrono::time_point<std::chrono::system_clock> mCallbackReceivedTimeStamp;
+
+private:
+    std::mutex mMutex;
+    std::condition_variable cv;
+    bool mCallbackReceived = false;
+};
+
+TEST_F(BLASTBufferQueueTest, setApplyToken) {
+    sp<IBinder> applyToken = sp<BBinder>::make();
+    WaitForCommittedCallback firstTransaction;
+    WaitForCommittedCallback secondTransaction;
+    {
+        BLASTBufferQueueHelper adapter(mSurfaceControl, mDisplayWidth, mDisplayHeight);
+        adapter.setApplyToken(applyToken);
+        sp<IGraphicBufferProducer> igbProducer;
+        setUpProducer(adapter, igbProducer);
+
+        Transaction t;
+        t.addTransactionCommittedCallback(firstTransaction.getCallback(), nullptr);
+        adapter.mergeWithNextTransaction(&t, 1);
+        queueBuffer(igbProducer, 127, 127, 127,
+                    /*presentTimeDelay*/ std::chrono::nanoseconds(500ms).count());
+    }
+    {
+        BLASTBufferQueueHelper adapter(mSurfaceControl, mDisplayWidth, mDisplayHeight);
+        adapter.setApplyToken(applyToken);
+        sp<IGraphicBufferProducer> igbProducer;
+        setUpProducer(adapter, igbProducer);
+
+        Transaction t;
+        t.addTransactionCommittedCallback(secondTransaction.getCallback(), nullptr);
+        adapter.mergeWithNextTransaction(&t, 1);
+        queueBuffer(igbProducer, 127, 127, 127, /*presentTimeDelay*/ 0);
+    }
+
+    firstTransaction.wait();
+    secondTransaction.wait();
+    EXPECT_GT(secondTransaction.mCallbackReceivedTimeStamp,
+              firstTransaction.mCallbackReceivedTimeStamp);
 }
 
 TEST_F(BLASTBufferQueueTest, SetCrop_Item) {

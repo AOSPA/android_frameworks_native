@@ -178,7 +178,7 @@ void LayerProtoHelper::writeToProto(
 }
 
 void LayerProtoHelper::writeToProto(
-        const WindowInfo& inputInfo, const wp<Layer>& touchableRegionBounds,
+        const WindowInfo& inputInfo,
         std::function<perfetto::protos::InputWindowInfoProto*()> getInputWindowInfoProto) {
     if (inputInfo.token == nullptr) {
         return;
@@ -208,13 +208,6 @@ void LayerProtoHelper::writeToProto(
     proto->set_global_scale_factor(inputInfo.globalScaleFactor);
     LayerProtoHelper::writeToProtoDeprecated(inputInfo.transform, proto->mutable_transform());
     proto->set_replace_touchable_region_with_crop(inputInfo.replaceTouchableRegionWithCrop);
-    auto cropLayer = touchableRegionBounds.promote();
-    if (cropLayer != nullptr) {
-        proto->set_crop_layer_id(cropLayer->sequence);
-        LayerProtoHelper::writeToProto(cropLayer->getScreenBounds(
-                                               false /* reduceTransparentRegion */),
-                                       [&]() { return proto->mutable_touchable_region_crop(); });
-    }
 }
 
 void LayerProtoHelper::writeToProto(const mat4 matrix,
@@ -482,7 +475,7 @@ void LayerProtoHelper::writeSnapshotToProto(perfetto::protos::LayerProto* layerI
     layerInfo->set_owner_uid(requestedState.ownerUid.val());
 
     if ((traceFlags & LayerTracing::TRACE_INPUT) && snapshot.hasInputInfo()) {
-        LayerProtoHelper::writeToProto(snapshot.inputInfo, {},
+        LayerProtoHelper::writeToProto(snapshot.inputInfo,
                                        [&]() { return layerInfo->mutable_input_window_info(); });
     }
 

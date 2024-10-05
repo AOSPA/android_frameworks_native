@@ -249,6 +249,16 @@ void RenderEngineThreaded::drawLayersInternal(
     return;
 }
 
+void RenderEngineThreaded::drawGainmapInternal(
+        const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
+        const std::shared_ptr<ExternalTexture>& sdr, base::borrowed_fd&& sdrFence,
+        const std::shared_ptr<ExternalTexture>& hdr, base::borrowed_fd&& hdrFence,
+        float hdrSdrRatio, ui::Dataspace dataspace,
+        const std::shared_ptr<ExternalTexture>& gainmap) {
+    resultPromise->set_value(Fence::NO_FENCE);
+    return;
+}
+
 ftl::Future<FenceResult> RenderEngineThreaded::drawLayers(
         const DisplaySettings& display, const std::vector<LayerSettings>& layers,
         const std::shared_ptr<ExternalTexture>& buffer, base::unique_fd&& bufferFence) {
@@ -262,10 +272,34 @@ ftl::Future<FenceResult> RenderEngineThreaded::drawLayers(
         mFunctionCalls.push(
                 [resultPromise, display, layers, buffer, fd](renderengine::RenderEngine& instance) {
                     SFTRACE_NAME("REThreaded::drawLayers");
-                    instance.updateProtectedContext(layers, buffer);
+                    instance.updateProtectedContext(layers, {buffer.get()});
                     instance.drawLayersInternal(std::move(resultPromise), display, layers, buffer,
                                                 base::unique_fd(fd));
                 });
+    }
+    mCondition.notify_one();
+    return resultFuture;
+}
+
+ftl::Future<FenceResult> RenderEngineThreaded::drawGainmap(
+        const std::shared_ptr<ExternalTexture>& sdr, base::borrowed_fd&& sdrFence,
+        const std::shared_ptr<ExternalTexture>& hdr, base::borrowed_fd&& hdrFence,
+        float hdrSdrRatio, ui::Dataspace dataspace,
+        const std::shared_ptr<ExternalTexture>& gainmap) {
+    SFTRACE_CALL();
+    const auto resultPromise = std::make_shared<std::promise<FenceResult>>();
+    std::future<FenceResult> resultFuture = resultPromise->get_future();
+    {
+        std::lock_guard lock(mThreadMutex);
+        mNeedsPostRenderCleanup = true;
+        mFunctionCalls.push([resultPromise, sdr, sdrFence = std::move(sdrFence), hdr,
+                             hdrFence = std::move(hdrFence), hdrSdrRatio, dataspace,
+                             gainmap](renderengine::RenderEngine& instance) mutable {
+            SFTRACE_NAME("REThreaded::drawGainmap");
+            instance.updateProtectedContext({}, {sdr.get(), hdr.get(), gainmap.get()});
+            instance.drawGainmapInternal(std::move(resultPromise), sdr, std::move(sdrFence), hdr,
+                                         std::move(hdrFence), hdrSdrRatio, dataspace, gainmap);
+        });
     }
     mCondition.notify_one();
     return resultFuture;

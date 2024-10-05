@@ -103,7 +103,8 @@ ScheduleResult VSyncDispatchTimerQueueEntry::schedule(VSyncDispatch::ScheduleTim
             tracker.nextAnticipatedVSyncTimeFrom(std::max(timing.lastVsync,
                                                           now + timing.workDuration +
                                                                   timing.readyDuration),
-                                                 timing.lastVsync);
+                                                 timing.committedVsyncOpt.value_or(
+                                                         timing.lastVsync));
     auto nextWakeupTime = nextVsyncTime - timing.workDuration - timing.readyDuration;
 
     bool const wouldSkipAVsyncTarget =
@@ -208,9 +209,12 @@ void VSyncDispatchTimerQueueEntry::update(VSyncTracker& tracker, nsecs_t now) {
         const auto workDelta = mWorkloadUpdateInfo->workDuration - mScheduleTiming.workDuration;
         const auto readyDelta = mWorkloadUpdateInfo->readyDuration - mScheduleTiming.readyDuration;
         const auto lastVsyncDelta = mWorkloadUpdateInfo->lastVsync - mScheduleTiming.lastVsync;
+        const auto lastCommittedVsyncDelta =
+                mWorkloadUpdateInfo->committedVsyncOpt.value_or(mWorkloadUpdateInfo->lastVsync) -
+                mScheduleTiming.committedVsyncOpt.value_or(mScheduleTiming.lastVsync);
         SFTRACE_FORMAT_INSTANT("Workload updated workDelta=%" PRId64 " readyDelta=%" PRId64
-                               " lastVsyncDelta=%" PRId64,
-                               workDelta, readyDelta, lastVsyncDelta);
+                               " lastVsyncDelta=%" PRId64 " committedVsyncDelta=%" PRId64,
+                               workDelta, readyDelta, lastVsyncDelta, lastCommittedVsyncDelta);
         mScheduleTiming = *mWorkloadUpdateInfo;
         mWorkloadUpdateInfo.reset();
     }
@@ -261,10 +265,14 @@ void VSyncDispatchTimerQueueEntry::dump(std::string& result) const {
     StringAppendF(&result, "\t\t%s: %s %s\n", mName.c_str(),
                   mRunning ? "(in callback function)" : "", armedInfo.c_str());
     StringAppendF(&result,
-                  "\t\t\tworkDuration: %.2fms readyDuration: %.2fms lastVsync: %.2fms relative "
-                  "to now\n",
+                  "\t\t\tworkDuration: %.2fms readyDuration: %.2fms "
+                  "lastVsync: %.2fms relative to now "
+                  "committedVsync: %.2fms relative to now\n",
                   mScheduleTiming.workDuration / 1e6f, mScheduleTiming.readyDuration / 1e6f,
-                  (mScheduleTiming.lastVsync - systemTime()) / 1e6f);
+                  (mScheduleTiming.lastVsync - systemTime()) / 1e6f,
+                  (mScheduleTiming.committedVsyncOpt.value_or(mScheduleTiming.lastVsync) -
+                   systemTime()) /
+                          1e6f);
 
     if (mLastDispatchTime) {
         StringAppendF(&result, "\t\t\tmLastDispatchTime: %.2fms ago\n",

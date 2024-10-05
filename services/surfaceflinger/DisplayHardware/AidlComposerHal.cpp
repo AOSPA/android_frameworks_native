@@ -67,6 +67,7 @@ using AidlDisplayCapability = aidl::android::hardware::graphics::composer3::Disp
 using AidlHdrCapabilities = aidl::android::hardware::graphics::composer3::HdrCapabilities;
 using AidlHdrConversionCapability =
         aidl::android::hardware::graphics::common::HdrConversionCapability;
+using AidlHdcpLevels = aidl::android::hardware::drm::HdcpLevels;
 using AidlHdrConversionStrategy = aidl::android::hardware::graphics::common::HdrConversionStrategy;
 using AidlOverlayProperties = aidl::android::hardware::graphics::composer3::OverlayProperties;
 using AidlPerFrameMetadata = aidl::android::hardware::graphics::composer3::PerFrameMetadata;
@@ -227,6 +228,12 @@ public:
     ::ndk::ScopedAStatus onHotplugEvent(int64_t in_display,
                                         AidlDisplayHotplugEvent event) override {
         mCallback.onComposerHalHotplugEvent(translate<Display>(in_display), event);
+        return ::ndk::ScopedAStatus::ok();
+    }
+
+    ::ndk::ScopedAStatus onHdcpLevelsChanged(int64_t in_display,
+                                             const AidlHdcpLevels& levels) override {
+        mCallback.onComposerHalHdcpLevelsChanged(translate<Display>(in_display), levels);
         return ::ndk::ScopedAStatus::ok();
     }
 

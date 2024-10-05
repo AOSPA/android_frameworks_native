@@ -1837,6 +1837,43 @@ TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_withFrameRateCategory_60_12
     }
 }
 
+TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_vrrHighHintTouch_primaryRangeIsSingleRate) {
+    if (GetParam() != Config::FrameRateOverride::Enabled) {
+        return;
+    }
+
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
+
+    auto selector = createSelector(kVrrMode_120, kModeId120);
+    selector.setActiveMode(kModeId120, 60_Hz);
+
+    // Change primary physical range to be single rate, which on VRR device should not affect
+    // fps scoring.
+    EXPECT_EQ(SetPolicyResult::Changed,
+              selector.setDisplayManagerPolicy({kModeId120, {120_Hz, 120_Hz}}));
+
+    std::vector<LayerRequirement> layers = {{.weight = 1.f}, {.weight = 1.f}};
+    layers[0].vote = LayerVoteType::ExplicitCategory;
+    layers[0].frameRateCategory = FrameRateCategory::HighHint;
+    layers[0].name = "ExplicitCategory HighHint";
+
+    auto actualRankedFrameRates = selector.getRankedFrameRates(layers);
+    // Expect late touch boost from HighHint.
+    EXPECT_EQ(120_Hz, actualRankedFrameRates.ranking.front().frameRateMode.fps);
+    EXPECT_EQ(kModeId120, actualRankedFrameRates.ranking.front().frameRateMode.modePtr->getId());
+    EXPECT_TRUE(actualRankedFrameRates.consideredSignals.touch);
+
+    layers[1].vote = LayerVoteType::ExplicitExactOrMultiple;
+    layers[1].desiredRefreshRate = 30_Hz;
+    layers[1].name = "ExplicitExactOrMultiple 30Hz";
+
+    actualRankedFrameRates = selector.getRankedFrameRates(layers);
+    // Expect late touch boost from HighHint.
+    EXPECT_EQ(120_Hz, actualRankedFrameRates.ranking.front().frameRateMode.fps);
+    EXPECT_EQ(kModeId120, actualRankedFrameRates.ranking.front().frameRateMode.modePtr->getId());
+    EXPECT_TRUE(actualRankedFrameRates.consideredSignals.touch);
+}
+
 TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_withFrameRateCategory_HighHint) {
     auto selector = createSelector(makeModes(kMode24, kMode30, kMode60, kMode120), kModeId60);
 
@@ -1955,7 +1992,7 @@ TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_withFrameRateCategory_HighH
     // Gets touch boost
     EXPECT_EQ(120_Hz, actualRankedFrameRates.ranking.front().frameRateMode.fps);
     EXPECT_EQ(kModeId120, actualRankedFrameRates.ranking.front().frameRateMode.modePtr->getId());
-    EXPECT_FALSE(actualRankedFrameRates.consideredSignals.touch);
+    EXPECT_TRUE(actualRankedFrameRates.consideredSignals.touch);
 }
 
 TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_withFrameRateCategory_TouchBoost) {
@@ -2049,7 +2086,7 @@ TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_withFrameRateCategory_Touch
     lr2.name = "Max";
     actualRankedFrameRates = selector.getRankedFrameRates(layers, {.touch = true});
     EXPECT_FRAME_RATE_MODE(kMode120, 120_Hz, actualRankedFrameRates.ranking.front().frameRateMode);
-    EXPECT_FALSE(actualRankedFrameRates.consideredSignals.touch);
+    EXPECT_TRUE(actualRankedFrameRates.consideredSignals.touch);
 
     lr1.vote = LayerVoteType::ExplicitCategory;
     lr1.frameRateCategory = FrameRateCategory::Normal;

@@ -120,6 +120,47 @@ InputStream::operator MotionEvent() const {
 
 } // namespace
 
+/**
+ * The testing setup assumes an input rate of 200 Hz and a display rate of 60 Hz. This implies that
+ * input events are received every 5 milliseconds, while the display consumes batched events every
+ * ~16 milliseconds. The resampler's RESAMPLE_LATENCY constant determines the resample time, which
+ * is calculated as frameTime - RESAMPLE_LATENCY. resampleTime specifies the time used for
+ * resampling. For example, if the desired frame time consumption is ~16 milliseconds, the resample
+ * time would be ~11 milliseconds. Consequenly, the last added sample to the motion event has an
+ * event time of ~11 milliseconds. Note that there are specific scenarios where resampleMotionEvent
+ * is not called with a multiple of ~16 milliseconds. These cases are primarily for data addition
+ * or to test other functionalities of the resampler.
+ *
+ * Coordinates are calculated using linear interpolation (lerp) based on the last two available
+ * samples. Linear interpolation is defined as (a + alpha*(b - a)). Let t_b and t_a be the
+ * timestamps of samples a and b, respectively. The interpolation factor alpha is calculated as
+ * (resampleTime - t_a) / (t_b - t_a). The value of alpha determines whether the resampled
+ * coordinates are interpolated or extrapolated. If alpha falls within the semi-closed interval [0,
+ * 1), the coordinates are interpolated. If alpha is greater than or equal to 1, the coordinates are
+ * extrapolated.
+ *
+ * The timeline below depics an interpolation scenario
+ * -----------------------------------|---------|---------|---------|----------
+ *                                   10ms      11ms      15ms      16ms
+ *                                   MOVE       |        MOVE       |
+ *                                         resampleTime         frameTime
+ * Based on the timeline alpha is (11 - 10)/(15 - 10) = 1/5. Thus, coordinates are interpolated.
+ *
+ * The following timeline portrays an extrapolation scenario
+ * -------------------------|---------|---------|-------------------|----------
+ *                          5ms      10ms      11ms                16ms
+ *                          MOVE     MOVE       |                   |
+ *                                         resampleTime         frameTime
+ * Likewise, alpha = (11 - 5)/(10 - 5) = 6/5. Hence, coordinates are extrapolated.
+ *
+ * If a motion event was resampled, the tests will check that the following conditions are satisfied
+ * to guarantee resampling correctness:
+ * - The motion event metadata must not change.
+ * - The number of samples in the motion event must only increment by 1.
+ * - The resampled values must be at the end of motion event coordinates.
+ * - The rasamples values must be near the hand calculations.
+ * - The resampled time must be the most recent one in motion event.
+ */
 class ResamplerTest : public testing::Test {
 protected:
     ResamplerTest() : mResampler(std::make_unique<LegacyResampler>()) {}
@@ -225,7 +266,7 @@ TEST_F(ResamplerTest, NonResampledAxesArePreserved) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, &futureSample);
+    mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
     EXPECT_EQ(motionEvent.getTouchMajor(0), TOUCH_MAJOR_VALUE);
 
@@ -243,7 +284,7 @@ TEST_F(ResamplerTest, SinglePointerNotEnoughDataToResample) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, /*futureSample=*/nullptr);
+    mResampler->resampleMotionEvent(16ms, motionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
 }
@@ -270,23 +311,6 @@ TEST_F(ResamplerTest, SinglePointerDifferentDeviceIdBetweenMotionEvents) {
     assertMotionEventIsNotResampled(originalMotionEvent, motionFromSecondDevice);
 }
 
-// Increments of 16 ms for display refresh rate
-// Increments of 6 ms for input frequency
-// Resampling latency is known to be 5 ms
-// Therefore, first resampling time will be 11 ms
-
-/**
- * Timeline
- * ----+----------------------+---------+---------+---------+----------
- *     0ms                   10ms      11ms      15ms      16ms
- *    DOWN                   MOVE       |        MSG        |
- *                                  resample              frame
- * Resampling occurs at 11ms. It is possible to interpolate because there is a sample available
- * after the resample time. It is assumed that the InputMessage frequency is 100Hz, and the frame
- * frequency is 60Hz. This means the time between InputMessage samples is 10ms, and the time between
- * frames is ~16ms. Resample time is frameTime - RESAMPLE_LATENCY. The resampled sample must be the
- * last one in the batch to consume.
- */
 TEST_F(ResamplerTest, SinglePointerSingleSampleInterpolation) {
     MotionEvent motionEvent =
             InputStream{{InputSample{10ms,
@@ -297,7 +321,7 @@ TEST_F(ResamplerTest, SinglePointerSingleSampleInterpolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, &futureSample);
+    mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
     assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, motionEvent,
                                               {Pointer{.id = 0,
@@ -338,18 +362,13 @@ TEST_F(ResamplerTest, SinglePointerSingleSampleExtrapolation) {
 
     const MotionEvent originalMotionEvent = secondMotionEvent;
 
-    mResampler->resampleMotionEvent(11ms, secondMotionEvent, nullptr);
+    mResampler->resampleMotionEvent(16ms, secondMotionEvent, nullptr);
 
     assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, secondMotionEvent,
                                               {Pointer{.id = 0,
                                                        .x = 2.2f,
                                                        .y = 4.4f,
                                                        .isResampled = true}});
-    // Integrity of the whole motionEvent
-    // History size should increment by 1
-    // Check if the resampled value is the last one
-    // Check if the resampleTime is correct
-    // Check if the PointerCoords are consistent with the other computations
 }
 
 TEST_F(ResamplerTest, SinglePointerMultipleSampleInterpolation) {
@@ -364,7 +383,7 @@ TEST_F(ResamplerTest, SinglePointerMultipleSampleInterpolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, &futureSample);
+    mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
     assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, motionEvent,
                                               {Pointer{.id = 0,
@@ -382,7 +401,7 @@ TEST_F(ResamplerTest, SinglePointerMultipleSampleExtrapolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, nullptr);
+    mResampler->resampleMotionEvent(16ms, motionEvent, nullptr);
 
     assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, motionEvent,
                                               {Pointer{.id = 0,
@@ -400,7 +419,7 @@ TEST_F(ResamplerTest, SinglePointerDeltaTooSmallExtrapolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, nullptr);
+    mResampler->resampleMotionEvent(16ms, motionEvent, nullptr);
 
     assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
 }
@@ -414,7 +433,7 @@ TEST_F(ResamplerTest, SinglePointerDeltaTooLargeExtrapolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(27ms, motionEvent, nullptr);
+    mResampler->resampleMotionEvent(32ms, motionEvent, nullptr);
 
     assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
 }
@@ -428,7 +447,7 @@ TEST_F(ResamplerTest, SinglePointerResampleTimeTooFarExtrapolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(43ms, motionEvent, nullptr);
+    mResampler->resampleMotionEvent(48ms, motionEvent, nullptr);
 
     assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, motionEvent,
                                               {Pointer{.id = 0,
@@ -451,7 +470,7 @@ TEST_F(ResamplerTest, MultiplePointerSingleSampleInterpolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, &futureSample);
+    mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
     assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, motionEvent,
                                               {Pointer{.x = 2.2f, .y = 2.2f, .isResampled = true},
@@ -475,7 +494,7 @@ TEST_F(ResamplerTest, MultiplePointerSingleSampleExtrapolation) {
 
     const MotionEvent originalMotionEvent = secondMotionEvent;
 
-    mResampler->resampleMotionEvent(11ms, secondMotionEvent, /*futureSample=*/nullptr);
+    mResampler->resampleMotionEvent(16ms, secondMotionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, secondMotionEvent,
                                               {Pointer{.x = 3.4f, .y = 3.4f, .isResampled = true},
@@ -498,7 +517,7 @@ TEST_F(ResamplerTest, MultiplePointerMultipleSampleInterpolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, &futureSample);
+    mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
     assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, motionEvent,
                                               {Pointer{.x = 3.4f, .y = 3.4f, .isResampled = true},
@@ -517,7 +536,7 @@ TEST_F(ResamplerTest, MultiplePointerMultipleSampleExtrapolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, /*futureSample=*/nullptr);
+    mResampler->resampleMotionEvent(16ms, motionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, motionEvent,
                                               {Pointer{.x = 3.4f, .y = 3.4f, .isResampled = true},
@@ -539,7 +558,7 @@ TEST_F(ResamplerTest, MultiplePointerIncreaseNumPointersInterpolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, &futureSample);
+    mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
     assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, motionEvent,
                                               {Pointer{.x = 1.4f, .y = 1.4f, .isResampled = true},
@@ -560,7 +579,7 @@ TEST_F(ResamplerTest, MultiplePointerIncreaseNumPointersInterpolation) {
 
     const MotionEvent originalSecondMotionEvent = secondMotionEvent;
 
-    mResampler->resampleMotionEvent(27ms, secondMotionEvent, &secondFutureSample);
+    mResampler->resampleMotionEvent(32ms, secondMotionEvent, &secondFutureSample);
 
     assertMotionEventIsResampledAndCoordsNear(originalSecondMotionEvent, secondMotionEvent,
                                               {Pointer{.x = 3.8f, .y = 3.8f, .isResampled = true},
@@ -586,7 +605,7 @@ TEST_F(ResamplerTest, MultiplePointerIncreaseNumPointersExtrapolation) {
 
     const MotionEvent secondOriginalMotionEvent = secondMotionEvent;
 
-    mResampler->resampleMotionEvent(11ms, secondMotionEvent, /*futureSample=*/nullptr);
+    mResampler->resampleMotionEvent(16ms, secondMotionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsNotResampled(secondOriginalMotionEvent, secondMotionEvent);
 }
@@ -606,7 +625,7 @@ TEST_F(ResamplerTest, MultiplePointerDecreaseNumPointersInterpolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, &futureSample);
+    mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
     assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
 }
@@ -629,7 +648,7 @@ TEST_F(ResamplerTest, MultiplePointerDecreaseNumPointersExtrapolation) {
 
     const MotionEvent secondOriginalMotionEvent = secondMotionEvent;
 
-    mResampler->resampleMotionEvent(11ms, secondMotionEvent, /*futureSample=*/nullptr);
+    mResampler->resampleMotionEvent(16ms, secondMotionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsResampledAndCoordsNear(secondOriginalMotionEvent, secondMotionEvent,
                                               {Pointer{.x = 3.4f, .y = 3.4f, .isResampled = true},
@@ -650,7 +669,7 @@ TEST_F(ResamplerTest, MultiplePointerDifferentIdOrderInterpolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, &futureSample);
+    mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
     assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
 }
@@ -672,7 +691,7 @@ TEST_F(ResamplerTest, MultiplePointerDifferentIdOrderExtrapolation) {
 
     const MotionEvent secondOriginalMotionEvent = secondMotionEvent;
 
-    mResampler->resampleMotionEvent(11ms, secondMotionEvent, /*futureSample=*/nullptr);
+    mResampler->resampleMotionEvent(16ms, secondMotionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsNotResampled(secondOriginalMotionEvent, secondMotionEvent);
 }
@@ -691,7 +710,7 @@ TEST_F(ResamplerTest, MultiplePointerDifferentIdsInterpolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, &futureSample);
+    mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
     assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
 }
@@ -713,7 +732,7 @@ TEST_F(ResamplerTest, MultiplePointerDifferentIdsExtrapolation) {
 
     const MotionEvent secondOriginalMotionEvent = secondMotionEvent;
 
-    mResampler->resampleMotionEvent(11ms, secondMotionEvent, /*futureSample=*/nullptr);
+    mResampler->resampleMotionEvent(16ms, secondMotionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsNotResampled(secondOriginalMotionEvent, secondMotionEvent);
 }
@@ -746,7 +765,7 @@ TEST_F(ResamplerTest, MultiplePointerDifferentToolTypeInterpolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, &futureSample);
+    mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
     assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
 }
@@ -782,7 +801,7 @@ TEST_F(ResamplerTest, MultiplePointerDifferentToolTypeExtrapolation) {
 
     const MotionEvent secondOriginalMotionEvent = secondMotionEvent;
 
-    mResampler->resampleMotionEvent(11ms, secondMotionEvent, /*futureSample=*/nullptr);
+    mResampler->resampleMotionEvent(16ms, secondMotionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsNotResampled(secondOriginalMotionEvent, secondMotionEvent);
 }
@@ -815,7 +834,7 @@ TEST_F(ResamplerTest, MultiplePointerShouldNotResampleToolTypeInterpolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, /*futureSample=*/nullptr);
+    mResampler->resampleMotionEvent(16ms, motionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
 }
@@ -847,7 +866,7 @@ TEST_F(ResamplerTest, MultiplePointerShouldNotResampleToolTypeExtrapolation) {
 
     const MotionEvent originalMotionEvent = motionEvent;
 
-    mResampler->resampleMotionEvent(11ms, motionEvent, /*futureSample=*/nullptr);
+    mResampler->resampleMotionEvent(16ms, motionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
 }

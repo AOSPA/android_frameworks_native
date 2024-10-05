@@ -235,6 +235,9 @@ TEST_F(VibratorHalWrapperAidlTest, TestGetInfoDoesNotCacheFailedResult) {
     constexpr int32_t PWLE_SIZE_MAX = 20;
     constexpr int32_t PRIMITIVE_DELAY_MAX = 100;
     constexpr int32_t PWLE_DURATION_MAX = 200;
+    constexpr int32_t PWLE_V2_COMPOSITION_SIZE_MAX = 16;
+    constexpr int32_t PWLE_V2_MAX_ALLOWED_PRIMITIVE_MIN_DURATION_MS = 20;
+    constexpr int32_t PWLE_V2_MIN_REQUIRED_PRIMITIVE_MAX_DURATION_MS = 1000;
     std::vector<Effect> supportedEffects = {Effect::CLICK, Effect::TICK};
     std::vector<CompositePrimitive> supportedPrimitives = {CompositePrimitive::CLICK};
     std::vector<Braking> supportedBraking = {Braking::CLAB};
@@ -305,6 +308,21 @@ TEST_F(VibratorHalWrapperAidlTest, TestGetInfoDoesNotCacheFailedResult) {
             .Times(Exactly(2))
             .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
             .WillOnce(DoAll(SetArgPointee<0>(amplitudes), Return(ndk::ScopedAStatus::ok())));
+    EXPECT_CALL(*mMockHal.get(), getPwleV2CompositionSizeMax(_))
+            .Times(Exactly(2))
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(PWLE_V2_COMPOSITION_SIZE_MAX),
+                            Return(ndk::ScopedAStatus::ok())));
+    EXPECT_CALL(*mMockHal.get(), getPwleV2PrimitiveDurationMinMillis(_))
+            .Times(Exactly(2))
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(PWLE_V2_MAX_ALLOWED_PRIMITIVE_MIN_DURATION_MS),
+                            Return(ndk::ScopedAStatus::ok())));
+    EXPECT_CALL(*mMockHal.get(), getPwleV2PrimitiveDurationMaxMillis(_))
+            .Times(Exactly(2))
+            .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY)))
+            .WillOnce(DoAll(SetArgPointee<0>(PWLE_V2_MIN_REQUIRED_PRIMITIVE_MAX_DURATION_MS),
+                            Return(ndk::ScopedAStatus::ok())));
 
     vibrator::Info failed = mWrapper->getInfo();
     ASSERT_TRUE(failed.capabilities.isFailed());
@@ -321,6 +339,9 @@ TEST_F(VibratorHalWrapperAidlTest, TestGetInfoDoesNotCacheFailedResult) {
     ASSERT_TRUE(failed.frequencyResolution.isFailed());
     ASSERT_TRUE(failed.qFactor.isFailed());
     ASSERT_TRUE(failed.maxAmplitudes.isFailed());
+    ASSERT_TRUE(failed.maxEnvelopeEffectSize.isFailed());
+    ASSERT_TRUE(failed.minEnvelopeEffectControlPointDuration.isFailed());
+    ASSERT_TRUE(failed.maxEnvelopeEffectControlPointDuration.isFailed());
 
     vibrator::Info successful = mWrapper->getInfo();
     ASSERT_EQ(vibrator::Capabilities::ON_CALLBACK, successful.capabilities.value());
@@ -338,6 +359,11 @@ TEST_F(VibratorHalWrapperAidlTest, TestGetInfoDoesNotCacheFailedResult) {
     ASSERT_EQ(F_RESOLUTION, successful.frequencyResolution.value());
     ASSERT_EQ(Q_FACTOR, successful.qFactor.value());
     ASSERT_EQ(amplitudes, successful.maxAmplitudes.value());
+    ASSERT_EQ(PWLE_V2_COMPOSITION_SIZE_MAX, successful.maxEnvelopeEffectSize.value());
+    ASSERT_EQ(std::chrono::milliseconds(PWLE_V2_MAX_ALLOWED_PRIMITIVE_MIN_DURATION_MS),
+              successful.minEnvelopeEffectControlPointDuration.value());
+    ASSERT_EQ(std::chrono::milliseconds(PWLE_V2_MIN_REQUIRED_PRIMITIVE_MAX_DURATION_MS),
+              successful.maxEnvelopeEffectControlPointDuration.value());
 }
 
 TEST_F(VibratorHalWrapperAidlTest, TestGetInfoCachesResult) {
@@ -347,6 +373,9 @@ TEST_F(VibratorHalWrapperAidlTest, TestGetInfoCachesResult) {
     constexpr int32_t PWLE_SIZE_MAX = 20;
     constexpr int32_t PRIMITIVE_DELAY_MAX = 100;
     constexpr int32_t PWLE_DURATION_MAX = 200;
+    constexpr int32_t PWLE_V2_COMPOSITION_SIZE_MAX = 16;
+    constexpr int32_t PWLE_V2_MAX_ALLOWED_PRIMITIVE_MIN_DURATION_MS = 20;
+    constexpr int32_t PWLE_V2_MIN_REQUIRED_PRIMITIVE_MAX_DURATION_MS = 1000;
     std::vector<Effect> supportedEffects = {Effect::CLICK, Effect::TICK};
 
     EXPECT_CALL(*mMockHal.get(), getCapabilities(_))
@@ -391,6 +420,18 @@ TEST_F(VibratorHalWrapperAidlTest, TestGetInfoCachesResult) {
     EXPECT_CALL(*mMockHal.get(), getSupportedBraking(_))
             .Times(Exactly(1))
             .WillOnce(Return(ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION)));
+    EXPECT_CALL(*mMockHal.get(), getPwleV2CompositionSizeMax(_))
+            .Times(Exactly(1))
+            .WillOnce(DoAll(SetArgPointee<0>(PWLE_V2_COMPOSITION_SIZE_MAX),
+                            Return(ndk::ScopedAStatus::ok())));
+    EXPECT_CALL(*mMockHal.get(), getPwleV2PrimitiveDurationMinMillis(_))
+            .Times(Exactly(1))
+            .WillOnce(DoAll(SetArgPointee<0>(PWLE_V2_MAX_ALLOWED_PRIMITIVE_MIN_DURATION_MS),
+                            Return(ndk::ScopedAStatus::ok())));
+    EXPECT_CALL(*mMockHal.get(), getPwleV2PrimitiveDurationMaxMillis(_))
+            .Times(Exactly(1))
+            .WillOnce(DoAll(SetArgPointee<0>(PWLE_V2_MIN_REQUIRED_PRIMITIVE_MAX_DURATION_MS),
+                            Return(ndk::ScopedAStatus::ok())));
 
     std::vector<std::thread> threads;
     for (int i = 0; i < 10; i++) {
@@ -414,6 +455,11 @@ TEST_F(VibratorHalWrapperAidlTest, TestGetInfoCachesResult) {
     ASSERT_TRUE(info.frequencyResolution.isUnsupported());
     ASSERT_TRUE(info.qFactor.isUnsupported());
     ASSERT_TRUE(info.maxAmplitudes.isUnsupported());
+    ASSERT_EQ(PWLE_V2_COMPOSITION_SIZE_MAX, info.maxEnvelopeEffectSize.value());
+    ASSERT_EQ(std::chrono::milliseconds(PWLE_V2_MAX_ALLOWED_PRIMITIVE_MIN_DURATION_MS),
+              info.minEnvelopeEffectControlPointDuration.value());
+    ASSERT_EQ(std::chrono::milliseconds(PWLE_V2_MIN_REQUIRED_PRIMITIVE_MAX_DURATION_MS),
+              info.maxEnvelopeEffectControlPointDuration.value());
 }
 
 TEST_F(VibratorHalWrapperAidlTest, TestPerformEffectWithCallbackSupport) {

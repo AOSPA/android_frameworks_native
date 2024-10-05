@@ -263,7 +263,7 @@ public:
      * Return DEAD_OBJECT if the channel's peer has been closed.
      * Other errors probably indicate that the channel is broken.
      */
-    status_t sendMessage(const InputMessage* msg);
+    virtual status_t sendMessage(const InputMessage* msg);
 
     /* Receive a message sent by the other endpoint.
      *
@@ -275,14 +275,14 @@ public:
      * Return DEAD_OBJECT if the channel's peer has been closed.
      * Other errors probably indicate that the channel is broken.
      */
-    android::base::Result<InputMessage> receiveMessage();
+    virtual android::base::Result<InputMessage> receiveMessage();
 
     /* Tells whether there is a message in the channel available to be received.
      *
      * This is only a performance hint and may return false negative results. Clients should not
      * rely on availability of the message based on the return value.
      */
-    bool probablyHasInput() const;
+    virtual bool probablyHasInput() const;
 
     /* Wait until there is a message in the channel.
      *
@@ -323,11 +323,12 @@ public:
      */
     sp<IBinder> getConnectionToken() const;
 
+protected:
+    InputChannel(const std::string name, android::base::unique_fd fd, sp<IBinder> token);
+
 private:
     static std::unique_ptr<InputChannel> create(const std::string& name,
                                                 android::base::unique_fd fd, sp<IBinder> token);
-
-    InputChannel(const std::string name, android::base::unique_fd fd, sp<IBinder> token);
 };
 
 /*

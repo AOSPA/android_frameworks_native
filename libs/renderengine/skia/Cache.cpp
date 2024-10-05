@@ -27,6 +27,8 @@
 #include "ui/Rect.h"
 #include "utils/Timers.h"
 
+#include <com_android_graphics_libgui_flags.h>
+
 namespace android::renderengine::skia {
 
 namespace {
@@ -619,6 +621,32 @@ static void drawP3ImageLayers(SkiaRenderEngine* renderengine, const DisplaySetti
     }
 }
 
+static void drawEdgeExtensionLayers(SkiaRenderEngine* renderengine, const DisplaySettings& display,
+                                    const std::shared_ptr<ExternalTexture>& dstTexture,
+                                    const std::shared_ptr<ExternalTexture>& srcTexture) {
+    const Rect& displayRect = display.physicalDisplay;
+    // Make the layer
+    LayerSettings layer{
+            // Make the layer bigger than the texture
+            .geometry = Geometry{.boundaries = FloatRect(0, 0, displayRect.width(),
+                                                         displayRect.height())},
+            .source = PixelSource{.buffer =
+                                          Buffer{
+                                                  .buffer = srcTexture,
+                                                  .isOpaque = 1,
+                                          }},
+            // The type of effect does not affect the shader's uniforms, but the layer must have a
+            // valid EdgeExtensionEffect to apply the shader
+            .edgeExtensionEffect =
+                    EdgeExtensionEffect(true /* left */, false, false, true /* bottom */),
+    };
+    for (float alpha : {0.5, 0.0, 1.0}) {
+        layer.alpha = alpha;
+        auto layers = std::vector<LayerSettings>{layer};
+        renderengine->drawLayers(display, layers, dstTexture, base::unique_fd());
+    }
+}
+
 //
 // The collection of shaders cached here were found by using perfetto to record shader compiles
 // during actions that involve RenderEngine, logging the layer settings, and the shader code
@@ -760,6 +788,12 @@ void Cache::primeShaderCache(SkiaRenderEngine* renderengine, PrimeCacheConfig co
             if (config.cacheClippedLayers) {
                 // Draw layers for b/185569240.
                 drawClippedLayers(renderengine, display, dstTexture, texture);
+            }
+
+            if (com::android::graphics::libgui::flags::edge_extension_shader() &&
+                config.cacheEdgeExtension) {
+                drawEdgeExtensionLayers(renderengine, display, dstTexture, texture);
+                drawEdgeExtensionLayers(renderengine, p3Display, dstTexture, texture);
             }
         }
 

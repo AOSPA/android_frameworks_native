@@ -915,7 +915,8 @@ TEST_F(VSyncPredictorTest, adjustsVrrTimeline) {
 
     vrrTracker.onFrameBegin(TimePoint::fromNs(7000),
                             {TimePoint::fromNs(6500), TimePoint::fromNs(6500)});
-    EXPECT_EQ(10500, vrrTracker.nextAnticipatedVSyncTimeFrom(9000, 7000));
+    EXPECT_EQ(8500, vrrTracker.nextAnticipatedVSyncTimeFrom(8000, 7000));
+    EXPECT_EQ(9500, vrrTracker.nextAnticipatedVSyncTimeFrom(9000, 7000));
 }
 
 TEST_F(VSyncPredictorTest, adjustsVrrTimelineTwoClients) {

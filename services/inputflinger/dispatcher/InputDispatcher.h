@@ -153,8 +153,8 @@ public:
     // Public to allow tests to verify that a Monitor can get ANR.
     void setMonitorDispatchingTimeoutForTest(std::chrono::nanoseconds timeout);
 
-    void setKeyRepeatConfiguration(std::chrono::nanoseconds timeout,
-                                   std::chrono::nanoseconds delay) override;
+    void setKeyRepeatConfiguration(std::chrono::nanoseconds timeout, std::chrono::nanoseconds delay,
+                                   bool keyRepeatEnabled) override;
 
     bool isPointerInWindow(const sp<IBinder>& token, ui::LogicalDisplayId displayId,
                            DeviceId deviceId, int32_t pointerId) override;

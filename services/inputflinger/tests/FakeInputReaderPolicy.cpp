@@ -256,6 +256,10 @@ void FakeInputReaderPolicy::notifyTouchpadHardwareState(const SelfContainedHardw
     mTouchpadHardwareStateNotified.notify_all();
 }
 
+void FakeInputReaderPolicy::notifyTouchpadGestureInfo(GestureType type, int32_t deviceId) {
+    std::scoped_lock lock(mLock);
+}
+
 std::shared_ptr<KeyCharacterMap> FakeInputReaderPolicy::getKeyboardLayoutOverlay(
         const InputDeviceIdentifier&, const std::optional<KeyboardLayoutInfo>) {
     return nullptr;

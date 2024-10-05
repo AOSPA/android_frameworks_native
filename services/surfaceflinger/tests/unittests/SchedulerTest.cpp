@@ -124,7 +124,7 @@ SchedulerTest::SchedulerTest() {
 
     // createConnection call to scheduler makes a createEventConnection call to EventThread. Make
     // sure that call gets executed and returns an EventThread::Connection object.
-    EXPECT_CALL(*mEventThread, createEventConnection(_, _))
+    EXPECT_CALL(*mEventThread, createEventConnection(_))
             .WillRepeatedly(Return(mEventThreadConnection));
 
     mScheduler->setEventThread(Cycle::Render, std::move(eventThread));
@@ -797,7 +797,7 @@ TEST_F(AttachedChoreographerTest, registerMultipleOnSameLayer) {
 
     const auto mockConnection1 = sp<MockEventThreadConnection>::make(mEventThread);
     const auto mockConnection2 = sp<MockEventThreadConnection>::make(mEventThread);
-    EXPECT_CALL(*mEventThread, createEventConnection(_, _))
+    EXPECT_CALL(*mEventThread, createEventConnection(_))
             .WillOnce(Return(mockConnection1))
             .WillOnce(Return(mockConnection2));
 

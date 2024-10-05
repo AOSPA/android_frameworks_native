@@ -21,12 +21,12 @@
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <include/core/SkImage.h>
-#include <include/gpu/GrDirectContext.h>
+#include <include/gpu/ganesh/GrDirectContext.h>
 #include <include/gpu/ganesh/SkImageGanesh.h>
 #include <include/gpu/ganesh/SkSurfaceGanesh.h>
 #include <include/gpu/ganesh/gl/GrGLBackendSurface.h>
 #include <include/gpu/ganesh/vk/GrVkBackendSurface.h>
-#include <include/gpu/vk/GrVkTypes.h>
+#include <include/gpu/ganesh/vk/GrVkTypes.h>
 
 #include "skia/ColorSpaces.h"
 #include "skia/compat/SkiaBackendTexture.h"

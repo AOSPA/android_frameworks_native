@@ -27,6 +27,7 @@
 #include "LayerHierarchyTest.h"
 #include "ui/GraphicTypes.h"
 
+#include <com_android_graphics_libgui_flags.h>
 #include <com_android_graphics_surfaceflinger_flags.h>
 
 #define UPDATE_AND_VERIFY(BUILDER, ...)                                    \
@@ -1761,4 +1762,162 @@ TEST_F(LayerSnapshotTest, hideLayerWithNanMatrix) {
     UPDATE_AND_VERIFY(mSnapshotBuilder, {2});
     EXPECT_TRUE(getSnapshot(1)->isHiddenByPolicy());
 }
+TEST_F(LayerSnapshotTest, edgeExtensionPropagatesInHierarchy) {
+    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
+        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
+    }
+    setCrop(1, Rect(0, 0, 20, 20));
+    setBuffer(1221,
+              std::make_shared<renderengine::mock::FakeExternalTexture>(20 /* width */,
+                                                                        20 /* height */,
+                                                                        42ULL /* bufferId */,
+                                                                        HAL_PIXEL_FORMAT_RGBA_8888,
+                                                                        0 /*usage*/));
+    setEdgeExtensionEffect(12, LEFT);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+
+    EXPECT_TRUE(getSnapshot({.id = 12})->edgeExtensionEffect.extendsEdge(LEFT));
+    EXPECT_TRUE(getSnapshot({.id = 121})->edgeExtensionEffect.extendsEdge(LEFT));
+    EXPECT_TRUE(getSnapshot({.id = 1221})->edgeExtensionEffect.extendsEdge(LEFT));
+
+    setEdgeExtensionEffect(12, RIGHT);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+
+    EXPECT_TRUE(getSnapshot({.id = 12})->edgeExtensionEffect.extendsEdge(RIGHT));
+    EXPECT_TRUE(getSnapshot({.id = 121})->edgeExtensionEffect.extendsEdge(RIGHT));
+    EXPECT_TRUE(getSnapshot({.id = 1221})->edgeExtensionEffect.extendsEdge(RIGHT));
+
+    setEdgeExtensionEffect(12, TOP);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+
+    EXPECT_TRUE(getSnapshot({.id = 12})->edgeExtensionEffect.extendsEdge(TOP));
+    EXPECT_TRUE(getSnapshot({.id = 121})->edgeExtensionEffect.extendsEdge(TOP));
+    EXPECT_TRUE(getSnapshot({.id = 1221})->edgeExtensionEffect.extendsEdge(TOP));
+
+    setEdgeExtensionEffect(12, BOTTOM);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+
+    EXPECT_TRUE(getSnapshot({.id = 12})->edgeExtensionEffect.extendsEdge(BOTTOM));
+    EXPECT_TRUE(getSnapshot({.id = 121})->edgeExtensionEffect.extendsEdge(BOTTOM));
+    EXPECT_TRUE(getSnapshot({.id = 1221})->edgeExtensionEffect.extendsEdge(BOTTOM));
+}
+
+TEST_F(LayerSnapshotTest, leftEdgeExtensionIncreaseBoundSizeWithinCrop) {
+    // The left bound is extended when shifting to the right
+    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
+        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
+    }
+    setCrop(1, Rect(0, 0, 20, 20));
+    const int texSize = 10;
+    setBuffer(1221,
+              std::make_shared<renderengine::mock::FakeExternalTexture>(texSize /* width */,
+                                                                        texSize /* height*/,
+                                                                        42ULL /* bufferId */,
+                                                                        HAL_PIXEL_FORMAT_RGBA_8888,
+                                                                        0 /*usage*/));
+    const float translation = 5.0;
+    setPosition(12, translation, 0);
+    setEdgeExtensionEffect(12, LEFT);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot({.id = 1221})->transformedBounds.right, texSize + translation);
+    EXPECT_LT(getSnapshot({.id = 1221})->transformedBounds.left, translation);
+    EXPECT_GE(getSnapshot({.id = 1221})->transformedBounds.left, 0.0);
+}
+
+TEST_F(LayerSnapshotTest, rightEdgeExtensionIncreaseBoundSizeWithinCrop) {
+    // The right bound is extended when shifting to the left
+    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
+        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
+    }
+    const int crop = 20;
+    setCrop(1, Rect(0, 0, crop, crop));
+    const int texSize = 10;
+    setBuffer(1221,
+              std::make_shared<renderengine::mock::FakeExternalTexture>(texSize /* width */,
+                                                                        texSize /* height*/,
+                                                                        42ULL /* bufferId */,
+                                                                        HAL_PIXEL_FORMAT_RGBA_8888,
+                                                                        0 /*usage*/));
+    const float translation = -5.0;
+    setPosition(12, translation, 0);
+    setEdgeExtensionEffect(12, RIGHT);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot({.id = 1221})->transformedBounds.left, 0);
+    EXPECT_GT(getSnapshot({.id = 1221})->transformedBounds.right, texSize + translation);
+    EXPECT_LE(getSnapshot({.id = 1221})->transformedBounds.right, (float)crop);
+}
+
+TEST_F(LayerSnapshotTest, topEdgeExtensionIncreaseBoundSizeWithinCrop) {
+    // The top bound is extended when shifting to the bottom
+    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
+        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
+    }
+    setCrop(1, Rect(0, 0, 20, 20));
+    const int texSize = 10;
+    setBuffer(1221,
+              std::make_shared<renderengine::mock::FakeExternalTexture>(texSize /* width */,
+                                                                        texSize /* height*/,
+                                                                        42ULL /* bufferId */,
+                                                                        HAL_PIXEL_FORMAT_RGBA_8888,
+                                                                        0 /*usage*/));
+    const float translation = 5.0;
+    setPosition(12, 0, translation);
+    setEdgeExtensionEffect(12, TOP);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot({.id = 1221})->transformedBounds.bottom, texSize + translation);
+    EXPECT_LT(getSnapshot({.id = 1221})->transformedBounds.top, translation);
+    EXPECT_GE(getSnapshot({.id = 1221})->transformedBounds.top, 0.0);
+}
+
+TEST_F(LayerSnapshotTest, bottomEdgeExtensionIncreaseBoundSizeWithinCrop) {
+    // The bottom bound is extended when shifting to the top
+    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
+        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
+    }
+    const int crop = 20;
+    setCrop(1, Rect(0, 0, crop, crop));
+    const int texSize = 10;
+    setBuffer(1221,
+              std::make_shared<renderengine::mock::FakeExternalTexture>(texSize /* width */,
+                                                                        texSize /* height*/,
+                                                                        42ULL /* bufferId */,
+                                                                        HAL_PIXEL_FORMAT_RGBA_8888,
+                                                                        0 /*usage*/));
+    const float translation = -5.0;
+    setPosition(12, 0, translation);
+    setEdgeExtensionEffect(12, BOTTOM);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot({.id = 1221})->transformedBounds.top, 0);
+    EXPECT_GT(getSnapshot({.id = 1221})->transformedBounds.bottom, texSize - translation);
+    EXPECT_LE(getSnapshot({.id = 1221})->transformedBounds.bottom, (float)crop);
+}
+
+TEST_F(LayerSnapshotTest, multipleEdgeExtensionIncreaseBoundSizeWithinCrop) {
+    // The left bound is extended when shifting to the right
+    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
+        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
+    }
+    const int crop = 20;
+    setCrop(1, Rect(0, 0, crop, crop));
+    const int texSize = 10;
+    setBuffer(1221,
+              std::make_shared<renderengine::mock::FakeExternalTexture>(texSize /* width */,
+                                                                        texSize /* height*/,
+                                                                        42ULL /* bufferId */,
+                                                                        HAL_PIXEL_FORMAT_RGBA_8888,
+                                                                        0 /*usage*/));
+    const float translation = 5.0;
+    setPosition(12, translation, translation);
+    setEdgeExtensionEffect(12, LEFT | RIGHT | TOP | BOTTOM);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_GT(getSnapshot({.id = 1221})->transformedBounds.right, texSize + translation);
+    EXPECT_LE(getSnapshot({.id = 1221})->transformedBounds.right, (float)crop);
+    EXPECT_LT(getSnapshot({.id = 1221})->transformedBounds.left, translation);
+    EXPECT_GE(getSnapshot({.id = 1221})->transformedBounds.left, 0.0);
+    EXPECT_GT(getSnapshot({.id = 1221})->transformedBounds.bottom, texSize + translation);
+    EXPECT_LE(getSnapshot({.id = 1221})->transformedBounds.bottom, (float)crop);
+    EXPECT_LT(getSnapshot({.id = 1221})->transformedBounds.top, translation);
+    EXPECT_GE(getSnapshot({.id = 1221})->transformedBounds.top, 0);
+}
+
 } // namespace android::surfaceflinger::frontend

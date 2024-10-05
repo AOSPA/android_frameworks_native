@@ -18,6 +18,7 @@
 #define LOG_TAG "ServiceManagerCppClient"
 
 #include <binder/IServiceManager.h>
+#include <binder/IServiceManagerUnitTestHelper.h>
 #include "BackendUnifiedServiceManager.h"
 
 #include <inttypes.h>
@@ -156,7 +157,7 @@ protected:
 
 class AccessorProvider {
 public:
-    AccessorProvider(RpcAccessorProvider&& provider) : mProvider(provider) {}
+    AccessorProvider(RpcAccessorProvider&& provider) : mProvider(std::move(provider)) {}
     sp<IBinder> provide(const String16& name) { return mProvider(name); }
 
 private:
@@ -167,7 +168,8 @@ private:
 
 class AccessorProviderEntry {
 public:
-    AccessorProviderEntry(std::shared_ptr<AccessorProvider>&& provider) : mProvider(provider) {}
+    AccessorProviderEntry(std::shared_ptr<AccessorProvider>&& provider)
+          : mProvider(std::move(provider)) {}
     std::shared_ptr<AccessorProvider> mProvider;
 
 private:
@@ -182,7 +184,7 @@ private:
 class LocalAccessor : public android::os::BnAccessor {
 public:
     LocalAccessor(const String16& instance, RpcSocketAddressProvider&& connectionInfoProvider)
-          : mInstance(instance), mConnectionInfoProvider(connectionInfoProvider) {
+          : mInstance(instance), mConnectionInfoProvider(std::move(connectionInfoProvider)) {
         LOG_ALWAYS_FATAL_IF(!mConnectionInfoProvider,
                             "LocalAccessor object needs a valid connection info provider");
     }
@@ -311,13 +313,19 @@ void setDefaultServiceManager(const sp<IServiceManager>& sm) {
     }
 }
 
+sp<IServiceManager> getServiceManagerShimFromAidlServiceManagerForTests(
+        const sp<AidlServiceManager>& sm) {
+    return sp<CppBackendShim>::make(sp<BackendUnifiedServiceManager>::make(sm));
+}
+
 std::weak_ptr<AccessorProvider> addAccessorProvider(RpcAccessorProvider&& providerCallback) {
     std::lock_guard<std::mutex> lock(gAccessorProvidersMutex);
     std::shared_ptr<AccessorProvider> provider =
             std::make_shared<AccessorProvider>(std::move(providerCallback));
+    std::weak_ptr<AccessorProvider> receipt = provider;
     gAccessorProviders.push_back(AccessorProviderEntry(std::move(provider)));
 
-    return provider;
+    return receipt;
 }
 
 status_t removeAccessorProvider(std::weak_ptr<AccessorProvider> wProvider) {

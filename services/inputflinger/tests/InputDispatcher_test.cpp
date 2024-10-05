@@ -9091,6 +9091,7 @@ class InputDispatcherKeyRepeatTest : public InputDispatcherTest {
 protected:
     static constexpr std::chrono::nanoseconds KEY_REPEAT_TIMEOUT = 40ms;
     static constexpr std::chrono::nanoseconds KEY_REPEAT_DELAY = 40ms;
+    static constexpr bool KEY_REPEAT_ENABLED = true;
 
     std::shared_ptr<FakeApplicationHandle> mApp;
     sp<FakeWindowHandle> mWindow;
@@ -9098,7 +9099,8 @@ protected:
     virtual void SetUp() override {
         InputDispatcherTest::SetUp();
 
-        mDispatcher->setKeyRepeatConfiguration(KEY_REPEAT_TIMEOUT, KEY_REPEAT_DELAY);
+        mDispatcher->setKeyRepeatConfiguration(KEY_REPEAT_TIMEOUT, KEY_REPEAT_DELAY,
+                                               KEY_REPEAT_ENABLED);
         setUpWindow();
     }
 
@@ -9245,6 +9247,24 @@ TEST_F(InputDispatcherKeyRepeatTest, FocusedWindow_CorrectRepeatCountWhenInjectK
     injectKeyRepeat(1);
     // Expect repeatCount to be 3 instead of 1
     expectKeyRepeatOnce(3);
+}
+
+TEST_F(InputDispatcherKeyRepeatTest, FocusedWindow_NoRepeatWhenKeyRepeatDisabled) {
+    SCOPED_FLAG_OVERRIDE(keyboard_repeat_keys, true);
+    static constexpr std::chrono::milliseconds KEY_NO_REPEAT_ASSERTION_TIMEOUT = 100ms;
+
+    mDispatcher->setKeyRepeatConfiguration(KEY_REPEAT_TIMEOUT, KEY_REPEAT_DELAY,
+                                           /*repeatKeyEnabled=*/false);
+    sendAndConsumeKeyDown(/*deviceId=*/1);
+
+    ASSERT_GT(KEY_NO_REPEAT_ASSERTION_TIMEOUT, KEY_REPEAT_TIMEOUT)
+            << "Ensure the check for no key repeats extends beyond the repeat timeout duration.";
+    ASSERT_GT(KEY_NO_REPEAT_ASSERTION_TIMEOUT, KEY_REPEAT_DELAY)
+            << "Ensure the check for no key repeats extends beyond the repeat delay duration.";
+
+    // No events should be returned if key repeat is turned off.
+    // Wait for KEY_NO_REPEAT_ASSERTION_TIMEOUT to return no events to ensure key repeat disabled.
+    mWindow->assertNoEvents(KEY_NO_REPEAT_ASSERTION_TIMEOUT);
 }
 
 /* Test InputDispatcher for MultiDisplay */

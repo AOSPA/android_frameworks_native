@@ -56,7 +56,6 @@ public:
     /// Trunk stable readonly flags ///
     bool connected_display() const;
     bool frame_rate_category_mrr() const;
-    bool view_set_requested_frame_rate_mrr() const;
     bool enable_small_area_detection() const;
     bool misc1() const;
     bool vrr_config() const;
@@ -82,11 +81,13 @@ public:
     bool ce_fence_promise() const;
     bool idle_screen_refresh_rate_timeout() const;
     bool graphite_renderengine() const;
+    bool filter_frames_before_trace_starts() const;
     bool latch_unsignaled_with_auto_refresh_changed() const;
     bool deprecate_vsync_sf() const;
     bool allow_n_vsyncs_in_targeter() const;
     bool detached_mirror() const;
     bool commit_not_composited() const;
+    bool correct_dpi_with_display_size() const;
     bool local_tonemap_screenshots() const;
     bool override_trusted_overlay() const;
     bool flush_buffer_slots_to_uncache() const;

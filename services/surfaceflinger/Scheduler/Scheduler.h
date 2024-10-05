@@ -155,10 +155,6 @@ public:
             Cycle, EventRegistrationFlags eventRegistration = {},
             const sp<IBinder>& layerHandle = nullptr) EXCLUDES(mChoreographerLock);
 
-    const sp<EventThreadConnection>& getEventConnection(Cycle cycle) const {
-        return cycle == Cycle::Render ? mRenderEventConnection : mLastCompositeEventConnection;
-    }
-
     enum class Hotplug { Connected, Disconnected };
     void dispatchHotplug(PhysicalDisplayId, Hotplug);
 
@@ -484,10 +480,7 @@ private:
     void onExpectedPresentTimePosted(TimePoint expectedPresentTime) override EXCLUDES(mDisplayLock);
 
     std::unique_ptr<EventThread> mRenderEventThread;
-    sp<EventThreadConnection> mRenderEventConnection;
-
     std::unique_ptr<EventThread> mLastCompositeEventThread;
-    sp<EventThreadConnection> mLastCompositeEventConnection;
 
     std::atomic<nsecs_t> mLastResyncTime = 0;
 

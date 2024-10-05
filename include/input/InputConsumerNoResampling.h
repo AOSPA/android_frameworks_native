@@ -17,6 +17,7 @@
 #pragma once
 
 #include <input/InputTransport.h>
+#include <input/LooperInterface.h>
 #include <input/Resampler.h>
 #include <utils/Looper.h>
 
@@ -66,6 +67,16 @@ public:
 class InputConsumerNoResampling final {
 public:
     /**
+     * This constructor is exclusively for test code. Any real use of InputConsumerNoResampling must
+     * use the constructor that takes an sp<Looper> parameter instead of
+     * std::shared_ptr<LooperInterface>.
+     */
+    explicit InputConsumerNoResampling(const std::shared_ptr<InputChannel>& channel,
+                                       std::shared_ptr<LooperInterface> looper,
+                                       InputConsumerCallbacks& callbacks,
+                                       std::unique_ptr<Resampler> resampler);
+
+    /**
      * @param callbacks are used to interact with InputConsumerNoResampling. They're called whenever
      * the event is ready to consume.
      * @param looper needs to be sp and not shared_ptr because it inherits from
@@ -108,7 +119,7 @@ public:
 
 private:
     std::shared_ptr<InputChannel> mChannel;
-    sp<Looper> mLooper;
+    std::shared_ptr<LooperInterface> mLooper;
     InputConsumerCallbacks& mCallbacks;
     std::unique_ptr<Resampler> mResampler;
 

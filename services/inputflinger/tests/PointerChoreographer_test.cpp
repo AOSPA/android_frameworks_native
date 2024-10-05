@@ -978,6 +978,36 @@ TEST_F(PointerChoreographerTest, WhenTouchDeviceIsResetClearsSpots) {
     assertPointerControllerRemoved(pc);
 }
 
+/**
+ * When both "show touches" and "stylus hover icons" are enabled, if the app doesn't specify an
+ * icon for the hovering stylus, fall back to using the spot hover icon.
+ */
+TEST_F(PointerChoreographerTest, ShowTouchesOverridesUnspecifiedStylusIcon) {
+    mChoreographer.setShowTouchesEnabled(true);
+    mChoreographer.setStylusPointerIconEnabled(true);
+    mChoreographer.notifyInputDevicesChanged(
+            {/*id=*/0,
+             {generateTestDeviceInfo(DEVICE_ID, AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS,
+                                     DISPLAY_ID)}});
+
+    mChoreographer.notifyMotion(MotionArgsBuilder(AMOTION_EVENT_ACTION_HOVER_ENTER,
+                                                  AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS)
+                                        .pointer(STYLUS_POINTER)
+                                        .deviceId(DEVICE_ID)
+                                        .displayId(DISPLAY_ID)
+                                        .build());
+    auto pc = assertPointerControllerCreated(ControllerType::STYLUS);
+
+    mChoreographer.setPointerIcon(PointerIconStyle::TYPE_NOT_SPECIFIED, DISPLAY_ID, DEVICE_ID);
+    pc->assertPointerIconSet(PointerIconStyle::TYPE_SPOT_HOVER);
+
+    mChoreographer.setPointerIcon(PointerIconStyle::TYPE_ARROW, DISPLAY_ID, DEVICE_ID);
+    pc->assertPointerIconSet(PointerIconStyle::TYPE_ARROW);
+
+    mChoreographer.setPointerIcon(PointerIconStyle::TYPE_NOT_SPECIFIED, DISPLAY_ID, DEVICE_ID);
+    pc->assertPointerIconSet(PointerIconStyle::TYPE_SPOT_HOVER);
+}
+
 using StylusFixtureParam =
         std::tuple</*name*/ std::string_view, /*source*/ uint32_t, ControllerType>;
 

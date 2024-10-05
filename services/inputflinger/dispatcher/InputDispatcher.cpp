@@ -4488,6 +4488,10 @@ void InputDispatcher::notifyKey(const NotifyKeyArgs& args) {
     { // acquire lock
         mLock.lock();
 
+        if (input_flags::keyboard_repeat_keys() && !mConfig.keyRepeatEnabled) {
+            policyFlags |= POLICY_FLAG_DISABLE_KEY_REPEAT;
+        }
+
         if (shouldSendKeyToInputFilterLocked(args)) {
             mLock.unlock();
 
@@ -7206,11 +7210,13 @@ sp<WindowInfoHandle> InputDispatcher::findWallpaperWindowBelow(
 }
 
 void InputDispatcher::setKeyRepeatConfiguration(std::chrono::nanoseconds timeout,
-                                                std::chrono::nanoseconds delay) {
+                                                std::chrono::nanoseconds delay,
+                                                bool keyRepeatEnabled) {
     std::scoped_lock _l(mLock);
 
     mConfig.keyRepeatTimeout = timeout.count();
     mConfig.keyRepeatDelay = delay.count();
+    mConfig.keyRepeatEnabled = keyRepeatEnabled;
 }
 
 bool InputDispatcher::isPointerInWindow(const sp<android::IBinder>& token,

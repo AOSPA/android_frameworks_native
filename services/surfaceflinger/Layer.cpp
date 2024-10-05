@@ -66,9 +66,7 @@
 #include <utils/StopWatch.h>
 
 #include <algorithm>
-#include <mutex>
 #include <optional>
-#include <sstream>
 
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWComposer.h"
@@ -78,7 +76,6 @@
 #include "FrontEnd/LayerHandle.h"
 #include "Layer.h"
 #include "LayerProtoHelper.h"
-#include "MutexUtils.h"
 /* QTI_BEGIN */
 #include "QtiExtension/QtiSurfaceFlingerExtensionIntf.h"
 /* QTI_END */
@@ -97,18 +94,6 @@ namespace {
 constexpr int kDumpTableRowLength = 159;
 
 const ui::Transform kIdentityTransform;
-
-ui::LogicalDisplayId toLogicalDisplayId(const ui::LayerStack& layerStack) {
-    return ui::LogicalDisplayId{static_cast<int32_t>(layerStack.id)};
-}
-
-bool assignTransform(ui::Transform* dst, ui::Transform& from) {
-    if (*dst == from) {
-        return false;
-    }
-    *dst = from;
-    return true;
-}
 
 TimeStats::SetFrameRateVote frameRateToSetFrameRateVotePayload(Layer::FrameRate frameRate) {
     using FrameRateCompatibility = TimeStats::SetFrameRateVote::FrameRateCompatibility;
@@ -164,24 +149,11 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
       : sequence(args.sequence),
         mFlinger(sp<SurfaceFlinger>::fromExisting(args.flinger)),
         mName(base::StringPrintf("%s#%d", args.name.c_str(), sequence)),
-        mClientRef(args.client),
         mWindowType(static_cast<WindowInfo::Type>(
-                args.metadata.getInt32(gui::METADATA_WINDOW_TYPE, 0))),
-        mLayerCreationFlags(args.flags),
-        mLegacyLayerFE(args.flinger->getFactory().createLayerFE(mName, this)) {
+                args.metadata.getInt32(gui::METADATA_WINDOW_TYPE, 0))) {
     ALOGV("Creating Layer %s", getDebugName());
 
-    uint32_t layerFlags = 0;
-    if (args.flags & ISurfaceComposerClient::eHidden) layerFlags |= layer_state_t::eLayerHidden;
-    if (args.flags & ISurfaceComposerClient::eOpaque) layerFlags |= layer_state_t::eLayerOpaque;
-    if (args.flags & ISurfaceComposerClient::eSecure) layerFlags |= layer_state_t::eLayerSecure;
-    if (args.flags & ISurfaceComposerClient::eSkipScreenshot)
-        layerFlags |= layer_state_t::eLayerSkipScreenshot;
-    mDrawingState.flags = layerFlags;
     mDrawingState.crop.makeInvalid();
-    mDrawingState.z = 0;
-    mDrawingState.color.a = 1.0f;
-    mDrawingState.layerStack = ui::DEFAULT_LAYER_STACK;
     mDrawingState.sequence = 0;
     mDrawingState.transform.set(0, 0);
     mDrawingState.frameNumber = 0;
@@ -194,33 +166,9 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
     mDrawingState.acquireFence = sp<Fence>::make(-1);
     mDrawingState.acquireFenceTime = std::make_shared<FenceTime>(mDrawingState.acquireFence);
     mDrawingState.dataspace = ui::Dataspace::V0_SRGB;
-    mDrawingState.hdrMetadata.validTypes = 0;
-    mDrawingState.surfaceDamageRegion = Region::INVALID_REGION;
-    mDrawingState.cornerRadius = 0.0f;
-    mDrawingState.backgroundBlurRadius = 0;
-    mDrawingState.api = -1;
-    mDrawingState.hasColorTransform = false;
-    mDrawingState.colorSpaceAgnostic = false;
-    mDrawingState.frameRateSelectionPriority = PRIORITY_UNSET;
     mDrawingState.metadata = args.metadata;
-    mDrawingState.shadowRadius = 0.f;
-    mDrawingState.fixedTransformHint = ui::Transform::ROT_INVALID;
     mDrawingState.frameTimelineInfo = {};
     mDrawingState.postTime = -1;
-    mDrawingState.destinationFrame.makeInvalid();
-    mDrawingState.isTrustedOverlay = false;
-    mDrawingState.dropInputMode = gui::DropInputMode::NONE;
-    mDrawingState.dimmingEnabled = true;
-    mDrawingState.defaultFrameRateCompatibility = FrameRateCompatibility::Default;
-    mDrawingState.frameRateSelectionStrategy = FrameRateSelectionStrategy::Propagate;
-
-    if (args.flags & ISurfaceComposerClient::eNoColorFill) {
-        // Set an invalid color so there is no color fill.
-        mDrawingState.color.r = -1.0_hf;
-        mDrawingState.color.g = -1.0_hf;
-        mDrawingState.color.b = -1.0_hf;
-    }
-
     mFrameTracker.setDisplayRefreshPeriod(
             args.flinger->mScheduler->getPacesetterVsyncPeriod().ns());
 
@@ -228,18 +176,10 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
     mOwnerPid = args.ownerPid;
     mOwnerAppId = mOwnerUid % PER_USER_RANGE;
 
-    mPremultipliedAlpha = !(args.flags & ISurfaceComposerClient::eNonPremultiplied);
     mPotentialCursor = args.flags & ISurfaceComposerClient::eCursorWindow;
-    mProtectedByApp = args.flags & ISurfaceComposerClient::eProtectedByApp;
-
     /* QTI_BEGIN */
     mQtiLayerClass = mFlinger->mQtiSFExtnIntf->qtiGetLayerClass(mName);
     /* QTI_END */
-
-    mSnapshot->sequence = sequence;
-    mSnapshot->name = getDebugName();
-    mSnapshot->premultipliedAlpha = mPremultipliedAlpha;
-    mSnapshot->parentTransform = {};
 }
 
 void Layer::onFirstRef() {
@@ -272,35 +212,8 @@ Layer::~Layer() {
 }
 
 // ---------------------------------------------------------------------------
-// callbacks
-// ---------------------------------------------------------------------------
-
-void Layer::removeRelativeZ(const std::vector<Layer*>& layersInTree) {
-    if (mDrawingState.zOrderRelativeOf == nullptr) {
-        return;
-    }
-
-    sp<Layer> strongRelative = mDrawingState.zOrderRelativeOf.promote();
-    if (strongRelative == nullptr) {
-        setZOrderRelativeOf(nullptr);
-        return;
-    }
-
-    if (!std::binary_search(layersInTree.begin(), layersInTree.end(), strongRelative.get())) {
-        strongRelative->removeZOrderRelative(wp<Layer>::fromExisting(this));
-        mFlinger->setTransactionFlags(eTraversalNeeded);
-        setZOrderRelativeOf(nullptr);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // set-up
 // ---------------------------------------------------------------------------
-
-bool Layer::getPremultipledAlpha() const {
-    return mPremultipliedAlpha;
-}
-
 sp<IBinder> Layer::getHandle() {
     Mutex::Autolock _l(mLock);
     if (mGetHandleCalled) {
@@ -315,46 +228,6 @@ sp<IBinder> Layer::getHandle() {
 // ---------------------------------------------------------------------------
 // h/w composer set-up
 // ---------------------------------------------------------------------------
-
-static Rect reduce(const Rect& win, const Region& exclude) {
-    if (CC_LIKELY(exclude.isEmpty())) {
-        return win;
-    }
-    if (exclude.isRect()) {
-        return win.reduce(exclude.getBounds());
-    }
-    return Region(win).subtract(exclude).getBounds();
-}
-
-static FloatRect reduce(const FloatRect& win, const Region& exclude) {
-    if (CC_LIKELY(exclude.isEmpty())) {
-        return win;
-    }
-    // Convert through Rect (by rounding) for lack of FloatRegion
-    return Region(Rect{win}).subtract(exclude).getBounds().toFloatRect();
-}
-
-Rect Layer::getScreenBounds(bool reduceTransparentRegion) const {
-    if (!reduceTransparentRegion) {
-        return Rect{mScreenBounds};
-    }
-
-    FloatRect bounds = getBounds();
-    ui::Transform t = getTransform();
-    // Transform to screen space.
-    bounds = t.transform(bounds);
-    return Rect{bounds};
-}
-
-FloatRect Layer::getBounds() const {
-    const State& s(getDrawingState());
-    return getBounds(getActiveTransparentRegion(s));
-}
-
-FloatRect Layer::getBounds(const Region& activeTransparentRegion) const {
-    // Subtract the transparent region and snap to the bounds.
-    return reduce(mBounds, activeTransparentRegion);
-}
 
 // No early returns.
 void Layer::updateTrustedPresentationState(const DisplayDevice* display,
@@ -457,57 +330,6 @@ bool Layer::computeTrustedPresentationState(const FloatRect& bounds, const Float
     return true;
 }
 
-void Layer::computeBounds(FloatRect parentBounds, ui::Transform parentTransform,
-                          float parentShadowRadius) {
-    const State& s(getDrawingState());
-
-    // Calculate effective layer transform
-    mEffectiveTransform = parentTransform * getActiveTransform(s);
-
-    if (CC_UNLIKELY(!isTransformValid())) {
-        ALOGW("Stop computing bounds for %s because it has invalid transformation.",
-              getDebugName());
-        return;
-    }
-
-    // Transform parent bounds to layer space
-    parentBounds = getActiveTransform(s).inverse().transform(parentBounds);
-
-    // Calculate source bounds
-    mSourceBounds = computeSourceBounds(parentBounds);
-
-    // Calculate bounds by croping diplay frame with layer crop and parent bounds
-    FloatRect bounds = mSourceBounds;
-    const Rect layerCrop = getCrop(s);
-    if (!layerCrop.isEmpty()) {
-        bounds = mSourceBounds.intersect(layerCrop.toFloatRect());
-    }
-    bounds = bounds.intersect(parentBounds);
-
-    mBounds = bounds;
-    mScreenBounds = mEffectiveTransform.transform(mBounds);
-
-    // Use the layer's own shadow radius if set. Otherwise get the radius from
-    // parent.
-    if (s.shadowRadius > 0.f) {
-        mEffectiveShadowRadius = s.shadowRadius;
-    } else {
-        mEffectiveShadowRadius = parentShadowRadius;
-    }
-
-    // Shadow radius is passed down to only one layer so if the layer can draw shadows,
-    // don't pass it to its children.
-    const float childShadowRadius = canDrawShadows() ? 0.f : mEffectiveShadowRadius;
-
-    for (const sp<Layer>& child : mDrawingChildren) {
-        child->computeBounds(mBounds, mEffectiveTransform, childShadowRadius);
-    }
-
-    if (mPotentialCursor) {
-        prepareCursorCompositionState();
-    }
-}
-
 Rect Layer::getCroppedBufferSize(const State& s) const {
     Rect size = getBufferSize(s);
     Rect crop = getCrop(s);
@@ -517,188 +339,6 @@ Rect Layer::getCroppedBufferSize(const State& s) const {
         size = crop;
     }
     return size;
-}
-
-void Layer::setupRoundedCornersCropCoordinates(Rect win,
-                                               const FloatRect& roundedCornersCrop) const {
-    // Translate win by the rounded corners rect coordinates, to have all values in
-    // layer coordinate space.
-    win.left -= roundedCornersCrop.left;
-    win.right -= roundedCornersCrop.left;
-    win.top -= roundedCornersCrop.top;
-    win.bottom -= roundedCornersCrop.top;
-}
-
-void Layer::prepareBasicGeometryCompositionState() {
-    const auto& drawingState{getDrawingState()};
-    const auto alpha = static_cast<float>(getAlpha());
-    const bool opaque = isOpaque(drawingState);
-    const bool usesRoundedCorners = hasRoundedCorners();
-
-    auto blendMode = Hwc2::IComposerClient::BlendMode::NONE;
-    if (!opaque || alpha != 1.0f) {
-        blendMode = mPremultipliedAlpha ? Hwc2::IComposerClient::BlendMode::PREMULTIPLIED
-                                        : Hwc2::IComposerClient::BlendMode::COVERAGE;
-    }
-
-    // Please keep in sync with LayerSnapshotBuilder
-    auto* snapshot = editLayerSnapshot();
-    snapshot->outputFilter = getOutputFilter();
-    snapshot->isVisible = isVisible();
-    snapshot->isOpaque = opaque && !usesRoundedCorners && alpha == 1.f;
-    snapshot->shadowSettings.length = mEffectiveShadowRadius;
-
-    snapshot->contentDirty = contentDirty;
-    contentDirty = false;
-
-    snapshot->geomLayerBounds = mBounds;
-    snapshot->geomLayerTransform = getTransform();
-    snapshot->geomInverseLayerTransform = snapshot->geomLayerTransform.inverse();
-    snapshot->transparentRegionHint = getActiveTransparentRegion(drawingState);
-    snapshot->localTransform = getActiveTransform(drawingState);
-    snapshot->localTransformInverse = snapshot->localTransform.inverse();
-    snapshot->blendMode = static_cast<Hwc2::IComposerClient::BlendMode>(blendMode);
-    snapshot->alpha = alpha;
-    snapshot->backgroundBlurRadius = getBackgroundBlurRadius();
-    snapshot->blurRegions = getBlurRegions();
-}
-
-void Layer::prepareGeometryCompositionState() {
-    const auto& drawingState{getDrawingState()};
-    auto* snapshot = editLayerSnapshot();
-
-    // Please keep in sync with LayerSnapshotBuilder
-    snapshot->geomBufferSize = getBufferSize(drawingState);
-    snapshot->geomContentCrop = getBufferCrop();
-    snapshot->geomCrop = getCrop(drawingState);
-    snapshot->geomBufferTransform = getBufferTransform();
-    snapshot->geomBufferUsesDisplayInverseTransform = getTransformToDisplayInverse();
-    snapshot->geomUsesSourceCrop = usesSourceCrop();
-    snapshot->isSecure = isSecure();
-
-    /* QTI_BEGIN */
-    snapshot->qtiIsSecureDisplay = mFlinger->mQtiSFExtnIntf->qtiIsSecureDisplay(
-            static_cast<sp<const GraphicBuffer>>(getBuffer()));
-    snapshot->qtiIsSecureCamera = mFlinger->mQtiSFExtnIntf->qtiIsSecureCamera(
-            static_cast<sp<const GraphicBuffer>>(getBuffer()));
-    snapshot->qtiLayerClass = mQtiLayerClass;
-    /* QTI_END */
-
-    snapshot->metadata.clear();
-    const auto& supportedMetadata = mFlinger->getHwComposer().getSupportedLayerGenericMetadata();
-    for (const auto& [key, mandatory] : supportedMetadata) {
-        const auto& genericLayerMetadataCompatibilityMap =
-                mFlinger->getGenericLayerMetadataKeyMap();
-        auto compatIter = genericLayerMetadataCompatibilityMap.find(key);
-        if (compatIter == std::end(genericLayerMetadataCompatibilityMap)) {
-            continue;
-        }
-        const uint32_t id = compatIter->second;
-
-        auto it = drawingState.metadata.mMap.find(id);
-        if (it == std::end(drawingState.metadata.mMap)) {
-            continue;
-        }
-
-        snapshot->metadata.emplace(key,
-                                   compositionengine::GenericLayerMetadataEntry{mandatory,
-                                                                                it->second});
-    }
-}
-
-void Layer::preparePerFrameCompositionState() {
-    const auto& drawingState{getDrawingState()};
-    // Please keep in sync with LayerSnapshotBuilder
-    auto* snapshot = editLayerSnapshot();
-
-    snapshot->forceClientComposition = false;
-
-    snapshot->isColorspaceAgnostic = isColorSpaceAgnostic();
-    snapshot->dataspace = getDataSpace();
-    snapshot->colorTransform = getColorTransform();
-    snapshot->colorTransformIsIdentity = !hasColorTransform();
-    snapshot->surfaceDamage = surfaceDamageRegion;
-    snapshot->hasProtectedContent = isProtected();
-    snapshot->dimmingEnabled = isDimmingEnabled();
-    snapshot->currentHdrSdrRatio = getCurrentHdrSdrRatio();
-    snapshot->desiredHdrSdrRatio = getDesiredHdrSdrRatio();
-    snapshot->cachingHint = getCachingHint();
-
-    const bool usesRoundedCorners = hasRoundedCorners();
-
-    snapshot->isOpaque = isOpaque(drawingState) && !usesRoundedCorners && getAlpha() == 1.0_hf;
-
-    // Force client composition for special cases known only to the front-end.
-    // Rounded corners no longer force client composition, since we may use a
-    // hole punch so that the layer will appear to have rounded corners.
-    if (drawShadows() || snapshot->stretchEffect.hasEffect()) {
-        snapshot->forceClientComposition = true;
-    }
-    // If there are no visible region changes, we still need to update blur parameters.
-    snapshot->blurRegions = getBlurRegions();
-    snapshot->backgroundBlurRadius = getBackgroundBlurRadius();
-
-    // Layer framerate is used in caching decisions.
-    // Retrieve it from the scheduler which maintains an instance of LayerHistory, and store it in
-    // LayerFECompositionState where it would be visible to Flattener.
-    snapshot->fps = mFlinger->getLayerFramerate(systemTime(), getSequence());
-
-    if (hasBufferOrSidebandStream()) {
-        preparePerFrameBufferCompositionState();
-    } else {
-        preparePerFrameEffectsCompositionState();
-    }
-}
-
-void Layer::preparePerFrameBufferCompositionState() {
-    // Please keep in sync with LayerSnapshotBuilder
-    auto* snapshot = editLayerSnapshot();
-    // Sideband layers
-    if (snapshot->sidebandStream.get() && !snapshot->sidebandStreamHasFrame) {
-        snapshot->compositionType =
-                aidl::android::hardware::graphics::composer3::Composition::SIDEBAND;
-        return;
-    } else if ((mDrawingState.flags & layer_state_t::eLayerIsDisplayDecoration) != 0) {
-        snapshot->compositionType =
-                aidl::android::hardware::graphics::composer3::Composition::DISPLAY_DECORATION;
-    } else if ((mDrawingState.flags & layer_state_t::eLayerIsRefreshRateIndicator) != 0) {
-        snapshot->compositionType =
-                aidl::android::hardware::graphics::composer3::Composition::REFRESH_RATE_INDICATOR;
-    } else {
-        // Normal buffer layers
-        snapshot->hdrMetadata = mBufferInfo.mHdrMetadata;
-        snapshot->compositionType = mPotentialCursor
-                ? aidl::android::hardware::graphics::composer3::Composition::CURSOR
-                : aidl::android::hardware::graphics::composer3::Composition::DEVICE;
-    }
-
-    snapshot->buffer = getBuffer();
-    snapshot->acquireFence = mBufferInfo.mFence;
-    snapshot->frameNumber = mBufferInfo.mFrameNumber;
-    snapshot->sidebandStreamHasFrame = false;
-}
-
-void Layer::preparePerFrameEffectsCompositionState() {
-    // Please keep in sync with LayerSnapshotBuilder
-    auto* snapshot = editLayerSnapshot();
-    snapshot->color = getColor();
-    snapshot->compositionType =
-            aidl::android::hardware::graphics::composer3::Composition::SOLID_COLOR;
-}
-
-void Layer::prepareCursorCompositionState() {
-    const State& drawingState{getDrawingState()};
-    // Please keep in sync with LayerSnapshotBuilder
-    auto* snapshot = editLayerSnapshot();
-
-    // Apply the layer's transform, followed by the display's global transform
-    // Here we're guaranteed that the layer's transform preserves rects
-    Rect win = getCroppedBufferSize(drawingState);
-    // Subtract the transparent region and snap to the bounds
-    Rect bounds = reduce(win, getActiveTransparentRegion(drawingState));
-    Rect frame(getTransform().transform(bounds));
-
-    snapshot->cursorFrame = frame;
 }
 
 const char* Layer::getDebugName() const {
@@ -728,45 +368,18 @@ aidl::android::hardware::graphics::composer3::Composition Layer::getCompositionT
 }
 
 // ----------------------------------------------------------------------------
-// local state
-// ----------------------------------------------------------------------------
-
-bool Layer::isSecure() const {
-    const State& s(mDrawingState);
-    if (s.flags & layer_state_t::eLayerSecure) {
-        return true;
-    }
-
-    const auto p = mDrawingParent.promote();
-    return (p != nullptr) ? p->isSecure() : false;
-}
-
-// ----------------------------------------------------------------------------
 // transaction
 // ----------------------------------------------------------------------------
 
 uint32_t Layer::doTransaction(uint32_t flags) {
     SFTRACE_CALL();
 
-    // TODO: This is unfortunate.
-    mDrawingStateModified = mDrawingState.modified;
-    mDrawingState.modified = false;
-
     const State& s(getDrawingState());
-
-    if (updateGeometry()) {
-        // invalidate and recompute the visible regions if needed
-        flags |= Layer::eVisibleRegion;
-    }
 
     if (s.sequence != mLastCommittedTxSequence) {
         // invalidate and recompute the visible regions if needed
         mLastCommittedTxSequence = s.sequence;
         flags |= eVisibleRegion;
-        this->contentDirty = true;
-
-        // we may use linear filtering, if the matrix scales us
-        mNeedsFiltering = getActiveTransform(s).needsBilinearFiltering();
     }
 
     if (!mPotentialCursor && (flags & Layer::eVisibleRegion)) {
@@ -802,208 +415,11 @@ void Layer::setTransactionFlags(uint32_t mask) {
     mTransactionFlags |= mask;
 }
 
-bool Layer::setLayer(int32_t z) {
-    if (mDrawingState.z == z && !usingRelativeZ(LayerVector::StateSet::Current)) return false;
-    mDrawingState.sequence++;
-    mDrawingState.z = z;
-    mDrawingState.modified = true;
-
-    mFlinger->mSomeChildrenChanged = true;
-
-    // Discard all relative layering.
-    if (mDrawingState.zOrderRelativeOf != nullptr) {
-        sp<Layer> strongRelative = mDrawingState.zOrderRelativeOf.promote();
-        if (strongRelative != nullptr) {
-            strongRelative->removeZOrderRelative(wp<Layer>::fromExisting(this));
-        }
-        setZOrderRelativeOf(nullptr);
-    }
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-void Layer::removeZOrderRelative(const wp<Layer>& relative) {
-    mDrawingState.zOrderRelatives.remove(relative);
-    mDrawingState.sequence++;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-}
-
-void Layer::addZOrderRelative(const wp<Layer>& relative) {
-    mDrawingState.zOrderRelatives.add(relative);
-    mDrawingState.modified = true;
-    mDrawingState.sequence++;
-    setTransactionFlags(eTransactionNeeded);
-}
-
-void Layer::setZOrderRelativeOf(const wp<Layer>& relativeOf) {
-    mDrawingState.zOrderRelativeOf = relativeOf;
-    mDrawingState.sequence++;
-    mDrawingState.modified = true;
-    mDrawingState.isRelativeOf = relativeOf != nullptr;
-
-    setTransactionFlags(eTransactionNeeded);
-}
-
-bool Layer::setRelativeLayer(const sp<IBinder>& relativeToHandle, int32_t relativeZ) {
-    sp<Layer> relative = LayerHandle::getLayer(relativeToHandle);
-    if (relative == nullptr) {
-        return false;
-    }
-
-    if (mDrawingState.z == relativeZ && usingRelativeZ(LayerVector::StateSet::Current) &&
-        mDrawingState.zOrderRelativeOf == relative) {
-        return false;
-    }
-
-    if (CC_UNLIKELY(relative->usingRelativeZ(LayerVector::StateSet::Drawing)) &&
-        (relative->mDrawingState.zOrderRelativeOf == this)) {
-        ALOGE("Detected relative layer loop between %s and %s",
-              mName.c_str(), relative->mName.c_str());
-        ALOGE("Ignoring new call to set relative layer");
-        return false;
-    }
-
-    mFlinger->mSomeChildrenChanged = true;
-
-    mDrawingState.sequence++;
-    mDrawingState.modified = true;
-    mDrawingState.z = relativeZ;
-
-    auto oldZOrderRelativeOf = mDrawingState.zOrderRelativeOf.promote();
-    if (oldZOrderRelativeOf != nullptr) {
-        oldZOrderRelativeOf->removeZOrderRelative(wp<Layer>::fromExisting(this));
-    }
-    setZOrderRelativeOf(relative);
-    relative->addZOrderRelative(wp<Layer>::fromExisting(this));
-
-    setTransactionFlags(eTransactionNeeded);
-
-    return true;
-}
-
-bool Layer::setTrustedOverlay(bool isTrustedOverlay) {
-    if (mDrawingState.isTrustedOverlay == isTrustedOverlay) return false;
-    mDrawingState.isTrustedOverlay = isTrustedOverlay;
-    mDrawingState.modified = true;
-    mFlinger->mUpdateInputInfo = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::isTrustedOverlay() const {
-    if (getDrawingState().isTrustedOverlay) {
-        return true;
-    }
-    const auto& p = mDrawingParent.promote();
-    return (p != nullptr) && p->isTrustedOverlay();
-}
-
-bool Layer::setAlpha(float alpha) {
-    if (mDrawingState.color.a == alpha) return false;
-    mDrawingState.sequence++;
-    mDrawingState.color.a = alpha;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setCornerRadius(float cornerRadius) {
-    if (mDrawingState.cornerRadius == cornerRadius) return false;
-
-    mDrawingState.sequence++;
-    mDrawingState.cornerRadius = cornerRadius;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setBackgroundBlurRadius(int backgroundBlurRadius) {
-    if (mDrawingState.backgroundBlurRadius == backgroundBlurRadius) return false;
-    // If we start or stop drawing blur then the layer's visibility state may change so increment
-    // the magic sequence number.
-    if (mDrawingState.backgroundBlurRadius == 0 || backgroundBlurRadius == 0) {
-        mDrawingState.sequence++;
-    }
-    mDrawingState.backgroundBlurRadius = backgroundBlurRadius;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setTransparentRegionHint(const Region& transparent) {
-    mDrawingState.sequence++;
-    mDrawingState.transparentRegionHint = transparent;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setBlurRegions(const std::vector<BlurRegion>& blurRegions) {
-    // If we start or stop drawing blur then the layer's visibility state may change so increment
-    // the magic sequence number.
-    if (mDrawingState.blurRegions.size() == 0 || blurRegions.size() == 0) {
-        mDrawingState.sequence++;
-    }
-    mDrawingState.blurRegions = blurRegions;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setFlags(uint32_t flags, uint32_t mask) {
-    const uint32_t newFlags = (mDrawingState.flags & ~mask) | (flags & mask);
-    if (mDrawingState.flags == newFlags) return false;
-    mDrawingState.sequence++;
-    mDrawingState.flags = newFlags;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
 bool Layer::setCrop(const Rect& crop) {
     if (mDrawingState.crop == crop) return false;
     mDrawingState.sequence++;
     mDrawingState.crop = crop;
 
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setMetadata(const LayerMetadata& data) {
-    if (!mDrawingState.metadata.merge(data, true /* eraseEmpty */)) return false;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setLayerStack(ui::LayerStack layerStack) {
-    if (mDrawingState.layerStack == layerStack) return false;
-    mDrawingState.sequence++;
-    mDrawingState.layerStack = layerStack;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setColorSpaceAgnostic(const bool agnostic) {
-    if (mDrawingState.colorSpaceAgnostic == agnostic) {
-        return false;
-    }
-    mDrawingState.sequence++;
-    mDrawingState.colorSpaceAgnostic = agnostic;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setDimmingEnabled(const bool dimmingEnabled) {
-    if (mDrawingState.dimmingEnabled == dimmingEnabled) return false;
-
-    mDrawingState.sequence++;
-    mDrawingState.dimmingEnabled = dimmingEnabled;
-    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -1011,52 +427,6 @@ bool Layer::setDimmingEnabled(const bool dimmingEnabled) {
 bool Layer::isLayerFocusedBasedOnPriority(int32_t priority) {
     return priority == PRIORITY_FOCUSED_WITH_MODE || priority == PRIORITY_FOCUSED_WITHOUT_MODE;
 };
-
-ui::LayerStack Layer::getLayerStack(LayerVector::StateSet state) const {
-    bool useDrawing = state == LayerVector::StateSet::Drawing;
-    const auto parent = useDrawing ? mDrawingParent.promote() : mCurrentParent.promote();
-    if (parent) {
-        return parent->getLayerStack();
-    }
-    return getDrawingState().layerStack;
-}
-
-bool Layer::setShadowRadius(float shadowRadius) {
-    if (mDrawingState.shadowRadius == shadowRadius) {
-        return false;
-    }
-
-    mDrawingState.sequence++;
-    mDrawingState.shadowRadius = shadowRadius;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setFixedTransformHint(ui::Transform::RotationFlags fixedTransformHint) {
-    if (mDrawingState.fixedTransformHint == fixedTransformHint) {
-        return false;
-    }
-
-    mDrawingState.sequence++;
-    mDrawingState.fixedTransformHint = fixedTransformHint;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setStretchEffect(const StretchEffect& effect) {
-    StretchEffect temp = effect;
-    temp.sanitize();
-    if (mDrawingState.stretchEffect == temp) {
-        return false;
-    }
-    mDrawingState.sequence++;
-    mDrawingState.stretchEffect = temp;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
 
 void Layer::setFrameTimelineVsyncForBufferTransaction(const FrameTimelineInfo& info,
                                                       nsecs_t postTime, gui::GameMode gameMode) {
@@ -1086,7 +456,6 @@ void Layer::setFrameTimelineVsyncForBufferlessTransaction(const FrameTimelineInf
                                                           gui::GameMode gameMode) {
     mDrawingState.frameTimelineInfo = info;
     mDrawingState.postTime = postTime;
-    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
 
     if (const auto& bufferSurfaceFrameTX = mDrawingState.bufferSurfaceFrameTX;
@@ -1208,40 +577,6 @@ Layer::FrameRate Layer::getFrameRateForLayerTree() const {
     return getDrawingState().frameRateForLayerTree;
 }
 
-bool Layer::isHiddenByPolicy() const {
-    const State& s(mDrawingState);
-    const auto& parent = mDrawingParent.promote();
-    if (parent != nullptr && parent->isHiddenByPolicy()) {
-        return true;
-    }
-    if (usingRelativeZ(LayerVector::StateSet::Drawing)) {
-        auto zOrderRelativeOf = mDrawingState.zOrderRelativeOf.promote();
-        if (zOrderRelativeOf != nullptr) {
-            if (zOrderRelativeOf->isHiddenByPolicy()) {
-                return true;
-            }
-        }
-    }
-    if (CC_UNLIKELY(!isTransformValid())) {
-        ALOGW("Hide layer %s because it has invalid transformation.", getDebugName());
-        return true;
-    }
-    return s.flags & layer_state_t::eLayerHidden;
-}
-
-uint32_t Layer::getEffectiveUsage(uint32_t usage) const {
-    // TODO: should we do something special if mSecure is set?
-    if (mProtectedByApp) {
-        // need a hardware-protected path to external video sink
-        usage |= GraphicBuffer::USAGE_PROTECTED;
-    }
-    if (mPotentialCursor) {
-        usage |= GraphicBuffer::USAGE_CURSOR;
-    }
-    usage |= GraphicBuffer::USAGE_HW_COMPOSER;
-    return usage;
-}
-
 // ----------------------------------------------------------------------------
 // debugging
 // ----------------------------------------------------------------------------
@@ -1326,246 +661,10 @@ void Layer::getFrameStats(FrameStats* outStats) const {
     mFrameTracker.getStats(outStats);
 }
 
-void Layer::dumpOffscreenDebugInfo(std::string& result) const {
-    std::string hasBuffer = hasBufferOrSidebandStream() ? " (contains buffer)" : "";
-    StringAppendF(&result, "Layer %s%s pid:%d uid:%d%s\n", getName().c_str(), hasBuffer.c_str(),
-                  mOwnerPid, mOwnerUid, isHandleAlive() ? " handleAlive" : "");
-}
-
 void Layer::onDisconnect() {
     const int32_t layerId = getSequence();
     mFlinger->mTimeStats->onDestroy(layerId);
     mFlinger->mFrameTracer->onDestroy(layerId);
-}
-
-void Layer::setChildrenDrawingParent(const sp<Layer>& newParent) {
-    for (const sp<Layer>& child : mDrawingChildren) {
-        child->mDrawingParent = newParent;
-        const float parentShadowRadius =
-                newParent->canDrawShadows() ? 0.f : newParent->mEffectiveShadowRadius;
-        child->computeBounds(newParent->mBounds, newParent->mEffectiveTransform,
-                             parentShadowRadius);
-    }
-}
-
-bool Layer::setColorTransform(const mat4& matrix) {
-    static const mat4 identityMatrix = mat4();
-
-    if (mDrawingState.colorTransform == matrix) {
-        return false;
-    }
-    ++mDrawingState.sequence;
-    mDrawingState.colorTransform = matrix;
-    mDrawingState.hasColorTransform = matrix != identityMatrix;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-mat4 Layer::getColorTransform() const {
-    mat4 colorTransform = mat4(getDrawingState().colorTransform);
-    if (sp<Layer> parent = mDrawingParent.promote(); parent != nullptr) {
-        colorTransform = parent->getColorTransform() * colorTransform;
-    }
-    return colorTransform;
-}
-
-bool Layer::hasColorTransform() const {
-    bool hasColorTransform = getDrawingState().hasColorTransform;
-    if (sp<Layer> parent = mDrawingParent.promote(); parent != nullptr) {
-        hasColorTransform = hasColorTransform || parent->hasColorTransform();
-    }
-    return hasColorTransform;
-}
-
-bool Layer::isLegacyDataSpace() const {
-    // return true when no higher bits are set
-    return !(getDataSpace() &
-             (ui::Dataspace::STANDARD_MASK | ui::Dataspace::TRANSFER_MASK |
-              ui::Dataspace::RANGE_MASK));
-}
-
-void Layer::setParent(const sp<Layer>& layer) {
-    mCurrentParent = layer;
-}
-
-int32_t Layer::getZ(LayerVector::StateSet) const {
-    return mDrawingState.z;
-}
-
-bool Layer::usingRelativeZ(LayerVector::StateSet stateSet) const {
-    const bool useDrawing = stateSet == LayerVector::StateSet::Drawing;
-    const State& state = useDrawing ? mDrawingState : mDrawingState;
-    return state.isRelativeOf;
-}
-
-__attribute__((no_sanitize("unsigned-integer-overflow"))) LayerVector Layer::makeTraversalList(
-        LayerVector::StateSet stateSet, bool* outSkipRelativeZUsers) {
-    LOG_ALWAYS_FATAL_IF(stateSet == LayerVector::StateSet::Invalid,
-                        "makeTraversalList received invalid stateSet");
-    const bool useDrawing = stateSet == LayerVector::StateSet::Drawing;
-    const LayerVector& children = useDrawing ? mDrawingChildren : mCurrentChildren;
-    const State& state = useDrawing ? mDrawingState : mDrawingState;
-
-    if (state.zOrderRelatives.size() == 0) {
-        *outSkipRelativeZUsers = true;
-        return children;
-    }
-
-    LayerVector traverse(stateSet);
-    for (const wp<Layer>& weakRelative : state.zOrderRelatives) {
-        sp<Layer> strongRelative = weakRelative.promote();
-        if (strongRelative != nullptr) {
-            traverse.add(strongRelative);
-        }
-    }
-
-    for (const sp<Layer>& child : children) {
-        if (child->usingRelativeZ(stateSet)) {
-            continue;
-        }
-        traverse.add(child);
-    }
-
-    return traverse;
-}
-
-ui::Transform Layer::getTransform() const {
-    return mEffectiveTransform;
-}
-
-bool Layer::isTransformValid() const {
-    float transformDet = getTransform().det();
-    return transformDet != 0 && !isinf(transformDet) && !isnan(transformDet);
-}
-
-half Layer::getAlpha() const {
-    const auto& p = mDrawingParent.promote();
-
-    half parentAlpha = (p != nullptr) ? p->getAlpha() : 1.0_hf;
-    return parentAlpha * getDrawingState().color.a;
-}
-
-ui::Transform::RotationFlags Layer::getFixedTransformHint() const {
-    ui::Transform::RotationFlags fixedTransformHint = mDrawingState.fixedTransformHint;
-    if (fixedTransformHint != ui::Transform::ROT_INVALID) {
-        return fixedTransformHint;
-    }
-    const auto& p = mCurrentParent.promote();
-    if (!p) return fixedTransformHint;
-    return p->getFixedTransformHint();
-}
-
-half4 Layer::getColor() const {
-    const half4 color(getDrawingState().color);
-    return half4(color.r, color.g, color.b, getAlpha());
-}
-
-int32_t Layer::getBackgroundBlurRadius() const {
-    if (getDrawingState().backgroundBlurRadius == 0) {
-        return 0;
-    }
-
-    const auto& p = mDrawingParent.promote();
-    half parentAlpha = (p != nullptr) ? p->getAlpha() : 1.0_hf;
-    return parentAlpha * getDrawingState().backgroundBlurRadius;
-}
-
-const std::vector<BlurRegion> Layer::getBlurRegions() const {
-    auto regionsCopy(getDrawingState().blurRegions);
-    float layerAlpha = getAlpha();
-    for (auto& region : regionsCopy) {
-        region.alpha = region.alpha * layerAlpha;
-    }
-    return regionsCopy;
-}
-
-RoundedCornerState Layer::getRoundedCornerState() const {
-    // Today's DPUs cannot do rounded corners. If RenderEngine cannot render
-    // protected content, remove rounded corners from protected content so it
-    // can be rendered by the DPU.
-    if (isProtected() && !mFlinger->getRenderEngine().supportsProtectedContent()) {
-        return {};
-    }
-
-    // Get parent settings
-    RoundedCornerState parentSettings;
-    const auto& parent = mDrawingParent.promote();
-    if (parent != nullptr) {
-        parentSettings = parent->getRoundedCornerState();
-        if (parentSettings.hasRoundedCorners()) {
-            ui::Transform t = getActiveTransform(getDrawingState());
-            t = t.inverse();
-            parentSettings.cropRect = t.transform(parentSettings.cropRect);
-            parentSettings.radius.x *= t.getScaleX();
-            parentSettings.radius.y *= t.getScaleY();
-        }
-    }
-
-    // Get layer settings
-    Rect layerCropRect = getCroppedBufferSize(getDrawingState());
-    const vec2 radius(getDrawingState().cornerRadius, getDrawingState().cornerRadius);
-    RoundedCornerState layerSettings(layerCropRect.toFloatRect(), radius);
-    const bool layerSettingsValid = layerSettings.hasRoundedCorners() && layerCropRect.isValid();
-
-    if (layerSettingsValid && parentSettings.hasRoundedCorners()) {
-        // If the parent and the layer have rounded corner settings, use the parent settings if the
-        // parent crop is entirely inside the layer crop.
-        // This has limitations and cause rendering artifacts. See b/200300845 for correct fix.
-        if (parentSettings.cropRect.left > layerCropRect.left &&
-            parentSettings.cropRect.top > layerCropRect.top &&
-            parentSettings.cropRect.right < layerCropRect.right &&
-            parentSettings.cropRect.bottom < layerCropRect.bottom) {
-            return parentSettings;
-        } else {
-            return layerSettings;
-        }
-    } else if (layerSettingsValid) {
-        return layerSettings;
-    } else if (parentSettings.hasRoundedCorners()) {
-        return parentSettings;
-    }
-    return {};
-}
-
-bool Layer::findInHierarchy(const sp<Layer>& l) {
-    if (l == this) {
-        return true;
-    }
-    for (auto& child : mDrawingChildren) {
-      if (child->findInHierarchy(l)) {
-          return true;
-      }
-    }
-    return false;
-}
-
-void Layer::setInputInfo(const WindowInfo& info) {
-    mDrawingState.inputInfo = info;
-    mDrawingState.touchableRegionCrop =
-            LayerHandle::getLayer(info.touchableRegionCropHandle.promote());
-    mDrawingState.modified = true;
-    mFlinger->mUpdateInputInfo = true;
-    setTransactionFlags(eTransactionNeeded);
-}
-
-perfetto::protos::LayerProto* Layer::writeToProto(perfetto::protos::LayersProto& layersProto,
-                                                  uint32_t traceFlags) {
-    perfetto::protos::LayerProto* layerProto = layersProto.add_layers();
-    writeToProtoDrawingState(layerProto);
-    writeToProtoCommonState(layerProto, LayerVector::StateSet::Drawing, traceFlags);
-
-    if (traceFlags & LayerTracing::TRACE_COMPOSITION) {
-        ui::LayerStack layerStack =
-                (mSnapshot) ? mSnapshot->outputFilter.layerStack : ui::INVALID_LAYER_STACK;
-        writeCompositionStateToProto(layerProto, layerStack);
-    }
-
-    for (const sp<Layer>& layer : mDrawingChildren) {
-        layer->writeToProto(layersProto, traceFlags);
-    }
-
-    return layerProto;
 }
 
 void Layer::writeCompositionStateToProto(perfetto::protos::LayerProto* layerProto,
@@ -1581,352 +680,6 @@ void Layer::writeCompositionStateToProto(perfetto::protos::LayerProto* layerProt
         LayerProtoHelper::writeToProto(getVisibleRegion(display),
                                        [&]() { return layerProto->mutable_visible_region(); });
     }
-}
-
-void Layer::writeToProtoDrawingState(perfetto::protos::LayerProto* layerInfo) {
-    const ui::Transform transform = getTransform();
-    auto buffer = getExternalTexture();
-    if (buffer != nullptr) {
-        LayerProtoHelper::writeToProto(*buffer,
-                                       [&]() { return layerInfo->mutable_active_buffer(); });
-        LayerProtoHelper::writeToProtoDeprecated(ui::Transform(getBufferTransform()),
-                                                 layerInfo->mutable_buffer_transform());
-    }
-    layerInfo->set_invalidate(contentDirty);
-    layerInfo->set_is_protected(isProtected());
-    layerInfo->set_dataspace(dataspaceDetails(static_cast<android_dataspace>(getDataSpace())));
-    layerInfo->set_queued_frames(getQueuedFrameCount());
-    layerInfo->set_curr_frame(mCurrentFrameNumber);
-    layerInfo->set_requested_corner_radius(getDrawingState().cornerRadius);
-    layerInfo->set_corner_radius(
-            (getRoundedCornerState().radius.x + getRoundedCornerState().radius.y) / 2.0);
-    layerInfo->set_background_blur_radius(getBackgroundBlurRadius());
-    layerInfo->set_is_trusted_overlay(isTrustedOverlay());
-    LayerProtoHelper::writeToProtoDeprecated(transform, layerInfo->mutable_transform());
-    LayerProtoHelper::writePositionToProto(transform.tx(), transform.ty(),
-                                           [&]() { return layerInfo->mutable_position(); });
-    LayerProtoHelper::writeToProto(mBounds, [&]() { return layerInfo->mutable_bounds(); });
-    LayerProtoHelper::writeToProto(surfaceDamageRegion,
-                                   [&]() { return layerInfo->mutable_damage_region(); });
-
-    if (hasColorTransform()) {
-        LayerProtoHelper::writeToProto(getColorTransform(), layerInfo->mutable_color_transform());
-    }
-
-    LayerProtoHelper::writeToProto(mSourceBounds,
-                                   [&]() { return layerInfo->mutable_source_bounds(); });
-    LayerProtoHelper::writeToProto(mScreenBounds,
-                                   [&]() { return layerInfo->mutable_screen_bounds(); });
-    LayerProtoHelper::writeToProto(getRoundedCornerState().cropRect,
-                                   [&]() { return layerInfo->mutable_corner_radius_crop(); });
-    layerInfo->set_shadow_radius(mEffectiveShadowRadius);
-}
-
-void Layer::writeToProtoCommonState(perfetto::protos::LayerProto* layerInfo,
-                                    LayerVector::StateSet stateSet, uint32_t traceFlags) {
-    const bool useDrawing = stateSet == LayerVector::StateSet::Drawing;
-    const LayerVector& children = useDrawing ? mDrawingChildren : mCurrentChildren;
-    const State& state = useDrawing ? mDrawingState : mDrawingState;
-
-    ui::Transform requestedTransform = state.transform;
-
-    layerInfo->set_id(sequence);
-    layerInfo->set_name(getName().c_str());
-    layerInfo->set_type(getType());
-
-    for (const auto& child : children) {
-        layerInfo->add_children(child->sequence);
-    }
-
-    for (const wp<Layer>& weakRelative : state.zOrderRelatives) {
-        sp<Layer> strongRelative = weakRelative.promote();
-        if (strongRelative != nullptr) {
-            layerInfo->add_relatives(strongRelative->sequence);
-        }
-    }
-
-    LayerProtoHelper::writeToProto(state.transparentRegionHint,
-                                   [&]() { return layerInfo->mutable_transparent_region(); });
-
-    layerInfo->set_layer_stack(getLayerStack().id);
-    layerInfo->set_z(state.z);
-
-    LayerProtoHelper::writePositionToProto(requestedTransform.tx(), requestedTransform.ty(), [&]() {
-        return layerInfo->mutable_requested_position();
-    });
-
-    LayerProtoHelper::writeToProto(state.crop, [&]() { return layerInfo->mutable_crop(); });
-
-    layerInfo->set_is_opaque(isOpaque(state));
-
-    layerInfo->set_pixel_format(decodePixelFormat(getPixelFormat()));
-    LayerProtoHelper::writeToProto(getColor(), [&]() { return layerInfo->mutable_color(); });
-    LayerProtoHelper::writeToProto(state.color,
-                                   [&]() { return layerInfo->mutable_requested_color(); });
-    layerInfo->set_flags(state.flags);
-
-    LayerProtoHelper::writeToProtoDeprecated(requestedTransform,
-                                             layerInfo->mutable_requested_transform());
-
-    auto parent = useDrawing ? mDrawingParent.promote() : mCurrentParent.promote();
-    if (parent != nullptr) {
-        layerInfo->set_parent(parent->sequence);
-    }
-
-    auto zOrderRelativeOf = state.zOrderRelativeOf.promote();
-    if (zOrderRelativeOf != nullptr) {
-        layerInfo->set_z_order_relative_of(zOrderRelativeOf->sequence);
-    }
-
-    layerInfo->set_is_relative_of(state.isRelativeOf);
-
-    layerInfo->set_owner_uid(mOwnerUid);
-
-    if ((traceFlags & LayerTracing::TRACE_INPUT) && needsInputInfo()) {
-        WindowInfo info;
-        if (useDrawing) {
-            info = fillInputInfo(
-                    InputDisplayArgs{.transform = &kIdentityTransform, .isSecure = true});
-        } else {
-            info = state.inputInfo;
-        }
-
-        LayerProtoHelper::writeToProto(info, state.touchableRegionCrop,
-                                       [&]() { return layerInfo->mutable_input_window_info(); });
-    }
-
-    if (traceFlags & LayerTracing::TRACE_EXTRA) {
-        auto protoMap = layerInfo->mutable_metadata();
-        for (const auto& entry : state.metadata.mMap) {
-            (*protoMap)[entry.first] = std::string(entry.second.cbegin(), entry.second.cend());
-        }
-    }
-
-    LayerProtoHelper::writeToProto(state.destinationFrame,
-                                   [&]() { return layerInfo->mutable_destination_frame(); });
-}
-
-// Applies the given transform to the region, while protecting against overflows caused by any
-// offsets. If applying the offset in the transform to any of the Rects in the region would result
-// in an overflow, they are not added to the output Region.
-static Region transformTouchableRegionSafely(const ui::Transform& t, const Region& r,
-                                             const std::string& debugWindowName) {
-    // Round the translation using the same rounding strategy used by ui::Transform.
-    const auto tx = static_cast<int32_t>(t.tx() + 0.5);
-    const auto ty = static_cast<int32_t>(t.ty() + 0.5);
-
-    ui::Transform transformWithoutOffset = t;
-    transformWithoutOffset.set(0.f, 0.f);
-
-    const Region transformed = transformWithoutOffset.transform(r);
-
-    // Apply the translation to each of the Rects in the region while discarding any that overflow.
-    Region ret;
-    for (const auto& rect : transformed) {
-        Rect newRect;
-        if (__builtin_add_overflow(rect.left, tx, &newRect.left) ||
-            __builtin_add_overflow(rect.top, ty, &newRect.top) ||
-            __builtin_add_overflow(rect.right, tx, &newRect.right) ||
-            __builtin_add_overflow(rect.bottom, ty, &newRect.bottom)) {
-            ALOGE("Applying transform to touchable region of window '%s' resulted in an overflow.",
-                  debugWindowName.c_str());
-            continue;
-        }
-        ret.orSelf(newRect);
-    }
-    return ret;
-}
-
-void Layer::fillInputFrameInfo(WindowInfo& info, const ui::Transform& screenToDisplay) {
-    auto [inputBounds, inputBoundsValid] = getInputBounds(/*fillParentBounds=*/false);
-    if (!inputBoundsValid) {
-        info.touchableRegion.clear();
-    }
-
-    info.frame = getInputBoundsInDisplaySpace(inputBounds, screenToDisplay);
-
-    ui::Transform inputToLayer;
-    inputToLayer.set(inputBounds.left, inputBounds.top);
-    const ui::Transform layerToScreen = getInputTransform();
-    const ui::Transform inputToDisplay = screenToDisplay * layerToScreen * inputToLayer;
-
-    // InputDispatcher expects a display-to-input transform.
-    info.transform = inputToDisplay.inverse();
-
-    // The touchable region is specified in the input coordinate space. Change it to display space.
-    info.touchableRegion =
-            transformTouchableRegionSafely(inputToDisplay, info.touchableRegion, mName);
-}
-
-void Layer::fillTouchOcclusionMode(WindowInfo& info) {
-    sp<Layer> p = sp<Layer>::fromExisting(this);
-    while (p != nullptr && !p->hasInputInfo()) {
-        p = p->mDrawingParent.promote();
-    }
-    if (p != nullptr) {
-        info.touchOcclusionMode = p->mDrawingState.inputInfo.touchOcclusionMode;
-    }
-}
-
-gui::DropInputMode Layer::getDropInputMode() const {
-    gui::DropInputMode mode = mDrawingState.dropInputMode;
-    if (mode == gui::DropInputMode::ALL) {
-        return mode;
-    }
-    sp<Layer> parent = mDrawingParent.promote();
-    if (parent) {
-        gui::DropInputMode parentMode = parent->getDropInputMode();
-        if (parentMode != gui::DropInputMode::NONE) {
-            return parentMode;
-        }
-    }
-    return mode;
-}
-
-void Layer::handleDropInputMode(gui::WindowInfo& info) const {
-    if (mDrawingState.inputInfo.inputConfig.test(WindowInfo::InputConfig::NO_INPUT_CHANNEL)) {
-        return;
-    }
-
-    // Check if we need to drop input unconditionally
-    gui::DropInputMode dropInputMode = getDropInputMode();
-    if (dropInputMode == gui::DropInputMode::ALL) {
-        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT;
-        ALOGV("Dropping input for %s as requested by policy.", getDebugName());
-        return;
-    }
-
-    // Check if we need to check if the window is obscured by parent
-    if (dropInputMode != gui::DropInputMode::OBSCURED) {
-        return;
-    }
-
-    // Check if the parent has set an alpha on the layer
-    sp<Layer> parent = mDrawingParent.promote();
-    if (parent && parent->getAlpha() != 1.0_hf) {
-        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT;
-        ALOGV("Dropping input for %s as requested by policy because alpha=%f", getDebugName(),
-              static_cast<float>(getAlpha()));
-    }
-
-    // Check if the parent has cropped the buffer
-    Rect bufferSize = getCroppedBufferSize(getDrawingState());
-    if (!bufferSize.isValid()) {
-        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT_IF_OBSCURED;
-        return;
-    }
-
-    // Screenbounds are the layer bounds cropped by parents, transformed to screenspace.
-    // To check if the layer has been cropped, we take the buffer bounds, apply the local
-    // layer crop and apply the same set of transforms to move to screenspace. If the bounds
-    // match then the layer has not been cropped by its parents.
-    Rect bufferInScreenSpace(getTransform().transform(bufferSize));
-    bool croppedByParent = bufferInScreenSpace != Rect{mScreenBounds};
-
-    if (croppedByParent) {
-        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT;
-        ALOGV("Dropping input for %s as requested by policy because buffer is cropped by parent",
-              getDebugName());
-    } else {
-        // If the layer is not obscured by its parents (by setting an alpha or crop), then only drop
-        // input if the window is obscured. This check should be done in surfaceflinger but the
-        // logic currently resides in inputflinger. So pass the if_obscured check to input to only
-        // drop input events if the window is obscured.
-        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT_IF_OBSCURED;
-    }
-}
-
-WindowInfo Layer::fillInputInfo(const InputDisplayArgs& displayArgs) {
-    if (!hasInputInfo()) {
-        mDrawingState.inputInfo.name = getName();
-        mDrawingState.inputInfo.ownerUid = gui::Uid{mOwnerUid};
-        mDrawingState.inputInfo.ownerPid = gui::Pid{mOwnerPid};
-        mDrawingState.inputInfo.inputConfig |= WindowInfo::InputConfig::NO_INPUT_CHANNEL;
-        mDrawingState.inputInfo.displayId = toLogicalDisplayId(getLayerStack());
-    }
-
-    const ui::Transform& displayTransform =
-            displayArgs.transform != nullptr ? *displayArgs.transform : kIdentityTransform;
-
-    WindowInfo info = mDrawingState.inputInfo;
-    info.id = sequence;
-    info.displayId = toLogicalDisplayId(getLayerStack());
-
-    fillInputFrameInfo(info, displayTransform);
-
-    if (displayArgs.transform == nullptr) {
-        // Do not let the window receive touches if it is not associated with a valid display
-        // transform. We still allow the window to receive keys and prevent ANRs.
-        info.inputConfig |= WindowInfo::InputConfig::NOT_TOUCHABLE;
-    }
-
-    info.setInputConfig(WindowInfo::InputConfig::NOT_VISIBLE, !isVisibleForInput());
-
-    info.alpha = getAlpha();
-    fillTouchOcclusionMode(info);
-    handleDropInputMode(info);
-
-    // If the window will be blacked out on a display because the display does not have the secure
-    // flag and the layer has the secure flag set, then drop input.
-    if (!displayArgs.isSecure && isSecure()) {
-        info.inputConfig |= WindowInfo::InputConfig::DROP_INPUT;
-    }
-
-    sp<Layer> cropLayer = mDrawingState.touchableRegionCrop.promote();
-    if (info.replaceTouchableRegionWithCrop) {
-        Rect inputBoundsInDisplaySpace;
-        if (!cropLayer) {
-            FloatRect inputBounds = getInputBounds(/*fillParentBounds=*/true).first;
-            inputBoundsInDisplaySpace = getInputBoundsInDisplaySpace(inputBounds, displayTransform);
-        } else {
-            FloatRect inputBounds = cropLayer->getInputBounds(/*fillParentBounds=*/true).first;
-            inputBoundsInDisplaySpace =
-                    cropLayer->getInputBoundsInDisplaySpace(inputBounds, displayTransform);
-        }
-        info.touchableRegion = Region(inputBoundsInDisplaySpace);
-    } else if (cropLayer != nullptr) {
-        FloatRect inputBounds = cropLayer->getInputBounds(/*fillParentBounds=*/true).first;
-        Rect inputBoundsInDisplaySpace =
-                cropLayer->getInputBoundsInDisplaySpace(inputBounds, displayTransform);
-        info.touchableRegion = info.touchableRegion.intersect(inputBoundsInDisplaySpace);
-    }
-
-    // Inherit the trusted state from the parent hierarchy, but don't clobber the trusted state
-    // if it was set by WM for a known system overlay
-    if (isTrustedOverlay()) {
-        info.inputConfig |= WindowInfo::InputConfig::TRUSTED_OVERLAY;
-    }
-
-    Rect bufferSize = getBufferSize(getDrawingState());
-    info.contentSize = Size(bufferSize.width(), bufferSize.height());
-
-    return info;
-}
-
-Rect Layer::getInputBoundsInDisplaySpace(const FloatRect& inputBounds,
-                                         const ui::Transform& screenToDisplay) {
-    // InputDispatcher works in the display device's coordinate space. Here, we calculate the
-    // frame and transform used for the layer, which determines the bounds and the coordinate space
-    // within which the layer will receive input.
-
-    // Coordinate space definitions:
-    //   - display: The display device's coordinate space. Correlates to pixels on the display.
-    //   - screen: The post-rotation coordinate space for the display, a.k.a. logical display space.
-    //   - layer: The coordinate space of this layer.
-    //   - input: The coordinate space in which this layer will receive input events. This could be
-    //            different than layer space if a surfaceInset is used, which changes the origin
-    //            of the input space.
-
-    // Crop the input bounds to ensure it is within the parent's bounds.
-    const FloatRect croppedInputBounds = mBounds.intersect(inputBounds);
-    const ui::Transform layerToScreen = getInputTransform();
-    const ui::Transform layerToDisplay = screenToDisplay * layerToScreen;
-    return Rect{layerToDisplay.transform(croppedInputBounds)};
-}
-
-bool Layer::hasInputInfo() const {
-    return mDrawingState.inputInfo.token != nullptr ||
-            mDrawingState.inputInfo.inputConfig.test(WindowInfo::InputConfig::NO_INPUT_CHANNEL);
 }
 
 compositionengine::OutputLayer* Layer::findOutputLayerForDisplay(
@@ -1961,24 +714,6 @@ compositionengine::OutputLayer* Layer::findOutputLayerForDisplay(
 Region Layer::getVisibleRegion(const DisplayDevice* display) const {
     const auto outputLayer = findOutputLayerForDisplay(display);
     return outputLayer ? outputLayer->getState().visibleRegion : Region();
-}
-
-bool Layer::isInternalDisplayOverlay() const {
-    const State& s(mDrawingState);
-    if (s.flags & layer_state_t::eLayerSkipScreenshot) {
-        return true;
-    }
-
-    sp<Layer> parent = mDrawingParent.promote();
-    return parent && parent->isInternalDisplayOverlay();
-}
-
-bool Layer::setDropInputMode(gui::DropInputMode mode) {
-    if (mDrawingState.dropInputMode == mode) {
-        return false;
-    }
-    mDrawingState.dropInputMode = mode;
-    return true;
 }
 
 void Layer::callReleaseBufferCallback(const sp<ITransactionCompletedListener>& listener,
@@ -2056,6 +791,10 @@ void Layer::prepareReleaseCallbacks(ftl::Future<FenceResult> futureFenceResult,
         // Older fences for the same layer stack can be dropped when a new fence arrives.
         // An assumption here is that RenderEngine performs work sequentially, so an
         // incoming fence will not fire before an existing fence.
+        SFTRACE_NAME(
+                ftl::Concat("Adding additional fence for: ", ftl::truncated<20>(mName.c_str()),
+                            ", Replacing?: ", mAdditionalPreviousReleaseFences.contains(layerStack))
+                        .c_str());
         mAdditionalPreviousReleaseFences.emplace_or_replace(layerStack,
                                                             std::move(futureFenceResult));
     }
@@ -2139,17 +878,9 @@ void Layer::releasePendingBuffer(nsecs_t dequeueReadyTime) {
     mDrawingState.callbackHandles = {};
 }
 
-bool Layer::willPresentCurrentTransaction() const {
-    // Returns true if the most recent Transaction applied to CurrentState will be presented.
-    return (getSidebandStreamChanged() || getAutoRefresh() ||
-            (mDrawingState.modified &&
-             (mDrawingState.buffer != nullptr || mDrawingState.bgColorLayer != nullptr)));
-}
-
 bool Layer::setTransform(uint32_t transform) {
     if (mDrawingState.bufferTransform == transform) return false;
     mDrawingState.bufferTransform = transform;
-    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -2158,7 +889,6 @@ bool Layer::setTransformToDisplayInverse(bool transformToDisplayInverse) {
     if (mDrawingState.transformToDisplayInverse == transformToDisplayInverse) return false;
     mDrawingState.sequence++;
     mDrawingState.transformToDisplayInverse = transformToDisplayInverse;
-    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -2169,97 +899,7 @@ bool Layer::setBufferCrop(const Rect& bufferCrop) {
     mDrawingState.sequence++;
     mDrawingState.bufferCrop = bufferCrop;
 
-    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setDestinationFrame(const Rect& destinationFrame) {
-    if (mDrawingState.destinationFrame == destinationFrame) return false;
-
-    mDrawingState.sequence++;
-    mDrawingState.destinationFrame = destinationFrame;
-
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-// Translate destination frame into scale and position. If a destination frame is not set, use the
-// provided scale and position
-bool Layer::updateGeometry() {
-    if ((mDrawingState.flags & layer_state_t::eIgnoreDestinationFrame) ||
-        mDrawingState.destinationFrame.isEmpty()) {
-        // If destination frame is not set, use the requested transform set via
-        // Layer::setPosition and Layer::setMatrix.
-        return assignTransform(&mDrawingState.transform, mRequestedTransform);
-    }
-
-    Rect destRect = mDrawingState.destinationFrame;
-    int32_t destW = destRect.width();
-    int32_t destH = destRect.height();
-    if (destRect.left < 0) {
-        destRect.left = 0;
-        destRect.right = destW;
-    }
-    if (destRect.top < 0) {
-        destRect.top = 0;
-        destRect.bottom = destH;
-    }
-
-    if (!mDrawingState.buffer) {
-        ui::Transform t;
-        t.set(destRect.left, destRect.top);
-        return assignTransform(&mDrawingState.transform, t);
-    }
-
-    uint32_t bufferWidth = mDrawingState.buffer->getWidth();
-    uint32_t bufferHeight = mDrawingState.buffer->getHeight();
-    // Undo any transformations on the buffer.
-    if (mDrawingState.bufferTransform & ui::Transform::ROT_90) {
-        std::swap(bufferWidth, bufferHeight);
-    }
-    uint32_t invTransform = SurfaceFlinger::getActiveDisplayRotationFlags();
-    if (mDrawingState.transformToDisplayInverse) {
-        if (invTransform & ui::Transform::ROT_90) {
-            std::swap(bufferWidth, bufferHeight);
-        }
-    }
-
-    float sx = destW / static_cast<float>(bufferWidth);
-    float sy = destH / static_cast<float>(bufferHeight);
-    ui::Transform t;
-    t.set(sx, 0, 0, sy);
-    t.set(destRect.left, destRect.top);
-    return assignTransform(&mDrawingState.transform, t);
-}
-
-bool Layer::setMatrix(const layer_state_t::matrix22_t& matrix) {
-    if (mRequestedTransform.dsdx() == matrix.dsdx && mRequestedTransform.dtdy() == matrix.dtdy &&
-        mRequestedTransform.dtdx() == matrix.dtdx && mRequestedTransform.dsdy() == matrix.dsdy) {
-        return false;
-    }
-
-    mRequestedTransform.set(matrix.dsdx, matrix.dtdy, matrix.dtdx, matrix.dsdy);
-
-    mDrawingState.sequence++;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-
-    return true;
-}
-
-bool Layer::setPosition(float x, float y) {
-    if (mRequestedTransform.tx() == x && mRequestedTransform.ty() == y) {
-        return false;
-    }
-
-    mRequestedTransform.set(x, y);
-
-    mDrawingState.sequence++;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-
     return true;
 }
 
@@ -2334,7 +974,6 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
     mDrawingState.isAutoTimestamp = isAutoTimestamp;
     mDrawingState.latchedVsyncId = info.vsyncId;
     mDrawingState.useVsyncIdForRefreshRateSelection = info.useForRefreshRateSelection;
-    mDrawingState.modified = true;
     if (!buffer) {
         resetDrawingStateBufferInfo();
         setTransactionFlags(eTransactionNeeded);
@@ -2482,7 +1121,6 @@ void Layer::recordLayerHistoryAnimationTx(const scheduler::LayerProps& layerProp
 bool Layer::setDataspace(ui::Dataspace dataspace) {
     if (mDrawingState.dataspace == dataspace) return false;
     mDrawingState.dataspace = dataspace;
-    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -2493,7 +1131,6 @@ bool Layer::setExtendedRangeBrightness(float currentBufferRatio, float desiredRa
         return false;
     mDrawingState.currentHdrSdrRatio = currentBufferRatio;
     mDrawingState.desiredHdrSdrRatio = desiredRatio;
-    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -2501,40 +1138,6 @@ bool Layer::setExtendedRangeBrightness(float currentBufferRatio, float desiredRa
 bool Layer::setDesiredHdrHeadroom(float desiredRatio) {
     if (mDrawingState.desiredHdrSdrRatio == desiredRatio) return false;
     mDrawingState.desiredHdrSdrRatio = desiredRatio;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setCachingHint(gui::CachingHint cachingHint) {
-    if (mDrawingState.cachingHint == cachingHint) return false;
-    mDrawingState.cachingHint = cachingHint;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setHdrMetadata(const HdrMetadata& hdrMetadata) {
-    if (mDrawingState.hdrMetadata == hdrMetadata) return false;
-    mDrawingState.hdrMetadata = hdrMetadata;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setSurfaceDamageRegion(const Region& surfaceDamage) {
-    if (mDrawingState.surfaceDamageRegion.hasSameRects(surfaceDamage)) return false;
-    mDrawingState.surfaceDamageRegion = surfaceDamage;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    setIsSmallDirty(surfaceDamage, getTransform());
-    return true;
-}
-
-bool Layer::setApi(int32_t api) {
-    if (mDrawingState.api == api) return false;
-    mDrawingState.api = api;
-    mDrawingState.modified = true;
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -2550,7 +1153,6 @@ bool Layer::setSidebandStream(const sp<NativeHandle>& sidebandStream, const Fram
     }
 
     mDrawingState.sidebandStream = sidebandStream;
-    mDrawingState.modified = true;
     if (sidebandStream != nullptr && mDrawingState.buffer != nullptr) {
         releasePreviousBuffer();
         resetDrawingStateBufferInfo();
@@ -2647,14 +1249,6 @@ Rect Layer::getBufferSize(const State& /*s*/) const {
     return Rect(0, 0, static_cast<int32_t>(bufWidth), static_cast<int32_t>(bufHeight));
 }
 
-FloatRect Layer::computeSourceBounds(const FloatRect& parentBounds) const {
-    if (mBufferInfo.mBuffer == nullptr) {
-        return parentBounds;
-    }
-
-    return getBufferSize(getDrawingState()).toFloatRect();
-}
-
 bool Layer::fenceHasSignaled() const {
     if (SurfaceFlinger::enableLatchUnsignaledConfig != LatchUnsignaledConfig::Disabled) {
         return true;
@@ -2676,35 +1270,19 @@ void Layer::onPreComposition(nsecs_t refreshStartTime) {
     }
 }
 
-void Layer::setAutoRefresh(bool autoRefresh) {
-    mDrawingState.autoRefresh = autoRefresh;
-}
-
 bool Layer::latchSidebandStream(bool& recomputeVisibleRegions) {
-    // We need to update the sideband stream if the layer has both a buffer and a sideband stream.
-    auto* snapshot = editLayerSnapshot();
-    snapshot->sidebandStreamHasFrame = hasFrameUpdate() && mSidebandStream.get();
-
     if (mSidebandStreamChanged.exchange(false)) {
         const State& s(getDrawingState());
         // mSidebandStreamChanged was true
         mSidebandStream = s.sidebandStream;
-        snapshot->sidebandStream = mSidebandStream;
         if (mSidebandStream != nullptr) {
             setTransactionFlags(eTransactionNeeded);
             mFlinger->setTransactionFlags(eTraversalNeeded);
         }
         recomputeVisibleRegions = true;
-
         return true;
     }
     return false;
-}
-
-bool Layer::hasFrameUpdate() const {
-    const State& c(getDrawingState());
-    return (mDrawingStateModified || mDrawingState.modified) &&
-            (c.buffer != nullptr || c.bgColorLayer != nullptr);
 }
 
 void Layer::updateTexImage(nsecs_t latchTime, bool bgColorOnly) {
@@ -2753,8 +1331,6 @@ void Layer::updateTexImage(nsecs_t latchTime, bool bgColorOnly) {
     mFlinger->getTransactionCallbackInvoker()
             .addOnCommitCallbackHandles(mDrawingState.callbackHandles, remainingHandles);
     mDrawingState.callbackHandles = remainingHandles;
-
-    mDrawingStateModified = false;
 }
 
 void Layer::gatherBufferInfo() {
@@ -2778,7 +1354,6 @@ void Layer::gatherBufferInfo() {
     mBufferInfo.mFrameLatencyNeeded = true;
     mBufferInfo.mDesiredPresentTime = mDrawingState.desiredPresentTime;
     mBufferInfo.mFenceTime = std::make_shared<FenceTime>(mDrawingState.acquireFence);
-    mBufferInfo.mFence = mDrawingState.acquireFence;
     mBufferInfo.mTransform = mDrawingState.bufferTransform;
     auto lastDataspace = mBufferInfo.mDataspace;
     mBufferInfo.mDataspace = translateDataspace(mDrawingState.dataspace);
@@ -2821,10 +1396,6 @@ void Layer::gatherBufferInfo() {
         mFlinger->mHdrLayerInfoChanged = true;
     }
     mBufferInfo.mCrop = computeBufferCrop(mDrawingState);
-    mBufferInfo.mScaleMode = NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
-    mBufferInfo.mSurfaceDamage = mDrawingState.surfaceDamageRegion;
-    mBufferInfo.mHdrMetadata = mDrawingState.hdrMetadata;
-    mBufferInfo.mApi = mDrawingState.api;
     mBufferInfo.mTransformToDisplayInverse = mDrawingState.transformToDisplayInverse;
 }
 
@@ -2849,294 +1420,6 @@ void Layer::tracePendingBufferCount(int32_t pendingBuffers) {
     SFTRACE_INT(mBlastTransactionName.c_str(), pendingBuffers);
 }
 
-/*
- * We don't want to send the layer's transform to input, but rather the
- * parent's transform. This is because Layer's transform is
- * information about how the buffer is placed on screen. The parent's
- * transform makes more sense to send since it's information about how the
- * layer is placed on screen. This transform is used by input to determine
- * how to go from screen space back to window space.
- */
-ui::Transform Layer::getInputTransform() const {
-    if (!hasBufferOrSidebandStream()) {
-        return getTransform();
-    }
-    sp<Layer> parent = mDrawingParent.promote();
-    if (parent == nullptr) {
-        return ui::Transform();
-    }
-
-    return parent->getTransform();
-}
-
-/**
- * Returns the bounds used to fill the input frame and the touchable region.
- *
- * Similar to getInputTransform, we need to update the bounds to include the transform.
- * This is because bounds don't include the buffer transform, where the input assumes
- * that's already included.
- */
-std::pair<FloatRect, bool> Layer::getInputBounds(bool fillParentBounds) const {
-    Rect croppedBufferSize = getCroppedBufferSize(getDrawingState());
-    FloatRect inputBounds = croppedBufferSize.toFloatRect();
-    if (hasBufferOrSidebandStream() && croppedBufferSize.isValid() &&
-        mDrawingState.transform.getType() != ui::Transform::IDENTITY) {
-        inputBounds = mDrawingState.transform.transform(inputBounds);
-    }
-
-    bool inputBoundsValid = croppedBufferSize.isValid();
-    if (!inputBoundsValid) {
-        /**
-         * Input bounds are based on the layer crop or buffer size. But if we are using
-         * the layer bounds as the input bounds (replaceTouchableRegionWithCrop flag) then
-         * we can use the parent bounds as the input bounds if the layer does not have buffer
-         * or a crop. We want to unify this logic but because of compat reasons we cannot always
-         * use the parent bounds. A layer without a buffer can get input. So when a window is
-         * initially added, its touchable region can fill its parent layer bounds and that can
-         * have negative consequences.
-         */
-        inputBounds = fillParentBounds ? mBounds : FloatRect{};
-    }
-
-    // Clamp surface inset to the input bounds.
-    const float inset = static_cast<float>(mDrawingState.inputInfo.surfaceInset);
-    const float xSurfaceInset = std::clamp(inset, 0.f, inputBounds.getWidth() / 2.f);
-    const float ySurfaceInset = std::clamp(inset, 0.f, inputBounds.getHeight() / 2.f);
-
-    // Apply the insets to the input bounds.
-    inputBounds.left += xSurfaceInset;
-    inputBounds.top += ySurfaceInset;
-    inputBounds.right -= xSurfaceInset;
-    inputBounds.bottom -= ySurfaceInset;
-
-    return {inputBounds, inputBoundsValid};
-}
-
-bool Layer::isSimpleBufferUpdate(const layer_state_t& s) const {
-    const uint64_t requiredFlags = layer_state_t::eBufferChanged;
-
-    const uint64_t deniedFlags = layer_state_t::eProducerDisconnect | layer_state_t::eLayerChanged |
-            layer_state_t::eRelativeLayerChanged | layer_state_t::eTransparentRegionChanged |
-            layer_state_t::eFlagsChanged | layer_state_t::eBlurRegionsChanged |
-            layer_state_t::eLayerStackChanged | layer_state_t::eReparent |
-            (FlagManager::getInstance().latch_unsignaled_with_auto_refresh_changed()
-                     ? 0
-                     : layer_state_t::eAutoRefreshChanged);
-
-    if ((s.what & requiredFlags) != requiredFlags) {
-        SFTRACE_FORMAT_INSTANT("%s: false [missing required flags 0x%" PRIx64 "]", __func__,
-                               (s.what | requiredFlags) & ~s.what);
-        return false;
-    }
-
-    if (s.what & deniedFlags) {
-        SFTRACE_FORMAT_INSTANT("%s: false [has denied flags 0x%" PRIx64 "]", __func__,
-                               s.what & deniedFlags);
-        return false;
-    }
-
-    if (s.what & layer_state_t::ePositionChanged) {
-        if (mRequestedTransform.tx() != s.x || mRequestedTransform.ty() != s.y) {
-            SFTRACE_FORMAT_INSTANT("%s: false [ePositionChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eAlphaChanged) {
-        if (mDrawingState.color.a != s.color.a) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eAlphaChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eColorTransformChanged) {
-        if (mDrawingState.colorTransform != s.colorTransform) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eColorTransformChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eBackgroundColorChanged) {
-        if (mDrawingState.bgColorLayer || s.bgColor.a != 0) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eBackgroundColorChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eMatrixChanged) {
-        if (mRequestedTransform.dsdx() != s.matrix.dsdx ||
-            mRequestedTransform.dtdy() != s.matrix.dtdy ||
-            mRequestedTransform.dtdx() != s.matrix.dtdx ||
-            mRequestedTransform.dsdy() != s.matrix.dsdy) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eMatrixChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eCornerRadiusChanged) {
-        if (mDrawingState.cornerRadius != s.cornerRadius) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eCornerRadiusChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eBackgroundBlurRadiusChanged) {
-        if (mDrawingState.backgroundBlurRadius != static_cast<int>(s.backgroundBlurRadius)) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eBackgroundBlurRadiusChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eBufferTransformChanged) {
-        if (mDrawingState.bufferTransform != s.bufferTransform) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eBufferTransformChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eTransformToDisplayInverseChanged) {
-        if (mDrawingState.transformToDisplayInverse != s.transformToDisplayInverse) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eTransformToDisplayInverseChanged changed]",
-                                   __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eCropChanged) {
-        if (mDrawingState.crop != s.crop) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eCropChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eDataspaceChanged) {
-        if (mDrawingState.dataspace != s.dataspace) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eDataspaceChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eHdrMetadataChanged) {
-        if (mDrawingState.hdrMetadata != s.hdrMetadata) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eHdrMetadataChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eSidebandStreamChanged) {
-        if (mDrawingState.sidebandStream != s.sidebandStream) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eSidebandStreamChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eColorSpaceAgnosticChanged) {
-        if (mDrawingState.colorSpaceAgnostic != s.colorSpaceAgnostic) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eColorSpaceAgnosticChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eShadowRadiusChanged) {
-        if (mDrawingState.shadowRadius != s.shadowRadius) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eShadowRadiusChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eFixedTransformHintChanged) {
-        if (mDrawingState.fixedTransformHint != s.fixedTransformHint) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eFixedTransformHintChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eTrustedOverlayChanged) {
-        if (mDrawingState.isTrustedOverlay != (s.trustedOverlay == gui::TrustedOverlay::ENABLED)) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eTrustedOverlayChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eStretchChanged) {
-        StretchEffect temp = s.stretchEffect;
-        temp.sanitize();
-        if (mDrawingState.stretchEffect != temp) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eStretchChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eBufferCropChanged) {
-        if (mDrawingState.bufferCrop != s.bufferCrop) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eBufferCropChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eDestinationFrameChanged) {
-        if (mDrawingState.destinationFrame != s.destinationFrame) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eDestinationFrameChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eDimmingEnabledChanged) {
-        if (mDrawingState.dimmingEnabled != s.dimmingEnabled) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eDimmingEnabledChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eExtendedRangeBrightnessChanged) {
-        if (mDrawingState.currentHdrSdrRatio != s.currentHdrSdrRatio ||
-            mDrawingState.desiredHdrSdrRatio != s.desiredHdrSdrRatio) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eExtendedRangeBrightnessChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    if (s.what & layer_state_t::eDesiredHdrHeadroomChanged) {
-        if (mDrawingState.desiredHdrSdrRatio != s.desiredHdrSdrRatio) {
-            SFTRACE_FORMAT_INSTANT("%s: false [eDesiredHdrHeadroomChanged changed]", __func__);
-            return false;
-        }
-    }
-
-    return true;
-}
-
-sp<LayerFE> Layer::getCompositionEngineLayerFE() const {
-    // There's no need to get a CE Layer if the layer isn't going to draw anything.
-    return hasSomethingToDraw() ? mLegacyLayerFE : nullptr;
-}
-
-const LayerSnapshot* Layer::getLayerSnapshot() const {
-    return mSnapshot.get();
-}
-
-LayerSnapshot* Layer::editLayerSnapshot() {
-    return mSnapshot.get();
-}
-
-std::unique_ptr<frontend::LayerSnapshot> Layer::stealLayerSnapshot() {
-    return std::move(mSnapshot);
-}
-
-void Layer::updateLayerSnapshot(std::unique_ptr<frontend::LayerSnapshot> snapshot) {
-    mSnapshot = std::move(snapshot);
-}
-
-const compositionengine::LayerFECompositionState* Layer::getCompositionState() const {
-    return mSnapshot.get();
-}
-
-sp<LayerFE> Layer::copyCompositionEngineLayerFE() const {
-    auto result = mFlinger->getFactory().createLayerFE(mName, this);
-    result->mSnapshot = std::make_unique<LayerSnapshot>(*mSnapshot);
-    return result;
-}
-
 sp<LayerFE> Layer::getCompositionEngineLayerFE(
         const frontend::LayerHierarchy::TraversalPath& path) {
     for (auto& [p, layerFE] : mLayerFEs) {
@@ -3146,65 +1429,7 @@ sp<LayerFE> Layer::getCompositionEngineLayerFE(
     }
     auto layerFE = mFlinger->getFactory().createLayerFE(mName, this);
     mLayerFEs.emplace_back(path, layerFE);
-
-    /* QTI_BEGIN */
-    if (getBuffer()) {
-        mSnapshot->qtiIsSecureDisplay = mFlinger->mQtiSFExtnIntf->qtiIsSecureDisplay(
-                static_cast<sp<const GraphicBuffer>>(getBuffer()));
-        mSnapshot->qtiIsSecureCamera = mFlinger->mQtiSFExtnIntf->qtiIsSecureCamera(
-                static_cast<sp<const GraphicBuffer>>(getBuffer()));
-    }
-    /* QTI_END */
     return layerFE;
-}
-
-void Layer::useSurfaceDamage() {
-    if (mFlinger->mForceFullDamage) {
-        surfaceDamageRegion = Region::INVALID_REGION;
-    } else {
-        surfaceDamageRegion = mBufferInfo.mSurfaceDamage;
-    }
-}
-
-void Layer::useEmptyDamage() {
-    surfaceDamageRegion.clear();
-}
-
-bool Layer::isOpaque(const Layer::State& s) const {
-    // if we don't have a buffer or sidebandStream yet, we're translucent regardless of the
-    // layer's opaque flag.
-    if (!hasSomethingToDraw()) {
-        return false;
-    }
-
-    // if the layer has the opaque flag, then we're always opaque
-    if ((s.flags & layer_state_t::eLayerOpaque) == layer_state_t::eLayerOpaque) {
-        return true;
-    }
-
-    // If the buffer has no alpha channel, then we are opaque
-    if (hasBufferOrSidebandStream() && LayerSnapshot::isOpaqueFormat(getPixelFormat())) {
-        return true;
-    }
-
-    // Lastly consider the layer opaque if drawing a color with alpha == 1.0
-    return fillsColor() && getAlpha() == 1.0_hf;
-}
-
-bool Layer::canReceiveInput() const {
-    return !isHiddenByPolicy() && (mBufferInfo.mBuffer == nullptr || getAlpha() > 0.0f);
-}
-
-bool Layer::isVisible() const {
-    if (!hasSomethingToDraw()) {
-        return false;
-    }
-
-    if (isHiddenByPolicy()) {
-        return false;
-    }
-
-    return getAlpha() > 0.0f || hasBlur();
 }
 
 void Layer::onCompositionPresented(const DisplayDevice* display,
@@ -3299,11 +1524,6 @@ bool Layer::willReleaseBufferOnLatch() const {
     return !mDrawingState.buffer && mBufferInfo.mBuffer;
 }
 
-bool Layer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime) {
-    const bool bgColorOnly = mDrawingState.bgColorLayer != nullptr;
-    return latchBufferImpl(recomputeVisibleRegions, latchTime, bgColorOnly);
-}
-
 bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bool bgColorOnly) {
     SFTRACE_FORMAT_INSTANT("latchBuffer %s - %" PRIu64, getDebugName(),
                            getDrawingState().frameNumber);
@@ -3325,7 +1545,6 @@ bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bo
 
     // Capture the old state of the layer for comparisons later
     BufferInfo oldBufferInfo = mBufferInfo;
-    const bool oldOpacity = isOpaque(mDrawingState);
     mPreviousFrameNumber = mCurrentFrameNumber;
     mCurrentFrameNumber = mDrawingState.frameNumber;
     gatherBufferInfo();
@@ -3350,7 +1569,6 @@ bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bo
 
     if ((mBufferInfo.mCrop != oldBufferInfo.mCrop) ||
         (mBufferInfo.mTransform != oldBufferInfo.mTransform) ||
-        (mBufferInfo.mScaleMode != oldBufferInfo.mScaleMode) ||
         (mBufferInfo.mTransformToDisplayInverse != oldBufferInfo.mTransformToDisplayInverse)) {
         recomputeVisibleRegions = true;
     }
@@ -3363,11 +1581,6 @@ bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bo
             recomputeVisibleRegions = true;
         }
     }
-
-    if (oldOpacity != isOpaque(mDrawingState)) {
-        recomputeVisibleRegions = true;
-    }
-
     /* QTI_BEGIN */
     mFlinger->mQtiSFExtnIntf->qtiSetPresentTime(qtiGetSmomoLayerStackId(), getSequence(),
                                                 mBufferInfo.mDesiredPresentTime);
@@ -3376,25 +1589,9 @@ bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bo
     return true;
 }
 
-bool Layer::hasReadyFrame() const {
-    return hasFrameUpdate() || getSidebandStreamChanged() || getAutoRefresh();
-}
-
 bool Layer::isProtected() const {
     return (mBufferInfo.mBuffer != nullptr) &&
             (mBufferInfo.mBuffer->getUsage() & GRALLOC_USAGE_PROTECTED);
-}
-
-void Layer::latchAndReleaseBuffer() {
-    if (hasReadyFrame()) {
-        bool ignored = false;
-        latchBuffer(ignored, systemTime());
-    }
-    releasePendingBuffer(systemTime());
-}
-
-PixelFormat Layer::getPixelFormat() const {
-    return mBufferInfo.mPixelFormat;
 }
 
 bool Layer::getTransformToDisplayInverse() const {
@@ -3418,18 +1615,6 @@ Rect Layer::getBufferCrop() const {
 
 uint32_t Layer::getBufferTransform() const {
     return mBufferInfo.mTransform;
-}
-
-ui::Dataspace Layer::getDataSpace() const {
-    return hasBufferOrSidebandStream() ? mBufferInfo.mDataspace : mDrawingState.dataspace;
-}
-
-bool Layer::isFrontBuffered() const {
-    if (mBufferInfo.mBuffer == nullptr) {
-        return false;
-    }
-
-    return mBufferInfo.mBuffer->getUsage() & AHARDWAREBUFFER_USAGE_FRONT_BUFFER;
 }
 
 ui::Dataspace Layer::translateDataspace(ui::Dataspace dataspace) {
@@ -3467,84 +1652,6 @@ sp<GraphicBuffer> Layer::getBuffer() const {
     return mBufferInfo.mBuffer ? mBufferInfo.mBuffer->getBuffer() : nullptr;
 }
 
-const std::shared_ptr<renderengine::ExternalTexture>& Layer::getExternalTexture() const {
-    return mBufferInfo.mBuffer;
-}
-
-bool Layer::setColor(const half3& color) {
-    if (mDrawingState.color.rgb == color) {
-        return false;
-    }
-
-    mDrawingState.sequence++;
-    mDrawingState.color.rgb = color;
-    mDrawingState.modified = true;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::fillsColor() const {
-    return !hasBufferOrSidebandStream() && mDrawingState.color.r >= 0.0_hf &&
-            mDrawingState.color.g >= 0.0_hf && mDrawingState.color.b >= 0.0_hf;
-}
-
-bool Layer::hasBlur() const {
-    return getBackgroundBlurRadius() > 0 || getDrawingState().blurRegions.size() > 0;
-}
-
-void Layer::updateSnapshot(bool updateGeometry) {
-    if (!getCompositionEngineLayerFE()) {
-        return;
-    }
-
-    auto* snapshot = editLayerSnapshot();
-    if (updateGeometry) {
-        prepareBasicGeometryCompositionState();
-        prepareGeometryCompositionState();
-        snapshot->roundedCorner = getRoundedCornerState();
-        snapshot->transformedBounds = mScreenBounds;
-        if (mEffectiveShadowRadius > 0.f) {
-            snapshot->shadowSettings = mFlinger->mDrawingState.globalShadowSettings;
-
-            // Note: this preserves existing behavior of shadowing the entire layer and not cropping
-            // it if transparent regions are present. This may not be necessary since shadows are
-            // typically cast by layers without transparent regions.
-            snapshot->shadowSettings.boundaries = mBounds;
-
-            const float casterAlpha = snapshot->alpha;
-            const bool casterIsOpaque =
-                    ((mBufferInfo.mBuffer != nullptr) && isOpaque(mDrawingState));
-
-            // If the casting layer is translucent, we need to fill in the shadow underneath the
-            // layer. Otherwise the generated shadow will only be shown around the casting layer.
-            snapshot->shadowSettings.casterIsTranslucent = !casterIsOpaque || (casterAlpha < 1.0f);
-            snapshot->shadowSettings.ambientColor *= casterAlpha;
-            snapshot->shadowSettings.spotColor *= casterAlpha;
-        }
-        snapshot->shadowSettings.length = mEffectiveShadowRadius;
-    }
-    snapshot->contentOpaque = isOpaque(mDrawingState);
-    snapshot->layerOpaqueFlagSet =
-            (mDrawingState.flags & layer_state_t::eLayerOpaque) == layer_state_t::eLayerOpaque;
-    sp<Layer> p = mDrawingParent.promote();
-    if (p != nullptr) {
-        snapshot->parentTransform = p->getTransform();
-    } else {
-        snapshot->parentTransform.reset();
-    }
-    snapshot->bufferSize = getBufferSize(mDrawingState);
-    snapshot->externalTexture = mBufferInfo.mBuffer;
-    snapshot->hasReadyFrame = hasReadyFrame();
-    preparePerFrameCompositionState();
-}
-
-void Layer::updateChildrenSnapshots(bool updateGeometry) {
-    for (const sp<Layer>& child : mDrawingChildren) {
-        child->updateSnapshot(updateGeometry);
-        child->updateChildrenSnapshots(updateGeometry);
-    }
-}
-
 bool Layer::setTrustedPresentationInfo(TrustedPresentationThresholds const& thresholds,
                                        TrustedPresentationListener const& listener) {
     bool hadTrustedPresentationListener = hasTrustedPresentationListener();
@@ -3577,30 +1684,32 @@ void Layer::updateLastLatchTime(nsecs_t latchTime) {
     mLastLatchTime = latchTime;
 }
 
-void Layer::setIsSmallDirty(const Region& damageRegion,
-                            const ui::Transform& layerToDisplayTransform) {
-    mSmallDirty = false;
+void Layer::setIsSmallDirty(frontend::LayerSnapshot* snapshot) {
     if (!mFlinger->mScheduler->supportSmallDirtyDetection(mOwnerAppId)) {
+        snapshot->isSmallDirty = false;
         return;
     }
 
     if (mWindowType != WindowInfo::Type::APPLICATION &&
         mWindowType != WindowInfo::Type::BASE_APPLICATION) {
+        snapshot->isSmallDirty = false;
         return;
     }
 
-    Rect bounds = damageRegion.getBounds();
+    Rect bounds = snapshot->surfaceDamage.getBounds();
     if (!bounds.isValid()) {
+        snapshot->isSmallDirty = false;
         return;
     }
 
     // Transform to screen space.
-    bounds = layerToDisplayTransform.transform(bounds);
+    bounds = snapshot->localTransform.transform(bounds);
 
     // If the damage region is a small dirty, this could give the hint for the layer history that
     // it could suppress the heuristic rate when calculating.
-    mSmallDirty = mFlinger->mScheduler->isSmallDirtyArea(mOwnerAppId,
-                                                         bounds.getWidth() * bounds.getHeight());
+    snapshot->isSmallDirty =
+            mFlinger->mScheduler->isSmallDirtyArea(mOwnerAppId,
+                                                   bounds.getWidth() * bounds.getHeight());
 }
 
 /* QTI_BEGIN */
@@ -3612,11 +1721,6 @@ uint32_t Layer::qtiGetSmomoLayerStackId() {
     return qtiSmomoLayerStackId;
 }
 /* QTI_END */
-
-void Layer::setIsSmallDirty(frontend::LayerSnapshot* snapshot) {
-    setIsSmallDirty(snapshot->surfaceDamage, snapshot->localTransform);
-    snapshot->isSmallDirty = mSmallDirty;
-}
 
 } // namespace android
 

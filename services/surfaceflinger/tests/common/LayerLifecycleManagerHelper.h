@@ -515,6 +515,23 @@ public:
         mLifecycleManager.applyTransactions(transactions);
     }
 
+    void setEdgeExtensionEffect(uint32_t id, int edge) {
+        std::vector<TransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+
+        transactions.back().states.front().layerId = id;
+        transactions.back().states.front().state.what |= layer_state_t::eEdgeExtensionChanged;
+        transactions.back().states.front().state.edgeExtensionParameters =
+                gui::EdgeExtensionParameters();
+        transactions.back().states.front().state.edgeExtensionParameters.extendLeft = edge & LEFT;
+        transactions.back().states.front().state.edgeExtensionParameters.extendRight = edge & RIGHT;
+        transactions.back().states.front().state.edgeExtensionParameters.extendTop = edge & TOP;
+        transactions.back().states.front().state.edgeExtensionParameters.extendBottom =
+                edge & BOTTOM;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
 private:
     LayerLifecycleManager& mLifecycleManager;
 };

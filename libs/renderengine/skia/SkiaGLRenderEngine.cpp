@@ -21,16 +21,15 @@
 
 #include "SkiaGLRenderEngine.h"
 
-#include "compat/SkiaGpuContext.h"
-
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
-#include <GrContextOptions.h>
-#include <GrTypes.h>
 #include <android-base/stringprintf.h>
 #include <common/trace.h>
-#include <gl/GrGLInterface.h>
+#include <include/gpu/ganesh/GrContextOptions.h>
+#include <include/gpu/ganesh/GrTypes.h>
 #include <include/gpu/ganesh/gl/GrGLDirectContext.h>
+#include <include/gpu/ganesh/gl/GrGLInterface.h>
+#include <log/log_main.h>
 #include <sync/sync.h>
 #include <ui/DebugUtils.h>
 
@@ -40,7 +39,7 @@
 #include <numeric>
 
 #include "GLExtensions.h"
-#include "log/log_main.h"
+#include "compat/SkiaGpuContext.h"
 
 namespace android {
 namespace renderengine {

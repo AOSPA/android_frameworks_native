@@ -711,14 +711,17 @@ status_t SensorService::SensorEventConnection::enableDisable(
         if (err == OK && isSensorCapped) {
             if ((requestedSamplingPeriodNs >= SENSOR_SERVICE_CAPPED_SAMPLING_PERIOD_NS) ||
                 !isRateCappedBasedOnPermission()) {
+                Mutex::Autolock _l(mConnectionLock);
                 mMicSamplingPeriodBackup[handle] = requestedSamplingPeriodNs;
             } else {
+                Mutex::Autolock _l(mConnectionLock);
                 mMicSamplingPeriodBackup[handle] = SENSOR_SERVICE_CAPPED_SAMPLING_PERIOD_NS;
             }
         }
 
     } else {
         err = mService->disable(this, handle);
+        Mutex::Autolock _l(mConnectionLock);
         mMicSamplingPeriodBackup.erase(handle);
     }
     return err;
@@ -750,8 +753,10 @@ status_t SensorService::SensorEventConnection::setEventRate(int handle, nsecs_t 
     if (ret == OK && isSensorCapped) {
         if ((requestedSamplingPeriodNs >= SENSOR_SERVICE_CAPPED_SAMPLING_PERIOD_NS) ||
             !isRateCappedBasedOnPermission()) {
+            Mutex::Autolock _l(mConnectionLock);
             mMicSamplingPeriodBackup[handle] = requestedSamplingPeriodNs;
         } else {
+            Mutex::Autolock _l(mConnectionLock);
             mMicSamplingPeriodBackup[handle] = SENSOR_SERVICE_CAPPED_SAMPLING_PERIOD_NS;
         }
     }

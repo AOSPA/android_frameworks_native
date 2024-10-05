@@ -44,7 +44,6 @@
 #include <FrameTimeline/FrameTimeline.h>
 #include <scheduler/interface/ICompositor.h>
 
-#include <algorithm>
 #include <cinttypes>
 #include <cstdint>
 #include <functional>
@@ -52,16 +51,15 @@
 #include <numeric>
 
 #include <common/FlagManager.h>
-#include "../Layer.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
 #include "FrontEnd/LayerHandle.h"
+#include "Layer.h"
 #include "OneShotTimer.h"
 #include "RefreshRateStats.h"
 #include "SurfaceFlingerFactory.h"
 #include "SurfaceFlingerProperties.h"
 #include "TimeStats/TimeStats.h"
-#include "VSyncTracker.h"
 #include "VsyncConfiguration.h"
 #include "VsyncController.h"
 #include "VsyncSchedule.h"
@@ -367,10 +365,8 @@ void Scheduler::createEventThread(Cycle cycle, frametimeline::TokenManager* toke
 
     if (cycle == Cycle::Render) {
         mRenderEventThread = std::move(eventThread);
-        mRenderEventConnection = mRenderEventThread->createEventConnection();
     } else {
         mLastCompositeEventThread = std::move(eventThread);
-        mLastCompositeEventConnection = mLastCompositeEventThread->createEventConnection();
     }
 }
 

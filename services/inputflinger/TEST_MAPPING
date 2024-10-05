@@ -298,9 +298,14 @@
       "name": "CtsInputRootTestCases"
     }
   ],
-  "staged-platinum-postsubmit": [
+  "platinum-postsubmit": [
     {
       "name": "inputflinger_tests"
+    }
+  ],
+  "staged-platinum-postsubmit": [
+    {
+      "name": "libinput_tests"
     }
   ]
 }

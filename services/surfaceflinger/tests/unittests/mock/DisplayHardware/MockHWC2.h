@@ -35,6 +35,7 @@ public:
                 (const, override));
     MOCK_METHOD(bool, isVsyncPeriodSwitchSupported, (), (const, override));
     MOCK_METHOD(void, onLayerDestroyed, (hal::HWLayerId), (override));
+    MOCK_METHOD(std::optional<ui::Size>, getPhysicalSizeInMm, (), (const override));
 
     MOCK_METHOD(hal::Error, acceptChanges, (), (override));
     MOCK_METHOD((base::expected<std::shared_ptr<HWC2::Layer>, hal::Error>), createLayer, (),

@@ -841,7 +841,8 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
         return score.overallScore == 0;
     });
 
-    if (policy->primaryRangeIsSingleRate()) {
+    // TODO(b/364651864): Evaluate correctness of primaryRangeIsSingleRate.
+    if (!mIsVrrDevice.load() && policy->primaryRangeIsSingleRate()) {
         // If we never scored any layers, then choose the rate from the primary
         // range instead of picking a random score from the app range.
         if (noLayerScore) {
@@ -887,8 +888,8 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
         const auto touchRefreshRates = rankFrameRates(anchorGroup, RefreshRateOrder::Descending);
         using fps_approx_ops::operator<;
 
-        if (scores.front().frameRateMode.fps < touchRefreshRates.front().frameRateMode.fps) {
-            ALOGV("Touch Boost");
+        if (scores.front().frameRateMode.fps <= touchRefreshRates.front().frameRateMode.fps) {
+            ALOGV("Touch Boost [late]");
             SFTRACE_FORMAT_INSTANT("%s (Touch Boost [late])",
                                    to_string(touchRefreshRates.front().frameRateMode.fps).c_str());
             return {touchRefreshRates, GlobalSignals{.touch = true}};
@@ -1394,13 +1395,14 @@ auto RefreshRateSelector::setPolicy(const PolicyVariant& policy) -> SetPolicyRes
         const auto& idleScreenConfigOpt = getCurrentPolicyLocked()->idleScreenConfigOpt;
         if (idleScreenConfigOpt != oldPolicy.idleScreenConfigOpt) {
             if (!idleScreenConfigOpt.has_value()) {
-                // fallback to legacy timer if existed, otherwise pause the old timer
-                LOG_ALWAYS_FATAL_IF(!mIdleTimer);
-                if (mConfig.legacyIdleTimerTimeout > 0ms) {
-                    mIdleTimer->setInterval(mConfig.legacyIdleTimerTimeout);
-                    mIdleTimer->resume();
-                } else {
-                    mIdleTimer->pause();
+                if (mIdleTimer) {
+                    // fallback to legacy timer if existed, otherwise pause the old timer
+                    if (mConfig.legacyIdleTimerTimeout > 0ms) {
+                        mIdleTimer->setInterval(mConfig.legacyIdleTimerTimeout);
+                        mIdleTimer->resume();
+                    } else {
+                        mIdleTimer->pause();
+                    }
                 }
             } else if (idleScreenConfigOpt->timeoutMillis > 0) {
                 // create a new timer or reconfigure

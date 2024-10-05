@@ -99,3 +99,19 @@ flag {
   bug: "342199002"
   is_fixed_read_only: true
 } # wb_camera3_and_processors
+
+flag {
+  name: "wb_libcameraservice"
+  namespace: "core_graphics"
+  description: "Remove usage of IGBPs in the libcameraservice."
+  bug: "342197849"
+  is_fixed_read_only: true
+} # wb_libcameraservice
+
+flag {
+  name: "bq_producer_throttles_only_async_mode"
+  namespace: "core_graphics"
+  description: "BufferQueueProducer only CPU throttle on queueBuffer() in async mode."
+  bug: "359252619"
+  is_fixed_read_only: true
+} # bq_producer_throttles_only_async_mode

@@ -454,7 +454,7 @@ TEST_P(BinderRpc, ThreadPoolGreaterThanEqualRequested) {
         GTEST_SKIP() << "This test requires multiple threads";
     }
 
-    constexpr size_t kNumThreads = 10;
+    constexpr size_t kNumThreads = 5;
 
     auto proc = createRpcTestSocketServerProcess({.numThreads = kNumThreads});
 
@@ -499,11 +499,11 @@ static void testThreadPoolOverSaturated(sp<IBinderRpcTest> iface, size_t numCall
 
     EXPECT_GE(epochMsAfter, epochMsBefore + 2 * sleepMs);
 
-    // Potential flake, but make sure calls are handled in parallel. Due
-    // to past flakes, this only checks that the amount of time taken has
-    // some parallelism. Other tests such as ThreadPoolGreaterThanEqualRequested
-    // check this more exactly.
-    EXPECT_LE(epochMsAfter, epochMsBefore + (numCalls - 1) * sleepMs);
+    // b/272429574, b/365294257
+    // This flakes too much to test. Parallelization is tested
+    // in ThreadPoolGreaterThanEqualRequested and other tests.
+    // Test to make sure calls are handled in parallel.
+    // EXPECT_LE(epochMsAfter, epochMsBefore + (numCalls - 1) * sleepMs);
 }
 
 TEST_P(BinderRpc, ThreadPoolOverSaturated) {
@@ -515,8 +515,7 @@ TEST_P(BinderRpc, ThreadPoolOverSaturated) {
     constexpr size_t kNumCalls = kNumThreads + 3;
     auto proc = createRpcTestSocketServerProcess({.numThreads = kNumThreads});
 
-    // b/272429574 - below 500ms, the test fails
-    testThreadPoolOverSaturated(proc.rootIface, kNumCalls, 500 /*ms*/);
+    testThreadPoolOverSaturated(proc.rootIface, kNumCalls, 200 /*ms*/);
 }
 
 TEST_P(BinderRpc, ThreadPoolLimitOutgoing) {
@@ -530,8 +529,7 @@ TEST_P(BinderRpc, ThreadPoolLimitOutgoing) {
     auto proc = createRpcTestSocketServerProcess(
             {.numThreads = kNumThreads, .numOutgoingConnections = kNumOutgoingConnections});
 
-    // b/272429574 - below 500ms, the test fails
-    testThreadPoolOverSaturated(proc.rootIface, kNumCalls, 500 /*ms*/);
+    testThreadPoolOverSaturated(proc.rootIface, kNumCalls, 200 /*ms*/);
 }
 
 TEST_P(BinderRpc, ThreadingStressTest) {

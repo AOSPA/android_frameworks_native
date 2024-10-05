@@ -20,10 +20,10 @@
 #define LOG_TAG "RenderEngine"
 
 #include <include/core/SkSurface.h>
-#include <include/gpu/GrDirectContext.h>
-#include <include/gpu/gl/GrGLInterface.h>
+#include <include/gpu/ganesh/GrDirectContext.h>
+#include <include/gpu/ganesh/gl/GrGLInterface.h>
 #include <include/gpu/graphite/Context.h>
-#include "include/gpu/vk/VulkanBackendContext.h"
+#include <include/gpu/vk/VulkanBackendContext.h>
 
 #include "SkiaBackendTexture.h"
 

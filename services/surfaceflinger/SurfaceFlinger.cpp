@@ -550,9 +550,6 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mIgnoreHdrCameraLayers = ignore_hdr_camera_layers(false);
 
     // These are set by the HWC implementation to indicate that they will use the workarounds.
-    mIsHotplugErrViaNegVsync =
-            base::GetBoolProperty("debug.sf.hwc_hotplug_error_via_neg_vsync"s, false);
-
     mIsHdcpViaNegVsync = base::GetBoolProperty("debug.sf.hwc_hdcp_via_neg_vsync"s, false);
 }
 
@@ -1023,6 +1020,8 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
             // which we maintain for backwards compatibility.
             config.cacheUltraHDR =
                     base::GetBoolProperty("ro.surface_flinger.prime_shader_cache.ultrahdr"s, false);
+            config.cacheEdgeExtension =
+                    base::GetBoolProperty("debug.sf.edge_extension_shader"s, true);
             return getRenderEngine().primeCache(config);
         });
 
@@ -2232,21 +2231,13 @@ void SurfaceFlinger::onComposerHalVsync(hal::HWDisplayId hwcDisplayId, int64_t t
                                         std::optional<hal::VsyncPeriodNanos> vsyncPeriod) {
     if (FlagManager::getInstance().connected_display() && timestamp < 0 &&
         vsyncPeriod.has_value()) {
-        // use ~0 instead of -1 as AidlComposerHal.cpp passes the param as unsigned int32
-        if (mIsHotplugErrViaNegVsync && vsyncPeriod.value() == ~0) {
-            const auto errorCode = static_cast<int32_t>(-timestamp);
-            ALOGD("%s: Hotplug error %d for display %" PRIu64, __func__, errorCode, hwcDisplayId);
-            mScheduler->dispatchHotplugError(errorCode);
-            return;
-        }
-
         if (mIsHdcpViaNegVsync && vsyncPeriod.value() == ~1) {
             const int32_t value = static_cast<int32_t>(-timestamp);
             // one byte is good enough to encode android.hardware.drm.HdcpLevel
             const int32_t maxLevel = (value >> 8) & 0xFF;
             const int32_t connectedLevel = value & 0xFF;
-            ALOGD("%s: HDCP levels changed (connected=%d, max=%d) for display %" PRIu64, __func__,
-                  connectedLevel, maxLevel, hwcDisplayId);
+            ALOGD("%s: HDCP levels changed (connected=%d, max=%d) for hwcDisplayId %" PRIu64,
+                  __func__, connectedLevel, maxLevel, hwcDisplayId);
             updateHdcpLevels(hwcDisplayId, connectedLevel, maxLevel);
             return;
         }
@@ -2286,7 +2277,7 @@ void SurfaceFlinger::onComposerHalHotplugEvent(hal::HWDisplayId hwcDisplayId,
     if (FlagManager::getInstance().hotplug2()) {
         // TODO(b/311403559): use enum type instead of int
         const auto errorCode = static_cast<int32_t>(event);
-        ALOGD("%s: Hotplug error %d for display %" PRIu64, __func__, errorCode, hwcDisplayId);
+        ALOGD("%s: Hotplug error %d for hwcDisplayId %" PRIu64, __func__, errorCode, hwcDisplayId);
         mScheduler->dispatchHotplugError(errorCode);
     }
 }
@@ -2337,6 +2328,18 @@ void SurfaceFlinger::onRefreshRateChangedDebug(const RefreshRateChangedDebugData
             }
         }
     }));
+}
+
+void SurfaceFlinger::onComposerHalHdcpLevelsChanged(hal::HWDisplayId hwcDisplayId,
+                                                    const HdcpLevels& levels) {
+    if (FlagManager::getInstance().hdcp_level_hal()) {
+        // TODO(b/362270040): propagate enum constants
+        const int32_t maxLevel = static_cast<int32_t>(levels.maxLevel);
+        const int32_t connectedLevel = static_cast<int32_t>(levels.connectedLevel);
+        ALOGD("%s: HDCP levels changed (connected=%d, max=%d) for hwcDisplayId %" PRIu64, __func__,
+              connectedLevel, maxLevel, hwcDisplayId);
+        updateHdcpLevels(hwcDisplayId, connectedLevel, maxLevel);
+    }
 }
 
 void SurfaceFlinger::configure() {
@@ -2511,7 +2514,7 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
 
     bool newDataLatched = false;
     SFTRACE_NAME("DisplayCallbackAndStatsUpdates");
-    mustComposite |= applyTransactionsLocked(update.transactions, vsyncId);
+    mustComposite |= applyTransactionsLocked(update.transactions);
     traverseLegacyLayers([&](Layer* layer) { layer->commitTransaction(); });
     const nsecs_t latchTime = systemTime();
     bool unused = false;
@@ -2887,7 +2890,8 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
     if (!FlagManager::getInstance().ce_fence_promise()) {
         refreshArgs.layersWithQueuedFrames.reserve(mLayersWithQueuedFrames.size());
         for (auto& [layer, _] : mLayersWithQueuedFrames) {
-            if (const auto& layerFE = layer->getCompositionEngineLayerFE())
+            if (const auto& layerFE = layer->getCompositionEngineLayerFE(
+                        {static_cast<uint32_t>(layer->sequence)}))
                 refreshArgs.layersWithQueuedFrames.push_back(layerFE);
         }
     }
@@ -2967,7 +2971,8 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
 
         refreshArgs.layersWithQueuedFrames.reserve(mLayersWithQueuedFrames.size());
         for (auto& [layer, _] : mLayersWithQueuedFrames) {
-            if (const auto& layerFE = layer->getCompositionEngineLayerFE()) {
+            if (const auto& layerFE = layer->getCompositionEngineLayerFE(
+                        {static_cast<uint32_t>(layer->sequence)})) {
                 refreshArgs.layersWithQueuedFrames.push_back(layerFE);
                 // Some layers are not displayed and do not yet have a future release fence
                 if (layerFE->getReleaseFencePromiseStatus() ==
@@ -4042,7 +4047,8 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         mDisplays.erase(displayToken);
 
         if (const auto& physical = currentState.physical) {
-            getHwComposer().allocatePhysicalDisplay(physical->hwcDisplayId, physical->id);
+            getHwComposer().allocatePhysicalDisplay(physical->hwcDisplayId, physical->id,
+                                                    /*physicalSize=*/std::nullopt);
         }
 
         processDisplayAdded(displayToken, currentState);
@@ -4168,7 +4174,6 @@ void SurfaceFlinger::commitTransactionsLocked(uint32_t transactionFlags) {
     // Commit display transactions.
     const bool displayTransactionNeeded = transactionFlags & eDisplayTransactionNeeded;
     mFrontEndDisplayInfosChanged = displayTransactionNeeded;
-    mForceTransactionDisplayChange = displayTransactionNeeded;
 
     if (mSomeChildrenChanged) {
         mVisibleRegionsDirty = true;
@@ -4512,6 +4517,8 @@ void SurfaceFlinger::scheduleNotifyExpectedPresentHint(PhysicalDisplayId display
             if (data.hintStatus.compare_exchange_strong(scheduleHintOnTx,
                                                         NotifyExpectedPresentHintStatus::Sent)) {
                 sendHint();
+                constexpr bool kAllowToEnable = true;
+                mScheduler->resyncToHardwareVsync(displayId, kAllowToEnable);
             }
         }));
     }
@@ -4862,20 +4869,18 @@ void SurfaceFlinger::addTransactionReadyFilters() {
 }
 
 // For tests only
-bool SurfaceFlinger::flushTransactionQueues(VsyncId vsyncId) {
+bool SurfaceFlinger::flushTransactionQueues() {
     mTransactionHandler.collectTransactions();
     std::vector<TransactionState> transactions = mTransactionHandler.flushTransactions();
-    return applyTransactions(transactions, vsyncId);
+    return applyTransactions(transactions);
 }
 
-bool SurfaceFlinger::applyTransactions(std::vector<TransactionState>& transactions,
-                                       VsyncId vsyncId) {
+bool SurfaceFlinger::applyTransactions(std::vector<TransactionState>& transactions) {
     Mutex::Autolock lock(mStateLock);
-    return applyTransactionsLocked(transactions, vsyncId);
+    return applyTransactionsLocked(transactions);
 }
 
-bool SurfaceFlinger::applyTransactionsLocked(std::vector<TransactionState>& transactions,
-                                             VsyncId vsyncId) {
+bool SurfaceFlinger::applyTransactionsLocked(std::vector<TransactionState>& transactions) {
     bool needsTraversal = false;
     // Now apply all transactions.
     for (auto& transaction : transactions) {
@@ -7387,7 +7392,8 @@ void SurfaceFlinger::captureDisplay(const DisplayCaptureArgs& args,
                                                  displayWeak, options),
                         getLayerSnapshotsFn, reqSize,
                         static_cast<ui::PixelFormat>(captureArgs.pixelFormat),
-                        captureArgs.allowProtected, captureArgs.grayscale, captureListener);
+                        captureArgs.allowProtected, captureArgs.grayscale,
+                        captureArgs.attachGainmap, captureListener);
 }
 
 void SurfaceFlinger::captureDisplay(DisplayId displayId, const CaptureArgs& args,
@@ -7444,7 +7450,7 @@ void SurfaceFlinger::captureDisplay(DisplayId displayId, const CaptureArgs& args
                                                  static_cast<ui::Dataspace>(args.dataspace),
                                                  displayWeak, options),
                         getLayerSnapshotsFn, size, static_cast<ui::PixelFormat>(args.pixelFormat),
-                        kAllowProtected, kGrayscale, captureListener);
+                        kAllowProtected, kGrayscale, args.attachGainmap, captureListener);
 }
 
 ScreenCaptureResults SurfaceFlinger::captureLayersSync(const LayerCaptureArgs& args) {
@@ -7555,7 +7561,8 @@ void SurfaceFlinger::captureLayers(const LayerCaptureArgs& args,
                                                  options),
                         getLayerSnapshotsFn, reqSize,
                         static_cast<ui::PixelFormat>(captureArgs.pixelFormat),
-                        captureArgs.allowProtected, captureArgs.grayscale, captureListener);
+                        captureArgs.allowProtected, captureArgs.grayscale,
+                        captureArgs.attachGainmap, captureListener);
 }
 
 // Creates a Future release fence for a layer and keeps track of it in a list to
@@ -7613,7 +7620,7 @@ std::optional<SurfaceFlinger::OutputCompositionState> SurfaceFlinger::getSnapsho
 void SurfaceFlinger::captureScreenCommon(RenderAreaBuilderVariant renderAreaBuilder,
                                          GetLayerSnapshotsFunction getLayerSnapshotsFn,
                                          ui::Size bufferSize, ui::PixelFormat reqPixelFormat,
-                                         bool allowProtected, bool grayscale,
+                                         bool allowProtected, bool grayscale, bool attachGainmap,
                                          const sp<IScreenCaptureListener>& captureListener) {
     SFTRACE_CALL();
 
@@ -7664,9 +7671,9 @@ void SurfaceFlinger::captureScreenCommon(RenderAreaBuilderVariant renderAreaBuil
                 renderengine::impl::ExternalTexture>(buffer, getRenderEngine(),
                                                      renderengine::impl::ExternalTexture::Usage::
                                                              WRITEABLE);
-        auto futureFence =
-                captureScreenshot(renderAreaBuilder, texture, false /* regionSampling */, grayscale,
-                                  isProtected, captureListener, displayState, layerFEs);
+        auto futureFence = captureScreenshot(renderAreaBuilder, texture, false /* regionSampling */,
+                                             grayscale, isProtected, attachGainmap, captureListener,
+                                             displayState, layerFEs);
         futureFence.get();
 
     } else {
@@ -7701,7 +7708,7 @@ void SurfaceFlinger::captureScreenCommon(RenderAreaBuilderVariant renderAreaBuil
                                                              WRITEABLE);
         auto futureFence = captureScreenshotLegacy(renderAreaBuilder, getLayerSnapshotsFn, texture,
                                                    false /* regionSampling */, grayscale,
-                                                   isProtected, captureListener);
+                                                   isProtected, attachGainmap, captureListener);
         futureFence.get();
     }
 }
@@ -7755,7 +7762,8 @@ std::vector<sp<LayerFE>> SurfaceFlinger::extractLayerFEs(
 ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
         const RenderAreaBuilderVariant& renderAreaBuilder,
         const std::shared_ptr<renderengine::ExternalTexture>& buffer, bool regionSampling,
-        bool grayscale, bool isProtected, const sp<IScreenCaptureListener>& captureListener,
+        bool grayscale, bool isProtected, bool attachGainmap,
+        const sp<IScreenCaptureListener>& captureListener,
         std::optional<OutputCompositionState>& displayState, std::vector<sp<LayerFE>>& layerFEs) {
     SFTRACE_CALL();
 
@@ -7772,19 +7780,87 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
         }
         return ftl::yield<FenceResult>(base::unexpected(NO_ERROR)).share();
     }
+    float displayBrightnessNits = displayState.value().displayBrightnessNits;
+    float sdrWhitePointNits = displayState.value().sdrWhitePointNits;
 
     // Empty vector needed to pass into renderScreenImpl for legacy path
     std::vector<std::pair<Layer*, sp<android::LayerFE>>> layers;
     ftl::SharedFuture<FenceResult> renderFuture =
-            renderScreenImpl(std::move(renderArea), buffer, regionSampling, grayscale, isProtected,
-                             captureResults, displayState, layers, layerFEs);
+            renderScreenImpl(renderArea.get(), buffer, regionSampling, grayscale, isProtected,
+                             attachGainmap, captureResults, displayState, layers, layerFEs);
+
+    if (captureResults.capturedHdrLayers && attachGainmap &&
+        FlagManager::getInstance().true_hdr_screenshots()) {
+        sp<GraphicBuffer> hdrBuffer =
+                getFactory().createGraphicBuffer(buffer->getWidth(), buffer->getHeight(),
+                                                 HAL_PIXEL_FORMAT_RGBA_FP16, 1 /* layerCount */,
+                                                 buffer->getUsage(), "screenshot-hdr");
+        sp<GraphicBuffer> gainmapBuffer =
+                getFactory().createGraphicBuffer(buffer->getWidth(), buffer->getHeight(),
+                                                 buffer->getPixelFormat(), 1 /* layerCount */,
+                                                 buffer->getUsage(), "screenshot-gainmap");
+
+        const status_t bufferStatus = hdrBuffer->initCheck();
+        const status_t gainmapBufferStatus = gainmapBuffer->initCheck();
+
+        if (bufferStatus != OK) {
+            ALOGW("%s: Buffer failed to allocate for hdr: %d. Screenshoting SDR instead.", __func__,
+                  bufferStatus);
+        } else if (gainmapBufferStatus != OK) {
+            ALOGW("%s: Buffer failed to allocate for gainmap: %d. Screenshoting SDR instead.",
+                  __func__, gainmapBufferStatus);
+        } else {
+            captureResults.optionalGainMap = gainmapBuffer;
+            const auto hdrTexture = std::make_shared<
+                    renderengine::impl::ExternalTexture>(hdrBuffer, getRenderEngine(),
+                                                         renderengine::impl::ExternalTexture::
+                                                                 Usage::WRITEABLE);
+            const auto gainmapTexture = std::make_shared<
+                    renderengine::impl::ExternalTexture>(gainmapBuffer, getRenderEngine(),
+                                                         renderengine::impl::ExternalTexture::
+                                                                 Usage::WRITEABLE);
+            ScreenCaptureResults unusedResults;
+            ftl::SharedFuture<FenceResult> hdrRenderFuture =
+                    renderScreenImpl(renderArea.get(), hdrTexture, regionSampling, grayscale,
+                                     isProtected, attachGainmap, unusedResults, displayState,
+                                     layers, layerFEs);
+
+            renderFuture =
+                    ftl::Future(std::move(renderFuture))
+                            .then([&, hdrRenderFuture = std::move(hdrRenderFuture),
+                                   displayBrightnessNits, sdrWhitePointNits,
+                                   dataspace = captureResults.capturedDataspace, buffer, hdrTexture,
+                                   gainmapTexture](FenceResult fenceResult) -> FenceResult {
+                                if (!fenceResult.ok()) {
+                                    return fenceResult;
+                                }
+
+                                auto hdrFenceResult = hdrRenderFuture.get();
+
+                                if (!hdrFenceResult.ok()) {
+                                    return hdrFenceResult;
+                                }
+
+                                return getRenderEngine()
+                                        .drawGainmap(buffer, fenceResult.value()->get(), hdrTexture,
+                                                     hdrFenceResult.value()->get(),
+                                                     displayBrightnessNits / sdrWhitePointNits,
+                                                     static_cast<ui::Dataspace>(dataspace),
+                                                     gainmapTexture)
+                                        .get();
+                            })
+                            .share();
+        };
+    }
 
     if (captureListener) {
         // Defer blocking on renderFuture back to the Binder thread.
         return ftl::Future(std::move(renderFuture))
-                .then([captureListener, captureResults = std::move(captureResults)](
-                              FenceResult fenceResult) mutable -> FenceResult {
+                .then([captureListener, captureResults = std::move(captureResults),
+                       displayBrightnessNits,
+                       sdrWhitePointNits](FenceResult fenceResult) mutable -> FenceResult {
                     captureResults.fenceResult = std::move(fenceResult);
+                    captureResults.hdrSdrRatio = displayBrightnessNits / sdrWhitePointNits;
                     captureListener->onScreenCaptureCompleted(captureResults);
                     return base::unexpected(NO_ERROR);
                 })
@@ -7796,7 +7872,8 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
 ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshotLegacy(
         RenderAreaBuilderVariant renderAreaBuilder, GetLayerSnapshotsFunction getLayerSnapshotsFn,
         const std::shared_ptr<renderengine::ExternalTexture>& buffer, bool regionSampling,
-        bool grayscale, bool isProtected, const sp<IScreenCaptureListener>& captureListener) {
+        bool grayscale, bool isProtected, bool attachGainmap,
+        const sp<IScreenCaptureListener>& captureListener) {
     SFTRACE_CALL();
 
     auto takeScreenshotFn = [=, this, renderAreaBuilder = std::move(renderAreaBuilder)]() REQUIRES(
@@ -7825,8 +7902,8 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshotLegacy(
 
         auto layerFEs = extractLayerFEs(layers);
         ftl::SharedFuture<FenceResult> renderFuture =
-                renderScreenImpl(std::move(renderArea), buffer, regionSampling, grayscale,
-                                 isProtected, captureResults, displayState, layers, layerFEs);
+                renderScreenImpl(renderArea.get(), buffer, regionSampling, grayscale, isProtected,
+                                 attachGainmap, captureResults, displayState, layers, layerFEs);
 
         if (captureListener) {
             // Defer blocking on renderFuture back to the Binder thread.
@@ -7856,10 +7933,9 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshotLegacy(
 }
 
 ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
-        std::unique_ptr<const RenderArea> renderArea,
-        const std::shared_ptr<renderengine::ExternalTexture>& buffer, bool regionSampling,
-        bool grayscale, bool isProtected, ScreenCaptureResults& captureResults,
-        std::optional<OutputCompositionState>& displayState,
+        const RenderArea* renderArea, const std::shared_ptr<renderengine::ExternalTexture>& buffer,
+        bool regionSampling, bool grayscale, bool isProtected, bool attachGainmap,
+        ScreenCaptureResults& captureResults, std::optional<OutputCompositionState>& displayState,
         std::vector<std::pair<Layer*, sp<LayerFE>>>& layers, std::vector<sp<LayerFE>>& layerFEs) {
     SFTRACE_CALL();
 
@@ -8582,13 +8658,6 @@ std::vector<std::pair<Layer*, LayerFE*>> SurfaceFlinger::moveSnapshotsToComposit
                 auto& legacyLayer = it->second;
                 sp<LayerFE> layerFE = legacyLayer->getCompositionEngineLayerFE(snapshot->path);
                 snapshot->fps = getLayerFramerate(currentTime, snapshot->sequence);
-                /* QTI_BEGIN */
-                snapshot->qtiLayerClass = legacyLayer->qtiGetLayerClass();
-                snapshot->qtiIsSecureDisplay =
-                        legacyLayer->getCompositionState()->qtiIsSecureDisplay;
-                snapshot->qtiIsSecureCamera =
-                        legacyLayer->getCompositionState()->qtiIsSecureCamera;
-                /* QTI_END */
                 layerFE->mSnapshot = std::move(snapshot);
                 refreshArgs.layers.push_back(layerFE);
                 layers.emplace_back(legacyLayer.get(), layerFE.get());

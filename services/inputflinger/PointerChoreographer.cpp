@@ -407,7 +407,8 @@ void PointerChoreographer::processStylusHoverEventLocked(const NotifyMotionArgs&
         // TODO(b/315815559): Do not fade and reset the icon if the hover exit will be followed
         //   immediately by a DOWN event.
         pc.fade(PointerControllerInterface::Transition::IMMEDIATE);
-        pc.updatePointerIcon(PointerIconStyle::TYPE_NOT_SPECIFIED);
+        pc.updatePointerIcon(mShowTouchesEnabled ? PointerIconStyle::TYPE_SPOT_HOVER
+                                                 : PointerIconStyle::TYPE_NOT_SPECIFIED);
     } else if (canUnfadeOnDisplay(args.displayId)) {
         pc.unfade(PointerControllerInterface::Transition::IMMEDIATE);
     }
@@ -792,6 +793,13 @@ bool PointerChoreographer::setPointerIcon(
     if (isFromSource(sources, AINPUT_SOURCE_STYLUS)) {
         auto it = mStylusPointersByDevice.find(deviceId);
         if (it != mStylusPointersByDevice.end()) {
+            if (mShowTouchesEnabled) {
+                // If an app doesn't override the icon for the hovering stylus, show the hover icon.
+                auto* style = std::get_if<PointerIconStyle>(&icon);
+                if (style != nullptr && *style == PointerIconStyle::TYPE_NOT_SPECIFIED) {
+                    *style = PointerIconStyle::TYPE_SPOT_HOVER;
+                }
+            }
             setIconForController(icon, *it->second);
             return true;
         }

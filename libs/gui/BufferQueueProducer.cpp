@@ -57,7 +57,10 @@
 #endif
 /* QTI_END */
 
+#include <com_android_graphics_libgui_flags.h>
+
 namespace android {
+using namespace com::android::graphics::libgui;
 
 // Macros for include BufferQueueCore information in log messages
 #define BQ_LOGV(x, ...)                                                                           \
@@ -954,6 +957,7 @@ status_t BufferQueueProducer::queueBuffer(int slot,
     uint64_t currentFrameNumber = 0;
     BufferItem item;
     int connectedApi;
+    bool enableEglCpuThrottling = true;
     sp<Fence> lastQueuedFence;
 
     { // Autolock scope
@@ -1127,6 +1131,9 @@ status_t BufferQueueProducer::queueBuffer(int slot,
         VALIDATE_CONSISTENCY();
 
         connectedApi = mCore->mConnectedApi;
+        if (flags::bq_producer_throttles_only_async_mode()) {
+            enableEglCpuThrottling = mCore->mAsyncMode || mCore->mDequeueBufferCannotBlock;
+        }
         lastQueuedFence = std::move(mLastQueueBufferFence);
 
         mLastQueueBufferFence = std::move(acquireFence);
@@ -1172,7 +1179,7 @@ status_t BufferQueueProducer::queueBuffer(int slot,
     }
 
     // Wait without lock held
-    if (connectedApi == NATIVE_WINDOW_API_EGL) {
+    if (connectedApi == NATIVE_WINDOW_API_EGL && enableEglCpuThrottling) {
         // Waiting here allows for two full buffers to be queued but not a
         // third. In the event that frames take varying time, this makes a
         // small trade-off in favor of latency rather than throughput.

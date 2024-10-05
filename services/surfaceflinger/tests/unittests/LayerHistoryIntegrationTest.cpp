@@ -894,7 +894,6 @@ TEST_F(LayerHistoryIntegrationTest, oneLayerExplicitCategory) {
 
 TEST_F(LayerHistoryIntegrationTest, oneLayerExplicitVoteWithFixedSourceAndNoPreferenceCategory) {
     SET_FLAG_FOR_TEST(flags::frame_rate_category_mrr, false);
-    SET_FLAG_FOR_TEST(flags::view_set_requested_frame_rate_mrr, true);
 
     auto layer = createLegacyAndFrontedEndLayer(1);
     setFrameRate(1, (45.6_Hz).getValue(), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,

@@ -35,9 +35,9 @@ struct Resampler {
     virtual ~Resampler() = default;
 
     /**
-     * Tries to resample motionEvent at resampleTime. The provided resampleTime must be greater than
+     * Tries to resample motionEvent at frameTime. The provided frameTime must be greater than
      * the latest sample time of motionEvent. It is not guaranteed that resampling occurs at
-     * resampleTime. Interpolation may occur is futureSample is available. Otherwise, motionEvent
+     * frameTime. Interpolation may occur is futureSample is available. Otherwise, motionEvent
      * may be resampled by another method, or not resampled at all. Furthermore, it is the
      * implementer's responsibility to guarantee the following:
      * - If resampling occurs, a single additional sample should be added to motionEvent. That is,
@@ -45,15 +45,21 @@ struct Resampler {
      * samples by the end of the resampling. No other field of motionEvent should be modified.
      * - If resampling does not occur, then motionEvent must not be modified in any way.
      */
-    virtual void resampleMotionEvent(std::chrono::nanoseconds resampleTime,
-                                     MotionEvent& motionEvent,
+    virtual void resampleMotionEvent(std::chrono::nanoseconds frameTime, MotionEvent& motionEvent,
                                      const InputMessage* futureSample) = 0;
+
+    /**
+     * Returns resample latency. Resample latency is the time difference between frame time and
+     * resample time. More precisely, let frameTime and resampleTime be two timestamps, and
+     * frameTime > resampleTime. Resample latency is defined as frameTime - resampleTime.
+     */
+    virtual std::chrono::nanoseconds getResampleLatency() const = 0;
 };
 
 class LegacyResampler final : public Resampler {
 public:
     /**
-     * Tries to resample `motionEvent` at `resampleTime` by adding a resampled sample at the end of
+     * Tries to resample `motionEvent` at `frameTime` by adding a resampled sample at the end of
      * `motionEvent` with eventTime equal to `resampleTime` and pointer coordinates determined by
      * linear interpolation or linear extrapolation. An earlier `resampleTime` will be used if
      * extrapolation takes place and `resampleTime` is too far in the future. If `futureSample` is
@@ -61,8 +67,10 @@ public:
      * data, LegacyResampler will extrapolate. Otherwise, no resampling takes place and
      * `motionEvent` is unmodified.
      */
-    void resampleMotionEvent(std::chrono::nanoseconds resampleTime, MotionEvent& motionEvent,
+    void resampleMotionEvent(std::chrono::nanoseconds frameTime, MotionEvent& motionEvent,
                              const InputMessage* futureSample) override;
+
+    std::chrono::nanoseconds getResampleLatency() const override;
 
 private:
     struct Pointer {

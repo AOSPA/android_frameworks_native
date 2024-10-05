@@ -19,12 +19,12 @@
 #include <include/core/SkImageInfo.h>
 #include <include/core/SkSurface.h>
 #include <include/core/SkTraceMemoryDump.h>
-#include <include/gpu/GrDirectContext.h>
-#include <include/gpu/GrTypes.h>
+#include <include/gpu/ganesh/GrDirectContext.h>
+#include <include/gpu/ganesh/GrTypes.h>
 #include <include/gpu/ganesh/SkSurfaceGanesh.h>
 #include <include/gpu/ganesh/gl/GrGLDirectContext.h>
+#include <include/gpu/ganesh/gl/GrGLInterface.h>
 #include <include/gpu/ganesh/vk/GrVkDirectContext.h>
-#include <include/gpu/gl/GrGLInterface.h>
 #include <include/gpu/vk/VulkanBackendContext.h>
 
 #include "../AutoBackendTexture.h"

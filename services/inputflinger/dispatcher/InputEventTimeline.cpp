@@ -66,12 +66,11 @@ bool ConnectionTimeline::operator!=(const ConnectionTimeline& rhs) const {
     return !operator==(rhs);
 }
 
-InputEventTimeline::InputEventTimeline(bool isDown, nsecs_t eventTime, nsecs_t readTime,
-                                       uint16_t vendorId, uint16_t productId,
+InputEventTimeline::InputEventTimeline(nsecs_t eventTime, nsecs_t readTime, uint16_t vendorId,
+                                       uint16_t productId,
                                        const std::set<InputDeviceUsageSource>& sources,
                                        InputEventActionType inputEventActionType)
-      : isDown(isDown),
-        eventTime(eventTime),
+      : eventTime(eventTime),
         readTime(readTime),
         vendorId(vendorId),
         productId(productId),
@@ -91,8 +90,8 @@ bool InputEventTimeline::operator==(const InputEventTimeline& rhs) const {
             return false;
         }
     }
-    return isDown == rhs.isDown && eventTime == rhs.eventTime && readTime == rhs.readTime &&
-            vendorId == rhs.vendorId && productId == rhs.productId && sources == rhs.sources &&
+    return eventTime == rhs.eventTime && readTime == rhs.readTime && vendorId == rhs.vendorId &&
+            productId == rhs.productId && sources == rhs.sources &&
             inputEventActionType == rhs.inputEventActionType;
 }
 

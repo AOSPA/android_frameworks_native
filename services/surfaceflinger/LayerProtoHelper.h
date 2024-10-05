@@ -62,7 +62,7 @@ public:
             const renderengine::ExternalTexture& buffer,
             std::function<perfetto::protos::ActiveBufferProto*()> getActiveBufferProto);
     static void writeToProto(
-            const gui::WindowInfo& inputInfo, const wp<Layer>& touchableRegionBounds,
+            const gui::WindowInfo& inputInfo,
             std::function<perfetto::protos::InputWindowInfoProto*()> getInputWindowInfoProto);
     static void writeToProto(const mat4 matrix,
                              perfetto::protos::ColorTransformProto* colorTransformProto);

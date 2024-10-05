@@ -258,6 +258,9 @@ public:
     const HalResult<float> frequencyResolution;
     const HalResult<float> qFactor;
     const HalResult<std::vector<float>> maxAmplitudes;
+    const HalResult<int32_t> maxEnvelopeEffectSize;
+    const HalResult<std::chrono::milliseconds> minEnvelopeEffectControlPointDuration;
+    const HalResult<std::chrono::milliseconds> maxEnvelopeEffectControlPointDuration;
 
     void logFailures() const {
         logFailure<Capabilities>(capabilities, "getCapabilities");
@@ -276,6 +279,11 @@ public:
         logFailure<float>(frequencyResolution, "getFrequencyResolution");
         logFailure<float>(qFactor, "getQFactor");
         logFailure<std::vector<float>>(maxAmplitudes, "getMaxAmplitudes");
+        logFailure<int32_t>(maxEnvelopeEffectSize, "getMaxEnvelopeEffectSize");
+        logFailure<std::chrono::milliseconds>(minEnvelopeEffectControlPointDuration,
+                                              "getMinEnvelopeEffectControlPointDuration");
+        logFailure<std::chrono::milliseconds>(maxEnvelopeEffectControlPointDuration,
+                                              "getMaxEnvelopeEffectControlPointDuration");
     }
 
     bool shouldRetry() const {
@@ -285,7 +293,10 @@ public:
                 pwlePrimitiveDurationMax.shouldRetry() || compositionSizeMax.shouldRetry() ||
                 pwleSizeMax.shouldRetry() || minFrequency.shouldRetry() ||
                 resonantFrequency.shouldRetry() || frequencyResolution.shouldRetry() ||
-                qFactor.shouldRetry() || maxAmplitudes.shouldRetry();
+                qFactor.shouldRetry() || maxAmplitudes.shouldRetry() ||
+                maxEnvelopeEffectSize.shouldRetry() ||
+                minEnvelopeEffectControlPointDuration.shouldRetry() ||
+                maxEnvelopeEffectControlPointDuration.shouldRetry();
     }
 
 private:
@@ -313,7 +324,10 @@ public:
                 mResonantFrequency,
                 mFrequencyResolution,
                 mQFactor,
-                mMaxAmplitudes};
+                mMaxAmplitudes,
+                mMaxEnvelopeEffectSize,
+                mMinEnvelopeEffectControlPointDuration,
+                mMaxEnvelopeEffectControlPointDuration};
     }
 
 private:
@@ -340,6 +354,11 @@ private:
     HalResult<float> mQFactor = HalResult<float>::transactionFailed(MSG);
     HalResult<std::vector<float>> mMaxAmplitudes =
             HalResult<std::vector<float>>::transactionFailed(MSG);
+    HalResult<int32_t> mMaxEnvelopeEffectSize = HalResult<int>::transactionFailed(MSG);
+    HalResult<std::chrono::milliseconds> mMinEnvelopeEffectControlPointDuration =
+            HalResult<std::chrono::milliseconds>::transactionFailed(MSG);
+    HalResult<std::chrono::milliseconds> mMaxEnvelopeEffectControlPointDuration =
+            HalResult<std::chrono::milliseconds>::transactionFailed(MSG);
 
     friend class HalWrapper;
 };
@@ -420,6 +439,9 @@ protected:
     virtual HalResult<float> getFrequencyResolutionInternal();
     virtual HalResult<float> getQFactorInternal();
     virtual HalResult<std::vector<float>> getMaxAmplitudesInternal();
+    virtual HalResult<int32_t> getMaxEnvelopeEffectSizeInternal();
+    virtual HalResult<std::chrono::milliseconds> getMinEnvelopeEffectControlPointDurationInternal();
+    virtual HalResult<std::chrono::milliseconds> getMaxEnvelopeEffectControlPointDurationInternal();
 
 private:
     std::mutex mInfoMutex;
@@ -495,6 +517,13 @@ protected:
     HalResult<float> getFrequencyResolutionInternal() override final;
     HalResult<float> getQFactorInternal() override final;
     HalResult<std::vector<float>> getMaxAmplitudesInternal() override final;
+    HalResult<int32_t> getMaxEnvelopeEffectSizeInternal() override final;
+
+    HalResult<std::chrono::milliseconds> getMinEnvelopeEffectControlPointDurationInternal()
+            override final;
+
+    HalResult<std::chrono::milliseconds> getMaxEnvelopeEffectControlPointDurationInternal()
+            override final;
 
 private:
     const reconnect_fn mReconnectFn;

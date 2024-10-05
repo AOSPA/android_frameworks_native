@@ -37,6 +37,7 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 
+#include <gui/FenceMonitor.h>
 #include <gui/FrameRateUtils.h>
 #include <gui/GLConsumer.h>
 #include <gui/IProducerListener.h>
@@ -503,6 +504,16 @@ void BLASTBufferQueue::releaseBufferCallbackLocked(
         std::optional<uint32_t> currentMaxAcquiredBufferCount, bool fakeRelease) {
     ATRACE_CALL();
     BQA_LOGV("releaseBufferCallback %s", id.to_string().c_str());
+
+    if (CC_UNLIKELY(atrace_is_tag_enabled(ATRACE_TAG_GRAPHICS))) {
+        if (!mFenceMonitor) {
+            std::string monitorName = "release :";
+            monitorName.append(mName.c_str());
+            mFenceMonitor.emplace(monitorName.c_str());
+        }
+
+        mFenceMonitor->queueFence(releaseFence);
+    }
 
     // Calculate how many buffers we need to hold before we release them back
     // to the buffer queue. This will prevent higher latency when we are running
@@ -1293,6 +1304,11 @@ void BLASTBufferQueue::setTransactionHangCallback(
         std::function<void(const std::string&)> callback) {
     std::lock_guard _lock{mMutex};
     mTransactionHangCallback = std::move(callback);
+}
+
+void BLASTBufferQueue::setApplyToken(sp<IBinder> applyToken) {
+    std::lock_guard _lock{mMutex};
+    mApplyToken = std::move(applyToken);
 }
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)

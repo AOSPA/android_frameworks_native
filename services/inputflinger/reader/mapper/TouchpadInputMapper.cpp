@@ -425,7 +425,7 @@ std::list<NotifyArgs> TouchpadInputMapper::process(const RawEvent& rawEvent) {
     std::optional<SelfContainedHardwareState> state = mStateConverter.processRawEvent(rawEvent);
     if (state) {
         if (mTouchpadHardwareStateNotificationsEnabled) {
-            getPolicy()->notifyTouchpadHardwareState(*state, rawEvent.deviceId);
+            getPolicy()->notifyTouchpadHardwareState(*state, getDeviceId());
         }
         updatePalmDetectionMetrics();
         return sendHardwareState(rawEvent.when, rawEvent.readTime, *state);
@@ -480,6 +480,9 @@ void TouchpadInputMapper::consumeGesture(const Gesture* gesture) {
         return;
     }
     mGesturesToProcess.push_back(*gesture);
+    if (mTouchpadHardwareStateNotificationsEnabled) {
+        getPolicy()->notifyTouchpadGestureInfo(gesture->type, getDeviceId());
+    }
 }
 
 std::list<NotifyArgs> TouchpadInputMapper::processGestures(nsecs_t when, nsecs_t readTime) {

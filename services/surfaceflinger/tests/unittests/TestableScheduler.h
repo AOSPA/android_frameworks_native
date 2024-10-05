@@ -74,10 +74,8 @@ public:
     void setEventThread(Cycle cycle, std::unique_ptr<EventThread> eventThreadPtr) {
         if (cycle == Cycle::Render) {
             mRenderEventThread = std::move(eventThreadPtr);
-            mRenderEventConnection = mRenderEventThread->createEventConnection();
         } else {
             mLastCompositeEventThread = std::move(eventThreadPtr);
-            mLastCompositeEventConnection = mLastCompositeEventThread->createEventConnection();
         }
     }
 

@@ -100,6 +100,7 @@ filegroup {
         "skia/debug/SkiaCapture.cpp",
         "skia/debug/SkiaMemoryReporter.cpp",
         "skia/filters/BlurFilter.cpp",
+        "skia/filters/GainmapFactory.cpp",
         "skia/filters/GaussianBlurFilter.cpp",
         "skia/filters/KawaseBlurDualFilter.cpp",
         "skia/filters/KawaseBlurFilter.cpp",

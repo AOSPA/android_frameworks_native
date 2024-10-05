@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <thread>
 
 #include <ui/Fence.h>
 
@@ -28,17 +29,20 @@ class FenceMonitor {
 public:
     explicit FenceMonitor(const char* name);
     void queueFence(const sp<Fence>& fence);
+    ~FenceMonitor();
 
 private:
     void loop();
     void threadLoop();
 
-    const char* mName;
+    std::string mName;
     uint32_t mFencesQueued;
     uint32_t mFencesSignaled;
     std::deque<sp<Fence>> mQueue;
     std::condition_variable mCondition;
     std::mutex mMutex;
+    std::thread mThread;
+    std::atomic_bool mStopped = false;
 };
 
 } // namespace android::gui

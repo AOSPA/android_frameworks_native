@@ -53,7 +53,7 @@ public:
      * must drop all duplicate data.
      */
     void trackListener(int32_t inputEventId, nsecs_t eventTime, nsecs_t readTime, DeviceId deviceId,
-                       const std::set<InputDeviceUsageSource>& sources, int inputEventActionType,
+                       const std::set<InputDeviceUsageSource>& sources, int32_t inputEventAction,
                        InputEventType inputEventType);
     void trackFinishedEvent(int32_t inputEventId, const sp<IBinder>& connectionToken,
                             nsecs_t deliveryTime, nsecs_t consumeTime, nsecs_t finishTime);

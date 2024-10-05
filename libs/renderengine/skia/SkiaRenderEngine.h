@@ -18,11 +18,12 @@
 #define SF_SKIARENDERENGINE_H_
 
 #include <renderengine/RenderEngine.h>
-#include <sys/types.h>
 
-#include <GrBackendSemaphore.h>
-#include <SkSurface.h>
 #include <android-base/thread_annotations.h>
+#include <include/core/SkImageInfo.h>
+#include <include/core/SkSurface.h>
+#include <include/gpu/ganesh/GrBackendSemaphore.h>
+#include <include/gpu/ganesh/GrContextOptions.h>
 #include <renderengine/ExternalTexture.h>
 #include <renderengine/RenderEngine.h>
 #include <sys/types.h>
@@ -32,8 +33,6 @@
 #include <unordered_map>
 
 #include "AutoBackendTexture.h"
-#include "GrContextOptions.h"
-#include "SkImageInfo.h"
 #include "android-base/macros.h"
 #include "compat/SkiaGpuContext.h"
 #include "debug/SkiaCapture.h"
@@ -147,6 +146,13 @@ private:
                             const std::vector<LayerSettings>& layers,
                             const std::shared_ptr<ExternalTexture>& buffer,
                             base::unique_fd&& bufferFence) override final;
+    void drawGainmapInternal(const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
+                             const std::shared_ptr<ExternalTexture>& sdr,
+                             base::borrowed_fd&& sdrFence,
+                             const std::shared_ptr<ExternalTexture>& hdr,
+                             base::borrowed_fd&& hdrFence, float hdrSdrRatio,
+                             ui::Dataspace dataspace,
+                             const std::shared_ptr<ExternalTexture>& gainmap) override final;
 
     void dump(std::string& result) override final;
 

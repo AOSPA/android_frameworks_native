@@ -26,6 +26,7 @@
 #include <com_android_graphics_libgui_flags.h>
 #include <gui/BufferItem.h>
 #include <gui/BufferItemConsumer.h>
+#include <gui/FenceMonitor.h>
 #include <gui/IGraphicBufferConsumer.h>
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/SurfaceComposerClient.h>
@@ -168,7 +169,7 @@ public:
      * indicates the reason for the hang.
      */
     void setTransactionHangCallback(std::function<void(const std::string&)> callback);
-
+    void setApplyToken(sp<IBinder>);
     virtual ~BLASTBufferQueue();
 
     void onFirstRef() override;
@@ -305,7 +306,7 @@ private:
 
     // Queues up transactions using this token in SurfaceFlinger. This prevents queued up
     // transactions from other parts of the client from blocking this transaction.
-    const sp<IBinder> mApplyToken GUARDED_BY(mMutex) = sp<BBinder>::make();
+    sp<IBinder> mApplyToken GUARDED_BY(mMutex) = sp<BBinder>::make();
 
     // Guards access to mDequeueTimestamps since we cannot hold to mMutex in onFrameDequeued or
     // we will deadlock.
@@ -349,6 +350,8 @@ private:
     std::function<void(const std::string&)> mTransactionHangCallback;
 
     std::unordered_set<uint64_t> mSyncedFrameNumbers GUARDED_BY(mMutex);
+
+    std::optional<gui::FenceMonitor> mFenceMonitor GUARDED_BY(mMutex);
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
     class BufferReleaseReader {

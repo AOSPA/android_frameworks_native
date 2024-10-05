@@ -466,6 +466,9 @@ public:
     virtual void notifyTouchpadHardwareState(const SelfContainedHardwareState& schs,
                                              int32_t deviceId) = 0;
 
+    /* Sends the Info of gestures that happen on the touchpad. */
+    virtual void notifyTouchpadGestureInfo(GestureType type, int32_t deviceId) = 0;
+
     /* Gets the keyboard layout for a particular input device. */
     virtual std::shared_ptr<KeyCharacterMap> getKeyboardLayoutOverlay(
             const InputDeviceIdentifier& identifier,

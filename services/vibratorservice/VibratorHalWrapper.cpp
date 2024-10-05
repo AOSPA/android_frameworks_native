@@ -96,6 +96,17 @@ Info HalWrapper::getInfo() {
     if (mInfoCache.mMaxAmplitudes.isFailed()) {
         mInfoCache.mMaxAmplitudes = getMaxAmplitudesInternal();
     }
+    if (mInfoCache.mMaxEnvelopeEffectSize.isFailed()) {
+        mInfoCache.mMaxEnvelopeEffectSize = getMaxEnvelopeEffectSizeInternal();
+    }
+    if (mInfoCache.mMinEnvelopeEffectControlPointDuration.isFailed()) {
+        mInfoCache.mMinEnvelopeEffectControlPointDuration =
+                getMinEnvelopeEffectControlPointDurationInternal();
+    }
+    if (mInfoCache.mMaxEnvelopeEffectControlPointDuration.isFailed()) {
+        mInfoCache.mMaxEnvelopeEffectControlPointDuration =
+                getMaxEnvelopeEffectControlPointDurationInternal();
+    }
     return mInfoCache.get();
 }
 
@@ -209,6 +220,23 @@ HalResult<float> HalWrapper::getQFactorInternal() {
 HalResult<std::vector<float>> HalWrapper::getMaxAmplitudesInternal() {
     ALOGV("Skipped getMaxAmplitudes because it's not available in Vibrator HAL");
     return HalResult<std::vector<float>>::unsupported();
+}
+HalResult<int32_t> HalWrapper::getMaxEnvelopeEffectSizeInternal() {
+    ALOGV("Skipped getMaxEnvelopeEffectSizeInternal because it's not available "
+          "in Vibrator HAL");
+    return HalResult<int32_t>::unsupported();
+}
+
+HalResult<milliseconds> HalWrapper::getMinEnvelopeEffectControlPointDurationInternal() {
+    ALOGV("Skipped getMinEnvelopeEffectControlPointDurationInternal because it's not "
+          "available in Vibrator HAL");
+    return HalResult<milliseconds>::unsupported();
+}
+
+HalResult<milliseconds> HalWrapper::getMaxEnvelopeEffectControlPointDurationInternal() {
+    ALOGV("Skipped getMaxEnvelopeEffectControlPointDurationInternal because it's not "
+          "available in Vibrator HAL");
+    return HalResult<milliseconds>::unsupported();
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -439,6 +467,24 @@ HalResult<std::vector<float>> AidlHalWrapper::getMaxAmplitudesInternal() {
     std::vector<float> amplitudes;
     auto status = getHal()->getBandwidthAmplitudeMap(&amplitudes);
     return HalResultFactory::fromStatus<std::vector<float>>(std::move(status), amplitudes);
+}
+
+HalResult<int32_t> AidlHalWrapper::getMaxEnvelopeEffectSizeInternal() {
+    int32_t size = 0;
+    auto status = getHal()->getPwleV2CompositionSizeMax(&size);
+    return HalResultFactory::fromStatus<int32_t>(std::move(status), size);
+}
+
+HalResult<milliseconds> AidlHalWrapper::getMinEnvelopeEffectControlPointDurationInternal() {
+    int32_t durationMs = 0;
+    auto status = getHal()->getPwleV2PrimitiveDurationMinMillis(&durationMs);
+    return HalResultFactory::fromStatus<milliseconds>(std::move(status), milliseconds(durationMs));
+}
+
+HalResult<milliseconds> AidlHalWrapper::getMaxEnvelopeEffectControlPointDurationInternal() {
+    int32_t durationMs = 0;
+    auto status = getHal()->getPwleV2PrimitiveDurationMaxMillis(&durationMs);
+    return HalResultFactory::fromStatus<milliseconds>(std::move(status), milliseconds(durationMs));
 }
 
 std::shared_ptr<Aidl::IVibrator> AidlHalWrapper::getHal() {

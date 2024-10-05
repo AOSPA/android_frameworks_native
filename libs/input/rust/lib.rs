@@ -31,6 +31,7 @@ pub use input_verifier::InputVerifier;
 pub use keyboard_classifier::KeyboardClassifier;
 
 #[cxx::bridge(namespace = "android::input")]
+#[allow(clippy::needless_maybe_sized)]
 #[allow(unsafe_op_in_unsafe_fn)]
 mod ffi {
     #[namespace = "android"]

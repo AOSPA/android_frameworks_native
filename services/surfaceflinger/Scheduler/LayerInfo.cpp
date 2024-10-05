@@ -595,8 +595,7 @@ bool LayerInfo::FrameRate::isVoteValidForMrr(bool isVrrDevice) const {
         return true;
     }
 
-    if (FlagManager::getInstance().view_set_requested_frame_rate_mrr() &&
-        category == FrameRateCategory::NoPreference && vote.rate.isValid() &&
+    if (category == FrameRateCategory::NoPreference && vote.rate.isValid() &&
         vote.type == FrameRateCompatibility::ExactOrMultiple) {
         return true;
     }
