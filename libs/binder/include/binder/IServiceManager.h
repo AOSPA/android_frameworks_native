@@ -24,6 +24,7 @@
 #include <utils/String16.h>
 #include <utils/Vector.h>
 #include <optional>
+#include <set>
 
 namespace android {
 
@@ -224,20 +225,36 @@ LIBBINDER_EXPORTED bool checkPermission(const String16& permission, pid_t pid, u
 typedef std::function<status_t(const String16& name, sockaddr* outAddr, socklen_t addrSize)>
         RpcSocketAddressProvider;
 
-typedef std::function<sp<IBinder>(const String16& name)> RpcAccessorProvider;
+/**
+ * This callback provides a way for clients to get access to remote services by
+ * providing an Accessor object from libbinder that can connect to the remote
+ * service over sockets.
+ *
+ * \param instance name of the service that the callback will provide an
+ *        Accessor for. The provided accessor will be used to set up a client
+ *        RPC connection in libbinder in order to return a binder for the
+ *        associated remote service.
+ *
+ * \return IBinder of the Accessor object that libbinder implements.
+ *         nullptr if the provider callback doesn't know how to reach the
+ *         service or doesn't want to provide access for any other reason.
+ */
+typedef std::function<sp<IBinder>(const String16& instance)> RpcAccessorProvider;
 
 class AccessorProvider;
 
 /**
- * Register an accessor provider for the service manager APIs.
+ * Register a RpcAccessorProvider for the service manager APIs.
  *
+ * \param instances that the RpcAccessorProvider knows about and can provide an
+ *        Accessor for.
  * \param provider callback that generates Accessors.
  *
  * \return A pointer used as a recept for the successful addition of the
  *         AccessorProvider. This is needed to unregister it later.
  */
 [[nodiscard]] LIBBINDER_EXPORTED std::weak_ptr<AccessorProvider> addAccessorProvider(
-        RpcAccessorProvider&& providerCallback);
+        std::set<std::string>&& instances, RpcAccessorProvider&& providerCallback);
 
 /**
  * Remove an accessor provider using the pointer provided by addAccessorProvider

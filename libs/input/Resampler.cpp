@@ -247,11 +247,6 @@ nanoseconds LegacyResampler::getResampleLatency() const {
 
 void LegacyResampler::resampleMotionEvent(nanoseconds frameTime, MotionEvent& motionEvent,
                                           const InputMessage* futureSample) {
-    if (mPreviousDeviceId && *mPreviousDeviceId != motionEvent.getDeviceId()) {
-        mLatestSamples.clear();
-    }
-    mPreviousDeviceId = motionEvent.getDeviceId();
-
     const nanoseconds resampleTime = frameTime - RESAMPLE_LATENCY;
 
     updateLatestSamples(motionEvent);

@@ -371,26 +371,6 @@ aidl::android::hardware::graphics::composer3::Composition Layer::getCompositionT
 // transaction
 // ----------------------------------------------------------------------------
 
-uint32_t Layer::doTransaction(uint32_t flags) {
-    SFTRACE_CALL();
-
-    const State& s(getDrawingState());
-
-    if (s.sequence != mLastCommittedTxSequence) {
-        // invalidate and recompute the visible regions if needed
-        mLastCommittedTxSequence = s.sequence;
-        flags |= eVisibleRegion;
-    }
-
-    if (!mPotentialCursor && (flags & Layer::eVisibleRegion)) {
-        mFlinger->mUpdateInputInfo = true;
-    }
-
-    commitTransaction();
-
-    return flags;
-}
-
 void Layer::commitTransaction() {
     // Set the present state for all bufferlessSurfaceFramesTX to Presented. The
     // bufferSurfaceFrameTX will be presented in latchBuffer.
@@ -403,12 +383,6 @@ void Layer::commitTransaction() {
         }
     }
     mDrawingState.bufferlessSurfaceFramesTX.clear();
-}
-
-uint32_t Layer::clearTransactionFlags(uint32_t mask) {
-    const auto flags = mTransactionFlags & mask;
-    mTransactionFlags &= ~mask;
-    return flags;
 }
 
 void Layer::setTransactionFlags(uint32_t mask) {
@@ -791,10 +765,6 @@ void Layer::prepareReleaseCallbacks(ftl::Future<FenceResult> futureFenceResult,
         // Older fences for the same layer stack can be dropped when a new fence arrives.
         // An assumption here is that RenderEngine performs work sequentially, so an
         // incoming fence will not fire before an existing fence.
-        SFTRACE_NAME(
-                ftl::Concat("Adding additional fence for: ", ftl::truncated<20>(mName.c_str()),
-                            ", Replacing?: ", mAdditionalPreviousReleaseFences.contains(layerStack))
-                        .c_str());
         mAdditionalPreviousReleaseFences.emplace_or_replace(layerStack,
                                                             std::move(futureFenceResult));
     }
@@ -889,16 +859,6 @@ bool Layer::setTransformToDisplayInverse(bool transformToDisplayInverse) {
     if (mDrawingState.transformToDisplayInverse == transformToDisplayInverse) return false;
     mDrawingState.sequence++;
     mDrawingState.transformToDisplayInverse = transformToDisplayInverse;
-    setTransactionFlags(eTransactionNeeded);
-    return true;
-}
-
-bool Layer::setBufferCrop(const Rect& bufferCrop) {
-    if (mDrawingState.bufferCrop == bufferCrop) return false;
-
-    mDrawingState.sequence++;
-    mDrawingState.bufferCrop = bufferCrop;
-
     setTransactionFlags(eTransactionNeeded);
     return true;
 }
@@ -1520,10 +1480,6 @@ void Layer::onCompositionPresented(const DisplayDevice* display,
     mBufferInfo.mFrameLatencyNeeded = false;
 }
 
-bool Layer::willReleaseBufferOnLatch() const {
-    return !mDrawingState.buffer && mBufferInfo.mBuffer;
-}
-
 bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bool bgColorOnly) {
     SFTRACE_FORMAT_INSTANT("latchBuffer %s - %" PRIu64, getDebugName(),
                            getDrawingState().frameNumber);
@@ -1589,32 +1545,8 @@ bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bo
     return true;
 }
 
-bool Layer::isProtected() const {
-    return (mBufferInfo.mBuffer != nullptr) &&
-            (mBufferInfo.mBuffer->getUsage() & GRALLOC_USAGE_PROTECTED);
-}
-
 bool Layer::getTransformToDisplayInverse() const {
     return mBufferInfo.mTransformToDisplayInverse;
-}
-
-Rect Layer::getBufferCrop() const {
-    // this is the crop rectangle that applies to the buffer
-    // itself (as opposed to the window)
-    if (!mBufferInfo.mCrop.isEmpty()) {
-        // if the buffer crop is defined, we use that
-        return mBufferInfo.mCrop;
-    } else if (mBufferInfo.mBuffer != nullptr) {
-        // otherwise we use the whole buffer
-        return mBufferInfo.mBuffer->getBounds();
-    } else {
-        // if we don't have a buffer yet, we use an empty/invalid crop
-        return Rect();
-    }
-}
-
-uint32_t Layer::getBufferTransform() const {
-    return mBufferInfo.mTransform;
 }
 
 ui::Dataspace Layer::translateDataspace(ui::Dataspace dataspace) {

@@ -1762,6 +1762,7 @@ TEST_F(LayerSnapshotTest, hideLayerWithNanMatrix) {
     UPDATE_AND_VERIFY(mSnapshotBuilder, {2});
     EXPECT_TRUE(getSnapshot(1)->isHiddenByPolicy());
 }
+
 TEST_F(LayerSnapshotTest, edgeExtensionPropagatesInHierarchy) {
     if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
         GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
@@ -1918,6 +1919,20 @@ TEST_F(LayerSnapshotTest, multipleEdgeExtensionIncreaseBoundSizeWithinCrop) {
     EXPECT_LE(getSnapshot({.id = 1221})->transformedBounds.bottom, (float)crop);
     EXPECT_LT(getSnapshot({.id = 1221})->transformedBounds.top, translation);
     EXPECT_GE(getSnapshot({.id = 1221})->transformedBounds.top, 0);
+}
+
+TEST_F(LayerSnapshotTest, shouldUpdateInputWhenNoInputInfo) {
+    // By default the layer has no buffer, so we don't expect it to have an input info
+    EXPECT_FALSE(getSnapshot(111)->hasInputInfo());
+
+    setBuffer(111);
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+
+    EXPECT_TRUE(getSnapshot(111)->hasInputInfo());
+    EXPECT_TRUE(getSnapshot(111)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL));
+    EXPECT_FALSE(getSnapshot(2)->hasInputInfo());
 }
 
 } // namespace android::surfaceflinger::frontend

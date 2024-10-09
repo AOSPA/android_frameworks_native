@@ -3330,11 +3330,11 @@ TEST_F(KeyboardInputMapperTest, Process_SimpleKeyPress) {
 TEST_F(KeyboardInputMapperTest, Process_KeyRemapping) {
     mFakeEventHub->addKey(EVENTHUB_ID, KEY_A, 0, AKEYCODE_A, 0);
     mFakeEventHub->addKey(EVENTHUB_ID, KEY_B, 0, AKEYCODE_B, 0);
-    mFakeEventHub->addKeyRemapping(EVENTHUB_ID, AKEYCODE_A, AKEYCODE_B);
 
     KeyboardInputMapper& mapper =
             constructAndAddMapper<KeyboardInputMapper>(AINPUT_SOURCE_KEYBOARD);
 
+    mFakeEventHub->setKeyRemapping(EVENTHUB_ID, {{AKEYCODE_A, AKEYCODE_B}});
     // Key down by scan code.
     process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_A, 1);
     NotifyKeyArgs args;

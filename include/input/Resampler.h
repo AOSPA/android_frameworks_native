@@ -92,12 +92,6 @@ private:
     };
 
     /**
-     * Keeps track of the previous MotionEvent deviceId to enable comparison between the previous
-     * and the current deviceId.
-     */
-    std::optional<DeviceId> mPreviousDeviceId;
-
-    /**
      * Up to two latest samples from MotionEvent. Updated every time resampleMotionEvent is called.
      * Note: We store up to two samples in order to simplify the implementation. Although,
      * calculations are possible with only one previous sample.

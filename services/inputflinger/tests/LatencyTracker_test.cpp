@@ -87,7 +87,7 @@ protected:
         connection1 = sp<BBinder>::make();
         connection2 = sp<BBinder>::make();
 
-        mTracker = std::make_unique<LatencyTracker>(this);
+        mTracker = std::make_unique<LatencyTracker>(*this);
         setDefaultInputDeviceInfo(*mTracker);
     }
     void TearDown() override {}
@@ -106,6 +106,8 @@ private:
     void processTimeline(const InputEventTimeline& timeline) override {
         mReceivedTimelines.push_back(timeline);
     }
+    void pushLatencyStatistics() override {}
+    std::string dump(const char* prefix) const { return ""; };
     std::deque<InputEventTimeline> mReceivedTimelines;
 };
 

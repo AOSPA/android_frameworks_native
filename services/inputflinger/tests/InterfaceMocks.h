@@ -97,7 +97,8 @@ public:
     MOCK_METHOD(bool, hasRelativeAxis, (int32_t deviceId, int axis), (const));
     MOCK_METHOD(bool, hasInputProperty, (int32_t deviceId, int property), (const));
     MOCK_METHOD(bool, hasMscEvent, (int32_t deviceId, int mscEvent), (const));
-    MOCK_METHOD(void, addKeyRemapping, (int32_t deviceId, int fromKeyCode, int toKeyCode), (const));
+    MOCK_METHOD(void, setKeyRemapping,
+                (int32_t deviceId, (const std::map<int32_t, int32_t>& keyRemapping)), (const));
     MOCK_METHOD(status_t, mapKey,
                 (int32_t deviceId, int scanCode, int usageCode, int32_t metaState,
                  int32_t* outKeycode, int32_t* outMetaState, uint32_t* outFlags),
@@ -246,8 +247,6 @@ public:
 
     MOCK_METHOD(int32_t, getMetaState, (), ());
     MOCK_METHOD(void, updateMetaState, (int32_t keyCode), ());
-
-    MOCK_METHOD(void, addKeyRemapping, (int32_t fromKeyCode, int32_t toKeyCode), ());
 
     MOCK_METHOD(void, setKeyboardType, (KeyboardType keyboardType), ());
 

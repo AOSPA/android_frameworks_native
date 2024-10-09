@@ -19,6 +19,11 @@
 
 #include <TestInputChannel.h>
 
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <array>
+
 #include <android-base/logging.h>
 #include <android-base/unique_fd.h>
 #include <binder/IBinder.h>
@@ -27,13 +32,25 @@
 namespace android {
 
 namespace {
-constexpr int FAKE_FD{-1};
+
+/**
+ * Returns a stub file descriptor by opening a socket pair and closing one of the fds. The returned
+ * fd can be used to construct an InputChannel.
+ */
+base::unique_fd generateFileDescriptor() {
+    std::array<int, 2> kFileDescriptors;
+    LOG_IF(FATAL, ::socketpair(AF_UNIX, SOCK_SEQPACKET, 0, kFileDescriptors.data()) != 0)
+            << "TestInputChannel. Failed to create socket pair.";
+    LOG_IF(FATAL, ::close(kFileDescriptors[1]) != 0)
+            << "TestInputChannel. Failed to close file descriptor.";
+    return base::unique_fd{kFileDescriptors[0]};
+}
 } // namespace
 
 // --- TestInputChannel ---
 
 TestInputChannel::TestInputChannel(const std::string& name)
-      : InputChannel{name, base::unique_fd(FAKE_FD), sp<BBinder>::make()} {}
+      : InputChannel{name, generateFileDescriptor(), sp<BBinder>::make()} {}
 
 void TestInputChannel::enqueueMessage(const InputMessage& message) {
     mReceivedMessages.push(message);

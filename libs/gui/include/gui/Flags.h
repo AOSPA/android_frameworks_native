@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,24 +16,9 @@
 
 #pragma once
 
-#include <utils/Looper.h>
-#include <utils/StrongPointer.h>
+#include <com_android_graphics_libgui_flags.h>
 
-namespace android {
-
-/**
- * LooperInterface allows the use of TestLooper in InputConsumerNoResampling without reassigning to
- * Looper. LooperInterface is needed to control how InputConsumerNoResampling consumes and batches
- * InputMessages.
- */
-class LooperInterface {
-public:
-    virtual ~LooperInterface() = default;
-
-    virtual int addFd(int fd, int ident, int events, const sp<LooperCallback>& callback,
-                      void* data) = 0;
-    virtual int removeFd(int fd) = 0;
-
-    virtual sp<Looper> getLooper() const = 0;
-};
-} // namespace android
+#define WB_CAMERA3_AND_PROCESSORS_WITH_DEPENDENCIES                  \
+    (COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CAMERA3_AND_PROCESSORS) && \
+     COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ) &&  \
+     COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS))

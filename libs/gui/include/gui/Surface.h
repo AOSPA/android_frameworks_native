@@ -40,8 +40,6 @@
 #include <shared_mutex>
 #include <unordered_set>
 
-#include <com_android_graphics_libgui_flags.h>
-
 /* QTI_BEGIN */
 #include "../../QtiExtension/QtiSurfaceExtension.h"
 #include "../../QtiExtension/QtiSurfaceExtensionGPP.h"

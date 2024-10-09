@@ -638,6 +638,8 @@ bool InputState::shouldCancelMotion(const MotionMemento& memento,
             return memento.source & AINPUT_SOURCE_CLASS_POINTER;
         case CancelationOptions::Mode::CANCEL_NON_POINTER_EVENTS:
             return !(memento.source & AINPUT_SOURCE_CLASS_POINTER);
+        case CancelationOptions::Mode::CANCEL_HOVER_EVENTS:
+            return memento.hovering;
         default:
             return false;
     }

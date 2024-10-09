@@ -1177,7 +1177,8 @@ bool EventHub::markSupportedKeyCodes(int32_t deviceId, const std::vector<int32_t
     return false;
 }
 
-void EventHub::addKeyRemapping(int32_t deviceId, int32_t fromKeyCode, int32_t toKeyCode) const {
+void EventHub::setKeyRemapping(int32_t deviceId,
+                               const std::map<int32_t, int32_t>& keyRemapping) const {
     std::scoped_lock _l(mLock);
     Device* device = getDeviceLocked(deviceId);
     if (device == nullptr) {
@@ -1185,7 +1186,7 @@ void EventHub::addKeyRemapping(int32_t deviceId, int32_t fromKeyCode, int32_t to
     }
     const std::shared_ptr<KeyCharacterMap> kcm = device->getKeyCharacterMap();
     if (kcm) {
-        kcm->addKeyRemapping(fromKeyCode, toKeyCode);
+        kcm->setKeyRemapping(keyRemapping);
     }
 }
 

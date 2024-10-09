@@ -532,6 +532,9 @@ cc_test {
     static_libs: [
         "libbinder_rpc_single_threaded",
     ],
+    shared_libs: [
+        "libbinder_ndk",
+    ],
 }
 
 cc_test {

@@ -38,6 +38,10 @@ public:
             connectionTimeline.isComplete();
         }
     };
+
+    void pushLatencyStatistics() override {}
+
+    std::string dump(const char* prefix) const { return ""; };
 };
 
 static sp<IBinder> getConnectionToken(FuzzedDataProvider& fdp,
@@ -53,7 +57,7 @@ extern "C" int LLVMFuzzerTestOneInput(uint8_t* data, size_t size) {
     FuzzedDataProvider fdp(data, size);
 
     EmptyProcessor emptyProcessor;
-    LatencyTracker tracker(&emptyProcessor);
+    LatencyTracker tracker(emptyProcessor);
 
     // Make some pre-defined tokens to ensure that some timelines are complete.
     std::array<sp<IBinder> /*token*/, 10> predefinedTokens;

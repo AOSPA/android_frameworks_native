@@ -963,16 +963,20 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
                         }));
                     }));
 
-    mLayerTracing.setTakeLayersSnapshotProtoFunction([&](uint32_t traceFlags) {
-        auto snapshot = perfetto::protos::LayersSnapshotProto{};
-        mScheduler
-                ->schedule([&]() FTL_FAKE_GUARD(mStateLock) FTL_FAKE_GUARD(kMainThreadContext) {
-                    snapshot = takeLayersSnapshotProto(traceFlags, TimePoint::now(),
-                                                       mLastCommittedVsyncId, true);
-                })
-                .wait();
-        return snapshot;
-    });
+    mLayerTracing.setTakeLayersSnapshotProtoFunction(
+            [&](uint32_t traceFlags,
+                const LayerTracing::OnLayersSnapshotCallback& onLayersSnapshot) {
+                // Do not wait the future to avoid deadlocks
+                // between main and Perfetto threads (b/313130597)
+                static_cast<void>(mScheduler->schedule(
+                        [&, onLayersSnapshot]() FTL_FAKE_GUARD(mStateLock)
+                                FTL_FAKE_GUARD(kMainThreadContext) {
+                                    auto snapshot =
+                                            takeLayersSnapshotProto(traceFlags, TimePoint::now(),
+                                                                    mLastCommittedVsyncId, true);
+                                    onLayersSnapshot(std::move(snapshot));
+                                }));
+            });
 
     // Commit secondary display(s).
     processDisplayChangesLocked();

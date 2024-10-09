@@ -136,6 +136,31 @@ impl TryFrom<i32> for Stability {
     }
 }
 
+/// Same as `Stability`, but in the form of a trait. Used when the stability should be encoded in
+/// the type.
+///
+/// When/if the `adt_const_params` Rust feature is stabilized, this could be replace by using
+/// `Stability` directly with const generics.
+pub trait StabilityType {
+    /// The `Stability` represented by this type.
+    const VALUE: Stability;
+}
+
+/// `Stability::Local`.
+#[derive(Debug)]
+pub enum LocalStabilityType {}
+/// `Stability::Vintf`.
+#[derive(Debug)]
+pub enum VintfStabilityType {}
+
+impl StabilityType for LocalStabilityType {
+    const VALUE: Stability = Stability::Local;
+}
+
+impl StabilityType for VintfStabilityType {
+    const VALUE: Stability = Stability::Vintf;
+}
+
 /// A local service that can be remotable via Binder.
 ///
 /// An object that implement this interface made be made into a Binder service

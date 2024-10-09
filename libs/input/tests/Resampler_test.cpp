@@ -87,7 +87,6 @@ InputSample::operator InputMessage() const {
 struct InputStream {
     std::vector<InputSample> samples{};
     int32_t action{0};
-    DeviceId deviceId{0};
     /**
      * Converts from InputStream to MotionEvent. Enables calling LegacyResampler methods only with
      * the relevant data for tests.
@@ -100,8 +99,8 @@ InputStream::operator MotionEvent() const {
     MotionEventBuilder motionEventBuilder =
             MotionEventBuilder(action, AINPUT_SOURCE_CLASS_POINTER)
                     .downTime(0)
-                    .eventTime(static_cast<std::chrono::nanoseconds>(firstSample.eventTime).count())
-                    .deviceId(deviceId);
+                    .eventTime(
+                            static_cast<std::chrono::nanoseconds>(firstSample.eventTime).count());
     for (const Pointer& pointer : firstSample.pointers) {
         const PointerBuilder pointerBuilder =
                 PointerBuilder(pointer.id, pointer.toolType).x(pointer.x).y(pointer.y);
@@ -287,28 +286,6 @@ TEST_F(ResamplerTest, SinglePointerNotEnoughDataToResample) {
     mResampler->resampleMotionEvent(16ms, motionEvent, /*futureSample=*/nullptr);
 
     assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
-}
-
-TEST_F(ResamplerTest, SinglePointerDifferentDeviceIdBetweenMotionEvents) {
-    MotionEvent motionFromFirstDevice =
-            InputStream{{InputSample{4ms, {{.id = 0, .x = 1.0f, .y = 1.0f, .isResampled = false}}},
-                         InputSample{8ms, {{.id = 0, .x = 2.0f, .y = 2.0f, .isResampled = false}}}},
-                        AMOTION_EVENT_ACTION_MOVE,
-                        .deviceId = 0};
-
-    mResampler->resampleMotionEvent(10ms, motionFromFirstDevice, nullptr);
-
-    MotionEvent motionFromSecondDevice =
-            InputStream{{InputSample{11ms,
-                                     {{.id = 0, .x = 3.0f, .y = 3.0f, .isResampled = false}}}},
-                        AMOTION_EVENT_ACTION_MOVE,
-                        .deviceId = 1};
-    const MotionEvent originalMotionEvent = motionFromSecondDevice;
-
-    mResampler->resampleMotionEvent(12ms, motionFromSecondDevice, nullptr);
-    // The MotionEvent should not be resampled because the second event came from a different device
-    // than the previous event.
-    assertMotionEventIsNotResampled(originalMotionEvent, motionFromSecondDevice);
 }
 
 TEST_F(ResamplerTest, SinglePointerSingleSampleInterpolation) {

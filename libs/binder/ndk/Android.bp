@@ -95,6 +95,7 @@ cc_library {
         "persistable_bundle.cpp",
         "process.cpp",
         "service_manager.cpp",
+        "binder_rpc.cpp",
     ],
 
     static_libs: [

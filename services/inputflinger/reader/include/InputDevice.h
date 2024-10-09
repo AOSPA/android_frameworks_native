@@ -124,8 +124,6 @@ public:
     int32_t getMetaState();
     void updateMetaState(int32_t keyCode);
 
-    void addKeyRemapping(int32_t fromKeyCode, int32_t toKeyCode);
-
     void setKeyboardType(KeyboardType keyboardType);
 
     void bumpGeneration();
@@ -329,8 +327,8 @@ public:
 
     inline bool hasMscEvent(int mscEvent) const { return mEventHub->hasMscEvent(mId, mscEvent); }
 
-    inline void addKeyRemapping(int32_t fromKeyCode, int32_t toKeyCode) const {
-        mEventHub->addKeyRemapping(mId, fromKeyCode, toKeyCode);
+    inline void setKeyRemapping(const std::map<int32_t, int32_t>& keyRemapping) const {
+        mEventHub->setKeyRemapping(mId, keyRemapping);
     }
 
     inline status_t mapKey(int32_t scanCode, int32_t usageCode, int32_t metaState,

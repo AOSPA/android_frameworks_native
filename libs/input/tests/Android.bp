@@ -27,7 +27,6 @@ cc_test {
         "Resampler_test.cpp",
         "RingBuffer_test.cpp",
         "TestInputChannel.cpp",
-        "TestLooper.cpp",
         "TfLiteMotionPredictor_test.cpp",
         "TouchResampling_test.cpp",
         "TouchVideoFrame_test.cpp",

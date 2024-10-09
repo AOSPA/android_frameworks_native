@@ -28,6 +28,7 @@
 #include "InputTarget.h"
 #include "InputThread.h"
 #include "LatencyAggregator.h"
+#include "LatencyAggregatorWithHistograms.h"
 #include "LatencyTracker.h"
 #include "Monitor.h"
 #include "TouchState.h"
@@ -326,6 +327,7 @@ private:
     std::chrono::nanoseconds mMonitorDispatchingTimeout GUARDED_BY(mLock);
 
     nsecs_t processAnrsLocked() REQUIRES(mLock);
+    nsecs_t processLatencyStatisticsLocked() REQUIRES(mLock);
     std::chrono::nanoseconds getDispatchingTimeoutLocked(
             const std::shared_ptr<Connection>& connection) REQUIRES(mLock);
 
@@ -697,7 +699,8 @@ private:
                                          DeviceId deviceId) const REQUIRES(mLock);
 
     // Statistics gathering.
-    LatencyAggregator mLatencyAggregator GUARDED_BY(mLock);
+    nsecs_t mLastStatisticPushTime = 0;
+    std::unique_ptr<InputEventTimelineProcessor> mInputEventTimelineProcessor GUARDED_BY(mLock);
     LatencyTracker mLatencyTracker GUARDED_BY(mLock);
     void traceInboundQueueLengthLocked() REQUIRES(mLock);
     void traceOutboundQueueLength(const Connection& connection);

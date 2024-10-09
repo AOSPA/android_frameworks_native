@@ -619,4 +619,14 @@ TEST_F(LayerLifecycleManagerTest, isSimpleBufferUpdate) {
     }
 }
 
+TEST_F(LayerLifecycleManagerTest, testInputInfoOfRequestedLayerState) {
+    // By default the layer has no buffer, so it doesn't need an input info
+    EXPECT_FALSE(getRequestedLayerState(mLifecycleManager, 111)->needsInputInfo());
+
+    setBuffer(111);
+    mLifecycleManager.commitChanges();
+
+    EXPECT_TRUE(getRequestedLayerState(mLifecycleManager, 111)->needsInputInfo());
+}
+
 } // namespace android::surfaceflinger::frontend

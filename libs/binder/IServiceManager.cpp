@@ -157,12 +157,21 @@ protected:
 
 class AccessorProvider {
 public:
-    AccessorProvider(RpcAccessorProvider&& provider) : mProvider(std::move(provider)) {}
-    sp<IBinder> provide(const String16& name) { return mProvider(name); }
+    AccessorProvider(std::set<std::string>&& instances, RpcAccessorProvider&& provider)
+          : mInstances(std::move(instances)), mProvider(std::move(provider)) {}
+    sp<IBinder> provide(const String16& name) {
+        if (mInstances.count(String8(name).c_str()) > 0) {
+            return mProvider(name);
+        } else {
+            return nullptr;
+        }
+    }
+    const std::set<std::string>& instances() { return mInstances; }
 
 private:
     AccessorProvider() = delete;
 
+    std::set<std::string> mInstances;
     RpcAccessorProvider mProvider;
 };
 
@@ -318,10 +327,32 @@ sp<IServiceManager> getServiceManagerShimFromAidlServiceManagerForTests(
     return sp<CppBackendShim>::make(sp<BackendUnifiedServiceManager>::make(sm));
 }
 
-std::weak_ptr<AccessorProvider> addAccessorProvider(RpcAccessorProvider&& providerCallback) {
+// gAccessorProvidersMutex must be locked already
+static bool isInstanceProvidedLocked(const std::string& instance) {
+    return gAccessorProviders.end() !=
+            std::find_if(gAccessorProviders.begin(), gAccessorProviders.end(),
+                         [&instance](const AccessorProviderEntry& entry) {
+                             return entry.mProvider->instances().count(instance) > 0;
+                         });
+}
+
+std::weak_ptr<AccessorProvider> addAccessorProvider(std::set<std::string>&& instances,
+                                                    RpcAccessorProvider&& providerCallback) {
+    if (instances.empty()) {
+        ALOGE("Set of instances is empty! Need a non empty set of instances to provide for.");
+        return std::weak_ptr<AccessorProvider>();
+    }
     std::lock_guard<std::mutex> lock(gAccessorProvidersMutex);
+    for (const auto& instance : instances) {
+        if (isInstanceProvidedLocked(instance)) {
+            ALOGE("The instance %s is already provided for by a previously added "
+                  "RpcAccessorProvider.",
+                  instance.c_str());
+            return std::weak_ptr<AccessorProvider>();
+        }
+    }
     std::shared_ptr<AccessorProvider> provider =
-            std::make_shared<AccessorProvider>(std::move(providerCallback));
+            std::make_shared<AccessorProvider>(std::move(instances), std::move(providerCallback));
     std::weak_ptr<AccessorProvider> receipt = provider;
     gAccessorProviders.push_back(AccessorProviderEntry(std::move(provider)));
 
@@ -331,8 +362,9 @@ std::weak_ptr<AccessorProvider> addAccessorProvider(RpcAccessorProvider&& provid
 status_t removeAccessorProvider(std::weak_ptr<AccessorProvider> wProvider) {
     std::shared_ptr<AccessorProvider> provider = wProvider.lock();
     if (provider == nullptr) {
-        ALOGE("The provider supplied to removeAccessorProvider has already been removed.");
-        return NAME_NOT_FOUND;
+        ALOGE("The provider supplied to removeAccessorProvider has already been removed or the "
+              "argument to this function was nullptr.");
+        return BAD_VALUE;
     }
     std::lock_guard<std::mutex> lock(gAccessorProvidersMutex);
     size_t sizeBefore = gAccessorProviders.size();

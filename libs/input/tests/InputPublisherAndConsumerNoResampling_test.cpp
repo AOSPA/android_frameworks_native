@@ -364,7 +364,7 @@ private:
         if (!mConsumer->probablyHasInput()) {
             ADD_FAILURE() << "should deterministically have input because there is a batch";
         }
-        mConsumer->consumeBatchedInputEvents(std::nullopt);
+        mConsumer->consumeBatchedInputEvents(/*frameTime=*/std::nullopt);
     };
     void onFocusEvent(std::unique_ptr<FocusEvent> event, uint32_t seq) override {
         mFocusEvents.push(std::move(event));

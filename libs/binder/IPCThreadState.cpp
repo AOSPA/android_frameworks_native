@@ -232,6 +232,15 @@ static const void* printReturnCommand(std::ostream& out, const void* _cmd) {
     return cmd;
 }
 
+static void printReturnCommandParcel(std::ostream& out, const Parcel& parcel) {
+    const void* cmds = parcel.data();
+    out << "\t" << HexDump(cmds, parcel.dataSize()) << "\n";
+    IF_LOG_COMMANDS() {
+        const void* end = parcel.data() + parcel.dataSize();
+        while (cmds < end) cmds = printReturnCommand(out, cmds);
+    }
+}
+
 static const void* printCommand(std::ostream& out, const void* _cmd) {
     static const size_t N = sizeof(kCommandStrings)/sizeof(kCommandStrings[0]);
     const int32_t* cmd = (const int32_t*)_cmd;
@@ -1235,13 +1244,15 @@ status_t IPCThreadState::talkWithDriver(bool doReceive)
 
     if (err >= NO_ERROR) {
         if (bwr.write_consumed > 0) {
-            if (bwr.write_consumed < mOut.dataSize())
+            if (bwr.write_consumed < mOut.dataSize()) {
+                std::ostringstream logStream;
+                printReturnCommandParcel(logStream, mIn);
                 LOG_ALWAYS_FATAL("Driver did not consume write buffer. "
-                                 "err: %s consumed: %zu of %zu",
-                                 statusToString(err).c_str(),
-                                 (size_t)bwr.write_consumed,
-                                 mOut.dataSize());
-            else {
+                                 "err: %s consumed: %zu of %zu.\n"
+                                 "Return command: %s",
+                                 statusToString(err).c_str(), (size_t)bwr.write_consumed,
+                                 mOut.dataSize(), logStream.str().c_str());
+            } else {
                 mOut.setDataSize(0);
                 processPostWriteDerefs();
             }
@@ -1252,14 +1263,8 @@ status_t IPCThreadState::talkWithDriver(bool doReceive)
         }
         IF_LOG_COMMANDS() {
             std::ostringstream logStream;
-            logStream << "Remaining data size: " << mOut.dataSize() << "\n";
-            logStream << "Received commands from driver: ";
-            const void* cmds = mIn.data();
-            const void* end = mIn.data() + mIn.dataSize();
-            logStream << "\t" << HexDump(cmds, mIn.dataSize()) << "\n";
-            while (cmds < end) cmds = printReturnCommand(logStream, cmds);
-            std::string message = logStream.str();
-            ALOGI("%s", message.c_str());
+            printReturnCommandParcel(logStream, mIn);
+            ALOGI("%s", logStream.str().c_str());
         }
         return NO_ERROR;
     }
