@@ -334,7 +334,7 @@ struct layer_state_t {
     Region transparentRegion;
     uint32_t bufferTransform;
     bool transformToDisplayInverse;
-    Rect crop;
+    FloatRect crop;
     std::shared_ptr<BufferData> bufferData = nullptr;
     ui::Dataspace dataspace;
     HdrMetadata hdrMetadata;

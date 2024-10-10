@@ -101,7 +101,7 @@ public:
     struct State {
         int32_t sequence; // changes when visible regions can change
         // Crop is expressed in layer space coordinate.
-        Rect crop;
+        FloatRect crop;
         LayerMetadata metadata;
 
         ui::Dataspace dataspace;
@@ -178,7 +178,7 @@ public:
     // be delayed until the resize completes.
 
     // Buffer space
-    bool setCrop(const Rect& crop);
+    bool setCrop(const FloatRect& crop);
 
     bool setTransform(uint32_t /*transform*/);
     bool setTransformToDisplayInverse(bool /*transformToDisplayInverse*/);
@@ -204,7 +204,7 @@ public:
     Region getVisibleRegion(const DisplayDevice*) const;
     void updateLastLatchTime(nsecs_t latchtime);
 
-    Rect getCrop(const Layer::State& s) const { return s.crop; }
+    Rect getCrop(const Layer::State& s) const { return Rect(s.crop); }
 
     // from graphics API
     static ui::Dataspace translateDataspace(ui::Dataspace dataspace);

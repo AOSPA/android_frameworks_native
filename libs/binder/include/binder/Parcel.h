@@ -92,7 +92,7 @@ public:
 
     LIBBINDER_EXPORTED status_t appendFrom(const Parcel* parcel, size_t start, size_t len);
 
-    LIBBINDER_EXPORTED int compareData(const Parcel& other);
+    LIBBINDER_EXPORTED int compareData(const Parcel& other) const;
     LIBBINDER_EXPORTED status_t compareDataInRange(size_t thisOffset, const Parcel& other,
                                                    size_t otherOffset, size_t length,
                                                    int* result) const;
@@ -172,7 +172,6 @@ public:
 
     LIBBINDER_EXPORTED status_t write(const void* data, size_t len);
     LIBBINDER_EXPORTED void* writeInplace(size_t len);
-    LIBBINDER_EXPORTED status_t writeUnpadded(const void* data, size_t len);
     LIBBINDER_EXPORTED status_t writeInt32(int32_t val);
     LIBBINDER_EXPORTED status_t writeUint32(uint32_t val);
     LIBBINDER_EXPORTED status_t writeInt64(int64_t val);
@@ -637,9 +636,6 @@ public:
 
     LIBBINDER_EXPORTED const flat_binder_object* readObject(bool nullMetaData) const;
 
-    // Explicitly close all file descriptors in the parcel.
-    LIBBINDER_EXPORTED void closeFileDescriptors();
-
     // Debugging: get metrics on current allocations.
     LIBBINDER_EXPORTED static size_t getGlobalAllocSize();
     LIBBINDER_EXPORTED static size_t getGlobalAllocCount();
@@ -652,6 +648,9 @@ public:
     LIBBINDER_EXPORTED void print(std::ostream& to, uint32_t flags = 0) const;
 
 private:
+    // Explicitly close all file descriptors in the parcel.
+    void closeFileDescriptors();
+
     // `objects` and `objectsSize` always 0 for RPC Parcels.
     typedef void (*release_func)(const uint8_t* data, size_t dataSize, const binder_size_t* objects,
                                  size_t objectsSize);

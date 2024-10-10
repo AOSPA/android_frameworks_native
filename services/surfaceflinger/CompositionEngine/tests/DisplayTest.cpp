@@ -133,6 +133,7 @@ struct DisplayTestCommon : public testing::Test {
         MOCK_METHOD1(applyChangedTypesToLayers, void(const impl::Display::ChangedTypes&));
         MOCK_METHOD1(applyDisplayRequests, void(const impl::Display::DisplayRequests&));
         MOCK_METHOD1(applyLayerRequestsToLayers, void(const impl::Display::LayerRequests&));
+        MOCK_METHOD1(applyLayerLutsToLayers, void(const impl::Display::LayerLuts&));
 
         const compositionengine::CompositionEngine& mCompositionEngine;
         impl::OutputCompositionState mState;
@@ -212,6 +213,7 @@ struct PartialMockDisplayTestCommon : public DisplayTestCommon {
               aidl::android::hardware::graphics::common::Dataspace::UNKNOWN},
              -1.f,
              DimmingStage::NONE},
+            {},
     };
 
     void chooseCompositionStrategy(Display* display) {
@@ -615,6 +617,7 @@ TEST_F(DisplayChooseCompositionStrategyTest, normalOperation) {
     EXPECT_CALL(*mDisplay, applyLayerRequestsToLayers(mDeviceRequestedChanges.layerRequests))
             .Times(1);
     EXPECT_CALL(*mDisplay, allLayersRequireClientComposition()).WillOnce(Return(false));
+    EXPECT_CALL(*mDisplay, applyLayerLutsToLayers(mDeviceRequestedChanges.layerLuts)).Times(1);
 
     chooseCompositionStrategy(mDisplay.get());
 
@@ -667,6 +670,7 @@ TEST_F(DisplayChooseCompositionStrategyTest, normalOperationWithChanges) {
     EXPECT_CALL(*mDisplay, applyLayerRequestsToLayers(mDeviceRequestedChanges.layerRequests))
             .Times(1);
     EXPECT_CALL(*mDisplay, allLayersRequireClientComposition()).WillOnce(Return(false));
+    EXPECT_CALL(*mDisplay, applyLayerLutsToLayers(mDeviceRequestedChanges.layerLuts)).Times(1);
 
     chooseCompositionStrategy(mDisplay.get());
 

@@ -618,17 +618,29 @@ Error Display::getClientTargetProperty(
     return static_cast<Error>(error);
 }
 
-Error Display::getRequestedLuts(std::vector<DisplayLuts::LayerLut>* outLayerLuts) {
-    std::vector<DisplayLuts::LayerLut> tmpLayerLuts;
-    const auto error = mComposer.getRequestedLuts(mId, &tmpLayerLuts);
-    for (DisplayLuts::LayerLut& layerLut : tmpLayerLuts) {
-        if (layerLut.lut.pfd.get() >= 0) {
-            outLayerLuts->push_back({layerLut.layer,
-                                     Lut{ndk::ScopedFileDescriptor(layerLut.lut.pfd.release()),
-                                         layerLut.lut.lutProperties}});
+Error Display::getRequestedLuts(LayerLuts* outLuts,
+                                LutFileDescriptorMapper& lutFileDescriptorMapper) {
+    std::vector<Hwc2::Layer> layerIds;
+    std::vector<DisplayLuts::LayerLut> tmpLuts;
+    const auto error = static_cast<Error>(mComposer.getRequestedLuts(mId, &layerIds, &tmpLuts));
+    if (error != Error::NONE) {
+        return error;
+    }
+
+    uint32_t numElements = layerIds.size();
+    outLuts->clear();
+    for (uint32_t i = 0; i < numElements; ++i) {
+        auto layer = getLayerById(layerIds[i]);
+        if (layer) {
+            auto& layerLut = tmpLuts[i];
+            outLuts->emplace_or_replace(layer.get(), layerLut.lut.lutProperties);
+            lutFileDescriptorMapper.emplace_or_replace(layer.get(),
+                                                       ndk::ScopedFileDescriptor(
+                                                               layerLut.lut.pfd.release()));
         }
     }
-    return static_cast<Error>(error);
+
+    return Error::NONE;
 }
 
 Error Display::getDisplayDecorationSupport(

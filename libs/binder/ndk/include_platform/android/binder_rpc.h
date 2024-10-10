@@ -22,6 +22,22 @@
 __BEGIN_DECLS
 
 /**
+ * @defgroup ABinderRpc Binder RPC
+ *
+ * This set of APIs makes it possible for a process to use the AServiceManager
+ * APIs to get binder objects for services that are available over sockets
+ * instead of the traditional kernel binder with the extra ServiceManager
+ * process.
+ *
+ * These APIs are used to supply libbinder with enough information to create
+ * and manage the socket connections underneath the ServiceManager APIs so the
+ * clients do not need to know the service implementation details or what
+ * transport they use for communication.
+ *
+ * @{
+ */
+
+/**
  * This represents an IAccessor implementation from libbinder that is
  * responsible for providing a pre-connected socket file descriptor for a
  * specific service. The service is an RpcServer and the pre-connected socket is
@@ -66,7 +82,8 @@ typedef struct ABinderRpc_ConnectionInfo ABinderRpc_ConnectionInfo;
  * libbinder.
  *
  * \param instance name of the service like
- *        `android.hardware.vibrator.IVibrator/default`
+ *        `android.hardware.vibrator.IVibrator/default`. This string must remain
+ *        valid and unchanged for the duration of this function call.
  * \param data the data that was associated with this instance when the callback
  *        was registered.
  * \return The ABinderRpc_Accessor associated with the service `instance`. This
@@ -103,13 +120,15 @@ typedef void (*ABinderRpc_AccessorProviderUserData_deleteCallback)(void* _Nullab
  *        instance is being registered that was previously registered, this call
  *        will fail and the ABinderRpc_AccessorProviderUserData_deleteCallback
  *        will be called to clean up the data.
+ *        This array of strings must remain valid and unchanged for the duration
+ *        of this function call.
  * \param number of instances in the instances array.
  * \param data pointer that is passed to the ABinderRpc_AccessorProvider callback.
  *        IMPORTANT: The ABinderRpc_AccessorProvider now OWNS that object that data
  *        points to. It can be used as necessary in the callback. The data MUST
  *        remain valid for the lifetime of the provider callback.
  *        Do not attempt to give ownership of the same object to different
- *        providers throguh multiple calls to this function because the first
+ *        providers through multiple calls to this function because the first
  *        one to be deleted will call the onDelete callback.
  * \param onDelete callback used to delete the objects that `data` points to.
  *        This is called after ABinderRpc_AccessorProvider is guaranteed to never be
@@ -151,8 +170,9 @@ void ABinderRpc_unregisterAccessorProvider(ABinderRpc_AccessorProvider* _Nonnull
  * connect to a socket that a given service is listening on. This is needed to
  * create an ABinderRpc_Accessor so it can connect to these services.
  *
- * \param instance name of the service to connect to
- * \param data userdata for this callback. The pointer is provided in
+ * \param instance name of the service to connect to. This string must remain
+ *        valid and unchanged for the duration of this function call.
+ * \param data user data for this callback. The pointer is provided in
  *        ABinderRpc_Accessor_new.
  * \return ABinderRpc_ConnectionInfo with socket connection information for `instance`
  */
@@ -177,7 +197,9 @@ typedef void (*ABinderRpc_ConnectionInfoProviderUserData_delete)(void* _Nullable
  * that can use the info from the ABinderRpc_ConnectionInfoProvider to connect to a
  * socket that the service with `instance` name is listening to.
  *
- * \param instance name of the service that is listening on the socket
+ * \param instance name of the service that is listening on the socket. This
+ *        string must remain valid and unchanged for the duration of this
+ *        function call.
  * \param provider callback that can get the socket connection information for the
  *           instance. This connection information may be dynamic, so the
  *           provider will be called any time a new connection is required.
@@ -219,18 +241,24 @@ AIBinder* _Nullable ABinderRpc_Accessor_asBinder(ABinderRpc_Accessor* _Nonnull a
 
 /**
  * Return the ABinderRpc_Accessor associated with an AIBinder. The instance must match
- * the ABinderRpc_Accessor implementation, and the AIBinder must a proxy binder for a
- * remote service (ABpBinder).
- * This can be used when receivng an AIBinder from another process that the
+ * the ABinderRpc_Accessor implementation.
+ * This can be used when receiving an AIBinder from another process that the
  * other process obtained from ABinderRpc_Accessor_asBinder.
  *
  * \param instance name of the service that the Accessor is responsible for.
- * \param accessorBinder proxy binder from another processes ABinderRpc_Accessor.
+ *        This string must remain valid and unchanged for the duration of this
+ *        function call.
+ * \param accessorBinder proxy binder from another process's ABinderRpc_Accessor.
+ *        This function preserves the refcount of this binder object and the
+ *        caller still owns it.
  * \return ABinderRpc_Accessor representing the other processes ABinderRpc_Accessor
- *         implementation. This function does not take ownership of the
- *         ABinderRpc_Accessor (so the caller needs to delete with
- *         ABinderRpc_Accessor_delete), and it preserves the recount of the bidner
- *         object.
+ *         implementation. The caller owns this ABinderRpc_Accessor instance and
+ *         is responsible for deleting it with ABinderRpc_Accessor_delete or
+ *         passing ownership of it elsewhere, like returning it through
+ *         ABinderRpc_AccessorProvider_getAccessorCallback.
+ *         nullptr on error when the accessorBinder is not a valid binder from
+ *         an IAccessor implementation or the IAccessor implementation is not
+ *         associated with the provided instance.
  */
 ABinderRpc_Accessor* _Nullable ABinderRpc_Accessor_fromBinder(const char* _Nonnull instance,
                                                               AIBinder* _Nonnull accessorBinder)
@@ -257,5 +285,7 @@ ABinderRpc_ConnectionInfo* _Nullable ABinderRpc_ConnectionInfo_new(const sockadd
  * \param info object to be deleted
  */
 void ABinderRpc_ConnectionInfo_delete(ABinderRpc_ConnectionInfo* _Nonnull info) __INTRODUCED_IN(36);
+
+/** @} */
 
 __END_DECLS

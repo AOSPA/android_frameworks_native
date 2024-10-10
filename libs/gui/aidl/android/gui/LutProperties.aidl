@@ -1,11 +1,11 @@
 /*
- * Copyright 2022 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,19 +16,17 @@
 
 package android.gui;
 
-import android.gui.LutProperties;
+/**
+ * This mirrors aidl::android::hardware::graphics::composer3::LutProperties definition.
+ * @hide
+ */
+parcelable LutProperties {
+    @Backing(type="int")
+    enum Dimension { ONE_D = 1, THREE_D = 3 }
+    Dimension dimension;
 
-/** @hide */
-parcelable OverlayProperties {
-    parcelable SupportedBufferCombinations {
-        int[] pixelFormats;
-        int[] standards;
-        int[] transfers;
-        int[] ranges;
-    }
-    SupportedBufferCombinations[] combinations;
-
-    boolean supportMixedColorSpaces;
-
-    @nullable LutProperties[] lutProperties;
+    long size;
+    @Backing(type="int")
+    enum SamplingKey { RGB, MAX_RGB }
+    SamplingKey[] samplingKeys;
 }

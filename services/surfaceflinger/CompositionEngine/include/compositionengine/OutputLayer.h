@@ -128,6 +128,10 @@ public:
     // Applies a HWC device layer request
     virtual void applyDeviceLayerRequest(Hwc2::IComposerClient::LayerRequest request) = 0;
 
+    // Applies a HWC device layer lut
+    virtual void applyDeviceLayerLut(aidl::android::hardware::graphics::composer3::LutProperties,
+                                     ndk::ScopedFileDescriptor) = 0;
+
     // Returns true if the composition settings scale pixels
     virtual bool needsFiltering() const = 0;
 

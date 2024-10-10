@@ -637,7 +637,7 @@ public:
     void destroyAllLayerHandles() {
         ftl::FakeGuard guard(kMainThreadContext);
         for (auto [layerId, legacyLayer] : mFlinger->mLegacyLayers) {
-            mFlinger->onHandleDestroyed(nullptr, legacyLayer, layerId);
+            mFlinger->onHandleDestroyed(legacyLayer, layerId);
         }
     }
 

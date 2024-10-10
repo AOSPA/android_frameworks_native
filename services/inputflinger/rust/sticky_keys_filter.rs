@@ -24,7 +24,8 @@ use com_android_server_inputflinger::aidl::com::android::server::inputflinger::{
     DeviceInfo::DeviceInfo, KeyEvent::KeyEvent, KeyEventAction::KeyEventAction,
 };
 use input::ModifierState;
-use std::collections::HashSet;
+use std::any::Any;
+use std::collections::{HashMap, HashSet};
 
 // Modifier keycodes: values are from /frameworks/native/include/android/keycodes.h
 const KEYCODE_ALT_LEFT: i32 = 57;
@@ -40,10 +41,17 @@ const KEYCODE_META_LEFT: i32 = 117;
 const KEYCODE_META_RIGHT: i32 = 118;
 const KEYCODE_FUNCTION: i32 = 119;
 const KEYCODE_NUM_LOCK: i32 = 143;
+static STICKY_KEYS_DATA: &str = "sticky_keys_data";
 
 pub struct StickyKeysFilter {
     next: Box<dyn Filter + Send + Sync>,
     listener: ModifierStateListener,
+    data: Data,
+}
+
+#[derive(Default)]
+/// Data that will be saved and restored across configuration changes
+struct Data {
     /// Tracking devices that contributed to the modifier state.
     contributing_devices: HashSet<i32>,
     /// State describing the current enabled modifiers. This contain both locked and non-locked
@@ -61,21 +69,15 @@ impl StickyKeysFilter {
         next: Box<dyn Filter + Send + Sync>,
         listener: ModifierStateListener,
     ) -> StickyKeysFilter {
-        Self {
-            next,
-            listener,
-            contributing_devices: HashSet::new(),
-            modifier_state: ModifierState::None,
-            locked_modifier_state: ModifierState::None,
-        }
+        Self { next, listener, data: Default::default() }
     }
 }
 
 impl Filter for StickyKeysFilter {
     fn notify_key(&mut self, event: &KeyEvent) {
         let up = event.action == KeyEventAction::UP;
-        let mut modifier_state = self.modifier_state;
-        let mut locked_modifier_state = self.locked_modifier_state;
+        let mut modifier_state = self.data.modifier_state;
+        let mut locked_modifier_state = self.data.locked_modifier_state;
         if !is_ephemeral_modifier_key(event.keyCode) {
             // If non-ephemeral modifier key (i.e. non-modifier keys + toggle modifier keys like
             // CAPS_LOCK, NUM_LOCK etc.), don't block key and pass in the sticky modifier state with
@@ -93,7 +95,7 @@ impl Filter for StickyKeysFilter {
             }
         } else if up {
             // Update contributing devices to track keyboards
-            self.contributing_devices.insert(event.deviceId);
+            self.data.contributing_devices.insert(event.deviceId);
             // If ephemeral modifier key, capture the key and update the sticky modifier states
             let modifier_key_mask = get_ephemeral_modifier_key_mask(event.keyCode);
             let symmetrical_modifier_key_mask = get_symmetrical_modifier_key_mask(event.keyCode);
@@ -108,27 +110,51 @@ impl Filter for StickyKeysFilter {
                 modifier_state |= modifier_key_mask;
             }
         }
-        if self.modifier_state != modifier_state
-            || self.locked_modifier_state != locked_modifier_state
+        if self.data.modifier_state != modifier_state
+            || self.data.locked_modifier_state != locked_modifier_state
         {
-            self.modifier_state = modifier_state;
-            self.locked_modifier_state = locked_modifier_state;
+            self.data.modifier_state = modifier_state;
+            self.data.locked_modifier_state = locked_modifier_state;
             self.listener.modifier_state_changed(modifier_state, locked_modifier_state);
         }
     }
 
     fn notify_devices_changed(&mut self, device_infos: &[DeviceInfo]) {
         // Clear state if all contributing devices removed
-        self.contributing_devices.retain(|id| device_infos.iter().any(|x| *id == x.deviceId));
-        if self.contributing_devices.is_empty()
-            && (self.modifier_state != ModifierState::None
-                || self.locked_modifier_state != ModifierState::None)
+        self.data.contributing_devices.retain(|id| device_infos.iter().any(|x| *id == x.deviceId));
+        if self.data.contributing_devices.is_empty()
+            && (self.data.modifier_state != ModifierState::None
+                || self.data.locked_modifier_state != ModifierState::None)
         {
-            self.modifier_state = ModifierState::None;
-            self.locked_modifier_state = ModifierState::None;
+            self.data.modifier_state = ModifierState::None;
+            self.data.locked_modifier_state = ModifierState::None;
             self.listener.modifier_state_changed(ModifierState::None, ModifierState::None);
         }
         self.next.notify_devices_changed(device_infos);
+    }
+
+    fn save(
+        &mut self,
+        mut state: HashMap<&'static str, Box<dyn Any + Send + Sync>>,
+    ) -> HashMap<&'static str, Box<dyn Any + Send + Sync>> {
+        let data = Data {
+            contributing_devices: self.data.contributing_devices.clone(),
+            modifier_state: self.data.modifier_state,
+            locked_modifier_state: self.data.locked_modifier_state,
+        };
+        state.insert(STICKY_KEYS_DATA, Box::new(data));
+        self.next.save(state)
+    }
+
+    fn restore(&mut self, state: &HashMap<&'static str, Box<dyn Any + Send + Sync>>) {
+        if let Some(value) = state.get(STICKY_KEYS_DATA) {
+            if let Some(data) = value.downcast_ref::<Data>() {
+                self.data.contributing_devices = data.contributing_devices.clone();
+                self.data.modifier_state = data.modifier_state;
+                self.data.locked_modifier_state = data.locked_modifier_state;
+            }
+        }
+        self.next.restore(state)
     }
 
     fn destroy(&mut self) {
@@ -137,9 +163,9 @@ impl Filter for StickyKeysFilter {
 
     fn dump(&mut self, dump_str: String) -> String {
         let mut result = "Sticky Keys filter: \n".to_string();
-        result += &format!("\tmodifier_state = {:?}\n", self.modifier_state);
-        result += &format!("\tlocked_modifier_state = {:?}\n", self.locked_modifier_state);
-        result += &format!("\tcontributing_devices = {:?}\n", self.contributing_devices);
+        result += &format!("\tmodifier_state = {:?}\n", self.data.modifier_state);
+        result += &format!("\tlocked_modifier_state = {:?}\n", self.data.locked_modifier_state);
+        result += &format!("\tcontributing_devices = {:?}\n", self.data.contributing_devices);
         self.next.dump(dump_str + &result)
     }
 }
@@ -245,6 +271,7 @@ mod tests {
     };
     use input::KeyboardType;
     use input::ModifierState;
+    use std::collections::HashMap;
     use std::sync::{Arc, RwLock};
 
     static DEVICE_ID: i32 = 1;
@@ -441,6 +468,45 @@ mod tests {
         sticky_keys_filter.notify_key(&KeyEvent { keyCode: KEY_A, ..BASE_KEY_DOWN });
         sticky_keys_filter.notify_key(&KeyEvent { keyCode: KEY_A, ..BASE_KEY_UP });
 
+        assert_eq!(
+            test_callbacks.get_last_modifier_state(),
+            ModifierState::CtrlLeftOn | ModifierState::CtrlOn
+        );
+        assert_eq!(
+            test_callbacks.get_last_locked_modifier_state(),
+            ModifierState::CtrlLeftOn | ModifierState::CtrlOn
+        );
+    }
+
+    #[test]
+    fn test_modifier_state_restored_on_recreation() {
+        let test_filter = TestFilter::new();
+        let test_callbacks = TestCallbacks::new();
+        let mut sticky_keys_filter = setup_filter(
+            Box::new(test_filter.clone()),
+            Arc::new(RwLock::new(Strong::new(Box::new(test_callbacks.clone())))),
+        );
+        sticky_keys_filter.notify_key(&KeyEvent { keyCode: KEYCODE_CTRL_LEFT, ..BASE_KEY_DOWN });
+        sticky_keys_filter.notify_key(&KeyEvent { keyCode: KEYCODE_CTRL_LEFT, ..BASE_KEY_UP });
+
+        let saved_state = sticky_keys_filter.save(HashMap::new());
+        sticky_keys_filter.destroy();
+
+        // Create a new Sticky keys filter
+        let test_filter = TestFilter::new();
+        let mut sticky_keys_filter = setup_filter(
+            Box::new(test_filter.clone()),
+            Arc::new(RwLock::new(Strong::new(Box::new(test_callbacks.clone())))),
+        );
+        sticky_keys_filter.restore(&saved_state);
+        assert_eq!(
+            test_callbacks.get_last_modifier_state(),
+            ModifierState::CtrlLeftOn | ModifierState::CtrlOn
+        );
+        assert_eq!(test_callbacks.get_last_locked_modifier_state(), ModifierState::None);
+
+        sticky_keys_filter.notify_key(&KeyEvent { keyCode: KEYCODE_CTRL_LEFT, ..BASE_KEY_DOWN });
+        sticky_keys_filter.notify_key(&KeyEvent { keyCode: KEYCODE_CTRL_LEFT, ..BASE_KEY_UP });
         assert_eq!(
             test_callbacks.get_last_modifier_state(),
             ModifierState::CtrlLeftOn | ModifierState::CtrlOn

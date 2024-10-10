@@ -69,7 +69,7 @@ layer_state_t::layer_state_t()
         color(0),
         bufferTransform(0),
         transformToDisplayInverse(false),
-        crop(Rect::INVALID_RECT),
+        crop({0, 0, -1, -1}),
         dataspace(ui::Dataspace::UNKNOWN),
         surfaceDamageRegion(),
         api(-1),
@@ -109,7 +109,10 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeUint32, flags);
     SAFE_PARCEL(output.writeUint32, mask);
     SAFE_PARCEL(matrix.write, output);
-    SAFE_PARCEL(output.write, crop);
+    SAFE_PARCEL(output.writeFloat, crop.top);
+    SAFE_PARCEL(output.writeFloat, crop.left);
+    SAFE_PARCEL(output.writeFloat, crop.bottom);
+    SAFE_PARCEL(output.writeFloat, crop.right);
     SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output, relativeLayerSurfaceControl);
     SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output, parentSurfaceControlForChild);
     SAFE_PARCEL(output.writeFloat, color.r);
@@ -218,7 +221,10 @@ status_t layer_state_t::read(const Parcel& input)
     SAFE_PARCEL(input.readUint32, &mask);
 
     SAFE_PARCEL(matrix.read, input);
-    SAFE_PARCEL(input.read, crop);
+    SAFE_PARCEL(input.readFloat, &crop.top);
+    SAFE_PARCEL(input.readFloat, &crop.left);
+    SAFE_PARCEL(input.readFloat, &crop.bottom);
+    SAFE_PARCEL(input.readFloat, &crop.right);
 
     SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input, &relativeLayerSurfaceControl);
     SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input, &parentSurfaceControlForChild);

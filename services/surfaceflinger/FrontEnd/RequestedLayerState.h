@@ -79,7 +79,7 @@ struct RequestedLayerState : layer_state_t {
     bool isHiddenByPolicy() const;
     half4 getColor() const;
     Rect getBufferSize(uint32_t displayRotationFlags) const;
-    Rect getCroppedBufferSize(const Rect& bufferSize) const;
+    FloatRect getCroppedBufferSize(const Rect& bufferSize) const;
     Rect getBufferCrop() const;
     std::string getDebugString() const;
     std::string getDebugStringShort() const;

@@ -258,7 +258,7 @@ public:
     Error notifyExpectedPresent(Display, nsecs_t expectedPresentTime,
                                 int32_t frameIntervalNs) override;
     Error getRequestedLuts(
-            Display display,
+            Display display, std::vector<Layer>* outLayers,
             std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*
                     outLuts) override;
     Error setLayerLuts(

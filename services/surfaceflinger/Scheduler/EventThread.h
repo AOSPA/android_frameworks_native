@@ -235,10 +235,6 @@ private:
 
     // VSYNC state of connected display.
     struct VSyncState {
-        explicit VSyncState(PhysicalDisplayId displayId) : displayId(displayId) {}
-
-        const PhysicalDisplayId displayId;
-
         // Number of VSYNC events since display was connected.
         uint32_t count = 0;
 

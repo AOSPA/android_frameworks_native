@@ -249,6 +249,11 @@ void LegacyResampler::resampleMotionEvent(nanoseconds frameTime, MotionEvent& mo
                                           const InputMessage* futureSample) {
     const nanoseconds resampleTime = frameTime - RESAMPLE_LATENCY;
 
+    if (resampleTime.count() == motionEvent.getEventTime()) {
+        LOG_IF(INFO, debugResampling()) << "Not resampled. Resample time equals motion event time.";
+        return;
+    }
+
     updateLatestSamples(motionEvent);
 
     const std::optional<Sample> sample = (futureSample != nullptr)

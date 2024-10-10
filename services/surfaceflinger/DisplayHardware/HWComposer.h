@@ -59,6 +59,7 @@
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayLuts.h>
+#include <aidl/android/hardware/graphics/composer3/LutProperties.h>
 #include <aidl/android/hardware/graphics/composer3/OverlayProperties.h>
 
 namespace android {
@@ -102,11 +103,14 @@ public:
                 aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness;
         using DisplayRequests = hal::DisplayRequest;
         using LayerRequests = std::unordered_map<HWC2::Layer*, hal::LayerRequest>;
+        using LutProperties = aidl::android::hardware::graphics::composer3::LutProperties;
+        using LayerLuts = HWC2::Display::LayerLuts;
 
         ChangedTypes changedTypes;
         DisplayRequests displayRequests;
         LayerRequests layerRequests;
         ClientTargetProperty clientTargetProperty;
+        LayerLuts layerLuts;
     };
 
     struct HWCDisplayMode {
@@ -323,18 +327,15 @@ public:
     virtual status_t setRefreshRateChangedCallbackDebugEnabled(PhysicalDisplayId, bool enabled) = 0;
     virtual status_t notifyExpectedPresent(PhysicalDisplayId, TimePoint expectedPresentTime,
                                            Fps frameInterval) = 0;
-
-    // Composer 4.0
-    virtual status_t getRequestedLuts(
-            PhysicalDisplayId,
-            std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*) = 0;
+    // mapper
+    virtual HWC2::Display::LutFileDescriptorMapper& getLutFileDescriptorMapper() = 0;
 };
 
 static inline bool operator==(const android::HWComposer::DeviceRequestedChanges& lhs,
                               const android::HWComposer::DeviceRequestedChanges& rhs) {
     return lhs.changedTypes == rhs.changedTypes && lhs.displayRequests == rhs.displayRequests &&
             lhs.layerRequests == rhs.layerRequests &&
-            lhs.clientTargetProperty == rhs.clientTargetProperty;
+            lhs.clientTargetProperty == rhs.clientTargetProperty && lhs.layerLuts == rhs.layerLuts;
 }
 
 namespace impl {
@@ -492,11 +493,8 @@ public:
     status_t notifyExpectedPresent(PhysicalDisplayId, TimePoint expectedPresentTime,
                                    Fps frameInterval) override;
 
-    // Composer 4.0
-    status_t getRequestedLuts(
-            PhysicalDisplayId,
-            std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*)
-            override;
+    // get a mapper
+    HWC2::Display::LutFileDescriptorMapper& getLutFileDescriptorMapper() override;
 
     // for debugging ----------------------------------------------------------
     void dump(std::string& out) const override;
@@ -587,6 +585,8 @@ private:
     const size_t mMaxVirtualDisplayDimension;
     const bool mUpdateDeviceProductInfoOnHotplugReconnect;
     bool mEnableVrrTimeout;
+
+    HWC2::Display::LutFileDescriptorMapper mLutFileDescriptorMapper;
 };
 
 } // namespace impl

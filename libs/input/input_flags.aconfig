@@ -207,3 +207,10 @@ flag {
   description: "Allow user to enable key repeats or configure timeout before key repeat and key repeat delay rates."
   bug: "336585002"
 }
+
+flag {
+  name: "rotary_input_telemetry"
+  namespace: "wear_frameworks"
+  description: "Enable telemetry for rotary input"
+  bug: "370353565"
+}

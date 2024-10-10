@@ -283,6 +283,8 @@ void DisplayModeController::updateKernelIdleTimer(PhysicalDisplayId displayId,
     }
 }
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-value" // b/369277774
 auto DisplayModeController::getKernelIdleTimerState(PhysicalDisplayId displayId) const
         -> KernelIdleTimerState {
     std::lock_guard lock(mDisplayLock);
@@ -298,4 +300,5 @@ auto DisplayModeController::getKernelIdleTimerState(PhysicalDisplayId displayId)
     return {desiredModeIdOpt, displayPtr->isKernelIdleTimerEnabled};
 }
 
+#pragma clang diagnostic pop
 } // namespace android::display

@@ -599,6 +599,9 @@ Loader::driver_t* Loader::attempt_to_load_angle(egl_connection_t* cnx) {
     driver_t* hnd = nullptr;
 
     // ANGLE doesn't ship with GLES library, and thus we skip GLES driver.
+    // b/370113081: if there is no libEGL_angle.so in namespace ns, libEGL_angle.so in system
+    // partition will be loaded instead. If there is no libEGL_angle.so in system partition, no
+    // angle libs are loaded, and app that sets to use ANGLE will crash.
     void* dso = load_angle("EGL", ns);
     if (dso) {
         initialize_api(dso, cnx, EGL);

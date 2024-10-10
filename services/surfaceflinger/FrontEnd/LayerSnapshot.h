@@ -72,7 +72,7 @@ struct LayerSnapshot : public compositionengine::LayerFECompositionState {
     bool premultipliedAlpha;
     ui::Transform parentTransform;
     Rect bufferSize;
-    Rect croppedBufferSize;
+    FloatRect croppedBufferSize;
     std::shared_ptr<renderengine::ExternalTexture> externalTexture;
     gui::LayerMetadata layerMetadata;
     gui::LayerMetadata relativeLayerMetadata;

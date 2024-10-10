@@ -305,7 +305,7 @@ public:
     virtual Error setRefreshRateChangedCallbackDebugEnabled(Display, bool) = 0;
     virtual Error notifyExpectedPresent(Display, nsecs_t expectedPresentTime,
                                         int32_t frameIntervalNs) = 0;
-    virtual Error getRequestedLuts(Display display,
+    virtual Error getRequestedLuts(Display display, std::vector<Layer>* outLayers,
                                    std::vector<V3_0::DisplayLuts::LayerLut>* outLuts) = 0;
     virtual Error setLayerLuts(Display display, Layer layer, std::vector<V3_0::Lut>& luts) = 0;
 };

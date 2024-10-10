@@ -1488,7 +1488,8 @@ Error HidlComposer::getClientTargetProperty(
     return Error::NONE;
 }
 
-Error HidlComposer::getRequestedLuts(Display, std::vector<DisplayLuts::LayerLut>*) {
+Error HidlComposer::getRequestedLuts(Display, std::vector<Layer>*,
+                                     std::vector<DisplayLuts::LayerLut>*) {
     return Error::NONE;
 }
 

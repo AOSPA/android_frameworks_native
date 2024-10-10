@@ -60,6 +60,8 @@ public:
             aidl::android::hardware::graphics::composer3::Composition) override;
     void prepareForDeviceLayerRequests() override;
     void applyDeviceLayerRequest(Hwc2::IComposerClient::LayerRequest request) override;
+    void applyDeviceLayerLut(aidl::android::hardware::graphics::composer3::LutProperties,
+                             ndk::ScopedFileDescriptor) override;
     bool needsFiltering() const override;
     std::optional<LayerFE::LayerSettings> getOverrideCompositionSettings() const override;
 

@@ -969,7 +969,7 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
                 // Do not wait the future to avoid deadlocks
                 // between main and Perfetto threads (b/313130597)
                 static_cast<void>(mScheduler->schedule(
-                        [&, onLayersSnapshot]() FTL_FAKE_GUARD(mStateLock)
+                        [&, traceFlags, onLayersSnapshot]() FTL_FAKE_GUARD(mStateLock)
                                 FTL_FAKE_GUARD(kMainThreadContext) {
                                     auto snapshot =
                                             takeLayersSnapshotProto(traceFlags, TimePoint::now(),
@@ -1706,6 +1706,22 @@ status_t SurfaceFlinger::getOverlaySupport(gui::OverlayProperties* outProperties
         outProperties->combinations.emplace_back(outCombination);
     }
     outProperties->supportMixedColorSpaces = aidlProperties.supportMixedColorSpaces;
+    if (aidlProperties.lutProperties.has_value()) {
+        std::vector<gui::LutProperties> outLutProperties;
+        for (const auto& properties : aidlProperties.lutProperties.value()) {
+            gui::LutProperties currentProperties;
+            currentProperties.dimension =
+                    static_cast<gui::LutProperties::Dimension>(properties->dimension);
+            currentProperties.size = properties->size;
+            currentProperties.samplingKeys.reserve(properties->samplingKeys.size());
+            std::transform(properties->samplingKeys.cbegin(), properties->samplingKeys.cend(),
+                           std::back_inserter(currentProperties.samplingKeys), [](const auto& val) {
+                               return static_cast<gui::LutProperties::SamplingKey>(val);
+                           });
+            outLutProperties.push_back(std::move(currentProperties));
+        }
+        outProperties->lutProperties.emplace(outLutProperties.begin(), outLutProperties.end());
+    }
     return NO_ERROR;
 }
 
@@ -5028,6 +5044,7 @@ status_t SurfaceFlinger::setTransactionState(
     for (auto& state : states) {
         resolvedStates.emplace_back(std::move(state));
         auto& resolvedState = resolvedStates.back();
+        resolvedState.layerId = LayerHandle::getLayerId(resolvedState.state.surface);
         if (resolvedState.state.hasBufferChanges() && resolvedState.state.hasValidBuffer() &&
             resolvedState.state.surface) {
             sp<Layer> layer = LayerHandle::getLayer(resolvedState.state.surface);
@@ -5057,9 +5074,8 @@ status_t SurfaceFlinger::setTransactionState(
                                                     *resolvedState.state.bufferData);
             /* QTI_END */
 
-            mBufferCountTracker.increment(resolvedState.state.surface->localBinder());
+            mBufferCountTracker.increment(resolvedState.layerId);
         }
-        resolvedState.layerId = LayerHandle::getLayerId(resolvedState.state.surface);
         if (resolvedState.state.what & layer_state_t::eReparent) {
             resolvedState.parentId =
                     getLayerIdFromSurfaceControl(resolvedState.state.parentSurfaceControlForChild);
@@ -5502,7 +5518,7 @@ status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, gui::CreateSurface
             std::atomic<int32_t>* pendingBufferCounter = layer->getPendingBufferCounter();
             if (pendingBufferCounter) {
                 std::string counterName = layer->getPendingBufferCounterName();
-                mBufferCountTracker.add(outResult.handle->localBinder(), counterName,
+                mBufferCountTracker.add(LayerHandle::getLayerId(outResult.handle), counterName,
                                         pendingBufferCounter);
             }
         } break;
@@ -5550,7 +5566,7 @@ status_t SurfaceFlinger::createEffectLayer(const LayerCreationArgs& args, sp<IBi
     return NO_ERROR;
 }
 
-void SurfaceFlinger::onHandleDestroyed(BBinder* handle, sp<Layer>& layer, uint32_t layerId) {
+void SurfaceFlinger::onHandleDestroyed(sp<Layer>& layer, uint32_t layerId) {
     {
         // Used to remove stalled transactions which uses an internal lock.
         ftl::FakeGuard guard(kMainThreadContext);
@@ -5570,7 +5586,7 @@ void SurfaceFlinger::onHandleDestroyed(BBinder* handle, sp<Layer>& layer, uint32
 
     Mutex::Autolock stateLock(mStateLock);
     layer->onHandleDestroyed();
-    mBufferCountTracker.remove(handle);
+    mBufferCountTracker.remove(layerId);
     layer.clear();
     setTransactionFlags(eTransactionFlushNeeded | eTransactionNeeded);
 }
@@ -6081,7 +6097,7 @@ void SurfaceFlinger::dumpHdrInfo(std::string& result) const {
 
 void SurfaceFlinger::dumpFrontEnd(std::string& result) {
     std::ostringstream out;
-    out << "\nComposition list\n";
+    out << "\nComposition list (bottom to top)\n";
     ui::LayerStack lastPrintedLayerStackHeader = ui::INVALID_LAYER_STACK;
     for (const auto& snapshot : mLayerSnapshotBuilder.getSnapshots()) {
         if (lastPrintedLayerStackHeader != snapshot->outputFilter.layerStack) {
@@ -6109,7 +6125,7 @@ void SurfaceFlinger::dumpFrontEnd(std::string& result) {
 
 void SurfaceFlinger::dumpVisibleFrontEnd(std::string& result) {
     std::ostringstream out;
-    out << "\nComposition list\n";
+    out << "\nComposition list (bottom to top)\n";
     ui::LayerStack lastPrintedLayerStackHeader = ui::INVALID_LAYER_STACK;
     mLayerSnapshotBuilder.forEachVisibleSnapshot(
             [&](std::unique_ptr<frontend::LayerSnapshot>& snapshot) {

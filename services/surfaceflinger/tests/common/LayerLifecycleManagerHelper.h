@@ -182,7 +182,7 @@ public:
         mLifecycleManager.applyTransactions(setZTransaction(id, z));
     }
 
-    void setCrop(uint32_t id, const Rect& crop) {
+    void setCrop(uint32_t id, const FloatRect& crop) {
         std::vector<TransactionState> transactions;
         transactions.emplace_back();
         transactions.back().states.push_back({});
@@ -192,6 +192,8 @@ public:
         transactions.back().states.front().state.crop = crop;
         mLifecycleManager.applyTransactions(transactions);
     }
+
+    void setCrop(uint32_t id, const Rect& crop) { setCrop(id, crop.toFloatRect()); }
 
     void setFlags(uint32_t id, uint32_t mask, uint32_t flags) {
         std::vector<TransactionState> transactions;

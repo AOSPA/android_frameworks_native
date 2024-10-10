@@ -56,6 +56,9 @@ public:
     MOCK_METHOD1(applyDeviceLayerRequest, void(Hwc2::IComposerClient::LayerRequest request));
     MOCK_CONST_METHOD0(needsFiltering, bool());
     MOCK_CONST_METHOD0(getOverrideCompositionSettings, std::optional<LayerFE::LayerSettings>());
+    MOCK_METHOD(void, applyDeviceLayerLut,
+                (aidl::android::hardware::graphics::composer3::LutProperties,
+                 ndk::ScopedFileDescriptor));
 
     MOCK_CONST_METHOD1(dump, void(std::string&));
 };

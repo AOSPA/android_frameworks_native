@@ -31,10 +31,12 @@ using aidl::android::hardware::vibrator::CompositeEffect;
 using aidl::android::hardware::vibrator::CompositePrimitive;
 using aidl::android::hardware::vibrator::Effect;
 using aidl::android::hardware::vibrator::EffectStrength;
+using aidl::android::hardware::vibrator::IVibrationSession;
 using aidl::android::hardware::vibrator::IVibrator;
 using aidl::android::hardware::vibrator::IVibratorCallback;
 using aidl::android::hardware::vibrator::IVibratorManager;
 using aidl::android::hardware::vibrator::PrimitivePwle;
+using aidl::android::hardware::vibrator::VibrationSessionConfig;
 
 using namespace android;
 using namespace testing;
@@ -55,6 +57,12 @@ public:
     MOCK_METHOD(ndk::ScopedAStatus, triggerSynced, (const std::shared_ptr<IVibratorCallback>& cb),
                 (override));
     MOCK_METHOD(ndk::ScopedAStatus, cancelSynced, (), (override));
+    MOCK_METHOD(ndk::ScopedAStatus, startSession,
+                (const std::vector<int32_t>& ids, const VibrationSessionConfig& s,
+                 const std::shared_ptr<IVibratorCallback>& cb,
+                 std::shared_ptr<IVibrationSession>* ret),
+                (override));
+    MOCK_METHOD(ndk::ScopedAStatus, clearSessions, (), (override));
     MOCK_METHOD(ndk::ScopedAStatus, getInterfaceVersion, (int32_t*), (override));
     MOCK_METHOD(ndk::ScopedAStatus, getInterfaceHash, (std::string*), (override));
     MOCK_METHOD(ndk::SpAIBinder, asBinder, (), (override));

@@ -153,7 +153,7 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
                 args.metadata.getInt32(gui::METADATA_WINDOW_TYPE, 0))) {
     ALOGV("Creating Layer %s", getDebugName());
 
-    mDrawingState.crop.makeInvalid();
+    mDrawingState.crop = {0, 0, -1, -1};
     mDrawingState.sequence = 0;
     mDrawingState.transform.set(0, 0);
     mDrawingState.frameNumber = 0;
@@ -332,7 +332,7 @@ bool Layer::computeTrustedPresentationState(const FloatRect& bounds, const Float
 
 Rect Layer::getCroppedBufferSize(const State& s) const {
     Rect size = getBufferSize(s);
-    Rect crop = getCrop(s);
+    Rect crop = Rect(getCrop(s));
     if (!crop.isEmpty() && size.isValid()) {
         size.intersect(crop, &size);
     } else if (!crop.isEmpty()) {
@@ -389,7 +389,7 @@ void Layer::setTransactionFlags(uint32_t mask) {
     mTransactionFlags |= mask;
 }
 
-bool Layer::setCrop(const Rect& crop) {
+bool Layer::setCrop(const FloatRect& crop) {
     if (mDrawingState.crop == crop) return false;
     mDrawingState.sequence++;
     mDrawingState.crop = crop;

@@ -116,7 +116,7 @@ ui::Transform getInputTransform(const LayerSnapshot& snapshot) {
  * that's already included.
  */
 std::pair<FloatRect, bool> getInputBounds(const LayerSnapshot& snapshot, bool fillParentBounds) {
-    FloatRect inputBounds = snapshot.croppedBufferSize.toFloatRect();
+    FloatRect inputBounds = snapshot.croppedBufferSize;
     if (snapshot.hasBufferOrSidebandStream() && snapshot.croppedBufferSize.isValid() &&
         snapshot.localTransform.getType() != ui::Transform::IDENTITY) {
         inputBounds = snapshot.localTransform.transform(inputBounds);
@@ -220,7 +220,7 @@ void handleDropInputMode(LayerSnapshot& snapshot, const LayerSnapshot& parentSna
     }
 
     // Check if the parent has cropped the buffer
-    Rect bufferSize = snapshot.croppedBufferSize;
+    FloatRect bufferSize = snapshot.croppedBufferSize;
     if (!bufferSize.isValid()) {
         snapshot.inputInfo.inputConfig |= gui::WindowInfo::InputConfig::DROP_INPUT_IF_OBSCURED;
         return;
@@ -970,7 +970,7 @@ void LayerSnapshotBuilder::updateRoundedCorner(LayerSnapshot& snapshot,
         parentRoundedCorner.radius.y *= t.getScaleY();
     }
 
-    FloatRect layerCropRect = snapshot.croppedBufferSize.toFloatRect();
+    FloatRect layerCropRect = snapshot.croppedBufferSize;
     const vec2 radius(requested.cornerRadius, requested.cornerRadius);
     RoundedCornerState layerSettings(layerCropRect, radius);
     const bool layerSettingsValid = layerSettings.hasRoundedCorners() && !layerCropRect.isEmpty();
@@ -1061,7 +1061,7 @@ void LayerSnapshotBuilder::updateLayerBounds(LayerSnapshot& snapshot,
             requested.externalTexture ? snapshot.bufferSize.toFloatRect() : parentBounds;
     snapshot.geomLayerCrop = parentBounds;
     if (!requested.crop.isEmpty()) {
-        snapshot.geomLayerCrop = snapshot.geomLayerCrop.intersect(requested.crop.toFloatRect());
+        snapshot.geomLayerCrop = snapshot.geomLayerCrop.intersect(requested.crop);
     }
     snapshot.geomLayerBounds = snapshot.geomLayerBounds.intersect(snapshot.geomLayerCrop);
     snapshot.transformedBounds = snapshot.geomLayerTransform.transform(snapshot.geomLayerBounds);
@@ -1072,10 +1072,10 @@ void LayerSnapshotBuilder::updateLayerBounds(LayerSnapshot& snapshot,
             snapshot.geomLayerTransform.transform(geomLayerBoundsWithoutTransparentRegion);
     snapshot.parentTransform = parentSnapshot.geomLayerTransform;
 
-    // Subtract the transparent region and snap to the bounds
-    const Rect bounds =
-            RequestedLayerState::reduce(snapshot.croppedBufferSize, requested.transparentRegion);
     if (requested.potentialCursor) {
+        // Subtract the transparent region and snap to the bounds
+        const Rect bounds = RequestedLayerState::reduce(Rect(snapshot.croppedBufferSize),
+                                                        requested.transparentRegion);
         snapshot.cursorFrame = snapshot.geomLayerTransform.transform(bounds);
     }
 }
@@ -1192,7 +1192,8 @@ void LayerSnapshotBuilder::updateInput(LayerSnapshot& snapshot,
         snapshot.inputInfo.inputConfig |= InputConfig::TRUSTED_OVERLAY;
     }
 
-    snapshot.inputInfo.contentSize = snapshot.croppedBufferSize.getSize();
+    snapshot.inputInfo.contentSize = {snapshot.croppedBufferSize.getHeight(),
+                                      snapshot.croppedBufferSize.getWidth()};
 
     // If the layer is a clone, we need to crop the input region to cloned root to prevent
     // touches from going outside the cloned area.

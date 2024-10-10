@@ -65,7 +65,8 @@ public:
      * extrapolation takes place and `resampleTime` is too far in the future. If `futureSample` is
      * not null, interpolation will occur. If `futureSample` is null and there is enough historical
      * data, LegacyResampler will extrapolate. Otherwise, no resampling takes place and
-     * `motionEvent` is unmodified.
+     * `motionEvent` is unmodified. Furthermore, motionEvent is not resampled if resampleTime equals
+     * the last sample eventTime of motionEvent.
      */
     void resampleMotionEvent(std::chrono::nanoseconds frameTime, MotionEvent& motionEvent,
                              const InputMessage* futureSample) override;

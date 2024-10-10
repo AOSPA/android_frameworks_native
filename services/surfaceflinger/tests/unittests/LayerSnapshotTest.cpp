@@ -162,12 +162,12 @@ TEST_F(LayerSnapshotTest, croppedByParent) {
     info.info.logicalHeight = 100;
     info.info.logicalWidth = 200;
     mFrontEndDisplayInfos.emplace_or_replace(ui::LayerStack::fromValue(1), info);
-    Rect layerCrop(0, 0, 10, 20);
+    FloatRect layerCrop(0, 0, 10, 20);
     setCrop(11, layerCrop);
     EXPECT_TRUE(mLifecycleManager.getGlobalChanges().test(RequestedLayerState::Changes::Geometry));
     UPDATE_AND_VERIFY_WITH_DISPLAY_CHANGES(mSnapshotBuilder, STARTING_ZORDER);
     EXPECT_EQ(getSnapshot(11)->geomCrop, layerCrop);
-    EXPECT_EQ(getSnapshot(111)->geomLayerBounds, layerCrop.toFloatRect());
+    EXPECT_EQ(getSnapshot(111)->geomLayerBounds, layerCrop);
     float maxHeight = static_cast<float>(info.info.logicalHeight * 10);
     float maxWidth = static_cast<float>(info.info.logicalWidth * 10);
 

@@ -224,8 +224,10 @@ void AIBinder_Class_setOnDump(AIBinder_Class* clazz, AIBinder_onDump onDump) __I
  *
  * Trace messages will use the provided names instead of bare integer codes when set. If not set by
  * this function, trace messages will only be identified by the bare code. This should be called one
- * time during clazz initialization. clazz and transactionCodeToFunctionMap should have same
- * lifetime. Resetting/clearing the transactionCodeToFunctionMap is not allowed.
+ * time during clazz initialization. clazz is defined using AIBinder_Class_define and
+ * transactionCodeToFunctionMap should have same scope as clazz. Resetting/clearing the
+ * transactionCodeToFunctionMap is not allowed. Passing null for either clazz or
+ * transactionCodeToFunctionMap will abort.
  *
  * Available since API level 36.
  *
@@ -236,9 +238,6 @@ void AIBinder_Class_setOnDump(AIBinder_Class* clazz, AIBinder_onDump onDump) __I
  * contiguous, and this is required for maximum memory efficiency.
  * You can use nullptr if certain transaction codes are not used. Lifetime should be same as clazz.
  * \param length number of elements in the transactionCodeToFunctionMap
- *
- * \return true if setting codeToFunction to clazz is successful. return false if clazz or
- * codeToFunction is nullptr.
  */
 void AIBinder_Class_setTransactionCodeToFunctionNameMap(AIBinder_Class* clazz,
                                                         const char** transactionCodeToFunctionMap,
@@ -257,7 +256,8 @@ void AIBinder_Class_setTransactionCodeToFunctionNameMap(AIBinder_Class* clazz,
  * \param transactionCode transaction_code_t for which function name is requested.
  *
  * \return function name in form of const char* if transaction code is valid for given class.
- * if transaction code is invalid or transactionCodeToFunctionMap is not set, nullptr is returned
+ * The value returned is valid for the lifetime of clazz. if transaction code is invalid or
+ * transactionCodeToFunctionMap is not set, nullptr is returned.
  */
 const char* AIBinder_Class_getFunctionName(AIBinder_Class* clazz, transaction_code_t code)
         __INTRODUCED_IN(36);

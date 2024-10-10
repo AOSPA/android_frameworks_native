@@ -310,7 +310,7 @@ public:
     // Called when all clients have released all their references to
     // this layer. The layer may still be kept alive by its parents but
     // the client can no longer modify this layer directly.
-    void onHandleDestroyed(BBinder* handle, sp<Layer>& layer, uint32_t layerId);
+    void onHandleDestroyed(sp<Layer>& layer, uint32_t layerId);
 
     TransactionCallbackInvoker& getTransactionCallbackInvoker() {
         return mTransactionCallbackInvoker;
@@ -457,32 +457,32 @@ private:
     // This is done to avoid lock contention with the main thread.
     class BufferCountTracker {
     public:
-        void increment(BBinder* layerHandle) {
+        void increment(uint32_t layerId) {
             std::lock_guard<std::mutex> lock(mLock);
-            auto it = mCounterByLayerHandle.find(layerHandle);
-            if (it != mCounterByLayerHandle.end()) {
+            auto it = mCounterByLayerId.find(layerId);
+            if (it != mCounterByLayerId.end()) {
                 auto [name, pendingBuffers] = it->second;
                 int32_t count = ++(*pendingBuffers);
                 SFTRACE_INT(name.c_str(), count);
             } else {
-                ALOGW("Handle not found! %p", layerHandle);
+                ALOGW("Layer ID not found! %d", layerId);
             }
         }
 
-        void add(BBinder* layerHandle, const std::string& name, std::atomic<int32_t>* counter) {
+        void add(uint32_t layerId, const std::string& name, std::atomic<int32_t>* counter) {
             std::lock_guard<std::mutex> lock(mLock);
-            mCounterByLayerHandle[layerHandle] = std::make_pair(name, counter);
+            mCounterByLayerId[layerId] = std::make_pair(name, counter);
         }
 
-        void remove(BBinder* layerHandle) {
+        void remove(uint32_t layerId) {
             std::lock_guard<std::mutex> lock(mLock);
-            mCounterByLayerHandle.erase(layerHandle);
+            mCounterByLayerId.erase(layerId);
         }
 
     private:
         std::mutex mLock;
-        std::unordered_map<BBinder*, std::pair<std::string, std::atomic<int32_t>*>>
-                mCounterByLayerHandle GUARDED_BY(mLock);
+        std::unordered_map<uint32_t, std::pair<std::string, std::atomic<int32_t>*>>
+                mCounterByLayerId GUARDED_BY(mLock);
     };
 
     enum class BootStage {

@@ -156,8 +156,6 @@ typedef struct ASurfaceTransactionStats ASurfaceTransactionStats;
  *
  * THREADING
  * The transaction completed callback can be invoked on any thread.
- *
- * Available since API level 29.
  */
 typedef void (*ASurfaceTransaction_OnComplete)(void* _Null_unspecified context,
                                                ASurfaceTransactionStats* _Nonnull stats);
@@ -184,8 +182,6 @@ typedef void (*ASurfaceTransaction_OnComplete)(void* _Null_unspecified context,
  *
  * THREADING
  * The transaction committed callback can be invoked on any thread.
- *
- * Available since API level 31.
  */
 typedef void (*ASurfaceTransaction_OnCommit)(void* _Null_unspecified context,
                                              ASurfaceTransactionStats* _Nonnull stats);
@@ -213,8 +209,6 @@ typedef void (*ASurfaceTransaction_OnCommit)(void* _Null_unspecified context,
  *
  * THREADING
  * The callback can be invoked on any thread.
- *
- * Available since API level 36.
  */
 typedef void (*ASurfaceTransaction_OnBufferRelease)(void* _Null_unspecified context,
                                                     int release_fence_fd);

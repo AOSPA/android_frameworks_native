@@ -427,8 +427,8 @@ void EventThread::onVsync(nsecs_t vsyncTime, nsecs_t wakeupTime, nsecs_t readyTi
 
     LOG_FATAL_IF(!mVSyncState);
     mVsyncTracer = (mVsyncTracer + 1) % 2;
-    mPendingEvents.push_back(makeVSync(mVSyncState->displayId, wakeupTime, ++mVSyncState->count,
-                                       vsyncTime, readyTime));
+    mPendingEvents.push_back(makeVSync(mVsyncSchedule->getPhysicalDisplayId(), wakeupTime,
+                                       ++mVSyncState->count, vsyncTime, readyTime));
     mCondition.notify_all();
 }
 
@@ -487,9 +487,9 @@ void EventThread::threadMain(std::unique_lock<std::mutex>& lock) {
             if (event->header.type == DisplayEventReceiver::DISPLAY_EVENT_HOTPLUG) {
                 if (event->hotplug.connectionError == 0) {
                     if (event->hotplug.connected && !mVSyncState) {
-                        mVSyncState.emplace(event->header.displayId);
-                    } else if (!event->hotplug.connected && mVSyncState &&
-                               mVSyncState->displayId == event->header.displayId) {
+                        mVSyncState.emplace();
+                    } else if (!event->hotplug.connected &&
+                               mVsyncSchedule->getPhysicalDisplayId() == event->header.displayId) {
                         mVSyncState.reset();
                     }
                 } else {
@@ -560,7 +560,7 @@ void EventThread::threadMain(std::unique_lock<std::mutex>& lock) {
                 const auto now = systemTime(SYSTEM_TIME_MONOTONIC);
                 const auto deadlineTimestamp = now + timeout.count();
                 const auto expectedVSyncTime = deadlineTimestamp + timeout.count();
-                mPendingEvents.push_back(makeVSync(mVSyncState->displayId, now,
+                mPendingEvents.push_back(makeVSync(mVsyncSchedule->getPhysicalDisplayId(), now,
                                                    ++mVSyncState->count, expectedVSyncTime,
                                                    deadlineTimestamp));
             }
@@ -753,7 +753,7 @@ void EventThread::dump(std::string& result) const {
     StringAppendF(&result, "%s: state=%s VSyncState=", mThreadName, toCString(mState));
     if (mVSyncState) {
         StringAppendF(&result, "{displayId=%s, count=%u%s}\n",
-                      to_string(mVSyncState->displayId).c_str(), mVSyncState->count,
+                      to_string(mVsyncSchedule->getPhysicalDisplayId()).c_str(), mVSyncState->count,
                       mVSyncState->synthetic ? ", synthetic" : "");
     } else {
         StringAppendF(&result, "none\n");

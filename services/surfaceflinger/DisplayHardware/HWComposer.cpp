@@ -612,9 +612,14 @@ status_t HWComposer::getDeviceCompositionChanges(
     error = hwcDisplay->getClientTargetProperty(&clientTargetProperty);
     RETURN_IF_HWC_ERROR_FOR("getClientTargetProperty", error, displayId, BAD_INDEX);
 
+    DeviceRequestedChanges::LayerLuts layerLuts;
+    error = hwcDisplay->getRequestedLuts(&layerLuts, mLutFileDescriptorMapper);
+    RETURN_IF_HWC_ERROR_FOR("getRequestedLuts", error, displayId, BAD_INDEX);
+
     outChanges->emplace(DeviceRequestedChanges{std::move(changedTypes), std::move(displayRequests),
                                                std::move(layerRequests),
-                                               std::move(clientTargetProperty)});
+                                               std::move(clientTargetProperty),
+                                               std::move(layerLuts)});
     if (acceptChanges) {
         error = hwcDisplay->acceptChanges();
         RETURN_IF_HWC_ERROR_FOR("acceptChanges", error, displayId, BAD_INDEX);
@@ -1008,21 +1013,6 @@ status_t HWComposer::getDisplayDecorationSupport(
     return NO_ERROR;
 }
 
-status_t HWComposer::getRequestedLuts(
-        PhysicalDisplayId displayId,
-        std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>* outLuts) {
-    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
-    const auto error = mDisplayData[displayId].hwcDisplay->getRequestedLuts(outLuts);
-    if (error == hal::Error::UNSUPPORTED) {
-        RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
-    }
-    if (error == hal::Error::BAD_PARAMETER) {
-        RETURN_IF_HWC_ERROR(error, displayId, BAD_VALUE);
-    }
-    RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
-    return NO_ERROR;
-}
-
 status_t HWComposer::setAutoLowLatencyMode(PhysicalDisplayId displayId, bool on) {
     RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
     const auto error = mDisplayData[displayId].hwcDisplay->setAutoLowLatencyMode(on);
@@ -1064,6 +1054,11 @@ status_t HWComposer::setContentType(PhysicalDisplayId displayId, hal::ContentTyp
 
 const std::unordered_map<std::string, bool>& HWComposer::getSupportedLayerGenericMetadata() const {
     return mSupportedLayerGenericMetadata;
+}
+
+ftl::SmallMap<HWC2::Layer*, ndk::ScopedFileDescriptor, 20>&
+HWComposer::getLutFileDescriptorMapper() {
+    return mLutFileDescriptorMapper;
 }
 
 void HWComposer::dumpOverlayProperties(std::string& result) const {

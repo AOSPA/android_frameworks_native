@@ -30,6 +30,7 @@
 #include "MockHWC2.h"
 #include "MockHWComposer.h"
 #include "RegionMatcher.h"
+#include "ui/FloatRect.h"
 
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 
@@ -270,7 +271,7 @@ struct OutputLayerDisplayFrameTest : public OutputLayerTest {
         mLayerFEState.geomLayerTransform = ui::Transform{TR_IDENT};
         mLayerFEState.geomBufferSize = Rect{0, 0, 1920, 1080};
         mLayerFEState.geomBufferUsesDisplayInverseTransform = false;
-        mLayerFEState.geomCrop = Rect{0, 0, 1920, 1080};
+        mLayerFEState.geomCrop = FloatRect{0, 0, 1920, 1080};
         mLayerFEState.geomLayerBounds = FloatRect{0.f, 0.f, 1920.f, 1080.f};
 
         mOutputState.layerStackSpace.setContent(Rect{0, 0, 1920, 1080});
@@ -296,20 +297,20 @@ TEST_F(OutputLayerDisplayFrameTest, fullActiveTransparentRegionReturnsEmptyFrame
 }
 
 TEST_F(OutputLayerDisplayFrameTest, cropAffectsDisplayFrame) {
-    mLayerFEState.geomCrop = Rect{100, 200, 300, 500};
+    mLayerFEState.geomCrop = FloatRect{100, 200, 300, 500};
     const Rect expected{100, 200, 300, 500};
     EXPECT_THAT(calculateOutputDisplayFrame(), expected);
 }
 
 TEST_F(OutputLayerDisplayFrameTest, cropAffectsDisplayFrameRotated) {
-    mLayerFEState.geomCrop = Rect{100, 200, 300, 500};
+    mLayerFEState.geomCrop = FloatRect{100, 200, 300, 500};
     mLayerFEState.geomLayerTransform.set(HAL_TRANSFORM_ROT_90, 1920, 1080);
     const Rect expected{1420, 100, 1720, 300};
     EXPECT_THAT(calculateOutputDisplayFrame(), expected);
 }
 
 TEST_F(OutputLayerDisplayFrameTest, emptyGeomCropIsNotUsedToComputeFrame) {
-    mLayerFEState.geomCrop = Rect{};
+    mLayerFEState.geomCrop = FloatRect{};
     const Rect expected{0, 0, 1920, 1080};
     EXPECT_THAT(calculateOutputDisplayFrame(), expected);
 }
@@ -339,7 +340,7 @@ TEST_F(OutputLayerDisplayFrameTest, shadowExpandsDisplayFrame) {
 
     mLayerFEState.geomLayerBounds = FloatRect{100.f, 100.f, 200.f, 200.f};
     Rect expected{mLayerFEState.geomLayerBounds};
-    expected.inset(-kShadowRadius, -kShadowRadius, -kShadowRadius, -kShadowRadius);
+    expected.inset(-2 * kShadowRadius, -2 * kShadowRadius, -2 * kShadowRadius, -2 * kShadowRadius);
     EXPECT_THAT(calculateOutputDisplayFrame(), expected);
 }
 

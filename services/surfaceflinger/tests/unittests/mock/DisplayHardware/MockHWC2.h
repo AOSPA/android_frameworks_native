@@ -111,7 +111,7 @@ public:
                 (aidl::android::hardware::graphics::composer3::OverlayProperties *),
                 (const override));
     MOCK_METHOD(hal::Error, getRequestedLuts,
-                (std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*),
+                ((HWC2::Display::LayerLuts*), (HWC2::Display::LutFileDescriptorMapper&)),
                 (override));
 };
 

@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <com_android_input_flags.h>
+
 #include "AnrTracker.h"
 #include "CancelationOptions.h"
 #include "DragState.h"
@@ -741,6 +743,10 @@ private:
 
     sp<android::gui::WindowInfoHandle> findWallpaperWindowBelow(
             const sp<android::gui::WindowInfoHandle>& windowHandle) const REQUIRES(mLock);
+
+    /** Stores the value of the input flag for per device input latency metrics. */
+    const bool mPerDeviceInputLatencyMetricsFlag =
+            com::android::input::flags::enable_per_device_input_latency_metrics();
 };
 
 } // namespace android::inputdispatcher

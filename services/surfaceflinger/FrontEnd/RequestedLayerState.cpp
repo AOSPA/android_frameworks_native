@@ -96,7 +96,7 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     LLOGV(layerId, "Created %s flags=%d", getDebugString().c_str(), flags);
     color.a = 1.0f;
 
-    crop.makeInvalid();
+    crop = {0, 0, -1, -1};
     z = 0;
     layerStack = ui::DEFAULT_LAYER_STACK;
     transformToDisplayInverse = false;
@@ -473,10 +473,10 @@ Rect RequestedLayerState::getBufferSize(uint32_t displayRotationFlags) const {
     return Rect(0, 0, static_cast<int32_t>(bufWidth), static_cast<int32_t>(bufHeight));
 }
 
-Rect RequestedLayerState::getCroppedBufferSize(const Rect& bufferSize) const {
-    Rect size = bufferSize;
+FloatRect RequestedLayerState::getCroppedBufferSize(const Rect& bufferSize) const {
+    FloatRect size = bufferSize.toFloatRect();
     if (!crop.isEmpty() && size.isValid()) {
-        size.intersect(crop, &size);
+        size = size.intersect(crop);
     } else if (!crop.isEmpty()) {
         size = crop;
     }

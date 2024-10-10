@@ -467,7 +467,7 @@ struct BaseLayerProperties {
                                                          LayerProperties::FORMAT,
                                                          LayerProperties::USAGE |
                                                                  GraphicBuffer::USAGE_HW_TEXTURE);
-        layer.crop = Rect(0, 0, LayerProperties::HEIGHT, LayerProperties::WIDTH);
+        layer.crop = FloatRect(0, 0, LayerProperties::HEIGHT, LayerProperties::WIDTH);
         layer.externalTexture = buffer;
         layer.bufferData->acquireFence = Fence::NO_FENCE;
         layer.dataspace = ui::Dataspace::UNKNOWN;
@@ -664,7 +664,8 @@ struct SidebandLayerProperties : public BaseLayerProperties<SidebandLayerPropert
                 NativeHandle::create(reinterpret_cast<native_handle_t*>(DEFAULT_SIDEBAND_STREAM),
                                      false);
         layer.sidebandStream = stream;
-        layer.crop = Rect(0, 0, SidebandLayerProperties::HEIGHT, SidebandLayerProperties::WIDTH);
+        layer.crop =
+                FloatRect(0, 0, SidebandLayerProperties::HEIGHT, SidebandLayerProperties::WIDTH);
     }
 
     static void setupHwcSetSourceCropBufferCallExpectations(CompositionTest* test) {
@@ -828,7 +829,7 @@ struct EffectLayerVariant : public BaseLayerVariant<LayerProperties> {
             return frontend::RequestedLayerState(args);
         });
 
-        layer.crop = Rect(0, 0, LayerProperties::HEIGHT, LayerProperties::WIDTH);
+        layer.crop = FloatRect(0, 0, LayerProperties::HEIGHT, LayerProperties::WIDTH);
         return layer;
     }
 

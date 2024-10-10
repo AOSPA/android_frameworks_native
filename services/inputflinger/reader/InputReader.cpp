@@ -122,7 +122,8 @@ status_t InputReader::start() {
         return ALREADY_EXISTS;
     }
     mThread = std::make_unique<InputThread>(
-            "InputReader", [this]() { loopOnce(); }, [this]() { mEventHub->wake(); });
+            "InputReader", [this]() { loopOnce(); }, [this]() { mEventHub->wake(); },
+            /*isInCriticalPath=*/true);
     return OK;
 }
 

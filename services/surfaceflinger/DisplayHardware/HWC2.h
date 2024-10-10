@@ -20,6 +20,7 @@
 #include <android-base/thread_annotations.h>
 #include <ftl/expected.h>
 #include <ftl/future.h>
+#include <ftl/small_map.h>
 #include <gui/HdrMetadata.h>
 #include <math/mat4.h>
 #include <ui/HdrCapabilities.h>
@@ -107,6 +108,13 @@ public:
     virtual void onLayerDestroyed(hal::HWLayerId layerId) = 0;
     virtual std::optional<ui::Size> getPhysicalSizeInMm() const = 0;
 
+    static const int kLutFileDescriptorMapperSize = 20;
+    using LayerLuts =
+            ftl::SmallMap<HWC2::Layer*, aidl::android::hardware::graphics::composer3::LutProperties,
+                          kLutFileDescriptorMapperSize>;
+    using LutFileDescriptorMapper =
+            ftl::SmallMap<HWC2::Layer*, ndk::ScopedFileDescriptor, kLutFileDescriptorMapperSize>;
+
     [[nodiscard]] virtual hal::Error acceptChanges() = 0;
     [[nodiscard]] virtual base::expected<std::shared_ptr<HWC2::Layer>, hal::Error>
     createLayer() = 0;
@@ -183,8 +191,7 @@ public:
             aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness*
                     outClientTargetProperty) = 0;
     [[nodiscard]] virtual hal::Error getRequestedLuts(
-            std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*
-                    outLuts) = 0;
+            LayerLuts* outLuts, LutFileDescriptorMapper& lutFileDescriptorMapper) = 0;
     [[nodiscard]] virtual hal::Error getDisplayDecorationSupport(
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) = 0;
@@ -268,9 +275,8 @@ public:
     hal::Error getClientTargetProperty(
             aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness*
                     outClientTargetProperty) override;
-    hal::Error getRequestedLuts(
-            std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*
-                    outLuts) override;
+    hal::Error getRequestedLuts(LayerLuts* outLuts,
+                                LutFileDescriptorMapper& lutFileDescriptorMapper) override;
     hal::Error getDisplayDecorationSupport(
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) override;

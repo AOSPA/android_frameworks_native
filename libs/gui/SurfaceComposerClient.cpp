@@ -1563,14 +1563,7 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setFlags
         mStatus = BAD_INDEX;
         return *this;
     }
-    if ((mask & layer_state_t::eLayerOpaque) || (mask & layer_state_t::eLayerHidden) ||
-        (mask & layer_state_t::eLayerSecure) || (mask & layer_state_t::eLayerSkipScreenshot) ||
-        (mask & layer_state_t::eEnableBackpressure) ||
-        (mask & layer_state_t::eIgnoreDestinationFrame) ||
-        (mask & layer_state_t::eLayerIsDisplayDecoration) ||
-        (mask & layer_state_t::eLayerIsRefreshRateIndicator)) {
-        s->what |= layer_state_t::eFlagsChanged;
-    }
+    s->what |= layer_state_t::eFlagsChanged;
     s->flags &= ~mask;
     s->flags |= (flags & mask);
     s->mask |= mask;
@@ -1676,6 +1669,11 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setMatri
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setCrop(
         const sp<SurfaceControl>& sc, const Rect& crop) {
+    return setCrop(sc, crop.toFloatRect());
+}
+
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setCrop(
+        const sp<SurfaceControl>& sc, const FloatRect& crop) {
     layer_state_t* s = getLayerState(sc);
     if (!s) {
         mStatus = BAD_INDEX;
@@ -1961,6 +1959,20 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setDesir
     s->what |= layer_state_t::eDesiredHdrHeadroomChanged;
     s->desiredHdrSdrRatio = desiredRatio;
 
+    registerSurfaceControlForCallback(sc);
+    return *this;
+}
+
+SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setLuts(
+        const sp<SurfaceControl>& sc, const base::unique_fd& /*lutFd*/,
+        const std::vector<int32_t>& /*offsets*/, const std::vector<int32_t>& /*dimensions*/,
+        const std::vector<int32_t>& /*sizes*/, const std::vector<int32_t>& /*samplingKeys*/) {
+    layer_state_t* s = getLayerState(sc);
+    if (!s) {
+        mStatus = BAD_INDEX;
+        return *this;
+    }
+    // TODO (b/329472856): update layer_state_t for lut(s)
     registerSurfaceControlForCallback(sc);
     return *this;
 }

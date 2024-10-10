@@ -106,6 +106,13 @@ void LayerProtoHelper::readFromProto(const perfetto::protos::RectProto& proto, R
     outRect.right = proto.right();
 }
 
+void LayerProtoHelper::readFromProto(const perfetto::protos::RectProto& proto, FloatRect& outRect) {
+    outRect.left = proto.left();
+    outRect.top = proto.top();
+    outRect.bottom = proto.bottom();
+    outRect.right = proto.right();
+}
+
 void LayerProtoHelper::writeToProto(
         const FloatRect& rect,
         std::function<perfetto::protos::FloatRectProto*()> getFloatRectProto) {
@@ -427,7 +434,7 @@ void LayerProtoHelper::writeSnapshotToProto(perfetto::protos::LayerProto* layerI
                                        layerInfo->mutable_color_transform());
     }
 
-    LayerProtoHelper::writeToProto(snapshot.croppedBufferSize.toFloatRect(),
+    LayerProtoHelper::writeToProto(snapshot.croppedBufferSize,
                                    [&]() { return layerInfo->mutable_source_bounds(); });
     LayerProtoHelper::writeToProto(snapshot.transformedBounds,
                                    [&]() { return layerInfo->mutable_screen_bounds(); });
@@ -455,7 +462,7 @@ void LayerProtoHelper::writeSnapshotToProto(perfetto::protos::LayerProto* layerI
         return layerInfo->mutable_requested_position();
     });
 
-    LayerProtoHelper::writeToProto(requestedState.crop,
+    LayerProtoHelper::writeToProto(Rect(requestedState.crop),
                                    [&]() { return layerInfo->mutable_crop(); });
 
     layerInfo->set_is_opaque(snapshot.contentOpaque);

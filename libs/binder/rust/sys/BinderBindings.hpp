@@ -20,6 +20,7 @@
 #include <android/binder_parcel.h>
 #include <android/binder_parcel_platform.h>
 #include <android/binder_process.h>
+#include <android/binder_rpc.h>
 #include <android/binder_shell.h>
 #include <android/binder_stability.h>
 #include <android/binder_status.h>

@@ -152,10 +152,7 @@ public:
                 getOverlaySupport, (), (const, override));
     MOCK_METHOD(status_t, setRefreshRateChangedCallbackDebugEnabled, (PhysicalDisplayId, bool));
     MOCK_METHOD(status_t, notifyExpectedPresent, (PhysicalDisplayId, TimePoint, Fps));
-    MOCK_METHOD(status_t, getRequestedLuts,
-                (PhysicalDisplayId,
-                 std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*),
-                (override));
+    MOCK_METHOD((HWC2::Display::LutFileDescriptorMapper&), getLutFileDescriptorMapper, (), ());
 };
 
 } // namespace mock
