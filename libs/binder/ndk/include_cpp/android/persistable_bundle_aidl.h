@@ -22,8 +22,8 @@
 #include <set>
 #include <sstream>
 
-// Include llndk-versioning.h only for vendor build as it is not available for NDK headers.
-#if defined(__ANDROID_VENDOR__)
+// Include llndk-versioning.h only for non-system build as it is not available for NDK headers.
+#if defined(__ANDROID_VENDOR_API__)
 #include <android/llndk-versioning.h>
 #elif !defined(API_LEVEL_AT_LEAST)
 #if defined(__BIONIC__)
@@ -32,7 +32,7 @@
 #else
 #define API_LEVEL_AT_LEAST(sdk_api_level, vendor_api_level) (true)
 #endif  // __BIONIC__
-#endif  // __ANDROID_VENDOR__
+#endif  // __ANDROID_VENDOR_API__
 
 namespace aidl::android::os {
 

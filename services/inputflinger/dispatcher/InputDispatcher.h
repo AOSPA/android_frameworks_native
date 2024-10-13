@@ -329,7 +329,7 @@ private:
     std::chrono::nanoseconds mMonitorDispatchingTimeout GUARDED_BY(mLock);
 
     nsecs_t processAnrsLocked() REQUIRES(mLock);
-    nsecs_t processLatencyStatisticsLocked() REQUIRES(mLock);
+    void processLatencyStatisticsLocked() REQUIRES(mLock);
     std::chrono::nanoseconds getDispatchingTimeoutLocked(
             const std::shared_ptr<Connection>& connection) REQUIRES(mLock);
 

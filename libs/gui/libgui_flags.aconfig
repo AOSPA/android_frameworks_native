@@ -109,6 +109,14 @@ flag {
 } # wb_libcameraservice
 
 flag {
+  name: "wb_unlimited_slots"
+  namespace: "core_graphics"
+  description: "Adds APIs and updates the implementation of bufferqueues to have a user-defined slot count."
+  bug: "341359814"
+  is_fixed_read_only: true
+} # wb_unlimited_slots
+
+flag {
   name: "bq_producer_throttles_only_async_mode"
   namespace: "core_graphics"
   description: "BufferQueueProducer only CPU throttle on queueBuffer() in async mode."

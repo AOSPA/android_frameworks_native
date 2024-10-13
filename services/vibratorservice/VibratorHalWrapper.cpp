@@ -107,6 +107,10 @@ Info HalWrapper::getInfo() {
         mInfoCache.mMaxEnvelopeEffectControlPointDuration =
                 getMaxEnvelopeEffectControlPointDurationInternal();
     }
+    if (mInfoCache.mFrequencyToOutputAccelerationMap.isFailed()) {
+        mInfoCache.mFrequencyToOutputAccelerationMap =
+                getFrequencyToOutputAccelerationMapInternal();
+    }
     return mInfoCache.get();
 }
 
@@ -237,6 +241,13 @@ HalResult<milliseconds> HalWrapper::getMaxEnvelopeEffectControlPointDurationInte
     ALOGV("Skipped getMaxEnvelopeEffectControlPointDurationInternal because it's not "
           "available in Vibrator HAL");
     return HalResult<milliseconds>::unsupported();
+}
+
+HalResult<std::vector<PwleV2OutputMapEntry>>
+HalWrapper::getFrequencyToOutputAccelerationMapInternal() {
+    ALOGV("Skipped getFrequencyToOutputAccelerationMapInternal because it's not "
+          "available in Vibrator HAL");
+    return HalResult<std::vector<PwleV2OutputMapEntry>>::unsupported();
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -485,6 +496,15 @@ HalResult<milliseconds> AidlHalWrapper::getMaxEnvelopeEffectControlPointDuration
     int32_t durationMs = 0;
     auto status = getHal()->getPwleV2PrimitiveDurationMaxMillis(&durationMs);
     return HalResultFactory::fromStatus<milliseconds>(std::move(status), milliseconds(durationMs));
+}
+
+HalResult<std::vector<PwleV2OutputMapEntry>>
+AidlHalWrapper::getFrequencyToOutputAccelerationMapInternal() {
+    std::vector<PwleV2OutputMapEntry> frequencyToOutputAccelerationMap;
+    auto status =
+            getHal()->getPwleV2FrequencyToOutputAccelerationMap(&frequencyToOutputAccelerationMap);
+    return HalResultFactory::fromStatus<
+            std::vector<PwleV2OutputMapEntry>>(std::move(status), frequencyToOutputAccelerationMap);
 }
 
 std::shared_ptr<Aidl::IVibrator> AidlHalWrapper::getHal() {

@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <ostream>
 
 #include <android-base/logging.h>
 #include <android-base/properties.h>
@@ -26,10 +27,7 @@
 #include <input/Resampler.h>
 #include <utils/Timers.h>
 
-using std::chrono::nanoseconds;
-
 namespace android {
-
 namespace {
 
 const bool IS_DEBUGGABLE_BUILD =
@@ -48,6 +46,8 @@ bool debugResampling() {
     }
     return __android_log_is_loggable(ANDROID_LOG_DEBUG, LOG_TAG "Resampling", ANDROID_LOG_INFO);
 }
+
+using std::chrono::nanoseconds;
 
 constexpr std::chrono::milliseconds RESAMPLE_LATENCY{5};
 
@@ -75,6 +75,31 @@ PointerCoords calculateResampledCoords(const PointerCoords& a, const PointerCoor
     resampledCoords.setAxisValue(AMOTION_EVENT_AXIS_Y, lerp(a.getY(), b.getY(), alpha));
     return resampledCoords;
 }
+
+bool equalXY(const PointerCoords& a, const PointerCoords& b) {
+    return (a.getX() == b.getX()) && (a.getY() == b.getY());
+}
+
+void setMotionEventPointerCoords(MotionEvent& motionEvent, size_t sampleIndex, size_t pointerIndex,
+                                 const PointerCoords& pointerCoords) {
+    // Ideally, we should not cast away const. In this particular case, it's safe to cast away const
+    // and dereference getHistoricalRawPointerCoords returned pointer because motionEvent is a
+    // nonconst reference to a MotionEvent object, so mutating the object should not be undefined
+    // behavior; moreover, the invoked method guarantees to return a valid pointer. Otherwise, it
+    // fatally logs. Alternatively, we could've created a new MotionEvent from scratch, but this
+    // approach is simpler and more efficient.
+    PointerCoords& motionEventCoords = const_cast<PointerCoords&>(
+            *(motionEvent.getHistoricalRawPointerCoords(pointerIndex, sampleIndex)));
+    motionEventCoords.setAxisValue(AMOTION_EVENT_AXIS_X, pointerCoords.getX());
+    motionEventCoords.setAxisValue(AMOTION_EVENT_AXIS_Y, pointerCoords.getY());
+    motionEventCoords.isResampled = pointerCoords.isResampled;
+}
+
+std::ostream& operator<<(std::ostream& os, const PointerCoords& pointerCoords) {
+    os << "(" << pointerCoords.getX() << ", " << pointerCoords.getY() << ")";
+    return os;
+}
+
 } // namespace
 
 void LegacyResampler::updateLatestSamples(const MotionEvent& motionEvent) {
@@ -85,12 +110,9 @@ void LegacyResampler::updateLatestSamples(const MotionEvent& motionEvent) {
         std::vector<Pointer> pointers;
         const size_t numPointers = motionEvent.getPointerCount();
         for (size_t pointerIndex = 0; pointerIndex < numPointers; ++pointerIndex) {
-            // getSamplePointerCoords is the vector representation of a getHistorySize by
-            // getPointerCount matrix.
-            const PointerCoords& pointerCoords =
-                    motionEvent.getSamplePointerCoords()[sampleIndex * numPointers + pointerIndex];
-            pointers.push_back(
-                    Pointer{*motionEvent.getPointerProperties(pointerIndex), pointerCoords});
+            pointers.push_back(Pointer{*(motionEvent.getPointerProperties(pointerIndex)),
+                                       *(motionEvent.getHistoricalRawPointerCoords(pointerIndex,
+                                                                                   sampleIndex))});
         }
         mLatestSamples.pushBack(
                 Sample{nanoseconds{motionEvent.getHistoricalEventTime(sampleIndex)}, pointers});
@@ -245,6 +267,47 @@ nanoseconds LegacyResampler::getResampleLatency() const {
     return RESAMPLE_LATENCY;
 }
 
+void LegacyResampler::overwriteMotionEventSamples(MotionEvent& motionEvent) const {
+    const size_t numSamples = motionEvent.getHistorySize() + 1;
+    for (size_t sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
+        overwriteStillPointers(motionEvent, sampleIndex);
+        overwriteOldPointers(motionEvent, sampleIndex);
+    }
+}
+
+void LegacyResampler::overwriteStillPointers(MotionEvent& motionEvent, size_t sampleIndex) const {
+    for (size_t pointerIndex = 0; pointerIndex < motionEvent.getPointerCount(); ++pointerIndex) {
+        const PointerCoords& pointerCoords =
+                *(motionEvent.getHistoricalRawPointerCoords(pointerIndex, sampleIndex));
+        if (equalXY(mLastRealSample->pointers[pointerIndex].coords, pointerCoords)) {
+            LOG_IF(INFO, debugResampling())
+                    << "Pointer ID: " << motionEvent.getPointerId(pointerIndex)
+                    << " did not move. Overwriting its coordinates from " << pointerCoords << " to "
+                    << mLastRealSample->pointers[pointerIndex].coords;
+            setMotionEventPointerCoords(motionEvent, sampleIndex, pointerIndex,
+                                        mPreviousPrediction->pointers[pointerIndex].coords);
+        }
+    }
+}
+
+void LegacyResampler::overwriteOldPointers(MotionEvent& motionEvent, size_t sampleIndex) const {
+    if (!mPreviousPrediction.has_value()) {
+        return;
+    }
+    if (nanoseconds{motionEvent.getHistoricalEventTime(sampleIndex)} <
+        mPreviousPrediction->eventTime) {
+        LOG_IF(INFO, debugResampling())
+                << "Motion event sample older than predicted sample. Overwriting event time from "
+                << motionEvent.getHistoricalEventTime(sampleIndex) << "ns to "
+                << mPreviousPrediction->eventTime.count() << "ns.";
+        for (size_t pointerIndex = 0; pointerIndex < motionEvent.getPointerCount();
+             ++pointerIndex) {
+            setMotionEventPointerCoords(motionEvent, sampleIndex, pointerIndex,
+                                        mPreviousPrediction->pointers[pointerIndex].coords);
+        }
+    }
+}
+
 void LegacyResampler::resampleMotionEvent(nanoseconds frameTime, MotionEvent& motionEvent,
                                           const InputMessage* futureSample) {
     const nanoseconds resampleTime = frameTime - RESAMPLE_LATENCY;
@@ -261,6 +324,16 @@ void LegacyResampler::resampleMotionEvent(nanoseconds frameTime, MotionEvent& mo
             : (attemptExtrapolation(resampleTime));
     if (sample.has_value()) {
         addSampleToMotionEvent(*sample, motionEvent);
+        if (mPreviousPrediction.has_value()) {
+            overwriteMotionEventSamples(motionEvent);
+        }
+        // mPreviousPrediction is only updated whenever extrapolation occurs because extrapolation
+        // is about predicting upcoming scenarios.
+        if (futureSample == nullptr) {
+            mPreviousPrediction = sample;
+        }
     }
+    mLastRealSample = *(mLatestSamples.end() - 1);
 }
+
 } // namespace android

@@ -243,6 +243,7 @@ public:
     using EffectStrength = aidl::android::hardware::vibrator::EffectStrength;
     using CompositePrimitive = aidl::android::hardware::vibrator::CompositePrimitive;
     using Braking = aidl::android::hardware::vibrator::Braking;
+    using PwleV2OutputMapEntry = aidl::android::hardware::vibrator::PwleV2OutputMapEntry;
 
     const HalResult<Capabilities> capabilities;
     const HalResult<std::vector<Effect>> supportedEffects;
@@ -261,6 +262,7 @@ public:
     const HalResult<int32_t> maxEnvelopeEffectSize;
     const HalResult<std::chrono::milliseconds> minEnvelopeEffectControlPointDuration;
     const HalResult<std::chrono::milliseconds> maxEnvelopeEffectControlPointDuration;
+    const HalResult<std::vector<PwleV2OutputMapEntry>> frequencyToOutputAccelerationMap;
 
     void logFailures() const {
         logFailure<Capabilities>(capabilities, "getCapabilities");
@@ -284,6 +286,8 @@ public:
                                               "getMinEnvelopeEffectControlPointDuration");
         logFailure<std::chrono::milliseconds>(maxEnvelopeEffectControlPointDuration,
                                               "getMaxEnvelopeEffectControlPointDuration");
+        logFailure<std::vector<PwleV2OutputMapEntry>>(frequencyToOutputAccelerationMap,
+                                                      "getfrequencyToOutputAccelerationMap");
     }
 
     bool shouldRetry() const {
@@ -296,7 +300,8 @@ public:
                 qFactor.shouldRetry() || maxAmplitudes.shouldRetry() ||
                 maxEnvelopeEffectSize.shouldRetry() ||
                 minEnvelopeEffectControlPointDuration.shouldRetry() ||
-                maxEnvelopeEffectControlPointDuration.shouldRetry();
+                maxEnvelopeEffectControlPointDuration.shouldRetry() ||
+                frequencyToOutputAccelerationMap.shouldRetry();
     }
 
 private:
@@ -327,7 +332,8 @@ public:
                 mMaxAmplitudes,
                 mMaxEnvelopeEffectSize,
                 mMinEnvelopeEffectControlPointDuration,
-                mMaxEnvelopeEffectControlPointDuration};
+                mMaxEnvelopeEffectControlPointDuration,
+                mFrequencyToOutputAccelerationMap};
     }
 
 private:
@@ -359,6 +365,8 @@ private:
             HalResult<std::chrono::milliseconds>::transactionFailed(MSG);
     HalResult<std::chrono::milliseconds> mMaxEnvelopeEffectControlPointDuration =
             HalResult<std::chrono::milliseconds>::transactionFailed(MSG);
+    HalResult<std::vector<Info::PwleV2OutputMapEntry>> mFrequencyToOutputAccelerationMap =
+            HalResult<std::vector<Info::PwleV2OutputMapEntry>>::transactionFailed(MSG);
 
     friend class HalWrapper;
 };
@@ -442,6 +450,8 @@ protected:
     virtual HalResult<int32_t> getMaxEnvelopeEffectSizeInternal();
     virtual HalResult<std::chrono::milliseconds> getMinEnvelopeEffectControlPointDurationInternal();
     virtual HalResult<std::chrono::milliseconds> getMaxEnvelopeEffectControlPointDurationInternal();
+    virtual HalResult<std::vector<PwleV2OutputMapEntry>>
+    getFrequencyToOutputAccelerationMapInternal();
 
 private:
     std::mutex mInfoMutex;
@@ -518,11 +528,11 @@ protected:
     HalResult<float> getQFactorInternal() override final;
     HalResult<std::vector<float>> getMaxAmplitudesInternal() override final;
     HalResult<int32_t> getMaxEnvelopeEffectSizeInternal() override final;
-
     HalResult<std::chrono::milliseconds> getMinEnvelopeEffectControlPointDurationInternal()
             override final;
-
     HalResult<std::chrono::milliseconds> getMaxEnvelopeEffectControlPointDurationInternal()
+            override final;
+    HalResult<std::vector<PwleV2OutputMapEntry>> getFrequencyToOutputAccelerationMapInternal()
             override final;
 
 private:

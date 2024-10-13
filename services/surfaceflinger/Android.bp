@@ -174,7 +174,6 @@ filegroup {
         "DisplayHardware/VirtualDisplaySurface.cpp",
         "DisplayRenderArea.cpp",
         "Effects/Daltonizer.cpp",
-        "EventLog/EventLog.cpp",
         "FrontEnd/LayerCreationArgs.cpp",
         "FrontEnd/LayerHandle.cpp",
         "FrontEnd/LayerSnapshot.cpp",

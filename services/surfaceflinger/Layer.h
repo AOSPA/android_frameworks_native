@@ -375,7 +375,7 @@ public:
 
     // See mPendingBufferTransactions
     void decrementPendingBufferCount();
-    std::atomic<int32_t>* getPendingBufferCounter() { return &mPendingBufferTransactions; }
+    std::atomic<int32_t>* getPendingBufferCounter() { return &mPendingBuffers; }
     std::string getPendingBufferCounterName() { return mBlastTransactionName; }
     void callReleaseBufferCallback(const sp<ITransactionCompletedListener>& listener,
                                    const sp<GraphicBuffer>& buffer, uint64_t framenumber,
@@ -578,7 +578,7 @@ private:
     //     - If the integer increases, a buffer arrived at the server.
     //     - If the integer decreases in latchBuffer, that buffer was latched
     //     - If the integer decreases in setBuffer, a buffer was dropped
-    std::atomic<int32_t> mPendingBufferTransactions{0};
+    std::atomic<int32_t> mPendingBuffers{0};
 
     // Contains requested position and matrix updates. This will be applied if the client does
     // not specify a destination frame.

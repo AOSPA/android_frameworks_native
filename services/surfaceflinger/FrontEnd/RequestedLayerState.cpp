@@ -56,7 +56,8 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
         ownerUid(args.ownerUid),
         ownerPid(args.ownerPid),
         parentId(args.parentId),
-        layerIdToMirror(args.layerIdToMirror) {
+        layerIdToMirror(args.layerIdToMirror),
+        pendingBuffers(args.pendingBuffers) {
     layerId = static_cast<int32_t>(args.sequence);
     changes |= RequestedLayerState::Changes::Created;
     metadata.merge(args.metadata);

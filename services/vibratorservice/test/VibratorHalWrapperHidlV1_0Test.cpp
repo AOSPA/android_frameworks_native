@@ -223,6 +223,7 @@ TEST_F(VibratorHalWrapperHidlV1_0Test, TestGetInfoDoesNotCacheFailedResult) {
     ASSERT_TRUE(info.maxEnvelopeEffectSize.isUnsupported());
     ASSERT_TRUE(info.minEnvelopeEffectControlPointDuration.isUnsupported());
     ASSERT_TRUE(info.maxEnvelopeEffectControlPointDuration.isUnsupported());
+    ASSERT_TRUE(info.frequencyToOutputAccelerationMap.isUnsupported());
 }
 
 TEST_F(VibratorHalWrapperHidlV1_0Test, TestGetInfoWithoutAmplitudeControl) {
@@ -259,6 +260,7 @@ TEST_F(VibratorHalWrapperHidlV1_0Test, TestGetInfoCachesResult) {
     ASSERT_TRUE(info.maxEnvelopeEffectSize.isUnsupported());
     ASSERT_TRUE(info.minEnvelopeEffectControlPointDuration.isUnsupported());
     ASSERT_TRUE(info.maxEnvelopeEffectControlPointDuration.isUnsupported());
+    ASSERT_TRUE(info.frequencyToOutputAccelerationMap.isUnsupported());
 }
 
 TEST_F(VibratorHalWrapperHidlV1_0Test, TestPerformEffect) {

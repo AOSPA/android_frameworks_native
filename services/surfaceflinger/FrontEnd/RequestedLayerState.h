@@ -131,6 +131,7 @@ struct RequestedLayerState : layer_state_t {
     uint64_t barrierFrameNumber = 0;
     uint32_t barrierProducerId = 0;
     std::string debugName;
+    std::atomic<int32_t>* pendingBuffers = 0;
 
     // book keeping states
     bool handleAlive = true;

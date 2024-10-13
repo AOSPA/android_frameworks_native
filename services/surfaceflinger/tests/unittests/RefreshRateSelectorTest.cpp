@@ -100,7 +100,9 @@ struct TestableRefreshRateSelector : RefreshRateSelector {
     const std::vector<Fps>& knownFrameRates() const { return mKnownFrameRates; }
 
     using RefreshRateSelector::GetRankedFrameRatesCache;
-    auto& mutableGetRankedRefreshRatesCache() { return mGetRankedFrameRatesCache; }
+    auto& mutableGetRankedRefreshRatesCache() NO_THREAD_SAFETY_ANALYSIS {
+        return mGetRankedFrameRatesCache;
+    }
 
     auto getRankedFrameRates(const std::vector<LayerRequirement>& layers,
                              GlobalSignals signals = {}, Fps pacesetterFps = {}) const {
@@ -138,7 +140,9 @@ struct TestableRefreshRateSelector : RefreshRateSelector {
         return setPolicy(policy);
     }
 
-    const auto& getPrimaryFrameRates() const { return mPrimaryFrameRates; }
+    const auto& getPrimaryFrameRates() const NO_THREAD_SAFETY_ANALYSIS {
+        return mPrimaryFrameRates;
+    }
 };
 
 class RefreshRateSelectorTest : public testing::TestWithParam<Config::FrameRateOverride> {
