@@ -18,6 +18,8 @@ public:
 
     void qtiSetBufferDequeueDuration(std::string layerName, android_native_buffer_t* buffer,
                                      nsecs_t dequeue_duration);
+    void qtiTrackTransaction(uint64_t frameNumber, int64_t timestamp);
+    void qtiSendGfxTid();
 
 private:
     bool isGame(std::string layerName);
