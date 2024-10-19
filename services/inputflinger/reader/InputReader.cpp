@@ -584,18 +584,9 @@ int32_t InputReader::getStateLocked(int32_t deviceId, uint32_t sourceMask, int32
 
 void InputReader::toggleCapsLockState(int32_t deviceId) {
     std::scoped_lock _l(mLock);
-    InputDevice* device = findInputDeviceLocked(deviceId);
-    if (!device) {
-        ALOGW("Ignoring toggleCapsLock for unknown deviceId %" PRId32 ".", deviceId);
-        return;
+    if (mKeyboardClassifier->getKeyboardType(deviceId) == KeyboardType::ALPHABETIC) {
+        updateLedMetaStateLocked(mLedMetaState ^ AMETA_CAPS_LOCK_ON);
     }
-
-    if (device->isIgnored()) {
-        ALOGW("Ignoring toggleCapsLock for ignored deviceId %" PRId32 ".", deviceId);
-        return;
-    }
-
-    device->updateMetaState(AKEYCODE_CAPS_LOCK);
 }
 
 bool InputReader::hasKeys(int32_t deviceId, uint32_t sourceMask,

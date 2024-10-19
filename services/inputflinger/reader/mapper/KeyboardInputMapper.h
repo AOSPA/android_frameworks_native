@@ -45,7 +45,6 @@ public:
     int32_t getKeyCodeForKeyLocation(int32_t locationKeyCode) const override;
 
     int32_t getMetaState() override;
-    bool updateMetaState(int32_t keyCode) override;
     std::optional<ui::LogicalDisplayId> getAssociatedDisplayId() override;
     void updateLedState(bool reset) override;
 

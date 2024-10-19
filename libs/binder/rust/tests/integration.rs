@@ -945,6 +945,43 @@ mod tests {
         assert!(deleted.load(Ordering::Relaxed));
     }
 
+    #[test]
+    fn test_accessor_delegator_new_each_time() {
+        let get_connection_info = move |_instance: &str| None;
+        let accessor = Accessor::new("foo.service", get_connection_info);
+        let delegator_binder =
+            binder::delegate_accessor("foo.service", accessor.as_binder().unwrap());
+        let delegator_binder2 =
+            binder::delegate_accessor("foo.service", accessor.as_binder().unwrap());
+
+        // The delegate_accessor creates new delegators each time
+        assert!(delegator_binder != delegator_binder2);
+    }
+
+    #[test]
+    fn test_accessor_delegate_the_delegator() {
+        let get_connection_info = move |_instance: &str| None;
+        let accessor = Accessor::new("foo.service", get_connection_info);
+        let delegator_binder =
+            binder::delegate_accessor("foo.service", accessor.as_binder().unwrap());
+        let delegator_binder2 =
+            binder::delegate_accessor("foo.service", delegator_binder.clone().unwrap());
+
+        assert!(delegator_binder.clone() == delegator_binder);
+        // The delegate_accessor creates new delegators each time. Even when they are delegators
+        // of delegators.
+        assert!(delegator_binder != delegator_binder2);
+    }
+
+    #[test]
+    fn test_accessor_delegator_wrong_name() {
+        let get_connection_info = move |_instance: &str| None;
+        let accessor = Accessor::new("foo.service", get_connection_info);
+        let delegator_binder =
+            binder::delegate_accessor("NOT.foo.service", accessor.as_binder().unwrap());
+        assert_eq!(delegator_binder, Err(StatusCode::NAME_NOT_FOUND));
+    }
+
     #[tokio::test]
     async fn reassociate_rust_binder_async() {
         let service_name = "testing_service";

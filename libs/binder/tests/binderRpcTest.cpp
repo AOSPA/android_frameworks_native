@@ -75,6 +75,8 @@ constexpr bool kEnableSharedLibs = true;
 constexpr char kTrustyIpcDevice[] = "/dev/trusty-ipc-dev0";
 #endif
 
+constexpr char kKnownAidlService[] = "activity";
+
 static std::string WaitStatusToString(int wstatus) {
     if (WIFEXITED(wstatus)) {
         return "exit status " + std::to_string(WEXITSTATUS(wstatus));
@@ -1549,22 +1551,47 @@ TEST_F(BinderARpcNdk, ARpcNullArgs_ConnectionInfo_new) {
     EXPECT_EQ(nullptr, ABinderRpc_ConnectionInfo_new(reinterpret_cast<const sockaddr*>(&addr), 0));
 }
 
-TEST_P(BinderRpcAccessor, ARpcGetService) {
+TEST_F(BinderARpcNdk, ARpcDelegateAccessorWrongInstance) {
+    AccessorProviderData* data = new AccessorProviderData();
+    ABinderRpc_Accessor* accessor = getAccessor(kARpcInstance, data);
+    ASSERT_NE(accessor, nullptr);
+    AIBinder* localAccessorBinder = ABinderRpc_Accessor_asBinder(accessor);
+    EXPECT_NE(localAccessorBinder, nullptr);
+
+    AIBinder* delegatorBinder = nullptr;
+    binder_status_t status =
+            ABinderRpc_Accessor_delegateAccessor("bar", localAccessorBinder, &delegatorBinder);
+    EXPECT_EQ(status, NAME_NOT_FOUND);
+
+    AIBinder_decStrong(localAccessorBinder);
+    ABinderRpc_Accessor_delete(accessor);
+    delete data;
+}
+
+TEST_F(BinderARpcNdk, ARpcDelegateNonAccessor) {
+    auto service = defaultServiceManager()->checkService(String16(kKnownAidlService));
+    ASSERT_NE(nullptr, service);
+    ndk::SpAIBinder binder = ndk::SpAIBinder(AIBinder_fromPlatformBinder(service));
+
+    AIBinder* delegatorBinder = nullptr;
+    binder_status_t status =
+            ABinderRpc_Accessor_delegateAccessor("bar", binder.get(), &delegatorBinder);
+
+    EXPECT_EQ(status, BAD_TYPE);
+}
+
+inline void getServiceTest(BinderRpcTestProcessSession& proc,
+                           ABinderRpc_AccessorProvider_getAccessorCallback getAccessor) {
     constexpr size_t kNumThreads = 10;
     bool isDeleted = false;
-
-    auto proc = createRpcTestSocketServerProcess({.numThreads = kNumThreads});
-    EXPECT_EQ(OK, proc.rootBinder->pingBinder());
 
     AccessorProviderData* data =
             new AccessorProviderData{proc.proc->sessions[0].addr, proc.proc->sessions[0].addrLen,
                                      &isDeleted};
-
     ABinderRpc_AccessorProvider* provider =
             ABinderRpc_registerAccessorProvider(getAccessor, kARpcSupportedServices,
                                                 kARpcNumSupportedServices, data,
                                                 accessorProviderDataOnDelete);
-
     EXPECT_NE(provider, nullptr);
     EXPECT_FALSE(isDeleted);
 
@@ -1578,6 +1605,45 @@ TEST_P(BinderRpcAccessor, ARpcGetService) {
     EXPECT_TRUE(isDeleted);
 
     waitForExtraSessionCleanup(proc);
+}
+
+TEST_P(BinderRpcAccessor, ARpcGetService) {
+    constexpr size_t kNumThreads = 10;
+    auto proc = createRpcTestSocketServerProcess({.numThreads = kNumThreads});
+    EXPECT_EQ(OK, proc.rootBinder->pingBinder());
+
+    getServiceTest(proc, getAccessor);
+}
+
+// Create accessors and wrap each of the accessors in a delegator
+ABinderRpc_Accessor* getDelegatedAccessor(const char* instance, void* cookie) {
+    ABinderRpc_Accessor* accessor = getAccessor(instance, cookie);
+    AIBinder* accessorBinder = ABinderRpc_Accessor_asBinder(accessor);
+    // Once we have a handle to the AIBinder which holds a reference to the
+    // underlying accessor IBinder, we can get rid of the ABinderRpc_Accessor
+    ABinderRpc_Accessor_delete(accessor);
+
+    AIBinder* delegatorBinder = nullptr;
+    binder_status_t status =
+            ABinderRpc_Accessor_delegateAccessor(instance, accessorBinder, &delegatorBinder);
+    // No longer need this AIBinder. The delegator has a reference to the
+    // underlying IBinder on success, and on failure we are done here.
+    AIBinder_decStrong(accessorBinder);
+    if (status != OK || delegatorBinder == nullptr) {
+        ALOGE("Unexpected behavior. Status: %s, delegator ptr: %p", statusToString(status).c_str(),
+              delegatorBinder);
+        return nullptr;
+    }
+
+    return ABinderRpc_Accessor_fromBinder(instance, delegatorBinder);
+}
+
+TEST_P(BinderRpcAccessor, ARpcGetServiceWithDelegator) {
+    constexpr size_t kNumThreads = 10;
+    auto proc = createRpcTestSocketServerProcess({.numThreads = kNumThreads});
+    EXPECT_EQ(OK, proc.rootBinder->pingBinder());
+
+    getServiceTest(proc, getDelegatedAccessor);
 }
 
 #endif // BINDER_WITH_KERNEL_IPC
@@ -1845,7 +1911,7 @@ TEST(BinderRpc, Java) {
     ASSERT_NE(nullptr, sm);
     // Any Java service with non-empty getInterfaceDescriptor() would do.
     // Let's pick activity.
-    auto binder = sm->checkService(String16("activity"));
+    auto binder = sm->checkService(String16(kKnownAidlService));
     ASSERT_NE(nullptr, binder);
     auto descriptor = binder->getInterfaceDescriptor();
     ASSERT_GE(descriptor.size(), 0u);

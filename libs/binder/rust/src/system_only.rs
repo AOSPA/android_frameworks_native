@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+use crate::binder::AsNative;
+use crate::error::{status_result, Result};
 use crate::proxy::SpIBinder;
 use crate::sys;
 
@@ -184,4 +186,28 @@ impl Drop for Accessor {
             sys::ABinderRpc_Accessor_delete(self.accessor);
         }
     }
+}
+
+/// Register a new service with the default service manager.
+///
+/// Registers the given binder object with the given identifier. If successful,
+/// this service can then be retrieved using that identifier.
+///
+/// This function will panic if the identifier contains a 0 byte (NUL).
+pub fn delegate_accessor(name: &str, mut binder: SpIBinder) -> Result<SpIBinder> {
+    let instance = CString::new(name).unwrap();
+    let mut delegator = ptr::null_mut();
+    let status =
+    // Safety: `AServiceManager_addService` expects valid `AIBinder` and C
+    // string pointers. Caller retains ownership of both pointers.
+    // `AServiceManager_addService` creates a new strong reference and copies
+    // the string, so both pointers need only be valid until the call returns.
+        unsafe { sys::ABinderRpc_Accessor_delegateAccessor(instance.as_ptr(),
+            binder.as_native_mut(), &mut delegator) };
+
+    status_result(status)?;
+
+    // Safety: `delegator` is either null or a valid, owned pointer at this
+    // point, so can be safely passed to `SpIBinder::from_raw`.
+    Ok(unsafe { SpIBinder::from_raw(delegator).expect("Expected valid binder at this point") })
 }

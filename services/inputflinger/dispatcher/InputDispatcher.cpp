@@ -2893,7 +2893,8 @@ void InputDispatcher::finishDragAndDrop(ui::LogicalDisplayId displayId, float x,
 }
 
 void InputDispatcher::addDragEventLocked(const MotionEntry& entry) {
-    if (!mDragState || mDragState->dragWindow->getInfo()->displayId != entry.displayId) {
+    if (!mDragState || mDragState->dragWindow->getInfo()->displayId != entry.displayId ||
+        mDragState->deviceId != entry.deviceId) {
         return;
     }
 
@@ -5817,7 +5818,7 @@ bool InputDispatcher::transferTouchGesture(const sp<IBinder>& fromToken, const s
             }
             // Track the pointer id for drag window and generate the drag state.
             const size_t id = pointers.begin()->id;
-            mDragState = std::make_unique<DragState>(toWindowHandle, id);
+            mDragState = std::make_unique<DragState>(toWindowHandle, deviceId, id);
         }
 
         // Synthesize cancel for old window and down for new window.

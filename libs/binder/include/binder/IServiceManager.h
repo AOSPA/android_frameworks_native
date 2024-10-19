@@ -291,6 +291,28 @@ LIBBINDER_EXPORTED sp<IBinder> createAccessor(const String16& instance,
  * \return OK if the binder is an IAccessor for `instance`
  */
 LIBBINDER_EXPORTED status_t validateAccessor(const String16& instance, const sp<IBinder>& binder);
+
+/**
+ * Have libbinder wrap this IAccessor binder in an IAccessorDelegator and return
+ * it.
+ *
+ * This is required only in very specific situations when the process that has
+ * permissions to connect the to RPC service's socket and create the FD for it
+ * is in a separate process from this process that wants to service the Accessor
+ * binder and the communication between these two processes is binder RPC. This
+ * is needed because the binder passed over the binder RPC connection can not be
+ * used as a kernel binder, and needs to be wrapped by a kernel binder that can
+ * then be registered with service manager.
+ *
+ * \param instance name of the Accessor.
+ * \param binder to wrap in a Delegator and register with service manager.
+ * \param outDelegator the wrapped kernel binder for IAccessorDelegator
+ *
+ * \return OK if the binder is an IAccessor for `instance` and the delegator was
+ * successfully created.
+ */
+LIBBINDER_EXPORTED status_t delegateAccessor(const String16& name, const sp<IBinder>& accessor,
+                                             sp<IBinder>* delegator);
 #endif // __TRUSTY__
 
 #ifndef __ANDROID__

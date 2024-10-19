@@ -205,9 +205,14 @@ TEST_F(CursorInputMapperUnitTest, HoverAndLeftButtonPress) {
     args.clear();
     args += process(EV_KEY, BTN_LEFT, 1);
     args += process(EV_SYN, SYN_REPORT, 0);
+
     ASSERT_THAT(args,
                 ElementsAre(VariantWith<NotifyMotionArgs>(WithMotionAction(ACTION_DOWN)),
-                            VariantWith<NotifyMotionArgs>(WithMotionAction(BUTTON_PRESS))));
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(BUTTON_PRESS),
+                                          WithActionButton(AMOTION_EVENT_BUTTON_PRIMARY)))));
+    ASSERT_THAT(args,
+                Each(VariantWith<NotifyMotionArgs>(WithButtonState(AMOTION_EVENT_BUTTON_PRIMARY))));
 
     // Move some more.
     args.clear();
@@ -221,7 +226,74 @@ TEST_F(CursorInputMapperUnitTest, HoverAndLeftButtonPress) {
     args += process(EV_KEY, BTN_LEFT, 0);
     args += process(EV_SYN, SYN_REPORT, 0);
     ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(BUTTON_RELEASE),
+                                          WithActionButton(AMOTION_EVENT_BUTTON_PRIMARY))),
+                            VariantWith<NotifyMotionArgs>(WithMotionAction(ACTION_UP)),
+                            VariantWith<NotifyMotionArgs>(WithMotionAction(HOVER_MOVE))));
+}
+
+/**
+ * Test that enabling mouse swap primary button will have the left click result in a
+ * `SECONDARY_BUTTON` event and a right click will result in a `PRIMARY_BUTTON` event.
+ */
+TEST_F(CursorInputMapperUnitTest, SwappedPrimaryButtonPress) {
+    mReaderConfiguration.mouseSwapPrimaryButtonEnabled = true;
+    createMapper();
+    std::list<NotifyArgs> args;
+
+    // Now click the left mouse button , expect a `SECONDARY_BUTTON` button state.
+    args.clear();
+    args += process(EV_KEY, BTN_LEFT, 1);
+    args += process(EV_SYN, SYN_REPORT, 0);
+
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(WithMotionAction(ACTION_DOWN)),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(BUTTON_PRESS),
+                                          WithActionButton(AMOTION_EVENT_BUTTON_SECONDARY)))));
+    ASSERT_THAT(args,
+                Each(VariantWith<NotifyMotionArgs>(
+                        WithButtonState(AMOTION_EVENT_BUTTON_SECONDARY))));
+
+    // Release the left button.
+    args.clear();
+    args += process(EV_KEY, BTN_LEFT, 0);
+    args += process(EV_SYN, SYN_REPORT, 0);
+
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(BUTTON_RELEASE),
+                                          WithActionButton(AMOTION_EVENT_BUTTON_SECONDARY))),
+                            VariantWith<NotifyMotionArgs>(WithMotionAction(ACTION_UP)),
+                            VariantWith<NotifyMotionArgs>(WithMotionAction(HOVER_MOVE))));
+
+    // Now click the right mouse button , expect a `PRIMARY_BUTTON` button state.
+    args.clear();
+    args += process(EV_KEY, BTN_RIGHT, 1);
+    args += process(EV_SYN, SYN_REPORT, 0);
+
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(WithMotionAction(ACTION_DOWN)),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(BUTTON_PRESS),
+                                          WithActionButton(AMOTION_EVENT_BUTTON_PRIMARY)))));
+    ASSERT_THAT(args,
+                Each(VariantWith<NotifyMotionArgs>(WithButtonState(AMOTION_EVENT_BUTTON_PRIMARY))));
+
+    // Release the right button.
+    args.clear();
+    args += process(EV_KEY, BTN_RIGHT, 0);
+    args += process(EV_SYN, SYN_REPORT, 0);
+    ASSERT_THAT(args,
                 ElementsAre(VariantWith<NotifyMotionArgs>(WithMotionAction(BUTTON_RELEASE)),
+                            VariantWith<NotifyMotionArgs>(WithMotionAction(ACTION_UP)),
+                            VariantWith<NotifyMotionArgs>(WithMotionAction(HOVER_MOVE))));
+
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(BUTTON_RELEASE),
+                                          WithActionButton(AMOTION_EVENT_BUTTON_PRIMARY))),
                             VariantWith<NotifyMotionArgs>(WithMotionAction(ACTION_UP)),
                             VariantWith<NotifyMotionArgs>(WithMotionAction(HOVER_MOVE))));
 }
@@ -880,6 +952,51 @@ TEST_F(CursorInputMapperUnitTest, HighResScrollIgnoresRegularScroll) {
                                     AllOf(WithSource(AINPUT_SOURCE_MOUSE),
                                           WithMotionAction(AMOTION_EVENT_ACTION_SCROLL),
                                           WithScroll(0.5f, 0.5f)))));
+}
+
+TEST_F(CursorInputMapperUnitTest, ProcessReversedVerticalScroll) {
+    mReaderConfiguration.mouseReverseVerticalScrollingEnabled = true;
+    createMapper();
+
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_REL, REL_WHEEL, 1);
+    args += process(ARBITRARY_TIME, EV_REL, REL_HWHEEL, 1);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    // Reversed vertical scrolling only affects the y-axis, expect it to be -1.0f to indicate the
+    // inverted scroll direction.
+    EXPECT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_SCROLL),
+                                          WithScroll(1.0f, -1.0f)))));
+}
+
+TEST_F(CursorInputMapperUnitTest, ProcessHighResReversedVerticalScroll) {
+    mReaderConfiguration.mouseReverseVerticalScrollingEnabled = true;
+    vd_flags::high_resolution_scroll(true);
+    EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_WHEEL_HI_RES))
+            .WillRepeatedly(Return(true));
+    EXPECT_CALL(mMockEventHub, hasRelativeAxis(EVENTHUB_ID, REL_HWHEEL_HI_RES))
+            .WillRepeatedly(Return(true));
+    createMapper();
+
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_REL, REL_WHEEL_HI_RES, 60);
+    args += process(ARBITRARY_TIME, EV_REL, REL_HWHEEL_HI_RES, 60);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    EXPECT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithSource(AINPUT_SOURCE_MOUSE),
+                                          WithMotionAction(AMOTION_EVENT_ACTION_SCROLL),
+                                          WithScroll(0.5f, -0.5f)))));
 }
 
 /**

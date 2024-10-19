@@ -365,6 +365,17 @@ int32_t KeyCharacterMap::applyKeyRemapping(int32_t fromKeyCode) const {
     return toKeyCode;
 }
 
+std::vector<int32_t> KeyCharacterMap::findKeyCodesMappedToKeyCode(int32_t toKeyCode) const {
+    std::vector<int32_t> fromKeyCodes;
+
+    for (const auto& [from, to] : mKeyRemapping) {
+        if (toKeyCode == to) {
+            fromKeyCodes.push_back(from);
+        }
+    }
+    return fromKeyCodes;
+}
+
 std::pair<int32_t, int32_t> KeyCharacterMap::applyKeyBehavior(int32_t fromKeyCode,
                                                               int32_t fromMetaState) const {
     int32_t toKeyCode = fromKeyCode;

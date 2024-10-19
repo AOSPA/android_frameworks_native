@@ -193,13 +193,29 @@ InputConsumerNoResampling::InputConsumerNoResampling(
 
 InputConsumerNoResampling::~InputConsumerNoResampling() {
     ensureCalledOnLooperThread(__func__);
-    consumeBatchedInputEvents(/*requestedFrameTime=*/std::nullopt);
     while (!mOutboundQueue.empty()) {
         processOutboundEvents();
         // This is our last chance to ack the events. If we don't ack them here, we will get an ANR,
         // so keep trying to send the events as long as they are present in the queue.
     }
+
     setFdEvents(0);
+    // If there are any remaining unread batches, send an ack for them and don't deliver
+    // them to callbacks.
+    for (auto& [_, batches] : mBatches) {
+        while (!batches.empty()) {
+            finishInputEvent(batches.front().header.seq, /*handled=*/false);
+            batches.pop();
+        }
+    }
+    // However, it is still up to the app to finish any events that have already been delivered
+    // to the callbacks. If we wanted to change that behaviour and auto-finish all unfinished events
+    // that were already sent to callbacks, we could potentially loop through "mConsumeTimes"
+    // instead. We can't use "mBatchedSequenceNumbers" for this purpose, because it only contains
+    // batchable (i.e., ACTION_MOVE) events that were sent to the callbacks.
+    const size_t unfinishedEvents = mConsumeTimes.size();
+    LOG_IF(INFO, unfinishedEvents != 0)
+            << getName() << " has " << unfinishedEvents << " unfinished event(s)";
 }
 
 int InputConsumerNoResampling::handleReceiveCallback(int events) {

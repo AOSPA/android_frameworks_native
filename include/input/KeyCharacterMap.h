@@ -137,6 +137,9 @@ public:
     /* Returns keycode after applying Android key code remapping defined in mKeyRemapping */
     int32_t applyKeyRemapping(int32_t fromKeyCode) const;
 
+    /** Returns list of keycodes that remap to provided keycode (@see setKeyRemapping()) */
+    std::vector<int32_t> findKeyCodesMappedToKeyCode(int32_t toKeyCode) const;
+
     /* Returns the <keyCode, metaState> pair after applying key behavior defined in the kcm file,
      * that tries to find a replacement key code based on current meta state */
     std::pair<int32_t /*keyCode*/, int32_t /*metaState*/> applyKeyBehavior(int32_t keyCode,

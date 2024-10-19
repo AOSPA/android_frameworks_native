@@ -302,6 +302,28 @@ ABinderRpc_Accessor* ABinderRpc_Accessor_fromBinder(const char* instance, AIBind
     }
 }
 
+binder_status_t ABinderRpc_Accessor_delegateAccessor(const char* instance, AIBinder* accessor,
+                                                     AIBinder** outDelegator) {
+    LOG_ALWAYS_FATAL_IF(outDelegator == nullptr, "The outDelegator argument is null");
+    if (instance == nullptr || accessor == nullptr) {
+        ALOGW("instance or accessor arguments to ABinderRpc_Accessor_delegateBinder are null");
+        *outDelegator = nullptr;
+        return STATUS_UNEXPECTED_NULL;
+    }
+    sp<IBinder> accessorBinder = accessor->getBinder();
+
+    sp<IBinder> delegator;
+    status_t status = android::delegateAccessor(String16(instance), accessorBinder, &delegator);
+    if (status != OK) {
+        return PruneStatusT(status);
+    }
+    sp<AIBinder> binder = ABpBinder::lookupOrCreateFromBinder(delegator);
+    // This AIBinder needs a strong ref to pass ownership to the caller
+    binder->incStrong(nullptr);
+    *outDelegator = binder.get();
+    return OK;
+}
+
 ABinderRpc_ConnectionInfo* ABinderRpc_ConnectionInfo_new(const sockaddr* addr, socklen_t len) {
     if (addr == nullptr || len < 0 || static_cast<size_t>(len) < sizeof(sa_family_t)) {
         ALOGE("Invalid arguments in ABinderRpc_Connection_new");

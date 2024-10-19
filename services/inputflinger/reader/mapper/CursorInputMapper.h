@@ -121,6 +121,7 @@ private:
     nsecs_t mLastEventTime;
 
     const bool mEnableNewMousePointerBallistics;
+    bool mMouseReverseVerticalScrolling = false;
 
     explicit CursorInputMapper(InputDeviceContext& deviceContext,
                                const InputReaderConfiguration& readerConfig);
@@ -129,6 +130,7 @@ private:
     void configureOnPointerCapture(const InputReaderConfiguration& config);
     void configureOnChangePointerSpeed(const InputReaderConfiguration& config);
     void configureOnChangeDisplayInfo(const InputReaderConfiguration& config);
+    void configureOnChangeMouseSettings(const InputReaderConfiguration& config);
 
     [[nodiscard]] std::list<NotifyArgs> sync(nsecs_t when, nsecs_t readTime);
 

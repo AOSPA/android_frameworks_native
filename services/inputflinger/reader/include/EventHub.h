@@ -680,6 +680,7 @@ private:
         void configureFd();
         void populateAbsoluteAxisStates();
         bool hasKeycodeLocked(int keycode) const;
+        bool hasKeycodeInternalLocked(int keycode) const;
         void loadConfigurationLocked();
         bool loadVirtualKeyMapLocked();
         status_t loadKeyMapLocked();
