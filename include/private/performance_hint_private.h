@@ -83,6 +83,7 @@ enum class SessionTag : int32_t {
   HWUI = 2,
   GAME = 3,
   APP = 4,
+  SYSUI = 5,
 };
 
 /**

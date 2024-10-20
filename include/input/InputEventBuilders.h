@@ -250,6 +250,9 @@ class MotionEventBuilder {
 public:
     MotionEventBuilder(int32_t action, int32_t source) {
         mAction = action;
+        if (mAction == AMOTION_EVENT_ACTION_CANCEL) {
+            mFlags |= AMOTION_EVENT_FLAG_CANCELED;
+        }
         mSource = source;
         mEventTime = systemTime(SYSTEM_TIME_MONOTONIC);
         mDownTime = mEventTime;

@@ -5105,9 +5105,7 @@ TEST_F(InputDispatcherTest, HoverExitIsSentToRemovedWindow) {
 /**
  * Test that invalid HOVER events sent by accessibility do not cause a fatal crash.
  */
-TEST_F_WITH_FLAGS(InputDispatcherTest, InvalidA11yHoverStreamDoesNotCrash,
-                  REQUIRES_FLAGS_DISABLED(ACONFIG_FLAG(com::android::input::flags,
-                                                       a11y_crash_on_inconsistent_event_stream))) {
+TEST_F(InputDispatcherTest, InvalidA11yHoverStreamDoesNotCrash) {
     std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
     sp<FakeWindowHandle> window = sp<FakeWindowHandle>::make(application, mDispatcher, "Window",
                                                              ui::LogicalDisplayId::DEFAULT);
@@ -5123,10 +5121,11 @@ TEST_F_WITH_FLAGS(InputDispatcherTest, InvalidA11yHoverStreamDoesNotCrash,
                     .addFlag(AMOTION_EVENT_FLAG_IS_ACCESSIBILITY_EVENT);
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
               injectMotionEvent(*mDispatcher, hoverEnterBuilder.build()));
-    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+    window->consumeMotionEvent(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_ENTER));
+    // Another HOVER_ENTER would be inconsistent, and should therefore fail to
+    // get injected.
+    ASSERT_EQ(InputEventInjectionResult::FAILED,
               injectMotionEvent(*mDispatcher, hoverEnterBuilder.build()));
-    window->consumeMotionEvent(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_ENTER));
-    window->consumeMotionEvent(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_ENTER));
 }
 
 /**
@@ -12888,6 +12887,22 @@ TEST_F(InputDispatcherDragTests, DragAndDropFinishedWhenCancelCurrentTouch) {
 
     // Remove drag window
     mDispatcher->onWindowInfosChanged({{*mWindow->getInfo(), *mSecondWindow->getInfo()}, {}, 0, 0});
+
+    // Complete the first event stream, even though the injection will fail because there aren't any
+    // valid targets to dispatch this event to. This is still needed to make the input stream
+    // consistent
+    ASSERT_EQ(InputEventInjectionResult::FAILED,
+              injectMotionEvent(*mDispatcher,
+                                MotionEventBuilder(ACTION_CANCEL, AINPUT_SOURCE_TOUCHSCREEN)
+                                        .displayId(ui::LogicalDisplayId::DEFAULT)
+                                        .pointer(PointerBuilder(/*id=*/0, ToolType::FINGER)
+                                                         .x(150)
+                                                         .y(50))
+                                        .pointer(PointerBuilder(/*id=*/1, ToolType::FINGER)
+                                                         .x(50)
+                                                         .y(50))
+                                        .build(),
+                                INJECT_EVENT_TIMEOUT, InputEventInjectionSync::WAIT_FOR_RESULT));
 
     // Inject a simple gesture, ensure dispatcher not crashed
     ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,

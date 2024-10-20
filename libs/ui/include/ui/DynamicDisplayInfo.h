@@ -53,6 +53,8 @@ struct DynamicDisplayInfo {
     ui::DisplayModeId preferredBootDisplayMode;
 
     std::optional<ui::DisplayMode> getActiveDisplayMode() const;
+
+    bool hasArrSupport;
 };
 
 } // namespace android::ui

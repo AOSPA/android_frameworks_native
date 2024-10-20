@@ -59,6 +59,7 @@ enum {
     PLAYER_MUTE_PLAYBACK_RESTRICTED = (1 << 3),
     PLAYER_MUTE_CLIENT_VOLUME = (1 << 4),
     PLAYER_MUTE_VOLUME_SHAPER = (1 << 5),
+    PLAYER_MUTE_PORT_VOLUME = (1 << 6),
 };
 
 struct mute_state_t {
@@ -72,8 +73,10 @@ struct mute_state_t {
     bool muteFromPlaybackRestricted = false;
     /** Flag used when audio track was muted by client volume. */
     bool muteFromClientVolume = false;
-     /** Flag used when volume is muted by volume shaper. */
+    /** Flag used when volume is muted by volume shaper. */
     bool muteFromVolumeShaper = false;
+    /** Flag used when volume is muted by port volume. */
+    bool muteFromPortVolume = false;
 
     explicit operator int() const
     {
@@ -83,6 +86,7 @@ struct mute_state_t {
         result |= muteFromPlaybackRestricted * PLAYER_MUTE_PLAYBACK_RESTRICTED;
         result |= muteFromClientVolume * PLAYER_MUTE_CLIENT_VOLUME;
         result |= muteFromVolumeShaper * PLAYER_MUTE_VOLUME_SHAPER;
+        result |= muteFromPortVolume * PLAYER_MUTE_PORT_VOLUME;
         return result;
     }
 

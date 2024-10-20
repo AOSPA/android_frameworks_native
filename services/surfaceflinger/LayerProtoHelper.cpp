@@ -187,10 +187,6 @@ void LayerProtoHelper::writeToProto(
 void LayerProtoHelper::writeToProto(
         const WindowInfo& inputInfo,
         std::function<perfetto::protos::InputWindowInfoProto*()> getInputWindowInfoProto) {
-    if (inputInfo.token == nullptr) {
-        return;
-    }
-
     perfetto::protos::InputWindowInfoProto* proto = getInputWindowInfoProto();
     proto->set_layout_params_flags(inputInfo.layoutParamsFlags.get());
     proto->set_input_config(inputInfo.inputConfig.get());

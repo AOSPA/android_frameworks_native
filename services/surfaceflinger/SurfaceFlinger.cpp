@@ -1248,6 +1248,7 @@ void SurfaceFlinger::getDynamicDisplayInfoInternal(ui::DynamicDisplayInfo*& info
     const auto mode = display->refreshRateSelector().getActiveMode();
     info->activeDisplayModeId = ftl::to_underlying(mode.modePtr->getId());
     info->renderFrameRate = mode.fps.getValue();
+    info->hasArrSupport = mode.modePtr->getVrrConfig() && FlagManager::getInstance().vrr_config();
     info->activeColorMode = display->getCompositionDisplay()->getState().colorMode;
     info->hdrCapabilities = filterOut4k30(display->getHdrCapabilities());
 
@@ -9090,6 +9091,7 @@ void SurfaceComposerAIDL::getDynamicDisplayInfoInternal(ui::DynamicDisplayInfo& 
 
     outInfo->activeDisplayModeId = info.activeDisplayModeId;
     outInfo->renderFrameRate = info.renderFrameRate;
+    outInfo->hasArrSupport = info.hasArrSupport;
 
     outInfo->supportedColorModes.clear();
     outInfo->supportedColorModes.reserve(info.supportedColorModes.size());

@@ -299,6 +299,10 @@ private:
 
     // Event injection and synchronization.
     std::condition_variable mInjectionResultAvailable;
+    bool shouldRejectInjectedMotionLocked(const MotionEvent& motion, DeviceId deviceId,
+                                          ui::LogicalDisplayId displayId,
+                                          std::optional<gui::Uid> targetUid, int32_t flags)
+            REQUIRES(mLock);
     void setInjectionResult(const EventEntry& entry,
                             android::os::InputEventInjectionResult injectionResult);
     void transformMotionEntryForInjectionLocked(MotionEntry&,

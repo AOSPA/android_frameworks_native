@@ -4548,7 +4548,7 @@ void InputDispatcher::notifyKey(const NotifyKeyArgs& args) {
             if (args.id != android::os::IInputConstants::INVALID_INPUT_EVENT_ID &&
                 IdGenerator::getSource(args.id) == IdGenerator::Source::INPUT_READER &&
                 !mInputFilterEnabled) {
-                mLatencyTracker.trackNotifyKey(args);
+                mLatencyTracker.trackListener(args);
             }
         }
 
@@ -4684,7 +4684,7 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
         if (args.id != android::os::IInputConstants::INVALID_INPUT_EVENT_ID &&
             IdGenerator::getSource(args.id) == IdGenerator::Source::INPUT_READER &&
             !mInputFilterEnabled) {
-            mLatencyTracker.trackNotifyMotion(args);
+            mLatencyTracker.trackListener(args);
         }
 
         needWake = enqueueInboundEventLocked(std::move(newEntry));
@@ -4789,6 +4789,39 @@ void InputDispatcher::notifyPointerCaptureChanged(const NotifyPointerCaptureChan
     if (needWake) {
         mLooper->wake();
     }
+}
+
+bool InputDispatcher::shouldRejectInjectedMotionLocked(const MotionEvent& motionEvent,
+                                                       DeviceId deviceId,
+                                                       ui::LogicalDisplayId displayId,
+                                                       std::optional<gui::Uid> targetUid,
+                                                       int32_t flags) {
+    // Don't verify targeted injection, since it will only affect the caller's
+    // window, and the windows are typically destroyed at the end of the test.
+    if (targetUid.has_value()) {
+        return false;
+    }
+
+    // Verify all other injected streams, whether the injection is coming from apps or from
+    // input filter. Print an error if the stream becomes inconsistent with this event.
+    // An inconsistent injected event sent could cause a crash in the later stages of
+    // dispatching pipeline.
+    auto [it, _] = mInputFilterVerifiersByDisplay.try_emplace(displayId,
+                                                              std::string("Injection on ") +
+                                                                      displayId.toString());
+    InputVerifier& verifier = it->second;
+
+    Result<void> result =
+            verifier.processMovement(deviceId, motionEvent.getSource(), motionEvent.getAction(),
+                                     motionEvent.getPointerCount(),
+                                     motionEvent.getPointerProperties(),
+                                     motionEvent.getSamplePointerCoords(), flags);
+    if (!result.ok()) {
+        logDispatchStateLocked();
+        LOG(ERROR) << "Inconsistent event: " << motionEvent << ", reason: " << result.error();
+        return true;
+    }
+    return false;
 }
 
 InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* event,
@@ -4901,32 +4934,10 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
 
             mLock.lock();
 
-            {
-                // Verify all injected streams, whether the injection is coming from apps or from
-                // input filter. Print an error if the stream becomes inconsistent with this event.
-                // An inconsistent injected event sent could cause a crash in the later stages of
-                // dispatching pipeline.
-                auto [it, _] =
-                        mInputFilterVerifiersByDisplay.try_emplace(displayId,
-                                                                   std::string("Injection on ") +
-                                                                           displayId.toString());
-                InputVerifier& verifier = it->second;
-
-                Result<void> result =
-                        verifier.processMovement(resolvedDeviceId, motionEvent.getSource(),
-                                                 motionEvent.getAction(),
-                                                 motionEvent.getPointerCount(),
-                                                 motionEvent.getPointerProperties(),
-                                                 motionEvent.getSamplePointerCoords(), flags);
-                if (!result.ok()) {
-                    logDispatchStateLocked();
-                    LOG(ERROR) << "Inconsistent event: " << motionEvent
-                               << ", reason: " << result.error();
-                    if (policyFlags & POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY) {
-                        mLock.unlock();
-                        return InputEventInjectionResult::FAILED;
-                    }
-                }
+            if (shouldRejectInjectedMotionLocked(motionEvent, resolvedDeviceId, displayId,
+                                                 targetUid, flags)) {
+                mLock.unlock();
+                return InputEventInjectionResult::FAILED;
             }
 
             const nsecs_t* sampleEventTimes = motionEvent.getSampleEventTimes();
