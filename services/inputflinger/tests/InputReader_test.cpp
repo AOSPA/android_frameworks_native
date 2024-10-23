@@ -3671,40 +3671,6 @@ TEST_F(KeyboardInputMapperTest, Process_LockedKeysShouldToggleMetaStateAndLeds) 
     ASSERT_EQ(AMETA_NONE, mapper.getMetaState());
 }
 
-TEST_F(KeyboardInputMapperTest, NoMetaStateWhenMetaKeysNotPresent) {
-    mFakeEventHub->addKey(EVENTHUB_ID, BTN_A, 0, AKEYCODE_BUTTON_A, 0);
-    mFakeEventHub->addKey(EVENTHUB_ID, BTN_B, 0, AKEYCODE_BUTTON_B, 0);
-    mFakeEventHub->addKey(EVENTHUB_ID, BTN_X, 0, AKEYCODE_BUTTON_X, 0);
-    mFakeEventHub->addKey(EVENTHUB_ID, BTN_Y, 0, AKEYCODE_BUTTON_Y, 0);
-
-    KeyboardInputMapper& mapper =
-            constructAndAddMapper<KeyboardInputMapper>(AINPUT_SOURCE_KEYBOARD);
-
-    // Meta state should be AMETA_NONE after reset
-    std::list<NotifyArgs> unused = mapper.reset(ARBITRARY_TIME);
-    ASSERT_EQ(AMETA_NONE, mapper.getMetaState());
-    // Meta state should be AMETA_NONE with update, as device doesn't have the keys.
-    mapper.updateMetaState(AKEYCODE_NUM_LOCK);
-    ASSERT_EQ(AMETA_NONE, mapper.getMetaState());
-
-    NotifyKeyArgs args;
-    // Press button "A"
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, BTN_A, 1);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
-    ASSERT_EQ(AMETA_NONE, args.metaState);
-    ASSERT_EQ(AMETA_NONE, mapper.getMetaState());
-    ASSERT_EQ(AKEY_EVENT_ACTION_DOWN, args.action);
-    ASSERT_EQ(AKEYCODE_BUTTON_A, args.keyCode);
-
-    // Button up.
-    process(mapper, ARBITRARY_TIME + 2, READ_TIME, EV_KEY, BTN_A, 0);
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
-    ASSERT_EQ(AMETA_NONE, args.metaState);
-    ASSERT_EQ(AMETA_NONE, mapper.getMetaState());
-    ASSERT_EQ(AKEY_EVENT_ACTION_UP, args.action);
-    ASSERT_EQ(AKEYCODE_BUTTON_A, args.keyCode);
-}
-
 TEST_F(KeyboardInputMapperTest, Configure_AssignsDisplayPort) {
     // keyboard 1.
     mFakeEventHub->addKey(EVENTHUB_ID, KEY_UP, 0, AKEYCODE_DPAD_UP, 0);

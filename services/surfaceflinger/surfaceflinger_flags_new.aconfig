@@ -11,6 +11,14 @@ flag {
 } # adpf_gpu_sf
 
 flag {
+  name: "arr_setframerate_api"
+  namespace: "core_graphics"
+  description: "New setFrameRate API for Android 16"
+  bug: "356987016"
+  is_fixed_read_only: true
+} # arr_setframerate_api
+
+flag {
   name: "ce_fence_promise"
   namespace: "window_surfaces"
   description: "Moves logic for buffer release fences into LayerFE"

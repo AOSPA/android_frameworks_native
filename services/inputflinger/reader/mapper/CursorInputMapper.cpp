@@ -164,6 +164,10 @@ std::list<NotifyArgs> CursorInputMapper::reconfigure(nsecs_t when,
         changes.test(InputReaderConfiguration::Change::DISPLAY_INFO) || configurePointerCapture) {
         configureOnChangePointerSpeed(readerConfig);
     }
+
+    if (!changes.any() || changes.test(InputReaderConfiguration::Change::MOUSE_SETTINGS)) {
+        configureOnChangeMouseSettings(readerConfig);
+    }
     return out;
 }
 
@@ -275,7 +279,12 @@ std::list<NotifyArgs> CursorInputMapper::sync(nsecs_t when, nsecs_t readTime) {
     PointerCoords pointerCoords;
     pointerCoords.clear();
 
-    float vscroll = mCursorScrollAccumulator.getRelativeVWheel();
+    // A negative value represents inverted scrolling direction.
+    // Applies only if the source is a mouse.
+    const bool isMouse =
+            (mSource == AINPUT_SOURCE_MOUSE) || (mSource == AINPUT_SOURCE_MOUSE_RELATIVE);
+    const int scrollingDirection = (mMouseReverseVerticalScrolling && isMouse) ? -1 : 1;
+    float vscroll = scrollingDirection * mCursorScrollAccumulator.getRelativeVWheel();
     float hscroll = mCursorScrollAccumulator.getRelativeHWheel();
     bool scrolled = vscroll != 0 || hscroll != 0;
 
@@ -535,6 +544,11 @@ void CursorInputMapper::configureOnChangeDisplayInfo(const InputReaderConfigurat
             : FloatRect{0, 0, 0, 0};
 
     bumpGeneration();
+}
+
+void CursorInputMapper::configureOnChangeMouseSettings(const InputReaderConfiguration& config) {
+    mMouseReverseVerticalScrolling = config.mouseReverseVerticalScrollingEnabled;
+    mCursorButtonAccumulator.setSwapLeftRightButtons(config.mouseSwapPrimaryButtonEnabled);
 }
 
 } // namespace android

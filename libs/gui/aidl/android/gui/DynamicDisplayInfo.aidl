@@ -43,4 +43,7 @@ parcelable DynamicDisplayInfo {
 
     // The boot display mode preferred by the implementation.
     int preferredBootDisplayMode;
+
+    // Represents whether display supports ARR.
+    boolean hasArrSupport;
 }

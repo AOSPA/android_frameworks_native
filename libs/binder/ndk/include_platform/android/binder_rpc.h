@@ -265,6 +265,35 @@ ABinderRpc_Accessor* _Nullable ABinderRpc_Accessor_fromBinder(const char* _Nonnu
         __INTRODUCED_IN(36);
 
 /**
+ * Wrap an ABinderRpc_Accessor proxy binder with a delegator binder.
+ *
+ * The IAccessorDelegator binder delegates all calls to the proxy binder.
+ *
+ * This is required only in very specific situations when the process that has
+ * permissions to connect the to RPC service's socket and create the FD for it
+ * is in a separate process from this process that wants to serve the Accessor
+ * binder and the communication between these two processes is binder RPC. This
+ * is needed because the binder passed over the binder RPC connection can not be
+ * used as a kernel binder, and needs to be wrapped by a kernel binder that can
+ * then be registered with service manager.
+ *
+ * \param instance name of the service associated with the Accessor
+ * \param binder the AIBinder* from the ABinderRpc_Accessor from the
+ *        ABinderRpc_Accessor_asBinder. The other process across the binder RPC
+ *        connection will have called this and passed the AIBinder* across a
+ *        binder interface to the process calling this function.
+ * \param outDelegator the AIBinder* for the kernel binder that wraps the
+ *        'binder' argument and delegates all calls to it. The caller now owns
+ *        this object with one strong ref count and is responsible for removing
+ *        that ref count with with AIBinder_decStrong when the caller wishes to
+ *        drop the reference.
+ */
+binder_status_t ABinderRpc_Accessor_delegateAccessor(const char* _Nonnull instance,
+                                                     AIBinder* _Nonnull binder,
+                                                     AIBinder* _Nullable* _Nonnull outDelegator)
+        __INTRODUCED_IN(36);
+
+/**
  * Create a new ABinderRpc_ConnectionInfo with sockaddr. This can be supported socket
  * types like sockaddr_vm (vsock) and sockaddr_un (Unix Domain Sockets).
  *

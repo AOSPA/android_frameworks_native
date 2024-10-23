@@ -122,8 +122,6 @@ public:
     std::optional<int32_t> getLightPlayerId(int32_t lightId);
 
     int32_t getMetaState();
-    void updateMetaState(int32_t keyCode);
-
     void setKeyboardType(KeyboardType keyboardType);
 
     void bumpGeneration();

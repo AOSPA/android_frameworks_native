@@ -123,7 +123,7 @@ pub use service::{
 #[cfg(not(trusty))]
 pub use state::{ProcessState, ThreadState};
 #[cfg(not(any(android_vendor, android_vndk)))]
-pub use system_only::{Accessor, ConnectionInfo};
+pub use system_only::{delegate_accessor, Accessor, ConnectionInfo};
 
 /// Binder result containing a [`Status`] on error.
 pub type Result<T> = std::result::Result<T, Status>;

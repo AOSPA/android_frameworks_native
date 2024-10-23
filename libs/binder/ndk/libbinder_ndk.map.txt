@@ -257,6 +257,7 @@ LIBBINDER_NDK36 { # introduced=36
     ABinderRpc_registerAccessorProvider; # systemapi
     ABinderRpc_unregisterAccessorProvider; # systemapi
     ABinderRpc_Accessor_new; # systemapi
+    ABinderRpc_Accessor_delegateAccessor; #systemapi
     ABinderRpc_Accessor_delete; # systemapi
     ABinderRpc_Accessor_asBinder; # systemapi
     ABinderRpc_Accessor_fromBinder; # systemapi

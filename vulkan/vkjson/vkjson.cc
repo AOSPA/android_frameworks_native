@@ -1169,7 +1169,7 @@ inline Json::Value ArrayToJsonValue(uint32_t count, const T* values) {
   return array;
 }
 
-template <typename T, unsigned int N>
+template <typename T, size_t N>
 inline Json::Value ToJsonValue(const T (&value)[N]) {
   return ArrayToJsonValue(N, value);
 }
@@ -1293,7 +1293,7 @@ inline bool AsArray(Json::Value* json_value, uint32_t count, T* values) {
   return true;
 }
 
-template <typename T, unsigned int N>
+template <typename T, size_t N>
 inline bool AsValue(Json::Value* json_value, T (*value)[N]) {
   return AsArray(json_value, N, *value);
 }

@@ -691,16 +691,6 @@ int32_t InputDevice::getMetaState() {
     return result;
 }
 
-void InputDevice::updateMetaState(int32_t keyCode) {
-    first_in_mappers<bool>([keyCode](InputMapper& mapper) {
-        if (sourcesMatchMask(mapper.getSources(), AINPUT_SOURCE_KEYBOARD) &&
-            mapper.updateMetaState(keyCode)) {
-            return std::make_optional(true);
-        }
-        return std::optional<bool>();
-    });
-}
-
 void InputDevice::bumpGeneration() {
     mGeneration = mContext->bumpGeneration();
 }

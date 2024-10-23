@@ -246,8 +246,6 @@ public:
     MOCK_METHOD(std::optional<int32_t>, getLightPlayerId, (int32_t lightId), ());
 
     MOCK_METHOD(int32_t, getMetaState, (), ());
-    MOCK_METHOD(void, updateMetaState, (int32_t keyCode), ());
-
     MOCK_METHOD(void, setKeyboardType, (KeyboardType keyboardType), ());
 
     MOCK_METHOD(void, bumpGeneration, (), ());

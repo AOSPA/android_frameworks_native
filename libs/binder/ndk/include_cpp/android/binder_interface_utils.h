@@ -299,7 +299,8 @@ AIBinder_Class* ICInterface::defineClass(const char* interfaceDescriptor,
 
 #if defined(__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__) || __ANDROID_API__ >= 36
     if API_LEVEL_AT_LEAST (36, 202504) {
-        if (codeToFunction != nullptr) {
+        if (codeToFunction != nullptr &&
+            (&AIBinder_Class_setTransactionCodeToFunctionNameMap != nullptr)) {
             AIBinder_Class_setTransactionCodeToFunctionNameMap(clazz, codeToFunction,
                                                                functionCount);
         }

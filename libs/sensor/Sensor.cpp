@@ -21,6 +21,7 @@
 #include <binder/AppOpsManager.h>
 #include <binder/IPermissionController.h>
 #include <binder/IServiceManager.h>
+#include <android_permission_flags.h>
 
 /*
  * The permission to use for activity recognition sensors (like step counter).
@@ -121,7 +122,9 @@ Sensor::Sensor(struct sensor_t const& hwSensor, const uuid_t& uuid, int halVersi
         break;
     case SENSOR_TYPE_HEART_RATE: {
         mStringType = SENSOR_STRING_TYPE_HEART_RATE;
-        mRequiredPermission = SENSOR_PERMISSION_BODY_SENSORS;
+        mRequiredPermission =
+          android::permission::flags::replace_body_sensor_permission_enabled() ?
+            SENSOR_PERMISSION_READ_HEART_RATE : SENSOR_PERMISSION_BODY_SENSORS;
         AppOpsManager appOps;
         mRequiredAppOp = appOps.permissionToOpCode(String16(mRequiredPermission));
         mFlags |= SENSOR_FLAG_ON_CHANGE_MODE;

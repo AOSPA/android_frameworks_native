@@ -648,8 +648,8 @@ public:
     LIBBINDER_EXPORTED void print(std::ostream& to, uint32_t flags = 0) const;
 
 private:
-    // Explicitly close all file descriptors in the parcel.
-    void closeFileDescriptors();
+    // Close all file descriptors in the parcel at object positions >= newObjectsSize.
+    void closeFileDescriptors(size_t newObjectsSize);
 
     // `objects` and `objectsSize` always 0 for RPC Parcels.
     typedef void (*release_func)(const uint8_t* data, size_t dataSize, const binder_size_t* objects,
@@ -1239,7 +1239,7 @@ private:
             if (__builtin_mul_overflow(size, sizeof(T), &dataLen)) {
                 return -EOVERFLOW;
             }
-            auto data = reinterpret_cast<const T*>(readInplace(dataLen));
+            auto data = readInplace(dataLen);
             if (data == nullptr) return BAD_VALUE;
             // std::vector::insert and similar methods will require type-dependent
             // byte alignment when inserting from a const iterator such as `data`,

@@ -379,7 +379,7 @@ std::vector<HWComposer::HWCDisplayMode> HWComposer::getModesFromLegacyDisplayCon
         const int32_t dpiX = getAttribute(hwcDisplayId, configId, hal::Attribute::DPI_X);
         const int32_t dpiY = getAttribute(hwcDisplayId, configId, hal::Attribute::DPI_Y);
         const DisplayConfiguration::Dpi hwcDpi =
-                DisplayConfiguration::Dpi{dpiX == -1 ? dpiY : dpiX / 1000.f,
+                DisplayConfiguration::Dpi{dpiX == -1 ? dpiX : dpiX / 1000.f,
                                           dpiY == -1 ? dpiY : dpiY / 1000.f};
         const DisplayConfiguration::Dpi estimatedDPI =
                 getEstimatedDotsPerInchFromSize(hwcDisplayId, hwcMode);

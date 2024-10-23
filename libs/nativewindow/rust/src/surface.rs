@@ -14,6 +14,8 @@
 
 //! Rust wrapper for `ANativeWindow` and related types.
 
+pub(crate) mod buffer;
+
 use binder::{
     binder_impl::{BorrowedParcel, UnstructuredParcelable},
     impl_deserialize_for_unstructured_parcelable, impl_serialize_for_unstructured_parcelable,
@@ -21,17 +23,18 @@ use binder::{
     StatusCode,
 };
 use bitflags::bitflags;
+use buffer::Buffer;
 use nativewindow_bindgen::{
     ADataSpace, AHardwareBuffer_Format, ANativeWindow, ANativeWindow_acquire,
     ANativeWindow_getBuffersDataSpace, ANativeWindow_getBuffersDefaultDataSpace,
-    ANativeWindow_getFormat, ANativeWindow_getHeight, ANativeWindow_getWidth,
+    ANativeWindow_getFormat, ANativeWindow_getHeight, ANativeWindow_getWidth, ANativeWindow_lock,
     ANativeWindow_readFromParcel, ANativeWindow_release, ANativeWindow_setBuffersDataSpace,
     ANativeWindow_setBuffersGeometry, ANativeWindow_setBuffersTransform,
-    ANativeWindow_writeToParcel,
+    ANativeWindow_unlockAndPost, ANativeWindow_writeToParcel, ARect,
 };
 use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{self, null_mut, NonNull};
 
 /// Wrapper around an opaque C `ANativeWindow`.
 #[derive(PartialEq, Eq)]
@@ -151,6 +154,43 @@ impl Surface {
             Err(ErrorCode(data_space))
         } else {
             Ok(ADataSpace(data_space))
+        }
+    }
+
+    /// Locks the window's next drawing surface for writing, and returns it.
+    pub fn lock(&mut self, bounds: Option<&mut ARect>) -> Result<Buffer, ErrorCode> {
+        let mut buffer = buffer::EMPTY;
+        // SAFETY: The ANativeWindow pointer we pass is guaranteed to be non-null and valid because
+        // it must have been allocated by `ANativeWindow_allocate` or `ANativeWindow_readFromParcel`
+        // and we have not yet released it. The other pointers must be valid because the come from
+        // references, and aren't retained after the function returns.
+        let status = unsafe {
+            ANativeWindow_lock(
+                self.0.as_ptr(),
+                &mut buffer,
+                bounds.map(ptr::from_mut).unwrap_or(null_mut()),
+            )
+        };
+        if status != 0 {
+            return Err(ErrorCode(status));
+        }
+
+        Ok(Buffer::new(buffer, self))
+    }
+
+    /// Unlocks the window's drawing surface which was previously locked, posting the new buffer to
+    /// the display.
+    ///
+    /// This shouldn't be called directly but via the [`Buffer`], hence is not public here.
+    fn unlock_and_post(&mut self) -> Result<(), ErrorCode> {
+        // SAFETY: The ANativeWindow pointer we pass is guaranteed to be non-null and valid because
+        // it must have been allocated by `ANativeWindow_allocate` or `ANativeWindow_readFromParcel`
+        // and we have not yet released it.
+        let status = unsafe { ANativeWindow_unlockAndPost(self.0.as_ptr()) };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(ErrorCode(status))
         }
     }
 }

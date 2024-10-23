@@ -731,6 +731,9 @@ cc_test {
         "liblog",
         "libutils",
     ],
+    static_libs: [
+        "libgmock",
+    ],
     test_suites: [
         "general-tests",
         "vts",

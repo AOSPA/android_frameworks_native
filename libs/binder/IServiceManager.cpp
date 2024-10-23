@@ -386,7 +386,7 @@ status_t validateAccessor(const String16& instance, const sp<IBinder>& binder) {
         ALOGE("Binder is null");
         return BAD_VALUE;
     }
-    sp<IAccessor> accessor = interface_cast<IAccessor>(binder);
+    sp<IAccessor> accessor = checked_interface_cast<IAccessor>(binder);
     if (accessor == nullptr) {
         ALOGE("This binder for %s is not an IAccessor binder", String8(instance).c_str());
         return BAD_TYPE;
@@ -418,6 +418,28 @@ sp<IBinder> createAccessor(const String16& instance,
     }
     sp<IBinder> binder = sp<LocalAccessor>::make(instance, std::move(connectionInfoProvider));
     return binder;
+}
+
+status_t delegateAccessor(const String16& name, const sp<IBinder>& accessor,
+                          sp<IBinder>* delegator) {
+    LOG_ALWAYS_FATAL_IF(delegator == nullptr, "delegateAccessor called with a null out param");
+    if (accessor == nullptr) {
+        ALOGW("Accessor argument to delegateAccessor is null.");
+        *delegator = nullptr;
+        return OK;
+    }
+    status_t status = validateAccessor(name, accessor);
+    if (status != OK) {
+        ALOGE("The provided accessor binder is not an IAccessor for instance %s. Status: "
+              "%s",
+              String8(name).c_str(), statusToString(status).c_str());
+        return status;
+    }
+    // validateAccessor already called checked_interface_cast and made sure this
+    // is a valid accessor object.
+    *delegator = sp<android::os::IAccessorDelegator>::make(interface_cast<IAccessor>(accessor));
+
+    return OK;
 }
 
 #if !defined(__ANDROID_VNDK__)
