@@ -668,7 +668,8 @@ status_t Parcel::appendFrom(const Parcel* parcel, size_t offset, size_t len) {
                 // FD was unowned in the source parcel.
                 int newFd = -1;
                 if (status_t status = binder::os::dupFileDescriptor(oldFd, &newFd); status != OK) {
-                    ALOGW("Failed to duplicate file descriptor %d: %s", oldFd, strerror(-status));
+                    ALOGW("Failed to duplicate file descriptor %d: %s", oldFd,
+                          statusToString(status).c_str());
                 }
                 rpcFields->mFds->emplace_back(unique_fd(newFd));
                 // Fixup the index in the data.

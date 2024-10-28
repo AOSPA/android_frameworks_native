@@ -30,8 +30,6 @@
 #include "TimeStats/TimeStats.h"
 #include "gmock/gmock.h"
 
-#include <variant>
-
 using namespace com::android::graphics::surfaceflinger;
 
 namespace android::compositionengine {
@@ -494,9 +492,6 @@ struct CompositionEnginePostCompositionTest : public CompositionEngineTest {
 };
 
 TEST_F(CompositionEnginePostCompositionTest, postCompositionReleasesAllFences) {
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::ce_fence_promise, true);
-    ASSERT_TRUE(FlagManager::getInstance().ce_fence_promise());
-
     EXPECT_CALL(*mLayer1FE, getReleaseFencePromiseStatus)
             .WillOnce(Return(LayerFE::ReleaseFencePromiseStatus::FULFILLED));
     EXPECT_CALL(*mLayer2FE, getReleaseFencePromiseStatus)

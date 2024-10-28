@@ -1249,6 +1249,14 @@ private:
 
     bool mHdrLayerInfoChanged = false;
 
+    struct LayerEvent {
+        uid_t uid;
+        int32_t layerId;
+        ui::Dataspace dataspace;
+        std::chrono::milliseconds timeSinceLastEvent;
+    };
+    std::vector<LayerEvent> mLayerEvents;
+
     // Used to ensure we omit a callback when HDR layer info listener is newly added but the
     // scene hasn't changed
     bool mAddingHDRLayerInfoListener = false;

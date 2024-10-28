@@ -18,6 +18,7 @@
 #include <android/os/BnServiceManager.h>
 #include <android/os/IServiceManager.h>
 #include <binder/IPCThreadState.h>
+#include <binder/Trace.h>
 #include <map>
 #include <memory>
 
@@ -59,6 +60,12 @@ public:
     }
 
     bool removeItem(const std::string& key, const sp<IBinder>& who) {
+        std::string traceStr;
+        uint64_t tag = ATRACE_TAG_AIDL;
+        if (atrace_is_tag_enabled(tag)) {
+            traceStr = "BinderCacheWithInvalidation::removeItem " + key;
+        }
+        binder::ScopedTrace aidlTrace(tag, traceStr.c_str());
         std::lock_guard<std::mutex> lock(mCacheMutex);
         if (auto it = mCache.find(key); it != mCache.end()) {
             if (it->second.service == who) {
@@ -81,11 +88,22 @@ public:
         if (item->localBinder() == nullptr) {
             status_t status = item->linkToDeath(deathRecipient);
             if (status != android::OK) {
+                std::string traceStr;
+                uint64_t tag = ATRACE_TAG_AIDL;
+                if (atrace_is_tag_enabled(tag)) {
+                    traceStr =
+                            "BinderCacheWithInvalidation::setItem Failed LinkToDeath for service " +
+                            key + " : " + std::to_string(status);
+                }
+                binder::ScopedTrace aidlTrace(tag, traceStr.c_str());
+
                 ALOGE("Failed to linkToDeath binder for service %s. Error: %d", key.c_str(),
                       status);
                 return binder::Status::fromStatusT(status);
             }
         }
+        binder::ScopedTrace aidlTrace(ATRACE_TAG_AIDL,
+                                      "BinderCacheWithInvalidation::setItem Successfully Cached");
         std::lock_guard<std::mutex> lock(mCacheMutex);
         Entry entry = {.service = item, .deathRecipient = deathRecipient};
         mCache[key] = entry;

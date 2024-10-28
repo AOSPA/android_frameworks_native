@@ -16,7 +16,6 @@ rust_library {
         "libdowncast_rs",
         "liblibc",
         "liblog_rust",
-        "libnix",
     ],
     host_supported: true,
     vendor_available: true,
@@ -200,7 +199,6 @@ rust_test {
         "libdowncast_rs",
         "liblibc",
         "liblog_rust",
-        "libnix",
     ],
 }
 

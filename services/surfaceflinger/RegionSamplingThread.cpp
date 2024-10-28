@@ -355,7 +355,7 @@ void RegionSamplingThread::captureSample() {
 
     FenceResult fenceResult;
     if (FlagManager::getInstance().single_hop_screenshot() &&
-        FlagManager::getInstance().ce_fence_promise() && mFlinger.mRenderEngine->isThreaded()) {
+        mFlinger.mRenderEngine->isThreaded()) {
         std::vector<sp<LayerFE>> layerFEs;
         auto displayState = mFlinger.getSnapshotsFromMainThread(renderAreaBuilder,
                                                                 getLayerSnapshotsFn, layerFEs);

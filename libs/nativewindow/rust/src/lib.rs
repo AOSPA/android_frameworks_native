@@ -220,7 +220,13 @@ impl HardwareBuffer {
         Self(buffer)
     }
 
-    /// Get the internal |AHardwareBuffer| pointer without decrementing the refcount. This can
+    /// Get the internal `AHardwareBuffer` pointer that is only valid when this `HardwareBuffer`
+    /// exists. This can be used to provide a pointer to the AHB for a C/C++ API over the FFI.
+    pub fn as_raw(&self) -> NonNull<AHardwareBuffer> {
+        self.0
+    }
+
+    /// Get the internal `AHardwareBuffer` pointer without decrementing the refcount. This can
     /// be used to provide a pointer to the AHB for a C/C++ API over the FFI.
     pub fn into_raw(self) -> NonNull<AHardwareBuffer> {
         let buffer = ManuallyDrop::new(self);

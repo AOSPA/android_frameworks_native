@@ -84,15 +84,15 @@ static String8 toString(const char16_t* chars, size_t numChars) {
 
 KeyCharacterMap::KeyCharacterMap(const std::string& filename) : mLoadFileName(filename) {}
 
-base::Result<std::shared_ptr<KeyCharacterMap>> KeyCharacterMap::load(const std::string& filename,
+base::Result<std::unique_ptr<KeyCharacterMap>> KeyCharacterMap::load(const std::string& filename,
                                                                      Format format) {
     Tokenizer* tokenizer;
     status_t status = Tokenizer::open(String8(filename.c_str()), &tokenizer);
     if (status) {
         return Errorf("Error {} opening key character map file {}.", status, filename.c_str());
     }
-    std::shared_ptr<KeyCharacterMap> map =
-            std::shared_ptr<KeyCharacterMap>(new KeyCharacterMap(filename));
+    std::unique_ptr<KeyCharacterMap> map =
+            std::unique_ptr<KeyCharacterMap>(new KeyCharacterMap(filename));
     if (!map.get()) {
         ALOGE("Error allocating key character map.");
         return Errorf("Error allocating key character map.");

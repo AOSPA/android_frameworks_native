@@ -287,6 +287,11 @@ ABinderRpc_Accessor* _Nullable ABinderRpc_Accessor_fromBinder(const char* _Nonnu
  *        this object with one strong ref count and is responsible for removing
  *        that ref count with with AIBinder_decStrong when the caller wishes to
  *        drop the reference.
+ * \return STATUS_OK on success.
+ *         STATUS_UNEXPECTED_NULL if instance or binder arguments are null.
+ *         STATUS_BAD_TYPE if the binder is not an IAccessor.
+ *         STATUS_NAME_NOT_FOUND if the binder is an IAccessor, but not
+ *         associated with the provided instance name.
  */
 binder_status_t ABinderRpc_Accessor_delegateAccessor(const char* _Nonnull instance,
                                                      AIBinder* _Nonnull binder,
