@@ -20,16 +20,19 @@
 
 #include "InputMapperTest.h"
 #include "InterfaceMocks.h"
+#include "TestEventMatchers.h"
 
 #define TAG "KeyboardInputMapper_test"
 
 namespace android {
 
 using testing::_;
+using testing::AllOf;
 using testing::Args;
 using testing::DoAll;
 using testing::Return;
 using testing::SetArgPointee;
+using testing::VariantWith;
 
 /**
  * Unit tests for KeyboardInputMapper.
@@ -84,6 +87,26 @@ TEST_F(KeyboardInputMapperUnitTest, KeyPressTimestampRecorded) {
         process(when, EV_KEY, keyCode, 0);
         process(when, EV_SYN, SYN_REPORT, 0);
     }
+}
+
+TEST_F(KeyboardInputMapperUnitTest, RepeatEventsDiscarded) {
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_KEY, KEY_0, 1);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    args += process(ARBITRARY_TIME, EV_KEY, KEY_0, 2);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    args += process(ARBITRARY_TIME, EV_KEY, KEY_0, 0);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
+
+    EXPECT_THAT(args,
+                ElementsAre(VariantWith<NotifyKeyArgs>(AllOf(WithKeyAction(AKEY_EVENT_ACTION_DOWN),
+                                                             WithKeyCode(AKEYCODE_0),
+                                                             WithScanCode(KEY_0))),
+                            VariantWith<NotifyKeyArgs>(AllOf(WithKeyAction(AKEY_EVENT_ACTION_UP),
+                                                             WithKeyCode(AKEYCODE_0),
+                                                             WithScanCode(KEY_0)))));
 }
 
 } // namespace android

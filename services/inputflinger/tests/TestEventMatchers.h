@@ -540,6 +540,34 @@ inline WithKeyCodeMatcher WithKeyCode(int32_t keyCode) {
     return WithKeyCodeMatcher(keyCode);
 }
 
+/// Scan code
+class WithScanCodeMatcher {
+public:
+    using is_gtest_matcher = void;
+    explicit WithScanCodeMatcher(int32_t scanCode) : mScanCode(scanCode) {}
+
+    bool MatchAndExplain(const NotifyKeyArgs& args, std::ostream*) const {
+        return mScanCode == args.scanCode;
+    }
+
+    bool MatchAndExplain(const KeyEvent& event, std::ostream*) const {
+        return mScanCode == event.getKeyCode();
+    }
+
+    void DescribeTo(std::ostream* os) const {
+        *os << "with scan code " << KeyEvent::getLabel(mScanCode);
+    }
+
+    void DescribeNegationTo(std::ostream* os) const { *os << "wrong scan code"; }
+
+private:
+    const int32_t mScanCode;
+};
+
+inline WithScanCodeMatcher WithScanCode(int32_t scanCode) {
+    return WithScanCodeMatcher(scanCode);
+}
+
 /// EventId
 class WithEventIdMatcher {
 public:

@@ -72,7 +72,7 @@ public:
     };
 
     /* Loads a key character map from a file. */
-    static base::Result<std::shared_ptr<KeyCharacterMap>> load(const std::string& filename,
+    static base::Result<std::unique_ptr<KeyCharacterMap>> load(const std::string& filename,
                                                                Format format);
 
     /* Loads a key character map from its string contents. */

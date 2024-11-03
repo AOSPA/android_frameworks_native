@@ -297,7 +297,11 @@ status_t BufferQueueConsumer::acquireBuffer(BufferItem* outBuffer,
         // We might have freed a slot while dropping old buffers, or the producer
         // may be blocked waiting for the number of buffers in the queue to
         // decrease.
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
+        mCore->notifyBufferReleased();
+#else
         mCore->mDequeueCondition.notify_all();
+#endif
 
         ATRACE_INT(mCore->mConsumerName.c_str(), static_cast<int32_t>(mCore->mQueue.size()));
 #ifndef NO_BINDER
@@ -350,7 +354,12 @@ status_t BufferQueueConsumer::detachBuffer(int slot) {
         mCore->mActiveBuffers.erase(slot);
         mCore->mFreeSlots.insert(slot);
         mCore->clearBufferSlotLocked(slot);
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
+        mCore->notifyBufferReleased();
+#else
         mCore->mDequeueCondition.notify_all();
+#endif
+
         VALIDATE_CONSISTENCY();
     }
 
@@ -520,7 +529,12 @@ status_t BufferQueueConsumer::releaseBuffer(int slot, uint64_t frameNumber,
         }
         BQ_LOGV("releaseBuffer: releasing slot %d", slot);
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
+        mCore->notifyBufferReleased();
+#else
         mCore->mDequeueCondition.notify_all();
+#endif
+
         VALIDATE_CONSISTENCY();
     } // Autolock scope
 
@@ -574,7 +588,11 @@ status_t BufferQueueConsumer::disconnect() {
     mCore->mQueue.clear();
     mCore->freeAllBuffersLocked();
     mCore->mSharedBufferSlot = BufferQueueCore::INVALID_BUFFER_SLOT;
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
+    mCore->notifyBufferReleased();
+#else
     mCore->mDequeueCondition.notify_all();
+#endif
     return NO_ERROR;
 }
 
