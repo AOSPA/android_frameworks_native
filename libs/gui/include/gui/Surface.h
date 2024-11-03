@@ -51,7 +51,7 @@ namespace android {
 namespace libguiextension {
 class QtiSurfaceExtension;
 class QtiSurfaceExtensionGPP;
-};
+}
 /* QTI_END */
 
 class GraphicBuffer;

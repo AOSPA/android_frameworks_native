@@ -548,6 +548,10 @@ static void* load_angle(const char* kind, android_namespace_t* ns) {
                 .flags = ANDROID_DLEXT_USE_NAMESPACE,
                 .library_namespace = ns,
         };
+        auto prop = base::GetProperty("debug.angle.libs.suffix", "");
+        if (!prop.empty()) {
+            name = std::string("lib") + kind + "_" + prop + ".so";
+        }
         so = do_android_dlopen_ext(name.c_str(), RTLD_LOCAL | RTLD_NOW, &dlextinfo);
     }
 

@@ -23,14 +23,14 @@
 #include <compositionengine/mock/Output.h>
 #include <gtest/gtest.h>
 #include <log/log.h>
-
 #include <renderengine/impl/ExternalTexture.h>
 #include <renderengine/mock/RenderEngine.h>
+#include <ui/FloatRect.h>
 #include <ui/PixelFormat.h>
-#include "MockHWC2.h"
-#include "MockHWComposer.h"
+
 #include "RegionMatcher.h"
-#include "ui/FloatRect.h"
+#include "mock/DisplayHardware/MockHWC2.h"
+#include "mock/DisplayHardware/MockHWComposer.h"
 
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 

@@ -171,6 +171,10 @@ public:
 
     void notifyMouseCursorFadedOnTyping() override { reader->notifyMouseCursorFadedOnTyping(); }
 
+    bool setKernelWakeEnabled(int32_t deviceId, bool enabled) override {
+        return reader->setKernelWakeEnabled(deviceId, enabled);
+    }
+
 private:
     std::unique_ptr<InputReaderInterface> reader;
 };

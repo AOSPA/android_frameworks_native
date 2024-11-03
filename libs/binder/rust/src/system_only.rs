@@ -22,10 +22,9 @@ use crate::sys;
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
 
-use libc::sockaddr;
-use nix::sys::socket::{SockaddrLike, UnixAddr, VsockAddr};
+use libc::{sockaddr, sockaddr_un, sockaddr_vm, socklen_t};
 use std::sync::Arc;
-use std::{fmt, ptr};
+use std::{fmt, mem, ptr};
 
 /// Rust wrapper around ABinderRpc_Accessor objects for RPC binder service management.
 ///
@@ -44,9 +43,9 @@ impl fmt::Debug for Accessor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionInfo {
     /// For vsock connection
-    Vsock(VsockAddr),
+    Vsock(sockaddr_vm),
     /// For unix domain socket connection
-    Unix(UnixAddr),
+    Unix(sockaddr_un),
 }
 
 /// Safety: A `Accessor` is a wrapper around `ABinderRpc_Accessor` which is
@@ -148,13 +147,21 @@ impl Accessor {
         match connection {
             ConnectionInfo::Vsock(addr) => {
                 // Safety: The sockaddr is being copied in the NDK API
-                unsafe { sys::ABinderRpc_ConnectionInfo_new(addr.as_ptr(), addr.len()) }
+                unsafe {
+                    sys::ABinderRpc_ConnectionInfo_new(
+                        &addr as *const sockaddr_vm as *const sockaddr,
+                        mem::size_of::<sockaddr_vm>() as socklen_t,
+                    )
+                }
             }
             ConnectionInfo::Unix(addr) => {
                 // Safety: The sockaddr is being copied in the NDK API
                 // The cast is from sockaddr_un* to sockaddr*.
                 unsafe {
-                    sys::ABinderRpc_ConnectionInfo_new(addr.as_ptr() as *const sockaddr, addr.len())
+                    sys::ABinderRpc_ConnectionInfo_new(
+                        &addr as *const sockaddr_un as *const sockaddr,
+                        mem::size_of::<sockaddr_un>() as socklen_t,
+                    )
                 }
             }
         }

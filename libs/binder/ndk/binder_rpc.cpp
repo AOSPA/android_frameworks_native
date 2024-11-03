@@ -255,7 +255,7 @@ ABinderRpc_Accessor* ABinderRpc_Accessor_new(
                     "new variant was added to the ABinderRpc_ConnectionInfo and this needs to be "
                     "updated.");
         }
-        return OK;
+        return STATUS_OK;
     };
     sp<IBinder> accessorBinder = android::createAccessor(String16(instance), std::move(generate));
     if (accessorBinder == nullptr) {
@@ -321,7 +321,7 @@ binder_status_t ABinderRpc_Accessor_delegateAccessor(const char* instance, AIBin
     // This AIBinder needs a strong ref to pass ownership to the caller
     binder->incStrong(nullptr);
     *outDelegator = binder.get();
-    return OK;
+    return STATUS_OK;
 }
 
 ABinderRpc_ConnectionInfo* ABinderRpc_ConnectionInfo_new(const sockaddr* addr, socklen_t len) {

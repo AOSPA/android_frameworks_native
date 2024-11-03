@@ -36,10 +36,10 @@
 #include <ui/Rect.h>
 #include <ui/StaticDisplayInfo.h>
 
-#include "MockHWC2.h"
-#include "MockHWComposer.h"
-#include "MockPowerAdvisor.h"
 #include "ftl/future.h"
+#include "mock/DisplayHardware/MockHWC2.h"
+#include "mock/DisplayHardware/MockHWComposer.h"
+#include "mock/DisplayHardware/MockPowerAdvisor.h"
 
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 

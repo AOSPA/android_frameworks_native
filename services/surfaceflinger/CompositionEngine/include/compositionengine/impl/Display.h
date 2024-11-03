@@ -114,6 +114,9 @@ private:
     ColorProfile mQtiColorProfile = {ui::ColorMode::NATIVE, ui::Dataspace::UNKNOWN,
                                      ui::RenderIntent::COLORIMETRIC};
     /* QTI_END */
+
+    const aidl::android::hardware::graphics::composer3::OverlayProperties* getOverlaySupport()
+            override;
 };
 
 // This template factory function standardizes the implementation details of the

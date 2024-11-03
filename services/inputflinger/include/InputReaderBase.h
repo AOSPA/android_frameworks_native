@@ -137,19 +137,18 @@ struct InputReaderConfiguration {
     ui::LogicalDisplayId defaultPointerDisplayId;
 
     // The mouse pointer speed, as a number from -7 (slowest) to 7 (fastest).
-    //
-    // Currently only used when the enable_new_mouse_pointer_ballistics flag is enabled.
     int32_t mousePointerSpeed;
 
     // Displays on which an acceleration curve shouldn't be applied for pointer movements from mice.
-    //
-    // Currently only used when the enable_new_mouse_pointer_ballistics flag is enabled.
     std::set<ui::LogicalDisplayId> displaysWithMousePointerAccelerationDisabled;
 
-    // Velocity control parameters for mouse pointer movements.
+    // Velocity control parameters for touchpad pointer movements on the old touchpad stack (based
+    // on TouchInputMapper).
     //
-    // If the enable_new_mouse_pointer_ballistics flag is enabled, these are ignored and the values
-    // of mousePointerSpeed and mousePointerAccelerationEnabled used instead.
+    // For mice, these are ignored and the values of mousePointerSpeed and
+    // mousePointerAccelerationEnabled used instead.
+    //
+    // TODO(b/281840344): remove this.
     VelocityControlParameters pointerVelocityControlParameters;
 
     // Velocity control parameters for mouse wheel movements.
@@ -426,6 +425,16 @@ public:
 
     /* Notifies that mouse cursor faded due to typing. */
     virtual void notifyMouseCursorFadedOnTyping() = 0;
+
+    /* Set whether the given input device can wake up the kernel from sleep
+     * when it generates input events. By default, usually only internal (built-in)
+     * input devices can wake the kernel from sleep. For an external input device
+     * that supports remote wakeup to be able to wake the kernel, this must be called
+     * after each time the device is connected/added.
+     *
+     * Returns true if setting power wakeup was successful.
+     */
+    virtual bool setKernelWakeEnabled(int32_t deviceId, bool enabled) = 0;
 };
 
 // --- TouchAffineTransformation ---

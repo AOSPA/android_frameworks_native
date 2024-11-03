@@ -211,16 +211,17 @@ private:
      * `consumeBatchedInputEvents`.
      */
     std::map<DeviceId, std::queue<InputMessage>> mBatches;
+
     /**
-     * Creates a MotionEvent by consuming samples from the provided queue. If one message has
-     * eventTime > adjustedFrameTime, all subsequent messages in the queue will be skipped. It is
-     * assumed that messages are queued in chronological order. In other words, only events that
-     * occurred prior to the adjustedFrameTime will be consumed.
-     * @param requestedFrameTime the time up to which to consume events.
-     * @param messages the queue of messages to consume from
+     * Creates a MotionEvent by consuming samples from the provided queue. Consumes all messages
+     * with eventTime <= requestedFrameTime - resampleLatency, where `resampleLatency` is latency
+     * introduced by the resampler. Assumes that messages are queued in chronological order.
+     * @param requestedFrameTime The time up to which consume messages, as given by the inequality
+     * above. If std::nullopt, everything in messages will be consumed.
+     * @param messages the queue of messages to consume from.
      */
     std::pair<std::unique_ptr<MotionEvent>, std::optional<uint32_t>> createBatchedMotionEvent(
-            const nsecs_t requestedFrameTime, std::queue<InputMessage>& messages);
+            const std::optional<nsecs_t> requestedFrameTime, std::queue<InputMessage>& messages);
 
     /**
      * Consumes the batched input events, optionally allowing the caller to specify a device id

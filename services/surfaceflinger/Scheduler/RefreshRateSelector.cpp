@@ -722,13 +722,17 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
             const bool inPrimaryPhysicalRange =
                     policy->primaryRanges.physical.includes(modePtr->getPeakFps());
             const bool inPrimaryRenderRange = policy->primaryRanges.render.includes(fps);
-            if (((policy->primaryRangeIsSingleRate() && !inPrimaryPhysicalRange) ||
+            if (!mIsVrrDevice.load() &&
+                ((policy->primaryRangeIsSingleRate() && !inPrimaryPhysicalRange) ||
                  !inPrimaryRenderRange) &&
                 !(layer.focused &&
                   (layer.vote == LayerVoteType::ExplicitDefault ||
                    layer.vote == LayerVoteType::ExplicitExact))) {
                 // Only focused layers with ExplicitDefault frame rate settings are allowed to score
                 // refresh rates outside the primary range.
+                ALOGV("%s ignores %s (primaryRangeIsSingleRate). Current mode = %s",
+                      formatLayerInfo(layer, weight).c_str(), to_string(*modePtr).c_str(),
+                      to_string(activeMode).c_str());
                 continue;
             }
 
@@ -852,7 +856,8 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
                                    to_string(descending.front().frameRateMode.fps).c_str());
             return {descending, kNoSignals};
         } else {
-            ALOGV("primaryRangeIsSingleRate");
+            ALOGV("%s (primaryRangeIsSingleRate)",
+                  to_string(ranking.front().frameRateMode.fps).c_str());
             SFTRACE_FORMAT_INSTANT("%s (primaryRangeIsSingleRate)",
                                    to_string(ranking.front().frameRateMode.fps).c_str());
             return {ranking, kNoSignals};
@@ -932,6 +937,8 @@ PerUidLayerRequirements groupLayersByUid(
             using LayerVoteType = RefreshRateSelector::LayerVoteType;
 
             if (layer->vote == LayerVoteType::Max || layer->vote == LayerVoteType::Heuristic) {
+                ALOGV("%s: %s skips uid=%d due to the vote", __func__,
+                      formatLayerInfo(*layer, layer->weight).c_str(), layer->ownerUid);
                 skipUid = true;
                 break;
             }
@@ -1014,12 +1021,14 @@ auto RefreshRateSelector::getFrameRateOverrides(const std::vector<LayerRequireme
 
         // Layers with ExplicitExactOrMultiple expect touch boost
         if (globalSignals.touch && hasExplicitExactOrMultiple) {
+            ALOGV("%s: Skipping for touch (input signal): uid=%d", __func__, uid);
             continue;
         }
 
         // Mirrors getRankedFrameRates. If there is no ExplicitDefault, expect touch boost and
         // skip frame rate override.
         if (hasHighHint && !hasExplicitDefault) {
+            ALOGV("%s: Skipping for touch (HighHint): uid=%d", __func__, uid);
             continue;
         }
 
@@ -1043,6 +1052,9 @@ auto RefreshRateSelector::getFrameRateOverrides(const std::vector<LayerRequireme
                 constexpr bool isSeamlessSwitch = true;
                 const auto layerScore = calculateLayerScoreLocked(*layer, fps, isSeamlessSwitch);
                 score += layer->weight * layerScore;
+                ALOGV("%s: %s gives %s fps score of %.4f", __func__,
+                      formatLayerInfo(*layer, layer->weight).c_str(), to_string(fps).c_str(),
+                      layerScore);
             }
         }
 
@@ -1297,6 +1309,8 @@ void RefreshRateSelector::updateDisplayModes(DisplayModes modes, DisplayModeId a
     LOG_ALWAYS_FATAL_IF(!activeModeOpt);
     mActiveModeOpt = FrameRateMode{activeModeOpt->get()->getPeakFps(),
                                    ftl::as_non_null(activeModeOpt->get())};
+    mIsVrrDevice = FlagManager::getInstance().vrr_config() &&
+            activeModeOpt->get()->getVrrConfig().has_value();
 
     const auto sortedModes = sortByRefreshRate(mDisplayModes);
     mMinRefreshRateModeIt = sortedModes.front();

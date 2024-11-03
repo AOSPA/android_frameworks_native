@@ -308,6 +308,42 @@ protected:
                     << " category=" << ftl::enum_string(testCase.frameRateCategory);
         }
     }
+
+    template <class T>
+    std::vector<LayerRequirement> createLayers(const std::initializer_list<T>& surfaceVotes) {
+        std::vector<LayerRequirement> layers;
+        for (auto surfaceVote : surfaceVotes) {
+            ALOGI("**** %s: Adding layers for %s: (desiredFrameRate=%s, voteType=%s), "
+                  "(frameRateCategory=%s)",
+                  __func__, surfaceVote.name.c_str(),
+                  to_string(surfaceVote.desiredFrameRate).c_str(),
+                  ftl::enum_string(surfaceVote.voteType).c_str(),
+                  ftl::enum_string(surfaceVote.frameRateCategory).c_str());
+
+            if (surfaceVote.desiredFrameRate.isValid()) {
+                std::stringstream ss;
+                ss << surfaceVote.name << " (" << surfaceVote.weight << "): ExplicitDefault ("
+                   << to_string(surfaceVote.desiredFrameRate) << ")";
+                LayerRequirement layer = {.name = ss.str(),
+                                          .vote = surfaceVote.voteType,
+                                          .desiredRefreshRate = surfaceVote.desiredFrameRate,
+                                          .weight = surfaceVote.weight};
+                layers.push_back(layer);
+            }
+
+            if (surfaceVote.frameRateCategory != FrameRateCategory::Default) {
+                std::stringstream ss;
+                ss << surfaceVote.name << " (" << surfaceVote.weight << "): ExplicitCategory ("
+                   << ftl::enum_string(surfaceVote.frameRateCategory) << ")";
+                LayerRequirement layer = {.name = ss.str(),
+                                          .vote = LayerVoteType::ExplicitCategory,
+                                          .frameRateCategory = surfaceVote.frameRateCategory,
+                                          .weight = surfaceVote.weight};
+                layers.push_back(layer);
+            }
+        }
+        return layers;
+    }
 };
 
 RefreshRateSelectorTest::RefreshRateSelectorTest() {
@@ -1774,6 +1810,98 @@ TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_withFrameRateCategoryMultiL
                     {120_Hz, FrameRateCategory::Default, 120_Hz},
             },
             selector);
+}
+
+TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_multiSurface_arr) {
+    if (GetParam() != Config::FrameRateOverride::Enabled) {
+        return;
+    }
+
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
+
+    auto selector = createSelector(kVrrMode_120, kModeId120);
+
+    // Switch the policy to be more like an ARR device (primary range is a single rate).
+    constexpr FpsRange k120_120Hz = {120_Hz, 120_Hz};
+    constexpr FpsRange k0_120Hz = {0_Hz, 120_Hz};
+    constexpr FpsRanges kPrimaryRanges = {/*physical*/ k120_120Hz,
+                                          /*render*/ k120_120Hz};
+    constexpr FpsRanges kAppRequestRanges = {/*physical*/ k120_120Hz,
+                                             /*render*/ k0_120Hz};
+    EXPECT_EQ(SetPolicyResult::Changed,
+              selector.setDisplayManagerPolicy(
+                      {/*defaultMode*/ kModeId120, kPrimaryRanges, kAppRequestRanges}));
+
+    // Surface can translate to multiple layers in SF  scheduler due to category and frame rate
+    // value.
+    struct SurfaceVote {
+        // Params
+        std::string name = "";
+        Fps desiredFrameRate = 0_Hz;
+        LayerVoteType voteType = LayerVoteType::ExplicitDefault;
+        FrameRateCategory frameRateCategory = FrameRateCategory::Default;
+        float weight = 1.f;
+    };
+
+    auto layers = createLayers(
+            std::initializer_list<SurfaceVote>{{.name = "60 fixed source",
+                                                .desiredFrameRate = 60_Hz,
+                                                .voteType = LayerVoteType::ExplicitExactOrMultiple,
+                                                .weight = 0.27f},
+                                               {.name = "1 fixed source + NoPreference",
+                                                .desiredFrameRate = 1_Hz,
+                                                .voteType = LayerVoteType::ExplicitExactOrMultiple,
+                                                .frameRateCategory =
+                                                        FrameRateCategory::NoPreference}});
+    auto actualRankedFrameRates = selector.getRankedFrameRates(layers);
+    EXPECT_EQ(60_Hz, actualRankedFrameRates.ranking.front().frameRateMode.fps);
+
+    layers = createLayers(
+            std::initializer_list<SurfaceVote>{{.name = "60 fixed source",
+                                                .desiredFrameRate = 60_Hz,
+                                                .voteType = LayerVoteType::ExplicitExactOrMultiple,
+                                                .weight = 0.27f},
+                                               {.name = "1 fixed source + Normal",
+                                                .desiredFrameRate = 1_Hz,
+                                                .voteType = LayerVoteType::ExplicitExactOrMultiple,
+                                                .frameRateCategory = FrameRateCategory::Normal}});
+    actualRankedFrameRates = selector.getRankedFrameRates(layers);
+    EXPECT_EQ(60_Hz, actualRankedFrameRates.ranking.front().frameRateMode.fps);
+
+    layers = createLayers(std::initializer_list<SurfaceVote>{
+            {.name = "30 fixed source + NoPreference",
+             .desiredFrameRate = 30_Hz,
+             .voteType = LayerVoteType::ExplicitExactOrMultiple,
+             .frameRateCategory = FrameRateCategory::NoPreference}});
+    actualRankedFrameRates = selector.getRankedFrameRates(layers);
+    EXPECT_EQ(30_Hz, actualRankedFrameRates.ranking.front().frameRateMode.fps);
+
+    layers = createLayers(std::initializer_list<SurfaceVote>{
+            {.name = "1 fixed source + NoPreference",
+             .desiredFrameRate = 1_Hz,
+             .voteType = LayerVoteType::ExplicitExactOrMultiple,
+             .frameRateCategory = FrameRateCategory::NoPreference}});
+    actualRankedFrameRates = selector.getRankedFrameRates(layers);
+    // Result affected by RefreshRateSelector.kMinSupportedFrameRate.
+    EXPECT_EQ(20_Hz, actualRankedFrameRates.ranking.front().frameRateMode.fps);
+
+    layers = createLayers(std::initializer_list<SurfaceVote>{
+            {.name = "24 fixed source + NoPreference",
+             .desiredFrameRate = 24_Hz,
+             .voteType = LayerVoteType::ExplicitExactOrMultiple,
+             .frameRateCategory = FrameRateCategory::NoPreference}});
+    actualRankedFrameRates = selector.getRankedFrameRates(layers);
+    EXPECT_EQ(24_Hz, actualRankedFrameRates.ranking.front().frameRateMode.fps);
+
+    layers = createLayers(std::initializer_list<SurfaceVote>{
+            {.name = "23.976 fixed source + NoPreference",
+             .desiredFrameRate = 23.976_Hz,
+             .voteType = LayerVoteType::ExplicitExactOrMultiple,
+             .frameRateCategory = FrameRateCategory::NoPreference}});
+    actualRankedFrameRates = selector.getRankedFrameRates(layers);
+    // Chooses 120 unless certain threshold is set, see tests test23976Chooses120 and
+    // test23976Chooses60IfThresholdIs120.
+    EXPECT_EQ(120_Hz, actualRankedFrameRates.ranking.front().frameRateMode.fps);
 }
 
 TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_withFrameRateCategory_60_120) {

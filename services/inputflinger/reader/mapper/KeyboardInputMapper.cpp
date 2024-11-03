@@ -132,7 +132,9 @@ std::optional<KeyboardLayoutInfo> KeyboardInputMapper::getKeyboardLayoutInfo() c
 void KeyboardInputMapper::populateDeviceInfo(InputDeviceInfo& info) {
     InputMapper::populateDeviceInfo(info);
 
-    info.setKeyCharacterMap(getDeviceContext().getKeyCharacterMap());
+    if (const auto kcm = getDeviceContext().getKeyCharacterMap(); kcm != nullptr) {
+        info.setKeyCharacterMap(std::make_unique<KeyCharacterMap>(*kcm));
+    }
 
     std::optional keyboardLayoutInfo = getKeyboardLayoutInfo();
     if (keyboardLayoutInfo) {
@@ -241,11 +243,16 @@ std::list<NotifyArgs> KeyboardInputMapper::process(const RawEvent& rawEvent) {
     mHidUsageAccumulator.process(rawEvent);
     switch (rawEvent.type) {
         case EV_KEY: {
-            int32_t scanCode = rawEvent.code;
+            // Skip processing repeated keys (value == 2) since auto repeat is handled by Android
+            // internally.
+            if (rawEvent.value == 2) {
+                break;
+            }
 
+            const int32_t scanCode = rawEvent.code;
             if (isSupportedScanCode(scanCode)) {
-                out += processKey(rawEvent.when, rawEvent.readTime, rawEvent.value != 0,
-                                  scanCode, mHidUsageAccumulator.consumeCurrentHidUsage());
+                out += processKey(rawEvent.when, rawEvent.readTime, rawEvent.value != 0, scanCode,
+                                  mHidUsageAccumulator.consumeCurrentHidUsage());
             }
             break;
         }
@@ -337,12 +344,14 @@ std::list<NotifyArgs> KeyboardInputMapper::processKey(nsecs_t when, nsecs_t read
     }
 
     KeyboardType keyboardType = getDeviceContext().getKeyboardType();
-    // Any key down on an external keyboard should wake the device.
-    // We don't do this for internal keyboards to prevent them from waking up in your pocket.
+    // Any key down on an external keyboard or internal alphanumeric keyboard should wake the
+    // device. We don't do this for non-alphanumeric internal keyboards to prevent them from
+    // waking up in your pocket.
     // For internal keyboards and devices for which the default wake behavior is explicitly
     // prevented (e.g. TV remotes), the key layout file should specify the policy flags for each
     // wake key individually.
-    if (down && getDeviceContext().isExternal() && !mParameters.doNotWakeByDefault &&
+    if (down && !mParameters.doNotWakeByDefault &&
+        (getDeviceContext().isExternal() || wakeOnAlphabeticKeyboard(keyboardType)) &&
         !(keyboardType != KeyboardType::ALPHABETIC && isMediaKey(keyCode))) {
         policyFlags |= POLICY_FLAG_WAKE;
     }
@@ -498,6 +507,10 @@ uint32_t KeyboardInputMapper::getEventSource() const {
     const auto deviceSources = getDeviceContext().getDeviceSources();
     LOG_ALWAYS_FATAL_IF((deviceSources & mMapperSource) != mMapperSource);
     return deviceSources & ALL_KEYBOARD_SOURCES;
+}
+
+bool KeyboardInputMapper::wakeOnAlphabeticKeyboard(const KeyboardType keyboardType) const {
+    return mEnableAlphabeticKeyboardWakeFlag && (KeyboardType::ALPHABETIC == keyboardType);
 }
 
 } // namespace android

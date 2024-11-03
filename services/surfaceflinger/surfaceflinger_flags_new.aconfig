@@ -4,6 +4,14 @@ package: "com.android.graphics.surfaceflinger.flags"
 container: "system"
 
 flag {
+  name: "adpf_fmq_sf"
+  namespace: "game"
+  description: "Guards use of the ADPF FMQ system specifically for SurfaceFlinger"
+  bug: "315894228"
+  is_fixed_read_only: true
+} # adpf_fmq_sf
+
+flag {
   name: "adpf_gpu_sf"
   namespace: "game"
   description: "Guards use of the sending ADPF GPU duration hint and load hints from SurfaceFlinger to Power HAL"
@@ -72,6 +80,14 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 } # detached_mirror
+
+flag {
+  name: "display_config_error_hal"
+  namespace: "core_graphics"
+  description: "Report HAL display configuration errors like modeset failure or link training failure"
+  bug: "374184110"
+  is_fixed_read_only: true
+} # display_config_error_hal
 
 flag {
   name: "filter_frames_before_trace_starts"

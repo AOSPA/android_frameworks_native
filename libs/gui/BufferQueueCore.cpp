@@ -371,6 +371,12 @@ void BufferQueueCore::waitWhileAllocatingLocked(std::unique_lock<std::mutex>& lo
     }
 }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
+void BufferQueueCore::notifyBufferReleased() const {
+    mDequeueCondition.notify_all();
+}
+#endif
+
 #if DEBUG_ONLY_CODE
 void BufferQueueCore::validateConsistencyLocked() const {
     static const useconds_t PAUSE_TIME = 0;

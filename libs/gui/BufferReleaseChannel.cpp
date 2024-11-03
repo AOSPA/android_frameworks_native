@@ -136,6 +136,7 @@ status_t BufferReleaseChannel::Message::unflatten(void const*& buffer, size_t& s
 status_t BufferReleaseChannel::ConsumerEndpoint::readReleaseFence(
         ReleaseCallbackId& outReleaseCallbackId, sp<Fence>& outReleaseFence,
         uint32_t& outMaxAcquiredBufferCount) {
+    std::lock_guard lock{mMutex};
     Message message;
     mFlattenedBuffer.resize(message.getFlattenedSize());
     std::array<uint8_t, CMSG_SPACE(sizeof(int))> controlMessageBuffer;
@@ -152,7 +153,7 @@ status_t BufferReleaseChannel::ConsumerEndpoint::readReleaseFence(
             .msg_controllen = controlMessageBuffer.size(),
     };
 
-    int result;
+    ssize_t result;
     do {
         result = recvmsg(mFd, &msg, 0);
     } while (result == -1 && errno == EINTR);
@@ -242,7 +243,7 @@ int BufferReleaseChannel::ProducerEndpoint::writeReleaseFence(const ReleaseCallb
         memcpy(CMSG_DATA(cmsg), &flattenedFd, sizeof(int));
     }
 
-    int result;
+    ssize_t result;
     do {
         result = sendmsg(mFd, &msg, 0);
     } while (result == -1 && errno == EINTR);
