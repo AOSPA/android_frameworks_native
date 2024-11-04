@@ -214,9 +214,8 @@ MultifileBlobCache::MultifileBlobCache(size_t maxKeySize, size_t maxValueSize, s
                 }
 
                 // Ensure we have a good CRC
-                if (header.crc !=
-                    crc32c(mappedEntry + sizeof(MultifileHeader),
-                           fileSize - sizeof(MultifileHeader))) {
+                if (header.crc != GenerateCRC32(mappedEntry + sizeof(MultifileHeader),
+                                                fileSize - sizeof(MultifileHeader))) {
                     ALOGV("INIT: Entry %u failed CRC check! Removing.", entryHash);
                     if (remove(fullPath.c_str()) != 0) {
                         ALOGE("Error removing %s: %s", fullPath.c_str(), std::strerror(errno));
@@ -532,9 +531,9 @@ bool MultifileBlobCache::createStatus(const std::string& baseDir) {
             mBuildId.length() > PROP_VALUE_MAX ? PROP_VALUE_MAX : mBuildId.length());
 
     // Finally update the crc, using cacheVersion and everything the follows
-    status.crc =
-            crc32c(reinterpret_cast<uint8_t*>(&status) + offsetof(MultifileStatus, cacheVersion),
-                   sizeof(status) - offsetof(MultifileStatus, cacheVersion));
+    status.crc = GenerateCRC32(
+        reinterpret_cast<uint8_t *>(&status) + offsetof(MultifileStatus, cacheVersion),
+        sizeof(status) - offsetof(MultifileStatus, cacheVersion));
 
     // Create the status file
     std::string cacheStatus = baseDir + "/" + kMultifileBlobCacheStatusFile;
@@ -599,9 +598,9 @@ bool MultifileBlobCache::checkStatus(const std::string& baseDir) {
     }
 
     // Ensure we have a good CRC
-    if (status.crc !=
-        crc32c(reinterpret_cast<uint8_t*>(&status) + offsetof(MultifileStatus, cacheVersion),
-               sizeof(status) - offsetof(MultifileStatus, cacheVersion))) {
+    if (status.crc != GenerateCRC32(reinterpret_cast<uint8_t *>(&status) +
+                                        offsetof(MultifileStatus, cacheVersion),
+                                    sizeof(status) - offsetof(MultifileStatus, cacheVersion))) {
         ALOGE("STATUS(CHECK): Cache status failed CRC check!");
         return false;
     }
@@ -840,8 +839,8 @@ void MultifileBlobCache::processTask(DeferredTask& task) {
 
             // Add CRC check to the header (always do this last!)
             MultifileHeader* header = reinterpret_cast<MultifileHeader*>(buffer);
-            header->crc =
-                    crc32c(buffer + sizeof(MultifileHeader), bufferSize - sizeof(MultifileHeader));
+            header->crc             = GenerateCRC32(buffer + sizeof(MultifileHeader),
+                                                    bufferSize - sizeof(MultifileHeader));
 
             ssize_t result = write(fd, buffer, bufferSize);
             if (result != bufferSize) {

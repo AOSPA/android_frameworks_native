@@ -139,6 +139,8 @@ public:
 
     std::optional<HardwareProperties> getTouchpadHardwareProperties();
 
+    bool setKernelWakeEnabled(bool enabled);
+
     // construct and add a mapper to the input device
     template <class T, typename... Args>
     T& addMapper(int32_t eventHubId, Args... args) {
@@ -468,6 +470,9 @@ public:
     inline KeyboardType getKeyboardType() const { return mDevice.getKeyboardType(); }
     inline void setKeyboardType(KeyboardType keyboardType) {
         return mDevice.setKeyboardType(keyboardType);
+    }
+    inline bool setKernelWakeEnabled(bool enabled) {
+        return mEventHub->setKernelWakeEnabled(mId, enabled);
     }
 
 private:

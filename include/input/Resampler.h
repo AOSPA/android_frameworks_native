@@ -16,10 +16,14 @@
 
 #pragma once
 
+#include <array>
 #include <chrono>
+#include <iterator>
 #include <optional>
 #include <vector>
 
+#include <android-base/logging.h>
+#include <ftl/mixins.h>
 #include <input/Input.h>
 #include <input/InputTransport.h>
 #include <input/RingBuffer.h>
@@ -79,13 +83,127 @@ private:
         PointerCoords coords;
     };
 
+    /**
+     * Container that stores pointers as an associative array, supporting O(1) lookup by pointer id,
+     * as well as forward iteration in the order in which the pointer or pointers were inserted in
+     * the container. PointerMap has a maximum capacity equal to MAX_POINTERS.
+     */
+    class PointerMap {
+    public:
+        struct PointerId : ftl::DefaultConstructible<PointerId, int32_t>,
+                           ftl::Equatable<PointerId> {
+            using DefaultConstructible::DefaultConstructible;
+        };
+
+        /**
+         * Custom iterator to enable use of range-based for loops.
+         */
+        template <typename T>
+        class iterator {
+        public:
+            using iterator_category = std::forward_iterator_tag;
+            using value_type = T;
+            using difference_type = std::ptrdiff_t;
+            using pointer = T*;
+            using reference = T&;
+
+            explicit iterator(pointer element) : mElement{element} {}
+
+            friend bool operator==(const iterator& lhs, const iterator& rhs) {
+                return lhs.mElement == rhs.mElement;
+            }
+
+            friend bool operator!=(const iterator& lhs, const iterator& rhs) {
+                return !(lhs == rhs);
+            }
+
+            iterator operator++() {
+                ++mElement;
+                return *this;
+            }
+
+            reference operator*() const { return *mElement; }
+
+        private:
+            pointer mElement;
+        };
+
+        PointerMap() {
+            idToIndex.fill(std::nullopt);
+            for (Pointer& pointer : pointers) {
+                pointer.properties.clear();
+                pointer.coords.clear();
+            }
+        }
+
+        /**
+         * Forward iterators to traverse the pointers in `pointers`. The order of the pointers is
+         * determined by the order in which they were inserted (not by id).
+         */
+        iterator<Pointer> begin() { return iterator<Pointer>{&pointers[0]}; }
+
+        iterator<const Pointer> begin() const { return iterator<const Pointer>{&pointers[0]}; }
+
+        iterator<Pointer> end() { return iterator<Pointer>{&pointers[nextPointerIndex]}; }
+
+        iterator<const Pointer> end() const {
+            return iterator<const Pointer>{&pointers[nextPointerIndex]};
+        }
+
+        /**
+         * Inserts the given pointer into the PointerMap. Precondition: The current number of
+         * contained pointers must be less than MAX_POINTERS when this function is called. It
+         * fatally logs if the user tries to insert more than MAX_POINTERS, or if pointer id is out
+         * of bounds.
+         */
+        void insert(const Pointer& pointer) {
+            LOG_IF(FATAL, nextPointerIndex >= pointers.size())
+                    << "Cannot insert more than " << MAX_POINTERS << " in PointerMap.";
+            LOG_IF(FATAL, (pointer.properties.id < 0) || (pointer.properties.id > MAX_POINTER_ID))
+                    << "Invalid pointer id.";
+            idToIndex[pointer.properties.id] = std::optional<size_t>{nextPointerIndex};
+            pointers[nextPointerIndex] = pointer;
+            ++nextPointerIndex;
+        }
+
+        /**
+         * Returns the pointer associated with the provided id if it exists.
+         * Otherwise, std::nullopt is returned.
+         */
+        std::optional<Pointer> find(PointerId id) const {
+            const int32_t idValue = ftl::to_underlying(id);
+            LOG_IF(FATAL, (idValue < 0) || (idValue > MAX_POINTER_ID)) << "Invalid pointer id.";
+            const std::optional<size_t> index = idToIndex[idValue];
+            return index.has_value() ? std::optional{pointers[*index]} : std::nullopt;
+        }
+
+    private:
+        /**
+         * The index at which a pointer is inserted in `pointers`. Likewise, it represents the
+         * number of pointers in PointerMap.
+         */
+        size_t nextPointerIndex{0};
+
+        /**
+         * Sequentially stores pointers. Each pointer's position is determined by the value of
+         * nextPointerIndex at insertion time.
+         */
+        std::array<Pointer, MAX_POINTERS + 1> pointers;
+
+        /**
+         * Maps each pointer id to its associated index in pointers. If no pointer with the id
+         * exists in pointers, the mapped value is std::nullopt.
+         */
+        std::array<std::optional<size_t>, MAX_POINTER_ID + 1> idToIndex;
+    };
+
     struct Sample {
         std::chrono::nanoseconds eventTime;
-        std::vector<Pointer> pointers;
+        PointerMap pointerMap;
 
         std::vector<PointerCoords> asPointerCoords() const {
             std::vector<PointerCoords> pointersCoords;
-            for (const Pointer& pointer : pointers) {
+            for (const Pointer& pointer : pointerMap) {
                 pointersCoords.push_back(pointer.coords);
             }
             return pointersCoords;
@@ -100,13 +218,12 @@ private:
     RingBuffer<Sample> mLatestSamples{/*capacity=*/2};
 
     /**
-     * Latest sample in mLatestSamples after resampling motion event. Used to compare if a pointer
-     * does not move between samples.
+     * Latest sample in mLatestSamples after resampling motion event.
      */
     std::optional<Sample> mLastRealSample;
 
     /**
-     * Latest prediction. Used to overwrite motion event samples if a set of conditions is met.
+     * Latest prediction. That is, the latest extrapolated sample.
      */
     std::optional<Sample> mPreviousPrediction;
 
@@ -134,12 +251,12 @@ private:
     bool canInterpolate(const InputMessage& futureSample) const;
 
     /**
-     * Returns a sample interpolated between the latest sample of mLatestSamples and futureSample,
+     * Returns a sample interpolated between the latest sample of mLatestSamples and futureMessage,
      * if the conditions from canInterpolate are satisfied. Otherwise, returns nullopt.
      * mLatestSamples must have at least one sample when attemptInterpolation is called.
      */
     std::optional<Sample> attemptInterpolation(std::chrono::nanoseconds resampleTime,
-                                               const InputMessage& futureSample) const;
+                                               const InputMessage& futureMessage) const;
 
     /**
      * Checks if there are necessary conditions to extrapolate. That is, there are at least two
@@ -156,7 +273,8 @@ private:
     std::optional<Sample> attemptExtrapolation(std::chrono::nanoseconds resampleTime) const;
 
     /**
-     * Iterates through motion event samples, and calls overwriteStillPointers on each sample.
+     * Iterates through motion event samples, and replaces real coordinates with resampled
+     * coordinates to avoid jerkiness in certain conditions.
      */
     void overwriteMotionEventSamples(MotionEvent& motionEvent) const;
 
@@ -174,4 +292,5 @@ private:
 
     inline static void addSampleToMotionEvent(const Sample& sample, MotionEvent& motionEvent);
 };
+
 } // namespace android

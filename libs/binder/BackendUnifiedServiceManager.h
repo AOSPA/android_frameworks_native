@@ -121,7 +121,6 @@ class BackendUnifiedServiceManager : public android::os::BnServiceManager {
 public:
     explicit BackendUnifiedServiceManager(const sp<os::IServiceManager>& impl);
 
-    sp<os::IServiceManager> getImpl();
     binder::Status getService(const ::std::string& name, sp<IBinder>* _aidl_return) override;
     binder::Status getService2(const ::std::string& name, os::Service* out) override;
     binder::Status checkService(const ::std::string& name, os::Service* out) override;

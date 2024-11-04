@@ -513,6 +513,10 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
         isOpaque = contentOpaque && !roundedCorner.hasRoundedCorners() && color.a == 1.f;
         blendMode = getBlendMode(requested);
     }
+
+    if (forceUpdate || requested.what & layer_state_t::eLutsChanged) {
+        luts = requested.luts;
+    }
 }
 
 } // namespace android::surfaceflinger::frontend

@@ -139,6 +139,9 @@ rust_bindgen {
         "--raw-line",
         "use libc::sockaddr;",
     ],
+    cflags: [
+        "-DANDROID_PLATFORM",
+    ],
     shared_libs: [
         "libbinder_ndk",
     ],
@@ -178,6 +181,9 @@ rust_bindgen {
         // and then specify constified enums for the enums we don't want
         // rustified
         "libbinder_ndk_bindgen_flags.txt",
+    ],
+    cflags: [
+        "-DANDROID_PLATFORM",
     ],
     shared_libs: [
         "libbinder_ndk_on_trusty_mock",

@@ -826,11 +826,14 @@ void Output::updateCompositionState(const compositionengine::CompositionRefreshA
     mLayerRequestingBackgroundBlur = findLayerRequestingBackgroundComposition();
     bool forceClientComposition = mLayerRequestingBackgroundBlur != nullptr;
 
+    auto* properties = getOverlaySupport();
+
     for (auto* layer : getOutputLayersOrderedByZ()) {
         layer->updateCompositionState(refreshArgs.updatingGeometryThisFrame,
                                       refreshArgs.devOptForceClientComposition ||
                                               forceClientComposition,
-                                      refreshArgs.internalDisplayRotationFlags);
+                                      refreshArgs.internalDisplayRotationFlags,
+                                      properties ? properties->lutProperties : std::nullopt);
 
         if (mLayerRequestingBackgroundBlur == layer) {
             forceClientComposition = false;
@@ -1715,6 +1718,10 @@ void Output::updateHwcAsyncWorker() {
 
 void Output::setTreat170mAsSrgb(bool enable) {
     editState().treat170mAsSrgb = enable;
+}
+
+const aidl::android::hardware::graphics::composer3::OverlayProperties* Output::getOverlaySupport() {
+    return nullptr;
 }
 
 bool Output::canPredictCompositionStrategy(const CompositionRefreshArgs& refreshArgs) {

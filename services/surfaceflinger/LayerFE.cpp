@@ -174,6 +174,7 @@ std::optional<compositionengine::LayerFE::LayerSettings> LayerFE::prepareClientC
     layerSettings.edgeExtensionEffect = mSnapshot->edgeExtensionEffect;
     // Record the name of the layer for debugging further down the stack.
     layerSettings.name = mSnapshot->name;
+    layerSettings.luts = mSnapshot->luts;
 
     if (hasEffect() && !hasBufferOrSidebandStream()) {
         prepareEffectsClientComposition(layerSettings, targetSettings);

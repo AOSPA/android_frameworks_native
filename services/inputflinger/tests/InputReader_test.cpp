@@ -36,6 +36,7 @@
 #include <UinputDevice.h>
 #include <android-base/thread_annotations.h>
 #include <com_android_input_flags.h>
+#include <flag_macros.h>
 #include <ftl/enum.h>
 #include <gtest/gtest.h>
 #include <ui/Rotation.h>
@@ -1390,6 +1391,20 @@ TEST_F(InputReaderTest, LightGetColor) {
     ASSERT_EQ(controller.getLightColor(/*lightId=*/1), LIGHT_BRIGHTNESS);
     ASSERT_TRUE(mReader->setLightColor(deviceId, /*lightId=*/1, LIGHT_BRIGHTNESS));
     ASSERT_EQ(mReader->getLightColor(deviceId, /*lightId=*/1), LIGHT_BRIGHTNESS);
+}
+
+TEST_F(InputReaderTest, SetPowerWakeUp) {
+    ASSERT_NO_FATAL_FAILURE(addDevice(1, "1st", InputDeviceClass::KEYBOARD, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(2, "2nd", InputDeviceClass::KEYBOARD, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(3, "3rd", InputDeviceClass::KEYBOARD, nullptr));
+
+    ASSERT_EQ(mFakeEventHub->fakeReadKernelWakeup(1), false);
+
+    ASSERT_TRUE(mFakeEventHub->setKernelWakeEnabled(2, true));
+    ASSERT_EQ(mFakeEventHub->fakeReadKernelWakeup(2), true);
+
+    ASSERT_TRUE(mFakeEventHub->setKernelWakeEnabled(3, false));
+    ASSERT_EQ(mFakeEventHub->fakeReadKernelWakeup(3), false);
 }
 
 // --- InputReaderIntegrationTest ---
@@ -4003,6 +4018,44 @@ TEST_F(KeyboardInputMapperTest, Process_GesureEventToSetFlagKeepTouchMode) {
     process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_LEFT, 1);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
     ASSERT_EQ(AKEY_EVENT_FLAG_FROM_SYSTEM | AKEY_EVENT_FLAG_KEEP_TOUCH_MODE, args.flags);
+}
+
+TEST_F_WITH_FLAGS(KeyboardInputMapperTest, WakeBehavior_AlphabeticKeyboard,
+                  REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(com::android::input::flags,
+                                                      enable_alphabetic_keyboard_wake))) {
+    // For internal alphabetic devices, keys will trigger wake on key down.
+
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_A, 0, AKEYCODE_A, 0);
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_HOME, 0, AKEYCODE_HOME, 0);
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_PLAYPAUSE, 0, AKEYCODE_MEDIA_PLAY_PAUSE, 0);
+
+    KeyboardInputMapper& mapper =
+            constructAndAddMapper<KeyboardInputMapper>(AINPUT_SOURCE_KEYBOARD);
+
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_A, 1);
+    NotifyKeyArgs args;
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(POLICY_FLAG_WAKE, args.policyFlags);
+
+    process(mapper, ARBITRARY_TIME + 1, READ_TIME, EV_KEY, KEY_A, 0);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(uint32_t(0), args.policyFlags);
+
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_HOME, 1);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(POLICY_FLAG_WAKE, args.policyFlags);
+
+    process(mapper, ARBITRARY_TIME + 1, READ_TIME, EV_KEY, KEY_HOME, 0);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(uint32_t(0), args.policyFlags);
+
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_PLAYPAUSE, 1);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(POLICY_FLAG_WAKE, args.policyFlags);
+
+    process(mapper, ARBITRARY_TIME + 1, READ_TIME, EV_KEY, KEY_PLAYPAUSE, 0);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyKeyWasCalled(&args));
+    ASSERT_EQ(uint32_t(0), args.policyFlags);
 }
 
 /**

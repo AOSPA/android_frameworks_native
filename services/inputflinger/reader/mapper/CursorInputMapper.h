@@ -104,8 +104,7 @@ private:
 
     // Velocity controls for mouse pointer and wheel movements.
     // The controls for X and Y wheel movements are separate to keep them decoupled.
-    SimpleVelocityControl mOldPointerVelocityControl;
-    CurvedVelocityControl mNewPointerVelocityControl;
+    CurvedVelocityControl mPointerVelocityControl;
     SimpleVelocityControl mWheelXVelocityControl;
     SimpleVelocityControl mWheelYVelocityControl;
 
@@ -120,7 +119,6 @@ private:
     nsecs_t mDownTime;
     nsecs_t mLastEventTime;
 
-    const bool mEnableNewMousePointerBallistics;
     bool mMouseReverseVerticalScrolling = false;
 
     explicit CursorInputMapper(InputDeviceContext& deviceContext,

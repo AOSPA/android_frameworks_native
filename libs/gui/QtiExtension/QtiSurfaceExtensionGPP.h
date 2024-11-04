@@ -17,9 +17,9 @@ public:
     void Disconnect(int api, sp<IGraphicBufferProducer>* gbp);
     bool DynamicEnable(sp<IGraphicBufferProducer>* gbp);
     void StoreConnect(int api, const sp<IProducerListener>& listener,bool reportBufferRemoval);
-    inline bool IsGPPEnabled() const { return mIsEnable;};
-    inline bool IsGPPSupported() const { return mIsSupported && mConnectedToGpu;};
-    int getUid() const { return mUID;};
+    inline bool IsGPPEnabled() const { return mIsEnable;}
+    inline bool IsGPPSupported() const { return mIsSupported && mConnectedToGpu;}
+    int getUid() const { return mUID;}
     int query(int what, int* outValue) const;
 
     struct SidebandStream
@@ -30,7 +30,7 @@ public:
     inline void setSidebandStream(const sp<NativeHandle>& stream) {
        mSidebandStream.seted = true;
        mSidebandStream.stream = stream;
-    };
+    }
     ~QtiSurfaceExtensionGPP();
 private:
     bool mIsEnable;

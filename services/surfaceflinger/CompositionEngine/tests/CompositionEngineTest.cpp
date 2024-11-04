@@ -26,9 +26,8 @@
 #include <gtest/gtest.h>
 #include <renderengine/mock/RenderEngine.h>
 
-#include "MockHWComposer.h"
 #include "TimeStats/TimeStats.h"
-#include "gmock/gmock.h"
+#include "mock/DisplayHardware/MockHWComposer.h"
 
 using namespace com::android::graphics::surfaceflinger;
 

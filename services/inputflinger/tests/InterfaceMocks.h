@@ -180,6 +180,7 @@ public:
     MOCK_METHOD(status_t, enableDevice, (int32_t deviceId), (override));
     MOCK_METHOD(status_t, disableDevice, (int32_t deviceId), (override));
     MOCK_METHOD(void, sysfsNodeChanged, (const std::string& sysfsNodePath), (override));
+    MOCK_METHOD(bool, setKernelWakeEnabled, (int32_t deviceId, bool enabled), (override));
 };
 
 class MockPointerChoreographerPolicyInterface : public PointerChoreographerPolicyInterface {

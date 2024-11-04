@@ -344,12 +344,14 @@ std::list<NotifyArgs> KeyboardInputMapper::processKey(nsecs_t when, nsecs_t read
     }
 
     KeyboardType keyboardType = getDeviceContext().getKeyboardType();
-    // Any key down on an external keyboard should wake the device.
-    // We don't do this for internal keyboards to prevent them from waking up in your pocket.
+    // Any key down on an external keyboard or internal alphanumeric keyboard should wake the
+    // device. We don't do this for non-alphanumeric internal keyboards to prevent them from
+    // waking up in your pocket.
     // For internal keyboards and devices for which the default wake behavior is explicitly
     // prevented (e.g. TV remotes), the key layout file should specify the policy flags for each
     // wake key individually.
-    if (down && getDeviceContext().isExternal() && !mParameters.doNotWakeByDefault &&
+    if (down && !mParameters.doNotWakeByDefault &&
+        (getDeviceContext().isExternal() || wakeOnAlphabeticKeyboard(keyboardType)) &&
         !(keyboardType != KeyboardType::ALPHABETIC && isMediaKey(keyCode))) {
         policyFlags |= POLICY_FLAG_WAKE;
     }
@@ -505,6 +507,10 @@ uint32_t KeyboardInputMapper::getEventSource() const {
     const auto deviceSources = getDeviceContext().getDeviceSources();
     LOG_ALWAYS_FATAL_IF((deviceSources & mMapperSource) != mMapperSource);
     return deviceSources & ALL_KEYBOARD_SOURCES;
+}
+
+bool KeyboardInputMapper::wakeOnAlphabeticKeyboard(const KeyboardType keyboardType) const {
+    return mEnableAlphabeticKeyboardWakeFlag && (KeyboardType::ALPHABETIC == keyboardType);
 }
 
 } // namespace android

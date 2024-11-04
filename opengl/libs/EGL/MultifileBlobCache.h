@@ -34,7 +34,7 @@
 
 namespace android {
 
-constexpr uint32_t kMultifileBlobCacheVersion = 1;
+constexpr uint32_t kMultifileBlobCacheVersion = 2;
 constexpr char kMultifileBlobCacheStatusFile[] = "cache.status";
 
 struct MultifileHeader {

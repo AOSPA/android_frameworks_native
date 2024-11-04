@@ -54,6 +54,7 @@ public:
     bool adpf_use_fmq_channel_fixed() const;
 
     /// Trunk stable readonly flags ///
+    bool adpf_fmq_sf() const;
     bool connected_display() const;
     bool frame_rate_category_mrr() const;
     bool enable_small_area_detection() const;
@@ -93,6 +94,7 @@ public:
     bool single_hop_screenshot() const;
     bool trace_frame_rate_override() const;
     bool true_hdr_screenshots() const;
+    bool display_config_error_hal() const;
 
 protected:
     // overridden for unit tests

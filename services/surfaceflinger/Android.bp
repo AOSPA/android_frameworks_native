@@ -149,6 +149,46 @@ cc_defaults {
     },
 }
 
+// libsurfaceflinger_backend_{headers|sources} are a step towards pulling out
+// the "backend" sources to clean up the dependency graph between
+// CompositionEngine and SurfaceFlinger. Completing the cleanup would require
+// moving the headers in particular so that the dependency can strictly be a
+// DAG. There would certainly be additional cleanups: VirtualDisplaySurface.cpp
+// and FrameBufferSurface.cpp likely belong in CompositionEngine for example.
+cc_library_headers {
+    name: "libsurfaceflinger_backend_headers",
+    export_include_dirs: ["."],
+    static_libs: ["libserviceutils"],
+    export_static_lib_headers: ["libserviceutils"],
+
+    shared_libs: [
+        "android.hardware.configstore-utils",
+        "android.hardware.configstore@1.0",
+        "android.hardware.configstore@1.1",
+        "libbinder_ndk",
+    ],
+    export_shared_lib_headers: [
+        "android.hardware.configstore-utils",
+        "android.hardware.configstore@1.0",
+        "android.hardware.configstore@1.1",
+        "libbinder_ndk",
+    ],
+}
+
+filegroup {
+    name: "libsurfaceflinger_backend_sources",
+    srcs: [
+        "DisplayHardware/AidlComposerHal.cpp",
+        "DisplayHardware/ComposerHal.cpp",
+        "DisplayHardware/FramebufferSurface.cpp",
+        "DisplayHardware/HWC2.cpp",
+        "DisplayHardware/HWComposer.cpp",
+        "DisplayHardware/HidlComposerHal.cpp",
+        "DisplayHardware/PowerAdvisor.cpp",
+        "DisplayHardware/VirtualDisplaySurface.cpp",
+    ],
+}
+
 cc_library_headers {
     name: "libsurfaceflinger_headers",
     export_include_dirs: ["."],
@@ -159,20 +199,13 @@ cc_library_headers {
 filegroup {
     name: "libsurfaceflinger_sources",
     srcs: [
+        ":libsurfaceflinger_backend_sources",
         "BackgroundExecutor.cpp",
         "Client.cpp",
         "ClientCache.cpp",
         "Display/DisplayModeController.cpp",
         "Display/DisplaySnapshot.cpp",
         "DisplayDevice.cpp",
-        "DisplayHardware/AidlComposerHal.cpp",
-        "DisplayHardware/ComposerHal.cpp",
-        "DisplayHardware/FramebufferSurface.cpp",
-        "DisplayHardware/HWC2.cpp",
-        "DisplayHardware/HWComposer.cpp",
-        "DisplayHardware/HidlComposerHal.cpp",
-        "DisplayHardware/PowerAdvisor.cpp",
-        "DisplayHardware/VirtualDisplaySurface.cpp",
         "DisplayRenderArea.cpp",
         "Effects/Daltonizer.cpp",
         "FrontEnd/LayerCreationArgs.cpp",

@@ -1708,19 +1708,22 @@ status_t SurfaceFlinger::getOverlaySupport(gui::OverlayProperties* outProperties
         outProperties->combinations.emplace_back(outCombination);
     }
     outProperties->supportMixedColorSpaces = aidlProperties.supportMixedColorSpaces;
-    if (aidlProperties.lutProperties.has_value()) {
+    if (aidlProperties.lutProperties) {
         std::vector<gui::LutProperties> outLutProperties;
-        for (const auto& properties : aidlProperties.lutProperties.value()) {
-            gui::LutProperties currentProperties;
-            currentProperties.dimension =
-                    static_cast<gui::LutProperties::Dimension>(properties->dimension);
-            currentProperties.size = properties->size;
-            currentProperties.samplingKeys.reserve(properties->samplingKeys.size());
-            std::transform(properties->samplingKeys.cbegin(), properties->samplingKeys.cend(),
-                           std::back_inserter(currentProperties.samplingKeys), [](const auto& val) {
-                               return static_cast<gui::LutProperties::SamplingKey>(val);
-                           });
-            outLutProperties.push_back(std::move(currentProperties));
+        for (auto properties : *aidlProperties.lutProperties) {
+            if (!properties) {
+                gui::LutProperties currentProperties;
+                currentProperties.dimension =
+                        static_cast<gui::LutProperties::Dimension>(properties->dimension);
+                currentProperties.size = properties->size;
+                currentProperties.samplingKeys.reserve(properties->samplingKeys.size());
+                std::transform(properties->samplingKeys.cbegin(), properties->samplingKeys.cend(),
+                               std::back_inserter(currentProperties.samplingKeys),
+                               [](const auto& val) {
+                                   return static_cast<gui::LutProperties::SamplingKey>(val);
+                               });
+                outLutProperties.push_back(std::move(currentProperties));
+            }
         }
         outProperties->lutProperties.emplace(outLutProperties.begin(), outLutProperties.end());
     }

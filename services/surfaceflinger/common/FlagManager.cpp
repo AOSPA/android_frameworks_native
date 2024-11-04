@@ -116,6 +116,7 @@ void FlagManager::dump(std::string& result) const {
     DUMP_SERVER_FLAG(adpf_use_fmq_channel);
 
     /// Trunk stable readonly flags ///
+    DUMP_READ_ONLY_FLAG(adpf_fmq_sf);
     DUMP_READ_ONLY_FLAG(connected_display);
     DUMP_READ_ONLY_FLAG(enable_small_area_detection);
     DUMP_READ_ONLY_FLAG(frame_rate_category_mrr);
@@ -155,6 +156,7 @@ void FlagManager::dump(std::string& result) const {
     DUMP_READ_ONLY_FLAG(single_hop_screenshot);
     DUMP_READ_ONLY_FLAG(trace_frame_rate_override);
     DUMP_READ_ONLY_FLAG(true_hdr_screenshots);
+    DUMP_READ_ONLY_FLAG(display_config_error_hal);
 
 #undef DUMP_READ_ONLY_FLAG
 #undef DUMP_SERVER_FLAG
@@ -220,6 +222,7 @@ FLAG_MANAGER_LEGACY_SERVER_FLAG(use_skia_tracing, PROPERTY_SKIA_ATRACE_ENABLED,
                                 "SkiaTracingFeature__use_skia_tracing")
 
 /// Trunk stable readonly flags ///
+FLAG_MANAGER_READ_ONLY_FLAG(adpf_fmq_sf, "")
 FLAG_MANAGER_READ_ONLY_FLAG(connected_display, "")
 FLAG_MANAGER_READ_ONLY_FLAG(enable_small_area_detection, "")
 FLAG_MANAGER_READ_ONLY_FLAG(frame_rate_category_mrr, "debug.sf.frame_rate_category_mrr")
@@ -258,6 +261,7 @@ FLAG_MANAGER_READ_ONLY_FLAG(flush_buffer_slots_to_uncache, "");
 FLAG_MANAGER_READ_ONLY_FLAG(force_compile_graphite_renderengine, "");
 FLAG_MANAGER_READ_ONLY_FLAG(single_hop_screenshot, "");
 FLAG_MANAGER_READ_ONLY_FLAG(true_hdr_screenshots, "debug.sf.true_hdr_screenshots");
+FLAG_MANAGER_READ_ONLY_FLAG(display_config_error_hal, "");
 
 /// Trunk stable server flags ///
 FLAG_MANAGER_SERVER_FLAG(refresh_rate_overlay_on_external_display, "")

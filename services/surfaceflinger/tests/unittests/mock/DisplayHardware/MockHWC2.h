@@ -126,6 +126,8 @@ public:
                 (uint32_t, const android::sp<android::GraphicBuffer> &,
                  const android::sp<android::Fence> &),
                 (override));
+    MOCK_METHOD(hal::Error, setBufferSlotsToClear,
+                (const std::vector<uint32_t>& slotsToClear, uint32_t activeBufferSlot), (override));
     MOCK_METHOD(hal::Error, setSurfaceDamage, (const android::Region &), (override));
     MOCK_METHOD(hal::Error, setBlendMode, (hal::BlendMode), (override));
     MOCK_METHOD(hal::Error, setColor, (aidl::android::hardware::graphics::composer3::Color),
@@ -147,8 +149,8 @@ public:
                 (const std::string &, bool, const std::vector<uint8_t> &), (override));
     MOCK_METHOD(hal::Error, setBrightness, (float), (override));
     MOCK_METHOD(hal::Error, setBlockingRegion, (const android::Region &), (override));
-    MOCK_METHOD(hal::Error, setLuts,
-                (std::vector<aidl::android::hardware::graphics::composer3::Lut>&), (override));
+    MOCK_METHOD(hal::Error, setLuts, (aidl::android::hardware::graphics::composer3::Luts&),
+                (override));
 };
 
 } // namespace android::HWC2::mock
