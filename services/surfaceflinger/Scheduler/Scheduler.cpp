@@ -411,6 +411,14 @@ void Scheduler::enableSyntheticVsync(bool enable) {
     eventThreadFor(Cycle::Render).enableSyntheticVsync(enable);
 }
 
+void Scheduler::omitVsyncDispatching(bool omitted) {
+    eventThreadFor(Cycle::Render).omitVsyncDispatching(omitted);
+    // Note: If we don't couple Cycle::LastComposite event thread, there is a black screen
+    // after boot. This is most likely sysui or system_server dependency on sf instance
+    // Choreographer
+    eventThreadFor(Cycle::LastComposite).omitVsyncDispatching(omitted);
+}
+
 void Scheduler::onFrameRateOverridesChanged() {
     const auto [pacesetterId, supportsFrameRateOverrideByContent] = [this] {
         std::scoped_lock lock(mDisplayLock);

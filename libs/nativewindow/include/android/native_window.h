@@ -33,8 +33,8 @@
 #ifndef ANDROID_NATIVE_WINDOW_H
 #define ANDROID_NATIVE_WINDOW_H
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <sys/cdefs.h>
 
 #include <android/data_space.h>
@@ -282,7 +282,7 @@ int32_t ANativeWindow_setFrameRate(ANativeWindow* window, float frameRate, int8_
 void ANativeWindow_tryAllocateBuffers(ANativeWindow* window) __INTRODUCED_IN(30);
 
 /** Change frame rate strategy value for ANativeWindow_setFrameRate. */
-enum ANativeWindow_ChangeFrameRateStrategy {
+typedef enum ANativeWindow_ChangeFrameRateStrategy : int8_t {
     /**
      * Change the frame rate only if the transition is going to be seamless.
      */
@@ -292,7 +292,7 @@ enum ANativeWindow_ChangeFrameRateStrategy {
      * i.e. with visual interruptions for the user.
      */
     ANATIVEWINDOW_CHANGE_FRAME_RATE_ALWAYS = 1
-} __INTRODUCED_IN(31);
+} ANativeWindow_ChangeFrameRateStrategy __INTRODUCED_IN(31);
 
 /**
  * Sets the intended frame rate for this window.
@@ -345,6 +345,76 @@ int32_t ANativeWindow_setFrameRateWithChangeStrategy(ANativeWindow* window, floa
         __INTRODUCED_IN(31);
 
 /**
+ * Sets the intended frame rate for this window.
+ *
+ * On devices that are capable of running the display at different frame rates,
+ * the system may choose a display refresh rate to better match this surface's frame
+ * rate. Usage of this API won't introduce frame rate throttling, or affect other
+ * aspects of the application's frame production pipeline. However, because the system
+ * may change the display refresh rate, calls to this function may result in changes
+ * to Choreographer callback timings, and changes to the time interval at which the
+ * system releases buffers back to the application.
+ *
+ * Note that this only has an effect for surfaces presented on the display. If this
+ * surface is consumed by something other than the system compositor, e.g. a media
+ * codec, this call has no effect.
+ *
+ * You can register for changes in the refresh rate using
+ * \a AChoreographer_registerRefreshRateCallback.
+ *
+ * See ANativeWindow_clearFrameRate().
+ *
+ * Available since API level 36.
+ *
+ * \param window pointer to an ANativeWindow object.
+ *
+ * \param desiredMinRate The desired minimum frame rate (inclusive) for the window, specifying that
+ * the surface prefers the device render rate to be at least `desiredMinRate`.
+ *
+ * <p>Set `desiredMinRate` = `desiredMaxRate` to indicate the surface prefers an exact frame rate.
+ *
+ * <p>Set `desiredMinRate` = 0 to indicate the window has no preference
+ * and any frame rate is acceptable.
+ *
+ * <p>The value should be greater than or equal to 0.
+ *
+ * \param desiredMaxRate The desired maximum frame rate (inclusive) for the window, specifying that
+ * the surface prefers the device render rate to be at most `desiredMaxRate`.
+ *
+ * <p>Set `desiredMaxRate` = `desiredMinRate` to indicate the surface prefers an exact frame rate.
+ *
+ * <p>Set `desiredMaxRate` = positive infinity to indicate the window has no preference
+ * and any frame rate is acceptable.
+ *
+ * <p>The value should be greater than or equal to `desiredMinRate`.
+ *
+ * \param fixedSourceRate The "fixed source" frame rate of the window if the content has an
+ * inherently fixed frame rate, e.g. a video that has a specific frame rate.
+ *
+ * <p>When the frame rate chosen for the surface is the `fixedSourceRate` or a
+ * multiple, the surface can render without frame pulldown, for optimal smoothness. For
+ * example, a 30 fps video (`fixedSourceRate`=30) renders just as smoothly on 30 fps,
+ * 60 fps, 90 fps, 120 fps, and so on.
+ *
+ * <p>Setting the fixed source rate can also be used together with a desired
+ * frame rate min and max via setting `desiredMinRate` and `desiredMaxRate`. This still
+ * means the window's content has a fixed frame rate of `fixedSourceRate`, but additionally
+ * specifies the preference to be in the range [`desiredMinRate`, `desiredMaxRate`]. For example, an
+ * app might want to specify there is 30 fps video (`fixedSourceRate`=30) as well as a smooth
+ * animation on the same window which looks good when drawing within a frame rate range such as
+ * [`desiredMinRate`, `desiredMaxRate`] = [60,120].
+ *
+ * \param changeFrameRateStrategy Whether display refresh rate transitions caused by this surface
+ * should be seamless. A seamless transition is one that doesn't have any visual interruptions, such
+ * as a black screen for a second or two.
+ *
+ * \return 0 for success, -EINVAL if the arguments are invalid.
+ */
+int32_t ANativeWindow_setFrameRateParams(
+        ANativeWindow* window, float desiredMinRate, float desiredMaxRate, float fixedSourceRate,
+        ANativeWindow_ChangeFrameRateStrategy changeFrameRateStrategy) __INTRODUCED_IN(36);
+
+/**
  * Clears the frame rate which is set for this window.
  *
  * This is equivalent to calling
@@ -366,14 +436,13 @@ int32_t ANativeWindow_setFrameRateWithChangeStrategy(ANativeWindow* window, floa
  *
  * See ANativeWindow_setFrameRateWithChangeStrategy().
  *
- * Available since API level 34.
+ * Available since API level 31.
  *
  * \param window pointer to an ANativeWindow object.
  *
  * \return 0 for success, -EINVAL if the window value is invalid.
  */
-inline int32_t ANativeWindow_clearFrameRate(ANativeWindow* window)
-        __INTRODUCED_IN(__ANDROID_API_U__) {
+inline int32_t ANativeWindow_clearFrameRate(ANativeWindow* window) __INTRODUCED_IN(31) {
     return ANativeWindow_setFrameRateWithChangeStrategy(window, 0,
             ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT,
             ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);

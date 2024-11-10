@@ -103,11 +103,11 @@ BufferQueueProducer::BufferQueueProducer(const sp<BufferQueueCore>& core,
     mDequeueTimeout(-1),
     mDequeueWaitingForAllocation(false) {
 /* QTI_BEGIN */
-#ifdef QTI_DISPLAY_EXTENSION
-    if (!mQtiBQPExtn) {
-        mQtiBQPExtn = new libguiextension::QtiBufferQueueProducerExtension(this);
-    }
-#endif
+// #ifdef QTI_DISPLAY_EXTENSION
+//     if (!mQtiBQPExtn) {
+//         mQtiBQPExtn = new libguiextension::QtiBufferQueueProducerExtension(this);
+//     }
+// #endif
 /* QTI_END */
 }
 

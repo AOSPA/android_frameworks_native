@@ -421,6 +421,16 @@ void EventThread::enableSyntheticVsync(bool enable) {
     mCondition.notify_all();
 }
 
+void EventThread::omitVsyncDispatching(bool omitted) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    if (!mVSyncState || mVSyncState->omitted == omitted) {
+        return;
+    }
+
+    mVSyncState->omitted = omitted;
+    mCondition.notify_all();
+}
+
 void EventThread::onVsync(nsecs_t vsyncTime, nsecs_t wakeupTime, nsecs_t readyTime) {
     std::lock_guard<std::mutex> lock(mMutex);
     mLastVsyncCallbackTime = TimePoint::fromNs(vsyncTime);
@@ -522,7 +532,17 @@ void EventThread::threadMain(std::unique_lock<std::mutex>& lock) {
         }
 
         if (mVSyncState && vsyncRequested) {
-            mState = mVSyncState->synthetic ? State::SyntheticVSync : State::VSync;
+            const bool vsyncOmitted =
+                    FlagManager::getInstance().no_vsyncs_on_screen_off() && mVSyncState->omitted;
+            if (vsyncOmitted) {
+                mState = State::Idle;
+                SFTRACE_INT("VsyncPendingScreenOn", 1);
+            } else {
+                mState = mVSyncState->synthetic ? State::SyntheticVSync : State::VSync;
+                if (FlagManager::getInstance().no_vsyncs_on_screen_off()) {
+                    SFTRACE_INT("VsyncPendingScreenOn", 0);
+                }
+            }
         } else {
             ALOGW_IF(!mVSyncState, "Ignoring VSYNC request while display is disconnected");
             mState = State::Idle;

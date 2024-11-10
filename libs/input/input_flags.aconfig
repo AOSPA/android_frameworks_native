@@ -224,3 +224,10 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 }
+
+flag {
+  name: "connected_displays_cursor"
+  namespace: "lse_desktop_experience"
+  description: "Allow cursor to transition across multiple connected displays"
+  bug: "362719483"
+}

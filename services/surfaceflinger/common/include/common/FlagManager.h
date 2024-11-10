@@ -77,6 +77,7 @@ public:
     bool renderable_buffer_usage() const;
     bool restore_blur_step() const;
     bool dont_skip_on_early_ro() const;
+    bool no_vsyncs_on_screen_off() const;
     bool protected_if_client() const;
     bool idle_screen_refresh_rate_timeout() const;
     bool graphite_renderengine() const;
@@ -91,10 +92,10 @@ public:
     bool override_trusted_overlay() const;
     bool flush_buffer_slots_to_uncache() const;
     bool force_compile_graphite_renderengine() const;
-    bool single_hop_screenshot() const;
     bool trace_frame_rate_override() const;
     bool true_hdr_screenshots() const;
     bool display_config_error_hal() const;
+    bool connected_display_hdr() const;
 
 protected:
     // overridden for unit tests

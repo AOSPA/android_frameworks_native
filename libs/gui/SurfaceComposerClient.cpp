@@ -61,6 +61,7 @@
 #include <ui/DisplayMode.h>
 #include <ui/DisplayState.h>
 #include <ui/DynamicDisplayInfo.h>
+#include <ui/FrameRateCategoryRate.h>
 
 #include <android-base/thread_annotations.h>
 #include <gui/LayerStatePermissions.h>
@@ -1366,10 +1367,11 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
         qtiDolphinWrapper->qtiDolphinQueueBuffer(true);
     }
     /* QTI_END */
-    sf->setTransactionState(mFrameTimelineInfo, composerStates, displayStates, flags, applyToken,
-                            mInputWindowCommands, mDesiredPresentTime, mIsAutoTimestamp,
-                            mUncacheBuffers, hasListenerCallbacks, listenerCallbacks, mId,
-                            mMergedTransactionIds);
+    status_t binderStatus =
+            sf->setTransactionState(mFrameTimelineInfo, composerStates, displayStates, flags,
+                                    applyToken, mInputWindowCommands, mDesiredPresentTime,
+                                    mIsAutoTimestamp, mUncacheBuffers, hasListenerCallbacks,
+                                    listenerCallbacks, mId, mMergedTransactionIds);
     /* QTI_BEGIN */
     if (qtiDolphinWrapper && qtiDolphinWrapper->qtiDolphinQueueBuffer) {
         qtiDolphinWrapper->qtiDolphinQueueBuffer(false);
@@ -1380,12 +1382,12 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
     // Clear the current states and flags
     clear();
 
-    if (synchronous) {
+    if (synchronous && binderStatus == OK) {
         syncCallback->wait();
     }
 
     mStatus = NO_ERROR;
-    return NO_ERROR;
+    return binderStatus;
 }
 
 sp<IBinder> SurfaceComposerClient::Transaction::sApplyToken = new BBinder();
@@ -1399,7 +1401,7 @@ sp<IBinder> SurfaceComposerClient::Transaction::getDefaultApplyToken() {
 
 void SurfaceComposerClient::Transaction::setDefaultApplyToken(sp<IBinder> applyToken) {
     std::scoped_lock lock{sApplyTokenMutex};
-    sApplyToken = applyToken;
+    sApplyToken = std::move(applyToken);
 }
 
 status_t SurfaceComposerClient::Transaction::sendSurfaceFlushJankDataTransaction(
@@ -2837,6 +2839,8 @@ void SurfaceComposerClient::getDynamicDisplayInfoInternal(gui::DynamicDisplayInf
     outInfo->gameContentTypeSupported = ginfo.gameContentTypeSupported;
     outInfo->preferredBootDisplayMode = ginfo.preferredBootDisplayMode;
     outInfo->hasArrSupport = ginfo.hasArrSupport;
+    outInfo->frameRateCategoryRate = ui::FrameRateCategoryRate(ginfo.frameRateCategoryRate.normal,
+                                                               ginfo.frameRateCategoryRate.high);
 }
 
 status_t SurfaceComposerClient::getDynamicDisplayInfoFromId(int64_t displayId,
