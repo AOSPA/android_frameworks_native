@@ -98,6 +98,7 @@
 #include <ui/DisplayStatInfo.h>
 #include <ui/DisplayState.h>
 #include <ui/DynamicDisplayInfo.h>
+#include <ui/FrameRateCategoryRate.h>
 #include <ui/GraphicBufferAllocator.h>
 #include <ui/HdrRenderTypeUtils.h>
 #include <ui/LayerStack.h>
@@ -1250,6 +1251,10 @@ void SurfaceFlinger::getDynamicDisplayInfoInternal(ui::DynamicDisplayInfo*& info
     info->activeDisplayModeId = ftl::to_underlying(mode.modePtr->getId());
     info->renderFrameRate = mode.fps.getValue();
     info->hasArrSupport = mode.modePtr->getVrrConfig() && FlagManager::getInstance().vrr_config();
+
+    const auto [normal, high] = display->refreshRateSelector().getFrameRateCategoryRates();
+    ui::FrameRateCategoryRate frameRateCategoryRate(normal.getValue(), high.getValue());
+    info->frameRateCategoryRate = frameRateCategoryRate;
     info->activeColorMode = display->getCompositionDisplay()->getState().colorMode;
     info->hdrCapabilities = filterOut4k30(display->getHdrCapabilities());
 
@@ -3836,6 +3841,26 @@ sp<DisplayDevice> SurfaceFlinger::setupNewDisplayDeviceInternal(
     return display;
 }
 
+void SurfaceFlinger::incRefreshableDisplays() {
+    if (FlagManager::getInstance().no_vsyncs_on_screen_off()) {
+        mRefreshableDisplays++;
+        if (mRefreshableDisplays == 1) {
+            ftl::FakeGuard guard(kMainThreadContext);
+            mScheduler->omitVsyncDispatching(false);
+        }
+    }
+}
+
+void SurfaceFlinger::decRefreshableDisplays() {
+    if (FlagManager::getInstance().no_vsyncs_on_screen_off()) {
+        mRefreshableDisplays--;
+        if (mRefreshableDisplays == 0) {
+            ftl::FakeGuard guard(kMainThreadContext);
+            mScheduler->omitVsyncDispatching(true);
+        }
+    }
+}
+
 void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
                                          const DisplayDeviceState& state) {
     ui::Size resolution(0, 0);
@@ -3966,6 +3991,10 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         display->adjustRefreshRate(mScheduler->getPacesetterRefreshRate());
     }
 
+    if (display->isRefreshable()) {
+        incRefreshableDisplays();
+    }
+
     mDisplays.try_emplace(displayToken, std::move(display));
     /* QTI_BEGIN */
     mQtiSFExtnIntf->qtiCreateSmomoInstance(state);
@@ -4008,6 +4037,10 @@ void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
         } else {
             mScheduler->unregisterDisplay(display->getPhysicalId(), mActiveDisplayId);
         }
+
+        if (display->isRefreshable()) {
+            decRefreshableDisplays();
+        }
     }
 
     mDisplays.erase(displayToken);
@@ -4047,6 +4080,10 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
             display->disconnect();
             if (display->isVirtual()) {
                 releaseVirtualDisplay(display->getVirtualId());
+            }
+
+            if (display->isRefreshable()) {
+                decRefreshableDisplays();
             }
         }
 
@@ -5648,7 +5685,15 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
                      activeDisplay->isPoweredOn(),
              "Trying to change power mode on inactive display without powering off active display");
 
+    const bool couldRefresh = display->isRefreshable();
     display->setPowerMode(mode);
+    const bool canRefresh = display->isRefreshable();
+
+    if (couldRefresh && !canRefresh) {
+        decRefreshableDisplays();
+    } else if (!couldRefresh && canRefresh) {
+        incRefreshableDisplays();
+    }
 
     const auto activeMode = display->refreshRateSelector().getActiveMode().modePtr;
     if (currentMode == hal::PowerMode::OFF) {
@@ -7585,9 +7630,10 @@ void SurfaceFlinger::attachReleaseFenceFutureToLayer(Layer* layer, LayerFE* laye
 // typically a layer with DRM contents, or have the GRALLOC_USAGE_PROTECTED set on the buffer.
 // A protected layer has no implication on whether it's secure, which is explicitly set by
 // application to avoid being screenshot or drawn via unsecure display.
-bool SurfaceFlinger::layersHasProtectedLayer(const std::vector<sp<LayerFE>>& layers) const {
+bool SurfaceFlinger::layersHasProtectedLayer(
+        const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const {
     bool protectedLayerFound = false;
-    for (auto& layerFE : layers) {
+    for (auto& [_, layerFE] : layers) {
         /* QTI_BEGIN */
         bool qtiSecCamera = layerFE->getCompositionState()->qtiIsSecureCamera;
         bool qtiSecDisplay = layerFE->getCompositionState()->qtiIsSecureDisplay;
@@ -7610,15 +7656,21 @@ bool SurfaceFlinger::layersHasProtectedLayer(const std::vector<sp<LayerFE>>& lay
 // risk of deadlocks.
 std::optional<SurfaceFlinger::OutputCompositionState> SurfaceFlinger::getSnapshotsFromMainThread(
         RenderAreaBuilderVariant& renderAreaBuilder, GetLayerSnapshotsFunction getLayerSnapshotsFn,
-        std::vector<sp<LayerFE>>& layerFEs) {
+        std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) {
     return mScheduler
-            ->schedule([=, this, &renderAreaBuilder, &layerFEs]() REQUIRES(kMainThreadContext) {
+            ->schedule([=, this, &renderAreaBuilder, &layers]() REQUIRES(kMainThreadContext) {
                 SFTRACE_NAME("getSnapshotsFromMainThread");
-                auto layers = getLayerSnapshotsFn();
-                for (auto& [layer, layerFE] : layers) {
-                    attachReleaseFenceFutureToLayer(layer, layerFE.get(), ui::INVALID_LAYER_STACK);
+                layers = getLayerSnapshotsFn();
+                // Non-threaded RenderEngine eventually returns to the main thread a 2nd time
+                // to complete the screenshot. Release fences should only be added during the 2nd
+                // hop to main thread in order to avoid potential deadlocks from waiting for the
+                // the future fence to fire.
+                if (mRenderEngine->isThreaded()) {
+                    for (auto& [layer, layerFE] : layers) {
+                        attachReleaseFenceFutureToLayer(layer, layerFE.get(),
+                                                        ui::INVALID_LAYER_STACK);
+                    }
                 }
-                layerFEs = extractLayerFEs(layers);
                 return getDisplayStateFromRenderAreaBuilder(renderAreaBuilder);
             })
             .get();
@@ -7639,84 +7691,46 @@ void SurfaceFlinger::captureScreenCommon(RenderAreaBuilderVariant renderAreaBuil
         return;
     }
 
-    if (FlagManager::getInstance().single_hop_screenshot() && mRenderEngine->isThreaded()) {
-        std::vector<sp<LayerFE>> layerFEs;
-        auto displayState =
-                getSnapshotsFromMainThread(renderAreaBuilder, getLayerSnapshotsFn, layerFEs);
+    std::vector<std::pair<Layer*, sp<LayerFE>>> layers;
+    auto displayState = getSnapshotsFromMainThread(renderAreaBuilder, getLayerSnapshotsFn, layers);
 
-        const bool supportsProtected = getRenderEngine().supportsProtectedContent();
-        bool hasProtectedLayer = false;
-        if (allowProtected && supportsProtected) {
-            hasProtectedLayer = layersHasProtectedLayer(layerFEs);
-        }
-
-        /* QTI_BEGIN */
-        mQtiSFExtnIntf->qtiHasProtectedLayer(&hasProtectedLayer);
-        /* QTI_END */
-
-        const bool isProtected = hasProtectedLayer && allowProtected && supportsProtected;
-        const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |
-                GRALLOC_USAGE_HW_TEXTURE |
-                (isProtected ? GRALLOC_USAGE_PROTECTED
-                             : GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);
-        sp<GraphicBuffer> buffer =
-                getFactory().createGraphicBuffer(bufferSize.getWidth(), bufferSize.getHeight(),
-                                                 static_cast<android_pixel_format>(reqPixelFormat),
-                                                 1 /* layerCount */, usage, "screenshot");
-
-        const status_t bufferStatus = buffer->initCheck();
-        if (bufferStatus != OK) {
-            // Animations may end up being really janky, but don't crash here.
-            // Otherwise an irreponsible process may cause an SF crash by allocating
-            // too much.
-            ALOGE("%s: Buffer failed to allocate: %d", __func__, bufferStatus);
-            invokeScreenCaptureError(bufferStatus, captureListener);
-            return;
-        }
-        const std::shared_ptr<renderengine::ExternalTexture> texture = std::make_shared<
-                renderengine::impl::ExternalTexture>(buffer, getRenderEngine(),
-                                                     renderengine::impl::ExternalTexture::Usage::
-                                                             WRITEABLE);
-        auto futureFence = captureScreenshot(renderAreaBuilder, texture, false /* regionSampling */,
-                                             grayscale, isProtected, attachGainmap, captureListener,
-                                             displayState, layerFEs);
-        futureFence.get();
-
-    } else {
-        const bool supportsProtected = getRenderEngine().supportsProtectedContent();
-        bool hasProtectedLayer = false;
-        if (allowProtected && supportsProtected) {
-            auto layers = mScheduler->schedule([=]() { return getLayerSnapshotsFn(); }).get();
-            hasProtectedLayer = layersHasProtectedLayer(extractLayerFEs(layers));
-        }
-        const bool isProtected = hasProtectedLayer && allowProtected && supportsProtected;
-        const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |
-                GRALLOC_USAGE_HW_TEXTURE |
-                (isProtected ? GRALLOC_USAGE_PROTECTED
-                             : GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);
-        sp<GraphicBuffer> buffer =
-                getFactory().createGraphicBuffer(bufferSize.getWidth(), bufferSize.getHeight(),
-                                                 static_cast<android_pixel_format>(reqPixelFormat),
-                                                 1 /* layerCount */, usage, "screenshot");
-
-        const status_t bufferStatus = buffer->initCheck();
-        if (bufferStatus != OK) {
-            // Animations may end up being really janky, but don't crash here.
-            // Otherwise an irreponsible process may cause an SF crash by allocating
-            // too much.
-            ALOGE("%s: Buffer failed to allocate: %d", __func__, bufferStatus);
-            invokeScreenCaptureError(bufferStatus, captureListener);
-            return;
-        }
-        const std::shared_ptr<renderengine::ExternalTexture> texture = std::make_shared<
-                renderengine::impl::ExternalTexture>(buffer, getRenderEngine(),
-                                                     renderengine::impl::ExternalTexture::Usage::
-                                                             WRITEABLE);
-        auto futureFence = captureScreenshotLegacy(renderAreaBuilder, getLayerSnapshotsFn, texture,
-                                                   false /* regionSampling */, grayscale,
-                                                   isProtected, attachGainmap, captureListener);
-        futureFence.get();
+    const bool supportsProtected = getRenderEngine().supportsProtectedContent();
+    bool hasProtectedLayer = false;
+    if (allowProtected && supportsProtected) {
+        hasProtectedLayer = layersHasProtectedLayer(layers);
     }
+
+    /* QTI_BEGIN */
+        mQtiSFExtnIntf->qtiHasProtectedLayer(&hasProtectedLayer);
+    /* QTI_END */
+
+    const bool isProtected = hasProtectedLayer && allowProtected && supportsProtected;
+    const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |
+            GRALLOC_USAGE_HW_TEXTURE |
+            (isProtected ? GRALLOC_USAGE_PROTECTED
+                         : GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);
+    sp<GraphicBuffer> buffer =
+            getFactory().createGraphicBuffer(bufferSize.getWidth(), bufferSize.getHeight(),
+                                             static_cast<android_pixel_format>(reqPixelFormat),
+                                             1 /* layerCount */, usage, "screenshot");
+
+    const status_t bufferStatus = buffer->initCheck();
+    if (bufferStatus != OK) {
+        // Animations may end up being really janky, but don't crash here.
+        // Otherwise an irreponsible process may cause an SF crash by allocating
+        // too much.
+        ALOGE("%s: Buffer failed to allocate: %d", __func__, bufferStatus);
+        invokeScreenCaptureError(bufferStatus, captureListener);
+        return;
+    }
+    const std::shared_ptr<renderengine::ExternalTexture> texture = std::make_shared<
+            renderengine::impl::ExternalTexture>(buffer, getRenderEngine(),
+                                                 renderengine::impl::ExternalTexture::Usage::
+                                                         WRITEABLE);
+    auto futureFence =
+            captureScreenshot(renderAreaBuilder, texture, false /* regionSampling */, grayscale,
+                              isProtected, attachGainmap, captureListener, displayState, layers);
+    futureFence.get();
 }
 
 std::optional<SurfaceFlinger::OutputCompositionState>
@@ -7755,22 +7769,13 @@ SurfaceFlinger::getDisplayStateFromRenderAreaBuilder(RenderAreaBuilderVariant& r
     return std::nullopt;
 }
 
-std::vector<sp<LayerFE>> SurfaceFlinger::extractLayerFEs(
-        const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const {
-    std::vector<sp<LayerFE>> layerFEs;
-    layerFEs.reserve(layers.size());
-    for (const auto& [_, layerFE] : layers) {
-        layerFEs.push_back(layerFE);
-    }
-    return layerFEs;
-}
-
 ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
         const RenderAreaBuilderVariant& renderAreaBuilder,
         const std::shared_ptr<renderengine::ExternalTexture>& buffer, bool regionSampling,
         bool grayscale, bool isProtected, bool attachGainmap,
         const sp<IScreenCaptureListener>& captureListener,
-        std::optional<OutputCompositionState>& displayState, std::vector<sp<LayerFE>>& layerFEs) {
+        std::optional<OutputCompositionState>& displayState,
+        std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) {
     SFTRACE_CALL();
 
     ScreenCaptureResults captureResults;
@@ -7789,11 +7794,9 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
     float displayBrightnessNits = displayState.value().displayBrightnessNits;
     float sdrWhitePointNits = displayState.value().sdrWhitePointNits;
 
-    // Empty vector needed to pass into renderScreenImpl for legacy path
-    std::vector<std::pair<Layer*, sp<android::LayerFE>>> layers;
     ftl::SharedFuture<FenceResult> renderFuture =
             renderScreenImpl(renderArea.get(), buffer, regionSampling, grayscale, isProtected,
-                             attachGainmap, captureResults, displayState, layers, layerFEs);
+                             captureResults, displayState, layers);
 
     if (captureResults.capturedHdrLayers && attachGainmap &&
         FlagManager::getInstance().true_hdr_screenshots()) {
@@ -7828,8 +7831,7 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
             ScreenCaptureResults unusedResults;
             ftl::SharedFuture<FenceResult> hdrRenderFuture =
                     renderScreenImpl(renderArea.get(), hdrTexture, regionSampling, grayscale,
-                                     isProtected, attachGainmap, unusedResults, displayState,
-                                     layers, layerFEs);
+                                     isProtected, unusedResults, displayState, layers);
 
             renderFuture =
                     ftl::Future(std::move(renderFuture))
@@ -7875,75 +7877,14 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
     return renderFuture;
 }
 
-ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshotLegacy(
-        RenderAreaBuilderVariant renderAreaBuilder, GetLayerSnapshotsFunction getLayerSnapshotsFn,
-        const std::shared_ptr<renderengine::ExternalTexture>& buffer, bool regionSampling,
-        bool grayscale, bool isProtected, bool attachGainmap,
-        const sp<IScreenCaptureListener>& captureListener) {
-    SFTRACE_CALL();
-
-    auto takeScreenshotFn = [=, this, renderAreaBuilder = std::move(renderAreaBuilder)]() REQUIRES(
-                                    kMainThreadContext) mutable -> ftl::SharedFuture<FenceResult> {
-        auto layers = getLayerSnapshotsFn();
-        for (auto& [layer, layerFE] : layers) {
-            attachReleaseFenceFutureToLayer(layer, layerFE.get(), ui::INVALID_LAYER_STACK);
-        }
-        auto displayState = getDisplayStateFromRenderAreaBuilder(renderAreaBuilder);
-
-        ScreenCaptureResults captureResults;
-        std::unique_ptr<const RenderArea> renderArea =
-                std::visit([](auto&& arg) -> std::unique_ptr<RenderArea> { return arg.build(); },
-                           renderAreaBuilder);
-
-        if (!renderArea) {
-            ALOGW("Skipping screen capture because of invalid render area.");
-            if (captureListener) {
-                captureResults.fenceResult = base::unexpected(NO_MEMORY);
-                captureListener->onScreenCaptureCompleted(captureResults);
-            }
-            return ftl::yield<FenceResult>(base::unexpected(NO_ERROR)).share();
-        }
-
-        auto layerFEs = extractLayerFEs(layers);
-        ftl::SharedFuture<FenceResult> renderFuture =
-                renderScreenImpl(renderArea.get(), buffer, regionSampling, grayscale, isProtected,
-                                 attachGainmap, captureResults, displayState, layers, layerFEs);
-
-        if (captureListener) {
-            // Defer blocking on renderFuture back to the Binder thread.
-            return ftl::Future(std::move(renderFuture))
-                    .then([captureListener, captureResults = std::move(captureResults)](
-                                  FenceResult fenceResult) mutable -> FenceResult {
-                        captureResults.fenceResult = std::move(fenceResult);
-                        captureListener->onScreenCaptureCompleted(captureResults);
-                        return base::unexpected(NO_ERROR);
-                    })
-                    .share();
-        }
-        return renderFuture;
-    };
-
-    // TODO(b/294936197): Run takeScreenshotsFn() in a binder thread to reduce the number
-    // of calls on the main thread.
-    auto future =
-            mScheduler->schedule(FTL_FAKE_GUARD(kMainThreadContext, std::move(takeScreenshotFn)));
-
-    // Flatten nested futures.
-    auto chain = ftl::Future(std::move(future)).then([](ftl::SharedFuture<FenceResult> future) {
-        return future;
-    });
-
-    return chain.share();
-}
-
 ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
         const RenderArea* renderArea, const std::shared_ptr<renderengine::ExternalTexture>& buffer,
-        bool regionSampling, bool grayscale, bool isProtected, bool attachGainmap,
-        ScreenCaptureResults& captureResults, std::optional<OutputCompositionState>& displayState,
-        std::vector<std::pair<Layer*, sp<LayerFE>>>& layers, std::vector<sp<LayerFE>>& layerFEs) {
+        bool regionSampling, bool grayscale, bool isProtected, ScreenCaptureResults& captureResults,
+        std::optional<OutputCompositionState>& displayState,
+        std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) {
     SFTRACE_CALL();
 
-    for (auto& layerFE : layerFEs) {
+    for (auto& [_, layerFE] : layers) {
         frontend::LayerSnapshot* snapshot = layerFE->mSnapshot.get();
         captureResults.capturedSecureLayers |= (snapshot->isVisible && snapshot->isSecure);
         captureResults.capturedHdrLayers |= isHdrLayer(*snapshot);
@@ -8002,28 +7943,31 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
     captureResults.buffer = capturedBuffer->getBuffer();
 
     ui::LayerStack layerStack{ui::DEFAULT_LAYER_STACK};
-    if (!layerFEs.empty()) {
-        const sp<LayerFE>& layerFE = layerFEs.back();
+    if (!layers.empty()) {
+        const sp<LayerFE>& layerFE = layers.back().second;
         layerStack = layerFE->getCompositionState()->outputFilter.layerStack;
     }
 
-    auto copyLayerFEs = [&layerFEs]() {
-        std::vector<sp<compositionengine::LayerFE>> ceLayerFEs;
-        ceLayerFEs.reserve(layerFEs.size());
-        for (const auto& layerFE : layerFEs) {
-            ceLayerFEs.push_back(layerFE);
-        }
-        return ceLayerFEs;
-    };
-
     auto present = [this, buffer = capturedBuffer, dataspace = captureResults.capturedDataspace,
                     sdrWhitePointNits, displayBrightnessNits, grayscale, isProtected,
-                    layerFEs = copyLayerFEs(), layerStack, regionSampling,
+                    layers = std::move(layers), layerStack, regionSampling,
                     renderArea = std::move(renderArea), renderIntent,
                     enableLocalTonemapping]() -> FenceResult {
         std::unique_ptr<compositionengine::CompositionEngine> compositionEngine =
                 mFactory.createCompositionEngine();
         compositionEngine->setRenderEngine(mRenderEngine.get());
+
+        std::vector<sp<compositionengine::LayerFE>> layerFEs;
+        layerFEs.reserve(layers.size());
+        for (auto& [layer, layerFE] : layers) {
+            // Release fences were not yet added for non-threaded render engine. To avoid
+            // deadlocks between main thread and binder threads waiting for the future fence
+            // result, fences should be added to layers in the same hop onto the main thread.
+            if (!mRenderEngine->isThreaded()) {
+                attachReleaseFenceFutureToLayer(layer, layerFE.get(), ui::INVALID_LAYER_STACK);
+            }
+            layerFEs.push_back(layerFE);
+        }
 
         compositionengine::Output::ColorProfile colorProfile{.dataspace = dataspace,
                                                              .renderIntent = renderIntent};
@@ -8082,13 +8026,9 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
     //
     // TODO(b/196334700) Once we use RenderEngineThreaded everywhere we can always defer the call
     // to CompositionEngine::present.
-    ftl::SharedFuture<FenceResult> presentFuture;
-    if (FlagManager::getInstance().single_hop_screenshot() && mRenderEngine->isThreaded()) {
-        presentFuture = ftl::yield(present()).share();
-    } else {
-        presentFuture = mRenderEngine->isThreaded() ? ftl::defer(std::move(present)).share()
-                                                    : ftl::yield(present()).share();
-    }
+    ftl::SharedFuture<FenceResult> presentFuture = mRenderEngine->isThreaded()
+            ? ftl::yield(present()).share()
+            : mScheduler->schedule(std::move(present)).share();
 
     return presentFuture;
 }
@@ -9052,6 +8992,9 @@ void SurfaceComposerAIDL::getDynamicDisplayInfoInternal(ui::DynamicDisplayInfo& 
     outInfo->activeDisplayModeId = info.activeDisplayModeId;
     outInfo->renderFrameRate = info.renderFrameRate;
     outInfo->hasArrSupport = info.hasArrSupport;
+    gui::FrameRateCategoryRate& frameRateCategoryRate = outInfo->frameRateCategoryRate;
+    frameRateCategoryRate.normal = info.frameRateCategoryRate.getNormal();
+    frameRateCategoryRate.high = info.frameRateCategoryRate.getHigh();
 
     outInfo->supportedColorModes.clear();
     outInfo->supportedColorModes.reserve(info.supportedColorModes.size());

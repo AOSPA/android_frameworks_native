@@ -106,6 +106,8 @@ public:
     // Feed clients with fake VSYNC, e.g. while the display is off.
     virtual void enableSyntheticVsync(bool) = 0;
 
+    virtual void omitVsyncDispatching(bool) = 0;
+
     virtual void onHotplugReceived(PhysicalDisplayId displayId, bool connected) = 0;
 
     virtual void onHotplugConnectionError(int32_t connectionError) = 0;
@@ -164,6 +166,8 @@ public:
                                            nsecs_t now) const override;
 
     void enableSyntheticVsync(bool) override;
+
+    void omitVsyncDispatching(bool) override;
 
     void onHotplugReceived(PhysicalDisplayId displayId, bool connected) override;
 
@@ -240,6 +244,9 @@ private:
 
         // True if VSYNC should be faked, e.g. when display is off.
         bool synthetic = false;
+
+        // True if VSYNC should not be delivered to apps. Used when the display is off.
+        bool omitted = false;
     };
 
     // TODO(b/74619554): Create per-display threads waiting on respective VSYNC signals,

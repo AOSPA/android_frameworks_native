@@ -711,8 +711,20 @@ void Layer::callReleaseBufferCallback(const sp<ITransactionCompletedListener>& l
         listener->onReleaseBuffer(callbackId, fence, currentMaxAcquiredBufferCount);
     }
 
-    if (mBufferReleaseChannel) {
-        mBufferReleaseChannel->writeReleaseFence(callbackId, fence, currentMaxAcquiredBufferCount);
+    if (!mBufferReleaseChannel) {
+        return;
+    }
+
+    status_t status = mBufferReleaseChannel->writeReleaseFence(callbackId, fence,
+                                                               currentMaxAcquiredBufferCount);
+    if (status != OK) {
+        int error = -status;
+        // callReleaseBufferCallback is called during Layer's destructor. In this case, it's
+        // expected to receive connection errors.
+        if (error != EPIPE && error != ECONNRESET) {
+            ALOGD("[%s] writeReleaseFence failed. error %d (%s)", getDebugName(), error,
+                  strerror(error));
+        }
     }
 }
 

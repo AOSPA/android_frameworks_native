@@ -52,7 +52,6 @@
  *   - DO NOT CHANGE THE LAYOUT OR SIZE OF STRUCTURES
  */
 
-#include <android/api-level.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <unistd.h>

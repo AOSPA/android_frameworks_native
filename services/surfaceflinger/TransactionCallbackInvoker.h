@@ -83,6 +83,7 @@ private:
         mCompletedTransactions;
 
     struct BufferRelease {
+        std::string layerName;
         std::shared_ptr<gui::BufferReleaseChannel::ProducerEndpoint> channel;
         ReleaseCallbackId callbackId;
         sp<Fence> fence;

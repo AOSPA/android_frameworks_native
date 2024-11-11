@@ -1652,9 +1652,9 @@ std::chrono::milliseconds RefreshRateSelector::getIdleTimerTimeout() {
 FpsRange RefreshRateSelector::getFrameRateCategoryRange(FrameRateCategory category) {
     switch (category) {
         case FrameRateCategory::High:
-            return FpsRange{90_Hz, 120_Hz};
+            return FpsRange{kFrameRateCategoryRateHigh, 120_Hz};
         case FrameRateCategory::Normal:
-            return FpsRange{60_Hz, 120_Hz};
+            return FpsRange{kFrameRateCategoryRateNormal, 120_Hz};
         case FrameRateCategory::Low:
             return FpsRange{48_Hz, 120_Hz};
         case FrameRateCategory::HighHint:

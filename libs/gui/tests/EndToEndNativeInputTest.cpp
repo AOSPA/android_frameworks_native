@@ -294,7 +294,7 @@ public:
                     transactionBody) {
         SurfaceComposerClient::Transaction t;
         transactionBody(t, mSurfaceControl);
-        t.apply(true);
+        t.apply(/*synchronously=*/true);
     }
 
     virtual void showAt(int x, int y, Rect crop = Rect(0, 0, 100, 100)) {
@@ -307,7 +307,7 @@ public:
         t.setAlpha(mSurfaceControl, 1);
         auto reportedListener = sp<SynchronousWindowInfosReportedListener>::make();
         t.addWindowInfosReportedListener(reportedListener);
-        t.apply();
+        t.apply(/*synchronously=*/true);
         reportedListener->wait();
     }
 
@@ -319,7 +319,7 @@ public:
         request.timestamp = systemTime(SYSTEM_TIME_MONOTONIC);
         request.displayId = displayId.val();
         t.setFocusedWindow(request);
-        t.apply(true);
+        t.apply(/*synchronously=*/true);
     }
 
 public:
@@ -363,7 +363,7 @@ public:
                     transactionBody) override {
         SurfaceComposerClient::Transaction t;
         transactionBody(t, mParentSurfaceControl);
-        t.apply(true);
+        t.apply(/*synchronously=*/true);
     }
 
     void showAt(int x, int y, Rect crop = Rect(0, 0, 100, 100)) override {
@@ -377,7 +377,7 @@ public:
         t.setInputWindowInfo(mSurfaceControl, mInputInfo);
         t.setCrop(mSurfaceControl, crop);
         t.setAlpha(mSurfaceControl, 1);
-        t.apply(true);
+        t.apply(/*synchronously=*/true);
     }
 
 private:
@@ -417,7 +417,7 @@ public:
                 BufferUsage::COMPOSER_OVERLAY | BufferUsage::GPU_TEXTURE;
         sp<GraphicBuffer> buffer =
                 new GraphicBuffer(w, h, PIXEL_FORMAT_RGBA_8888, 1, usageFlags, "test");
-        Transaction().setBuffer(layer, buffer).apply(true);
+        Transaction().setBuffer(layer, buffer).apply(/*synchronously=*/true);
         usleep(mBufferPostDelay);
     }
 
@@ -1207,7 +1207,7 @@ public:
         t.setDisplayLayerStack(token, layerStack);
         t.setDisplayProjection(token, ui::ROTATION_0, {0, 0, width, height},
                                {offsetX, offsetY, offsetX + width, offsetY + height});
-        t.apply(true);
+        t.apply(/*synchronously=*/true);
 
         mVirtualDisplays.push_back(token);
     }

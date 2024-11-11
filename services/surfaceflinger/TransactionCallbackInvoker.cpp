@@ -144,7 +144,7 @@ status_t TransactionCallbackInvoker::addCallbackHandle(const sp<CallbackHandle>&
                                                     eventStats, handle->previousReleaseCallbackId);
         if (handle->bufferReleaseChannel &&
             handle->previousReleaseCallbackId != ReleaseCallbackId::INVALID_ID) {
-            mBufferReleases.emplace_back(handle->bufferReleaseChannel,
+            mBufferReleases.emplace_back(handle->name, handle->bufferReleaseChannel,
                                          handle->previousReleaseCallbackId,
                                          handle->previousReleaseFence,
                                          handle->currentMaxAcquiredBufferCount);
@@ -159,8 +159,13 @@ void TransactionCallbackInvoker::addPresentFence(sp<Fence> presentFence) {
 
 void TransactionCallbackInvoker::sendCallbacks(bool onCommitOnly) {
     for (const auto& bufferRelease : mBufferReleases) {
-        bufferRelease.channel->writeReleaseFence(bufferRelease.callbackId, bufferRelease.fence,
-                                                 bufferRelease.currentMaxAcquiredBufferCount);
+        status_t status = bufferRelease.channel
+                                  ->writeReleaseFence(bufferRelease.callbackId, bufferRelease.fence,
+                                                      bufferRelease.currentMaxAcquiredBufferCount);
+        if (status != OK) {
+            ALOGE("[%s] writeReleaseFence failed. error %d (%s)", bufferRelease.layerName.c_str(),
+                  -status, strerror(-status));
+        }
     }
     mBufferReleases.clear();
 

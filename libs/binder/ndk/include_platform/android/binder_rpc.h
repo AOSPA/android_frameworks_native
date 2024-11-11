@@ -144,8 +144,9 @@ typedef void (*ABinderRpc_AccessorProviderUserData_deleteCallback)(void* _Nullab
  */
 ABinderRpc_AccessorProvider* _Nullable ABinderRpc_registerAccessorProvider(
         ABinderRpc_AccessorProvider_getAccessorCallback _Nonnull provider,
-        const char* _Nullable* _Nonnull instances, size_t numInstances, void* _Nullable data,
-        ABinderRpc_AccessorProviderUserData_deleteCallback _Nullable onDelete) __INTRODUCED_IN(36);
+        const char* _Nullable const* const _Nonnull instances, size_t numInstances,
+        void* _Nullable data, ABinderRpc_AccessorProviderUserData_deleteCallback _Nullable onDelete)
+        __INTRODUCED_IN(36);
 
 /**
  * Remove an ABinderRpc_AccessorProvider from libbinder. This will remove references

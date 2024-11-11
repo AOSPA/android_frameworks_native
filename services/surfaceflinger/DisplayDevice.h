@@ -189,6 +189,7 @@ public:
     hardware::graphics::composer::hal::PowerMode getPowerMode() const;
     void setPowerMode(hardware::graphics::composer::hal::PowerMode);
     bool isPoweredOn() const;
+    bool isRefreshable() const;
     void tracePowerMode();
 
     // Enables layer caching on this DisplayDevice

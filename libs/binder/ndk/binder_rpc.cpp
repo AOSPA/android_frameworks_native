@@ -104,8 +104,8 @@ struct OnDeleteProviderHolder {
 };
 
 ABinderRpc_AccessorProvider* ABinderRpc_registerAccessorProvider(
-        ABinderRpc_AccessorProvider_getAccessorCallback provider, const char** instances,
-        size_t numInstances, void* data,
+        ABinderRpc_AccessorProvider_getAccessorCallback provider,
+        const char* const* const instances, size_t numInstances, void* data,
         ABinderRpc_AccessorProviderUserData_deleteCallback onDelete) {
     if (provider == nullptr) {
         ALOGE("Null provider passed to ABinderRpc_registerAccessorProvider");

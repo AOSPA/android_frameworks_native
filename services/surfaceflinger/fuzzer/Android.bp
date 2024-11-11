@@ -28,7 +28,6 @@ package {
 cc_defaults {
     name: "surfaceflinger_fuzz_defaults",
     static_libs: [
-        "libc++fs",
         "libsurfaceflinger_common",
         "libqtisurfaceflingerextension",
         "libqticompositionengineextension",

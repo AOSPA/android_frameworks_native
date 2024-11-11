@@ -263,6 +263,16 @@ int32_t ANativeWindow_setFrameRateWithChangeStrategy(ANativeWindow* window, floa
     return native_window_set_frame_rate(window, frameRate, compatibility, changeFrameRateStrategy);
 }
 
+int32_t ANativeWindow_setFrameRateParams(
+        ANativeWindow* window, float desiredMinRate, float desiredMaxRate, float fixedSourceRate,
+        ANativeWindow_ChangeFrameRateStrategy changeFrameRateStrategy) {
+    if (!window || !query(window, NATIVE_WINDOW_IS_VALID)) {
+        return -EINVAL;
+    }
+    return native_window_set_frame_rate_params(window, desiredMinRate, desiredMaxRate,
+                                               fixedSourceRate, changeFrameRateStrategy);
+}
+
 /**************************************************************************************************
  * vndk-stable
  **************************************************************************************************/
