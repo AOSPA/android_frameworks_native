@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <com_android_graphics_libgui_flags.h>
 #include <compositionengine/impl/HwcBufferCache.h>
 #include <compositionengine/impl/OutputLayer.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
@@ -1328,6 +1329,71 @@ TEST_F(OutputLayerWriteStateToHWCTest, setCompositionTypeRefreshRateIndicator) {
     expectSetHdrMetadataAndBufferCalls();
     expectSetCompositionTypeCall(Composition::REFRESH_RATE_INDICATOR);
 
+    mOutputLayer.writeStateToHWC(/*includeGeometry*/ true, /*skipLayer*/ false, 0,
+                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false);
+}
+
+TEST_F(OutputLayerWriteStateToHWCTest, setsPictureProfileWhenCommitted) {
+    if (!com_android_graphics_libgui_flags_apply_picture_profiles()) {
+        GTEST_SKIP() << "Feature flag disabled, skipping";
+    }
+    mLayerFEState.compositionType = Composition::DEVICE;
+    mLayerFEState.pictureProfileHandle = PictureProfileHandle(1);
+
+    expectGeometryCommonCalls();
+    expectPerFrameCommonCalls();
+    expectSetHdrMetadataAndBufferCalls();
+    expectSetCompositionTypeCall(Composition::DEVICE);
+
+    EXPECT_CALL(*mHwcLayer, setPictureProfileHandle(PictureProfileHandle(1)));
+
+    mOutputLayer.commitPictureProfileToCompositionState();
+    mOutputLayer.writeStateToHWC(/*includeGeometry*/ true, /*skipLayer*/ false, 0,
+                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false);
+}
+
+TEST_F(OutputLayerWriteStateToHWCTest, doesNotSetPictureProfileWhenNotCommitted) {
+    if (!com_android_graphics_libgui_flags_apply_picture_profiles()) {
+        GTEST_SKIP() << "Feature flag disabled, skipping";
+    }
+    mLayerFEState.compositionType = Composition::DEVICE;
+    mLayerFEState.pictureProfileHandle = PictureProfileHandle(1);
+
+    expectGeometryCommonCalls();
+    expectPerFrameCommonCalls();
+    expectSetHdrMetadataAndBufferCalls();
+    expectSetCompositionTypeCall(Composition::DEVICE);
+
+    EXPECT_CALL(*mHwcLayer, setPictureProfileHandle(_)).Times(0);
+
+    mOutputLayer.writeStateToHWC(/*includeGeometry*/ true, /*skipLayer*/ false, 0,
+                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false);
+}
+
+TEST_F(OutputLayerWriteStateToHWCTest, doesNotSetPictureProfileWhenNotCommittedLater) {
+    if (!com_android_graphics_libgui_flags_apply_picture_profiles()) {
+        GTEST_SKIP() << "Feature flag disabled, skipping";
+    }
+    mLayerFEState.compositionType = Composition::DEVICE;
+    mLayerFEState.pictureProfileHandle = PictureProfileHandle(1);
+
+    expectGeometryCommonCalls();
+    expectPerFrameCommonCalls();
+    expectSetHdrMetadataAndBufferCalls();
+    expectSetCompositionTypeCall(Composition::DEVICE);
+
+    EXPECT_CALL(*mHwcLayer, setPictureProfileHandle(PictureProfileHandle(1)));
+
+    mOutputLayer.commitPictureProfileToCompositionState();
+    mOutputLayer.writeStateToHWC(/*includeGeometry*/ true, /*skipLayer*/ false, 0,
+                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false);
+
+    expectGeometryCommonCalls();
+    expectPerFrameCommonCalls();
+    expectSetHdrMetadataAndBufferCalls(kExpectedHwcSlot, nullptr, kFence);
+
+    EXPECT_CALL(*mHwcLayer, setPictureProfileHandle(PictureProfileHandle(1))).Times(0);
+    // No committing of picture profile before writing the state
     mOutputLayer.writeStateToHWC(/*includeGeometry*/ true, /*skipLayer*/ false, 0,
                                  /*zIsOverridden*/ false, /*isPeekingThrough*/ false);
 }

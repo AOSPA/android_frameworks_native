@@ -1272,6 +1272,27 @@ TEST_F(GestureConverterTest, Tap) {
                               WithDisplayId(ui::LogicalDisplayId::DEFAULT)))));
 }
 
+TEST_F(GestureConverterTest, ThreeFingerTap_TriggersShortcut) {
+    InputDeviceContext deviceContext(*mDevice, EVENTHUB_ID);
+    GestureConverter converter(*mReader->getContext(), deviceContext, DEVICE_ID);
+    converter.setDisplayId(ui::LogicalDisplayId::DEFAULT);
+    converter.setThreeFingerTapShortcutEnabled(true);
+
+    Gesture flingGesture(kGestureFling, ARBITRARY_GESTURE_TIME, ARBITRARY_GESTURE_TIME, /*vx=*/0,
+                         /*vy=*/0, GESTURES_FLING_TAP_DOWN);
+    std::list<NotifyArgs> args =
+            converter.handleGesture(ARBITRARY_TIME, READ_TIME, ARBITRARY_TIME, flingGesture);
+    // We don't need to check args here, since it's covered by the FlingTapDown test.
+
+    Gesture tapGesture(kGestureButtonsChange, ARBITRARY_GESTURE_TIME, ARBITRARY_GESTURE_TIME,
+                       /*down=*/GESTURES_BUTTON_MIDDLE, /*up=*/GESTURES_BUTTON_MIDDLE,
+                       /*is_tap=*/true);
+    args = converter.handleGesture(ARBITRARY_TIME, READ_TIME, ARBITRARY_TIME, tapGesture);
+
+    ASSERT_TRUE(args.empty());
+    mFakePolicy->assertTouchpadThreeFingerTapNotified();
+}
+
 TEST_F(GestureConverterTest, Click) {
     // Click should produce button press/release events
     InputDeviceContext deviceContext(*mDevice, EVENTHUB_ID);

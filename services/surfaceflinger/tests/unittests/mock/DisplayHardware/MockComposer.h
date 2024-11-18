@@ -186,6 +186,9 @@ public:
              std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*));
     MOCK_METHOD(Error, setLayerLuts,
                 (Display, Layer, aidl::android::hardware::graphics::composer3::Luts&));
+    MOCK_METHOD(Error, getMaxLayerPictureProfiles, (Display, int32_t*));
+    MOCK_METHOD(Error, setDisplayPictureProfileId, (Display, PictureProfileId id));
+    MOCK_METHOD(Error, setLayerPictureProfileId, (Display, Layer, PictureProfileId id));
 };
 
 } // namespace Hwc2::mock

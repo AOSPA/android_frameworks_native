@@ -40,10 +40,10 @@
 #include "Layer.h"
 #include "TestableSurfaceFlinger.h"
 #include "mock/DisplayHardware/MockComposer.h"
-#include "mock/DisplayHardware/MockPowerAdvisor.h"
 #include "mock/MockEventThread.h"
 #include "mock/MockTimeStats.h"
 #include "mock/MockVsyncController.h"
+#include "mock/PowerAdvisor/MockPowerAdvisor.h"
 #include "mock/system/window/MockNativeWindow.h"
 
 namespace android {
@@ -110,9 +110,9 @@ public:
         mFlinger.setupTimeStats(std::shared_ptr<TimeStats>(mTimeStats));
 
         mComposer = new Hwc2::mock::Composer();
-        mPowerAdvisor = new Hwc2::mock::PowerAdvisor();
+        mPowerAdvisor = new adpf::mock::PowerAdvisor();
         mFlinger.setupComposer(std::unique_ptr<Hwc2::Composer>(mComposer));
-        mFlinger.setupPowerAdvisor(std::unique_ptr<Hwc2::PowerAdvisor>(mPowerAdvisor));
+        mFlinger.setupPowerAdvisor(std::unique_ptr<adpf::PowerAdvisor>(mPowerAdvisor));
         mFlinger.mutableMaxRenderTargetSize() = 16384;
     }
 
@@ -158,7 +158,7 @@ public:
     Hwc2::mock::Composer* mComposer = nullptr;
     renderengine::mock::RenderEngine* mRenderEngine = new renderengine::mock::RenderEngine();
     mock::TimeStats* mTimeStats = new mock::TimeStats();
-    Hwc2::mock::PowerAdvisor* mPowerAdvisor = nullptr;
+    adpf::mock::PowerAdvisor* mPowerAdvisor = nullptr;
 
     sp<Fence> mClientTargetAcquireFence = Fence::NO_FENCE;
 

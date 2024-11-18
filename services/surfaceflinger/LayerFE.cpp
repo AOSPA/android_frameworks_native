@@ -27,7 +27,6 @@
 #include "LayerFE.h"
 #include "SurfaceFlinger.h"
 #include "ui/FenceResult.h"
-#include "ui/LayerStack.h"
 
 namespace android {
 
@@ -341,11 +340,6 @@ void LayerFE::prepareShadowClientComposition(LayerFE::LayerSettings& caster,
             (static_cast<float>(layerStackRect.width()) / 2.f) - mSnapshot->transformedBounds.left;
     state.lightPos.y -= mSnapshot->transformedBounds.top;
     caster.shadow = state;
-}
-
-void LayerFE::onLayerDisplayed(ftl::SharedFuture<FenceResult> futureFenceResult,
-                               ui::LayerStack layerStack) {
-    mCompositionResult.releaseFences.emplace_back(std::move(futureFenceResult), layerStack);
 }
 
 CompositionResult&& LayerFE::stealCompositionResult() {

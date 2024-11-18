@@ -48,7 +48,6 @@
 
 #include "DisplayHardware/DisplayMode.h"
 #include "DisplayHardware/Hal.h"
-#include "DisplayHardware/PowerAdvisor.h"
 #include "FrontEnd/DisplayInfo.h"
 #include "Scheduler/RefreshRateSelector.h"
 #include "ThreadContext.h"
@@ -319,6 +318,8 @@ struct DisplayDeviceState {
     bool isProtected = false;
     // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
     Fps requestedRefreshRate;
+    int32_t maxLayerPictureProfiles = 0;
+    bool hasPictureProcessing = false;
 
 private:
     static std::atomic<int32_t> sNextSequenceId;

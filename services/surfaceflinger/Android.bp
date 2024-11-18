@@ -178,13 +178,13 @@ cc_library_headers {
 filegroup {
     name: "libsurfaceflinger_backend_sources",
     srcs: [
+        "PowerAdvisor/*.cpp",
         "DisplayHardware/AidlComposerHal.cpp",
         "DisplayHardware/ComposerHal.cpp",
         "DisplayHardware/FramebufferSurface.cpp",
         "DisplayHardware/HWC2.cpp",
         "DisplayHardware/HWComposer.cpp",
         "DisplayHardware/HidlComposerHal.cpp",
-        "DisplayHardware/PowerAdvisor.cpp",
         "DisplayHardware/VirtualDisplaySurface.cpp",
     ],
 }

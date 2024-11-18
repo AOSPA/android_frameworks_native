@@ -1,4 +1,4 @@
-/*
+/**
  * Copyright 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,12 +14,18 @@
  * limitations under the License.
  */
 
-#include "mock/DisplayHardware/MockPowerHintSessionWrapper.h"
+#define LOG_TAG "CoordinateFilter"
 
-namespace android::Hwc2::mock {
+#include <input/CoordinateFilter.h>
 
-// Explicit default instantiation is recommended.
-MockPowerHintSessionWrapper::MockPowerHintSessionWrapper()
-      : power::PowerHintSessionWrapper(nullptr) {}
+namespace android {
 
-} // namespace android::Hwc2::mock
+CoordinateFilter::CoordinateFilter(float minCutoffFreq, float beta)
+      : mXFilter{minCutoffFreq, beta}, mYFilter{minCutoffFreq, beta} {}
+
+void CoordinateFilter::filter(std::chrono::duration<float> timestamp, PointerCoords& coords) {
+    coords.setAxisValue(AMOTION_EVENT_AXIS_X, mXFilter.filter(timestamp, coords.getX()));
+    coords.setAxisValue(AMOTION_EVENT_AXIS_Y, mYFilter.filter(timestamp, coords.getY()));
+}
+
+} // namespace android

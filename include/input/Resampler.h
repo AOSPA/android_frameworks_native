@@ -19,11 +19,13 @@
 #include <array>
 #include <chrono>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <vector>
 
 #include <android-base/logging.h>
 #include <ftl/mixins.h>
+#include <input/CoordinateFilter.h>
 #include <input/Input.h>
 #include <input/InputTransport.h>
 #include <input/RingBuffer.h>
@@ -291,6 +293,45 @@ private:
     void overwriteOldPointers(MotionEvent& motionEvent, size_t sampleIndex) const;
 
     inline static void addSampleToMotionEvent(const Sample& sample, MotionEvent& motionEvent);
+};
+
+/**
+ * Resampler that first applies the LegacyResampler resampling algorithm, then independently filters
+ * the X and Y coordinates with a pair of One Euro filters.
+ */
+class FilteredLegacyResampler final : public Resampler {
+public:
+    /**
+     * Creates a resampler, using the given minCutoffFreq and beta to instantiate its One Euro
+     * filters.
+     */
+    explicit FilteredLegacyResampler(float minCutoffFreq, float beta);
+
+    void resampleMotionEvent(std::chrono::nanoseconds requestedFrameTime, MotionEvent& motionEvent,
+                             const InputMessage* futureMessage) override;
+
+    std::chrono::nanoseconds getResampleLatency() const override;
+
+private:
+    LegacyResampler mResampler;
+
+    /**
+     * Minimum cutoff frequency of the value's low pass filter. Refer to OneEuroFilter class for a
+     * more detailed explanation.
+     */
+    const float mMinCutoffFreq;
+
+    /**
+     * Scaling factor of the adaptive cutoff frequency criterion. Refer to OneEuroFilter class for a
+     * more detailed explanation.
+     */
+    const float mBeta;
+
+    /*
+     * Note: an associative array with constant insertion and lookup times would be more efficient.
+     * When this was implemented, there was no container with these properties.
+     */
+    std::map<int32_t /*pointerId*/, CoordinateFilter> mFilteredPointers;
 };
 
 } // namespace android

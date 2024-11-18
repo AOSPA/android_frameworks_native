@@ -125,7 +125,7 @@ void QtiSurfaceFlingerExtension::qtiInit(SurfaceFlinger* flinger) {
 }
 
 QtiSurfaceFlingerExtensionIntf* QtiSurfaceFlingerExtension::qtiPostInit(
-        android::impl::HWComposer& hwc, Hwc2::impl::PowerAdvisor* powerAdvisor,
+        android::impl::HWComposer& hwc, adpf::impl::PowerAdvisor* powerAdvisor,
         scheduler::VsyncConfiguration* vsyncConfig, Hwc2::Composer* composerHal) {
     ndk::SpAIBinder binder(AServiceManager_checkService(
             "vendor.qti.hardware.display.config.IDisplayConfig/default"));

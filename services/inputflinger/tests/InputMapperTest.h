@@ -43,7 +43,8 @@ protected:
     virtual void SetUp() override { SetUpWithBus(0); }
     virtual void SetUpWithBus(int bus);
 
-    void setupAxis(int axis, bool valid, int32_t min, int32_t max, int32_t resolution);
+    void setupAxis(int axis, bool valid, int32_t min, int32_t max, int32_t resolution,
+                   int32_t flat = 0, int32_t fuzz = 0);
 
     void expectScanCodes(bool present, std::set<int> scanCodes);
 

@@ -44,22 +44,22 @@
 #include "NativeWindowSurface.h"
 #include "RenderArea.h"
 #include "Scheduler/RefreshRateSelector.h"
+#include "Scheduler/VSyncTracker.h"
+#include "Scheduler/VsyncController.h"
 #include "SurfaceFlinger.h"
 #include "TestableScheduler.h"
 #include "android/gui/ISurfaceComposerClient.h"
+
 #include "mock/DisplayHardware/MockComposer.h"
 #include "mock/DisplayHardware/MockDisplayMode.h"
-#include "mock/DisplayHardware/MockPowerAdvisor.h"
 #include "mock/MockEventThread.h"
 #include "mock/MockFrameTimeline.h"
 #include "mock/MockFrameTracer.h"
 #include "mock/MockSchedulerCallback.h"
-#include "mock/system/window/MockNativeWindow.h"
-
-#include "Scheduler/VSyncTracker.h"
-#include "Scheduler/VsyncController.h"
 #include "mock/MockVSyncTracker.h"
 #include "mock/MockVsyncController.h"
+#include "mock/PowerAdvisor/MockPowerAdvisor.h"
+#include "mock/system/window/MockNativeWindow.h"
 
 namespace android {
 
@@ -190,7 +190,7 @@ public:
                 &mFlinger->mCompositionEngine->getHwComposer());
     }
 
-    void setupPowerAdvisor(std::unique_ptr<Hwc2::PowerAdvisor> powerAdvisor) {
+    void setupPowerAdvisor(std::unique_ptr<adpf::PowerAdvisor> powerAdvisor) {
         mFlinger->mPowerAdvisor = std::move(powerAdvisor);
     }
 
@@ -1160,7 +1160,7 @@ private:
     scheduler::mock::NoOpSchedulerCallback mNoOpSchedulerCallback;
     std::unique_ptr<frametimeline::impl::TokenManager> mTokenManager;
     scheduler::TestableScheduler* mScheduler = nullptr;
-    Hwc2::mock::PowerAdvisor mPowerAdvisor;
+    adpf::mock::PowerAdvisor mPowerAdvisor;
 };
 
 } // namespace android

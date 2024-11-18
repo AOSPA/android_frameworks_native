@@ -1524,6 +1524,18 @@ Error HidlComposer::getPhysicalDisplayOrientation(Display, AidlTransform*) {
                      "OptionalFeature::PhysicalDisplayOrientation is not supported on HIDL");
 }
 
+Error HidlComposer::getMaxLayerPictureProfiles(Display, int32_t*) {
+    return Error::UNSUPPORTED;
+}
+
+Error HidlComposer::setDisplayPictureProfileId(Display, PictureProfileId) {
+    return Error::UNSUPPORTED;
+}
+
+Error HidlComposer::setLayerPictureProfileId(Display, Layer, PictureProfileId) {
+    return Error::UNSUPPORTED;
+}
+
 void HidlComposer::registerCallback(ComposerCallback& callback) {
     const bool vsyncSwitchingSupported =
             isSupported(Hwc2::Composer::OptionalFeature::RefreshRateSwitching);

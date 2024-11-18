@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include <ui/PictureProfileHandle.h>
 #include <ui/Transform.h>
 #include <utils/StrongPointer.h>
 
@@ -85,6 +86,16 @@ public:
     // Clear the cache entries for a set of buffers that SurfaceFlinger no
     // longer cares about.
     virtual void uncacheBuffers(const std::vector<uint64_t>& bufferIdsToUncache) = 0;
+
+    // Get the relative priority of the layer's picture profile with respect to the importance of
+    // the visual content to the user experience. Lower is higher priority.
+    virtual int64_t getPictureProfilePriority() const = 0;
+
+    // The picture profile handle for the layer.
+    virtual const PictureProfileHandle& getPictureProfileHandle() const = 0;
+
+    // Commit the picture profile to the composition state.
+    virtual void commitPictureProfileToCompositionState() = 0;
 
     // Recalculates the state of the output layer from the output-independent
     // layer. If includeGeometry is false, the geometry state can be skipped.

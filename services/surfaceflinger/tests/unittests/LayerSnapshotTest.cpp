@@ -1935,4 +1935,54 @@ TEST_F(LayerSnapshotTest, shouldUpdateInputWhenNoInputInfo) {
     EXPECT_FALSE(getSnapshot(2)->hasInputInfo());
 }
 
+// content dirty test
+TEST_F(LayerSnapshotTest, contentDirtyWhenParentAlphaChanges) {
+    setAlpha(1, 0.5);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_TRUE(getSnapshot(1)->contentDirty);
+    EXPECT_TRUE(getSnapshot(11)->contentDirty);
+    EXPECT_TRUE(getSnapshot(111)->contentDirty);
+
+    // subsequent updates clear the dirty bit
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_FALSE(getSnapshot(1)->contentDirty);
+    EXPECT_FALSE(getSnapshot(11)->contentDirty);
+    EXPECT_FALSE(getSnapshot(111)->contentDirty);
+}
+
+TEST_F(LayerSnapshotTest, contentDirtyWhenAutoRefresh) {
+    setAutoRefresh(1, true);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_TRUE(getSnapshot(1)->contentDirty);
+
+    // subsequent updates don't clear the dirty bit
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_TRUE(getSnapshot(1)->contentDirty);
+
+    // second update after removing auto refresh will clear content dirty
+    setAutoRefresh(1, false);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_FALSE(getSnapshot(1)->contentDirty);
+}
+
+TEST_F(LayerSnapshotTest, contentDirtyWhenColorChanges) {
+    setColor(1, {1, 2, 3});
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_TRUE(getSnapshot(1)->contentDirty);
+
+    // subsequent updates clear the dirty bit
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_FALSE(getSnapshot(1)->contentDirty);
+}
+
+TEST_F(LayerSnapshotTest, contentDirtyWhenParentGeometryChanges) {
+    setPosition(1, 2, 3);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_TRUE(getSnapshot(1)->contentDirty);
+
+    // subsequent updates clear the dirty bit
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_FALSE(getSnapshot(1)->contentDirty);
+}
 } // namespace android::surfaceflinger::frontend

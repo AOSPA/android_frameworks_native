@@ -314,8 +314,8 @@ void updateMetadataAndGameMode(LayerSnapshot& snapshot, const RequestedLayerStat
 void clearChanges(LayerSnapshot& snapshot) {
     snapshot.changes.clear();
     snapshot.clientChanges = 0;
-    snapshot.contentDirty = false;
-    snapshot.hasReadyFrame = false;
+    snapshot.contentDirty = snapshot.autoRefresh;
+    snapshot.hasReadyFrame = snapshot.autoRefresh;
     snapshot.sidebandStreamHasFrame = false;
     snapshot.surfaceDamage.clear();
 }
@@ -724,10 +724,12 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
     if (args.displayChanges) snapshot.changes |= RequestedLayerState::Changes::Geometry;
     snapshot.reachablilty = LayerSnapshot::Reachablilty::Reachable;
     snapshot.clientChanges |= (parentSnapshot.clientChanges & layer_state_t::AFFECTS_CHILDREN);
+    // mark the content as dirty if the parent state changes can dirty the child's content (for
+    // example alpha)
+    snapshot.contentDirty |= (snapshot.clientChanges & layer_state_t::CONTENT_DIRTY) != 0;
     snapshot.isHiddenByPolicyFromParent = parentSnapshot.isHiddenByPolicyFromParent ||
             parentSnapshot.invalidTransform || requested.isHiddenByPolicy() ||
             (args.excludeLayerIds.find(path.id) != args.excludeLayerIds.end());
-
     const bool forceUpdate = args.forceUpdate == ForceUpdateFlags::ALL ||
             snapshot.clientChanges & layer_state_t::eReparent ||
             snapshot.changes.any(RequestedLayerState::Changes::Visibility |

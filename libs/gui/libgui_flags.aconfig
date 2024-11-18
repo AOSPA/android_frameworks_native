@@ -2,6 +2,14 @@ package: "com.android.graphics.libgui.flags"
 container: "system"
 
 flag {
+  name: "apply_picture_profiles"
+  namespace: "tv_os_media"
+  description: "This flag controls sending picture profiles from BBQ to Composer HAL"
+  bug: "337330263"
+  is_fixed_read_only: true
+} # apply_picture_profiles
+
+flag {
   name: "bq_setframerate"
   namespace: "core_graphics"
   description: "This flag controls plumbing setFrameRate thru BufferQueue"

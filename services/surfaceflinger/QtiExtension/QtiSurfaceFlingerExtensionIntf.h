@@ -47,7 +47,7 @@ public:
 
     virtual void qtiInit(SurfaceFlinger* flinger) = 0;
     virtual QtiSurfaceFlingerExtensionIntf* qtiPostInit(android::impl::HWComposer& hwc,
-                                                        Hwc2::impl::PowerAdvisor* powerAdvisor,
+                                                        adpf::impl::PowerAdvisor* powerAdvisor,
                                                         VsyncConfiguration* vsyncConfig,
                                                         Hwc2::Composer* composerHal) = 0;
     virtual void qtiSetVsyncConfiguration(VsyncConfiguration* vsyncConfig) = 0;

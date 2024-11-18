@@ -327,6 +327,12 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
                 const auto setFrameRateVoteType =
                         info->isVisible() ? voteType : LayerVoteType::NoVote;
 
+                const bool hasSetFrameRateOpinion = frameRate.isValid() && !frameRate.isNoVote();
+                const bool hasCategoryOpinion =
+                        frameRate.category != FrameRateCategory::NoPreference &&
+                        frameRate.category != FrameRateCategory::Default;
+                const bool hasFrameRateOpinion = hasSetFrameRateOpinion || hasCategoryOpinion;
+
                 if (gameModeFrameRateOverride.isValid()) {
                     info->setLayerVote({gameFrameRateOverrideVoteType, gameModeFrameRateOverride});
                     SFTRACE_FORMAT_INSTANT("GameModeFrameRateOverride");
@@ -334,7 +340,7 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
                         trace(*info, gameFrameRateOverrideVoteType,
                               gameModeFrameRateOverride.getIntValue());
                     }
-                } else if (frameRate.isValid() && frameRate.isVoteValidForMrr(isVrrDevice)) {
+                } else if (hasFrameRateOpinion && frameRate.isVoteValidForMrr(isVrrDevice)) {
                     info->setLayerVote({setFrameRateVoteType,
                                         isValuelessVote ? 0_Hz : frameRate.vote.rate,
                                         frameRate.vote.seamlessness, frameRate.category});
@@ -351,7 +357,7 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
                               gameDefaultFrameRateOverride.getIntValue());
                     }
                 } else {
-                    if (frameRate.isValid() && !frameRate.isVoteValidForMrr(isVrrDevice)) {
+                    if (hasFrameRateOpinion && !frameRate.isVoteValidForMrr(isVrrDevice)) {
                         SFTRACE_FORMAT_INSTANT("Reset layer to ignore explicit vote on MRR %s: %s "
                                                "%s %s",
                                                info->getName().c_str(),

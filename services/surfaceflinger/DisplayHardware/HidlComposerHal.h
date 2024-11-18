@@ -376,6 +376,9 @@ public:
             override;
     Error setLayerLuts(Display, Layer,
                        aidl::android::hardware::graphics::composer3::Luts&) override;
+    Error getMaxLayerPictureProfiles(Display, int32_t* outMaxProfiles) override;
+    Error setDisplayPictureProfileId(Display, PictureProfileId) override;
+    Error setLayerPictureProfileId(Display, Layer, PictureProfileId) override;
 
 private:
     /* QTI_BEGIN */

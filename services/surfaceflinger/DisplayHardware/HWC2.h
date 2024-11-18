@@ -24,6 +24,7 @@
 #include <gui/HdrMetadata.h>
 #include <math/mat4.h>
 #include <ui/HdrCapabilities.h>
+#include <ui/PictureProfileHandle.h>
 #include <ui/Region.h>
 #include <ui/StaticDisplayInfo.h>
 #include <utils/Log.h>
@@ -199,6 +200,9 @@ public:
     [[nodiscard]] virtual hal::Error setIdleTimerEnabled(std::chrono::milliseconds timeout) = 0;
     [[nodiscard]] virtual hal::Error getPhysicalDisplayOrientation(
             Hwc2::AidlTransform* outTransform) const = 0;
+    [[nodiscard]] virtual hal::Error getMaxLayerPictureProfiles(int32_t* maxProfiles) = 0;
+    [[nodiscard]] virtual hal::Error setPictureProfileHandle(
+            const PictureProfileHandle& handle) = 0;
 };
 
 namespace impl {
@@ -282,6 +286,8 @@ public:
             std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>*
                     support) override;
     hal::Error setIdleTimerEnabled(std::chrono::milliseconds timeout) override;
+    hal::Error getMaxLayerPictureProfiles(int32_t* maxProfiles) override;
+    hal::Error setPictureProfileHandle(const android::PictureProfileHandle& handle) override;
 
     // Other Display methods
     hal::HWDisplayId getId() const override { return mId; }
@@ -377,6 +383,8 @@ public:
     [[nodiscard]] virtual hal::Error setBlockingRegion(const android::Region& region) = 0;
     [[nodiscard]] virtual hal::Error setLuts(
             aidl::android::hardware::graphics::composer3::Luts& luts) = 0;
+    [[nodiscard]] virtual hal::Error setPictureProfileHandle(
+            const PictureProfileHandle& handle) = 0;
 };
 
 namespace impl {
@@ -434,6 +442,7 @@ public:
     hal::Error setBrightness(float brightness) override;
     hal::Error setBlockingRegion(const android::Region& region) override;
     hal::Error setLuts(aidl::android::hardware::graphics::composer3::Luts&) override;
+    hal::Error setPictureProfileHandle(const PictureProfileHandle& handle) override;
 
 private:
     // These are references to data owned by HWComposer, which will outlive
@@ -455,6 +464,7 @@ private:
     android::HdrMetadata mHdrMetadata;
     android::mat4 mColorMatrix;
     uint32_t mBufferSlot;
+    android::PictureProfileHandle profile;
 };
 
 } // namespace impl

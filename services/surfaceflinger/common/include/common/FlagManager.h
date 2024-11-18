@@ -96,6 +96,7 @@ public:
     bool true_hdr_screenshots() const;
     bool display_config_error_hal() const;
     bool connected_display_hdr() const;
+    bool deprecate_frame_tracker() const;
 
 protected:
     // overridden for unit tests

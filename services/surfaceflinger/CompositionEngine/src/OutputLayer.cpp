@@ -29,11 +29,12 @@
 #include <compositionengine/impl/OutputCompositionState.h>
 #include <compositionengine/impl/OutputLayer.h>
 #include <compositionengine/impl/OutputLayerCompositionState.h>
+#include <ui/FloatRect.h>
+#include <ui/HdrRenderTypeUtils.h>
 #include <cstdint>
 #include "system/graphics-base-v1.0.h"
-#include "ui/FloatRect.h"
 
-#include <ui/HdrRenderTypeUtils.h>
+#include <com_android_graphics_libgui_flags.h>
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -434,6 +435,16 @@ void OutputLayer::updateCompositionState(
     }
 }
 
+void OutputLayer::commitPictureProfileToCompositionState() {
+    if (!com_android_graphics_libgui_flags_apply_picture_profiles()) {
+        return;
+    }
+    const auto* layerState = getLayerFE().getCompositionState();
+    if (layerState) {
+        editState().pictureProfileHandle = getLayerFE().getCompositionState()->pictureProfileHandle;
+    }
+}
+
 void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t z,
                                   bool zIsOverridden, bool isPeekingThrough) {
     const auto& state = getState();
@@ -655,6 +666,21 @@ void OutputLayer::writeOutputDependentPerFrameStateToHWC(HWC2::Layer* hwcLayer) 
         ALOGE("[%s] Failed to set brightness %f: %s (%d)", getLayerFE().getDebugName(),
               dimmingRatio, to_string(error).c_str(), static_cast<int32_t>(error));
     }
+
+    if (com_android_graphics_libgui_flags_apply_picture_profiles() &&
+        outputDependentState.pictureProfileHandle) {
+        if (auto error =
+                    hwcLayer->setPictureProfileHandle(outputDependentState.pictureProfileHandle);
+            error != hal::Error::NONE) {
+            ALOGE("[%s] Failed to set picture profile handle: %s (%d)", getLayerFE().getDebugName(),
+                  toString(outputDependentState.pictureProfileHandle).c_str(),
+                  static_cast<int32_t>(error));
+        }
+        // Reset the picture profile state, as it needs to be re-committed on each present cycle
+        // when Output decides that the limited picture-processing hardware should be used by this
+        // layer.
+        editState().pictureProfileHandle = PictureProfileHandle::NONE;
+    }
 }
 
 void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
@@ -765,6 +791,16 @@ void OutputLayer::uncacheBuffers(const std::vector<uint64_t>& bufferIdsToUncache
     }
 }
 
+int64_t OutputLayer::getPictureProfilePriority() const {
+    const auto* layerState = getLayerFE().getCompositionState();
+    return layerState ? layerState->pictureProfilePriority : 0;
+}
+
+const PictureProfileHandle& OutputLayer::getPictureProfileHandle() const {
+    const auto* layerState = getLayerFE().getCompositionState();
+    return layerState ? layerState->pictureProfileHandle : PictureProfileHandle::NONE;
+}
+
 void OutputLayer::writeBufferStateToHWC(HWC2::Layer* hwcLayer,
                                         const LayerFECompositionState& outputIndependentState,
                                         bool skipLayer) {
@@ -847,14 +883,14 @@ void OutputLayer::writeCursorPositionToHWC() const {
         return;
     }
 
-    const auto* layerFEState = getLayerFE().getCompositionState();
-    if (!layerFEState) {
+    const auto* layerState = getLayerFE().getCompositionState();
+    if (!layerState) {
         return;
     }
 
     const auto& outputState = getOutput().getState();
 
-    Rect frame = layerFEState->cursorFrame;
+    Rect frame = layerState->cursorFrame;
     frame.intersect(outputState.layerStackSpace.getContent(), &frame);
     Rect position = outputState.transform.transform(frame);
 

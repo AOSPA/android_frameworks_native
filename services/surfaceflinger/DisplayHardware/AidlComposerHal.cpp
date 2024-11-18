@@ -51,11 +51,10 @@ using hardware::Return;
 using aidl::android::hardware::graphics::composer3::BnComposerCallback;
 using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness;
+using aidl::android::hardware::graphics::composer3::CommandResultPayload;
 using aidl::android::hardware::graphics::composer3::Luts;
 using aidl::android::hardware::graphics::composer3::PowerMode;
 using aidl::android::hardware::graphics::composer3::VirtualDisplay;
-
-using aidl::android::hardware::graphics::composer3::CommandResultPayload;
 
 using AidlColorMode = aidl::android::hardware::graphics::composer3::ColorMode;
 using AidlContentType = aidl::android::hardware::graphics::composer3::ContentType;
@@ -1698,6 +1697,41 @@ Error AidlComposer::getPhysicalDisplayOrientation(Display displayId,
         return static_cast<Error>(status.getServiceSpecificError());
     }
     return Error::NONE;
+}
+
+Error AidlComposer::getMaxLayerPictureProfiles(Display display, int32_t* outMaxProfiles) {
+    const auto status = mAidlComposerClient->getMaxLayerPictureProfiles(translate<int64_t>(display),
+                                                                        outMaxProfiles);
+    if (!status.isOk()) {
+        ALOGE("getMaxLayerPictureProfiles failed %s", status.getDescription().c_str());
+        return static_cast<Error>(status.getServiceSpecificError());
+    }
+    return Error::NONE;
+}
+
+Error AidlComposer::setDisplayPictureProfileId(Display display, PictureProfileId id) {
+    Error error = Error::NONE;
+    mMutex.lock_shared();
+    if (auto writer = getWriter(display)) {
+        writer->get().setDisplayPictureProfileId(translate<int64_t>(display), id);
+    } else {
+        error = Error::BAD_DISPLAY;
+    }
+    mMutex.unlock_shared();
+    return error;
+}
+
+Error AidlComposer::setLayerPictureProfileId(Display display, Layer layer, PictureProfileId id) {
+    Error error = Error::NONE;
+    mMutex.lock_shared();
+    if (auto writer = getWriter(display)) {
+        writer->get().setLayerPictureProfileId(translate<int64_t>(display),
+                                               translate<int64_t>(layer), id);
+    } else {
+        error = Error::BAD_DISPLAY;
+    }
+    mMutex.unlock_shared();
+    return error;
 }
 
 ftl::Optional<std::reference_wrapper<QtiAidlCommandWriter>> AidlComposer::getWriter(

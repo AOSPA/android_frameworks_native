@@ -1851,6 +1851,11 @@ Dumpstate::RunStatus Dumpstate::dumpstate() {
         RunCommand("DUMP VENDOR RIL LOGS", {"vril-dump"}, options.Build());
     }
 
+    /* Dump USB information */
+    RunCommand("typec_connector_class", {"typec_connector_class"},
+               CommandOptions::WithTimeout(10).AsRootIfAvailable().Build());
+    RunCommand("lsusb", {"lsusb"}, CommandOptions::WithTimeout(10).AsRootIfAvailable().Build());
+
     printf("========================================================\n");
     printf("== Android Framework Services\n");
     printf("========================================================\n");

@@ -442,7 +442,8 @@ void Scheduler::onHdcpLevelsChanged(Cycle cycle, PhysicalDisplayId displayId,
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-value" // b/369277774
-bool Scheduler::onDisplayModeChanged(PhysicalDisplayId displayId, const FrameRateMode& mode) {
+bool Scheduler::onDisplayModeChanged(PhysicalDisplayId displayId, const FrameRateMode& mode,
+                                     bool clearContentRequirements) {
     const bool isPacesetter =
             FTL_FAKE_GUARD(kMainThreadContext,
                            (std::scoped_lock(mDisplayLock), displayId == mPacesetterDisplayId));
@@ -451,9 +452,11 @@ bool Scheduler::onDisplayModeChanged(PhysicalDisplayId displayId, const FrameRat
         std::lock_guard<std::mutex> lock(mPolicyLock);
         mPolicy.emittedModeOpt = mode;
 
-        // Invalidate content based refresh rate selection so it could be calculated
-        // again for the new refresh rate.
-        mPolicy.contentRequirements.clear();
+        if (clearContentRequirements) {
+            // Invalidate content based refresh rate selection so it could be calculated
+            // again for the new refresh rate.
+            mPolicy.contentRequirements.clear();
+        }
     }
 
     if (hasEventThreads()) {

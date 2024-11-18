@@ -261,6 +261,14 @@ std::list<NotifyArgs> GestureConverter::handleButtonsChange(nsecs_t when, nsecs_
     }
 
     const uint32_t buttonsPressed = gesture.details.buttons.down;
+    const uint32_t buttonsReleased = gesture.details.buttons.up;
+
+    if (mThreeFingerTapShortcutEnabled && gesture.details.buttons.is_tap &&
+        buttonsPressed == GESTURES_BUTTON_MIDDLE && buttonsReleased == GESTURES_BUTTON_MIDDLE) {
+        mReaderContext.getPolicy()->notifyTouchpadThreeFingerTap();
+        return out;
+    }
+
     bool pointerDown = isPointerDown(mButtonState) ||
             buttonsPressed &
                     (GESTURES_BUTTON_LEFT | GESTURES_BUTTON_MIDDLE | GESTURES_BUTTON_RIGHT);
@@ -291,7 +299,6 @@ std::list<NotifyArgs> GestureConverter::handleButtonsChange(nsecs_t when, nsecs_
     // changes: a set of buttons going down, followed by a set of buttons going up.
     mButtonState = newButtonState;
 
-    const uint32_t buttonsReleased = gesture.details.buttons.up;
     for (uint32_t button = 1; button <= GESTURES_BUTTON_FORWARD; button <<= 1) {
         if (buttonsReleased & button) {
             uint32_t actionButton = gesturesButtonToMotionEventButton(button);

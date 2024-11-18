@@ -2240,6 +2240,46 @@ TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_withFrameRateCategory_Touch
     EXPECT_FALSE(actualRankedFrameRates.consideredSignals.touch);
 }
 
+TEST_P(RefreshRateSelectorTest, getBestFrameRateMode_withFrameRateCategory_touchBoost_twoUids_arr) {
+    if (GetParam() != Config::FrameRateOverride::Enabled) {
+        return;
+    }
+
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
+    // Device with VRR config mode
+    auto selector = createSelector(kVrrMode_120, kModeId120);
+
+    std::vector<LayerRequirement> layers = {{.ownerUid = 1234, .weight = 1.f},
+                                            {.ownerUid = 5678, .weight = 1.f}};
+    auto& lr1 = layers[0];
+    auto& lr2 = layers[1];
+
+    lr1.vote = LayerVoteType::ExplicitCategory;
+    lr1.frameRateCategory = FrameRateCategory::Normal;
+    lr1.name = "ExplicitCategory Normal";
+    lr2.vote = LayerVoteType::ExplicitDefault;
+    lr2.desiredRefreshRate = 30_Hz;
+    lr2.name = "30Hz ExplicitDefault";
+    auto actualRankedFrameRates = selector.getRankedFrameRates(layers, {.touch = true});
+    // No global touch boost, for example a game that uses setFrameRate(30, default compatibility).
+    // However see 60 due to Normal vote.
+    EXPECT_FRAME_RATE_MODE(kVrrMode120TE240, 60_Hz,
+                           actualRankedFrameRates.ranking.front().frameRateMode);
+    EXPECT_FALSE(actualRankedFrameRates.consideredSignals.touch);
+
+    lr1.vote = LayerVoteType::ExplicitCategory;
+    lr1.frameRateCategory = FrameRateCategory::HighHint;
+    lr1.name = "ExplicitCategory HighHint";
+    lr2.vote = LayerVoteType::ExplicitDefault;
+    lr2.desiredRefreshRate = 30_Hz;
+    lr2.name = "30Hz ExplicitDefault";
+    // Gets touch boost because the touched (HighHint) app is different from the 30 Default app.
+    actualRankedFrameRates = selector.getRankedFrameRates(layers, {.touch = true});
+    EXPECT_FRAME_RATE_MODE(kVrrMode120TE240, 120_Hz,
+                           actualRankedFrameRates.ranking.front().frameRateMode);
+    EXPECT_TRUE(actualRankedFrameRates.consideredSignals.touch);
+}
+
 TEST_P(RefreshRateSelectorTest,
        getBestFrameRateMode_withFrameRateCategory_idleTimer_60_120_nonVrr) {
     SET_FLAG_FOR_TEST(flags::vrr_config, false);
@@ -3823,6 +3863,51 @@ TEST_P(RefreshRateSelectorTest, getFrameRateOverrides_twoUids) {
     layers[1].ownerUid = 1234;
     frameRateOverrides = selector.getFrameRateOverrides(layers, 120_Hz, {});
     EXPECT_TRUE(frameRateOverrides.empty());
+}
+
+TEST_P(RefreshRateSelectorTest, getFrameRateOverrides_twoUids_arr) {
+    if (GetParam() != Config::FrameRateOverride::Enabled) {
+        return;
+    }
+
+    SET_FLAG_FOR_TEST(flags::vrr_config, true);
+    // Device with VRR config mode
+    auto selector = createSelector(kVrrMode_120, kModeId120);
+
+    std::vector<LayerRequirement> layers = {{.ownerUid = 1234, .weight = 1.f},
+                                            {.ownerUid = 5678, .weight = 1.f}};
+    auto& lr1 = layers[0];
+    auto& lr2 = layers[1];
+
+    lr1.vote = LayerVoteType::ExplicitCategory;
+    lr1.frameRateCategory = FrameRateCategory::Normal;
+    lr1.name = "ExplicitCategory Normal";
+    lr2.vote = LayerVoteType::ExplicitDefault;
+    lr2.desiredRefreshRate = 30_Hz;
+    lr2.name = "30Hz ExplicitDefault";
+    // No global touch boost, for example a game that uses setFrameRate(30, default compatibility).
+    // The `displayFrameRate` is 60.
+    // However 30 Default app still gets frame rate override.
+    auto frameRateOverrides = selector.getFrameRateOverrides(layers, 60_Hz, {});
+    EXPECT_EQ(2u, frameRateOverrides.size());
+    ASSERT_EQ(1u, frameRateOverrides.count(1234));
+    EXPECT_EQ(60_Hz, frameRateOverrides.at(1234));
+    ASSERT_EQ(1u, frameRateOverrides.count(5678));
+    EXPECT_EQ(30_Hz, frameRateOverrides.at(5678));
+
+    lr1.vote = LayerVoteType::ExplicitCategory;
+    lr1.frameRateCategory = FrameRateCategory::HighHint;
+    lr1.name = "ExplicitCategory HighHint";
+    lr2.vote = LayerVoteType::ExplicitDefault;
+    lr2.desiredRefreshRate = 30_Hz;
+    lr2.name = "30Hz ExplicitDefault";
+    // Gets touch boost because the touched (HighHint) app is different from the 30 Default app.
+    // The `displayFrameRate` is 120 (late touch boost).
+    // However 30 Default app still gets frame rate override.
+    frameRateOverrides = selector.getFrameRateOverrides(layers, 120_Hz, {});
+    EXPECT_EQ(1u, frameRateOverrides.size());
+    ASSERT_EQ(1u, frameRateOverrides.count(5678));
+    EXPECT_EQ(30_Hz, frameRateOverrides.at(5678));
 }
 
 TEST_P(RefreshRateSelectorTest, getFrameRateOverrides_withFrameRateCategory) {
