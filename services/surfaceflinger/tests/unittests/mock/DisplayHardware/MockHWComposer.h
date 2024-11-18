@@ -148,6 +148,9 @@ public:
     MOCK_METHOD(status_t, notifyExpectedPresent, (PhysicalDisplayId, TimePoint, Fps));
     MOCK_METHOD(HWC2::Display::LutFileDescriptorMapper&, getLutFileDescriptorMapper, (),
                 (override));
+    MOCK_METHOD(int32_t, getMaxLayerPictureProfiles, (PhysicalDisplayId));
+    MOCK_METHOD(status_t, setDisplayPictureProfileHandle,
+                (PhysicalDisplayId, const PictureProfileHandle&));
 };
 
 } // namespace android::mock

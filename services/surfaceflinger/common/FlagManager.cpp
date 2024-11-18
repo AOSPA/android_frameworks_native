@@ -158,6 +158,7 @@ void FlagManager::dump(std::string& result) const {
     DUMP_READ_ONLY_FLAG(true_hdr_screenshots);
     DUMP_READ_ONLY_FLAG(display_config_error_hal);
     DUMP_READ_ONLY_FLAG(connected_display_hdr);
+    DUMP_READ_ONLY_FLAG(deprecate_frame_tracker);
 
 #undef DUMP_READ_ONLY_FLAG
 #undef DUMP_SERVER_FLAG
@@ -264,6 +265,7 @@ FLAG_MANAGER_READ_ONLY_FLAG(force_compile_graphite_renderengine, "");
 FLAG_MANAGER_READ_ONLY_FLAG(true_hdr_screenshots, "debug.sf.true_hdr_screenshots");
 FLAG_MANAGER_READ_ONLY_FLAG(display_config_error_hal, "");
 FLAG_MANAGER_READ_ONLY_FLAG(connected_display_hdr, "");
+FLAG_MANAGER_READ_ONLY_FLAG(deprecate_frame_tracker, "");
 
 /// Trunk stable server flags ///
 FLAG_MANAGER_SERVER_FLAG(refresh_rate_overlay_on_external_display, "")

@@ -63,7 +63,9 @@ public:
                 (ndk::ScopedFileDescriptor,
                  (std::vector<std::pair<
                           int, aidl::android::hardware::graphics::composer3::LutProperties>>)));
-
+    MOCK_METHOD(int64_t, getPictureProfilePriority, (), (const));
+    MOCK_METHOD(const PictureProfileHandle&, getPictureProfileHandle, (), (const));
+    MOCK_METHOD(void, commitPictureProfileToCompositionState, ());
     MOCK_CONST_METHOD1(dump, void(std::string&));
 };
 

@@ -42,6 +42,7 @@ cc_defaults {
     ],
     static_libs: [
         "liblayers_proto",
+        "libguiflags",
         "libmath",
         "librenderengine",
         "libtimestats",
@@ -49,9 +50,7 @@ cc_defaults {
         "libaidlcommonsupport",
         "libprocessgroup",
         "libprocessgroup_util",
-        "libcgrouprc",
         "libjsoncpp",
-        "libcgrouprc_format",
         "libsurfaceflinger_common",
     ],
     header_libs: [

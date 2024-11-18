@@ -53,13 +53,13 @@ void InputMapperUnitTest::SetUpWithBus(int bus) {
 }
 
 void InputMapperUnitTest::setupAxis(int axis, bool valid, int32_t min, int32_t max,
-                                    int32_t resolution) {
+                                    int32_t resolution, int32_t flat, int32_t fuzz) {
     EXPECT_CALL(mMockEventHub, getAbsoluteAxisInfo(EVENTHUB_ID, axis))
             .WillRepeatedly(Return(valid ? std::optional<RawAbsoluteAxisInfo>{{
                                                    .minValue = min,
                                                    .maxValue = max,
-                                                   .flat = 0,
-                                                   .fuzz = 0,
+                                                   .flat = flat,
+                                                   .fuzz = fuzz,
                                                    .resolution = resolution,
                                            }}
                                          : std::nullopt));

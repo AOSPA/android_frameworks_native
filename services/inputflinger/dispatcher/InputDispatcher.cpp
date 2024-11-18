@@ -836,13 +836,9 @@ bool isStylusActiveInDisplay(ui::LogicalDisplayId displayId,
 }
 
 Result<void> validateWindowInfosUpdate(const gui::WindowInfosUpdate& update) {
-    struct HashFunction {
-        size_t operator()(const WindowInfo& info) const { return info.id; }
-    };
-
-    std::unordered_set<WindowInfo, HashFunction> windowSet;
+    std::unordered_set<int32_t> windowIds;
     for (const WindowInfo& info : update.windowInfos) {
-        const auto [_, inserted] = windowSet.insert(info);
+        const auto [_, inserted] = windowIds.insert(info.id);
         if (!inserted) {
             return Error() << "Duplicate entry for " << info;
         }

@@ -16,168 +16,164 @@
 
 #include "SensorInputMapper.h"
 
+#include <cstdint>
+#include <list>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include <EventHub.h>
 #include <NotifyArgs.h>
+#include <ftl/enum.h>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <input/Input.h>
 #include <input/InputDevice.h>
+#include <input/PrintTools.h>
 #include <linux/input-event-codes.h>
 
 #include "InputMapperTest.h"
+#include "TestEventMatchers.h"
 
 namespace android {
 
-class SensorInputMapperTest : public InputMapperTest {
+using testing::AllOf;
+using testing::ElementsAre;
+using testing::Return;
+using testing::VariantWith;
+
+namespace {
+
+constexpr int32_t ACCEL_RAW_MIN = -32768;
+constexpr int32_t ACCEL_RAW_MAX = 32768;
+constexpr int32_t ACCEL_RAW_FUZZ = 16;
+constexpr int32_t ACCEL_RAW_FLAT = 0;
+constexpr int32_t ACCEL_RAW_RESOLUTION = 8192;
+
+constexpr int32_t GYRO_RAW_MIN = -2097152;
+constexpr int32_t GYRO_RAW_MAX = 2097152;
+constexpr int32_t GYRO_RAW_FUZZ = 16;
+constexpr int32_t GYRO_RAW_FLAT = 0;
+constexpr int32_t GYRO_RAW_RESOLUTION = 1024;
+
+constexpr float GRAVITY_MS2_UNIT = 9.80665f;
+constexpr float DEGREE_RADIAN_UNIT = 0.0174533f;
+
+} // namespace
+
+class SensorInputMapperTest : public InputMapperUnitTest {
 protected:
-    static const int32_t ACCEL_RAW_MIN;
-    static const int32_t ACCEL_RAW_MAX;
-    static const int32_t ACCEL_RAW_FUZZ;
-    static const int32_t ACCEL_RAW_FLAT;
-    static const int32_t ACCEL_RAW_RESOLUTION;
+    void SetUp() override {
+        InputMapperUnitTest::SetUp();
+        EXPECT_CALL(mMockEventHub, getDeviceClasses(EVENTHUB_ID))
+                .WillRepeatedly(Return(InputDeviceClass::SENSOR));
+        // The mapper requests info on all ABS axes, including ones which aren't actually used, so
+        // just return nullopt for all axes we don't explicitly set up.
+        EXPECT_CALL(mMockEventHub, getAbsoluteAxisInfo(EVENTHUB_ID, testing::_))
+                .WillRepeatedly(Return(std::nullopt));
+    }
 
-    static const int32_t GYRO_RAW_MIN;
-    static const int32_t GYRO_RAW_MAX;
-    static const int32_t GYRO_RAW_FUZZ;
-    static const int32_t GYRO_RAW_FLAT;
-    static const int32_t GYRO_RAW_RESOLUTION;
-
-    static const float GRAVITY_MS2_UNIT;
-    static const float DEGREE_RADIAN_UNIT;
-
-    void prepareAccelAxes();
-    void prepareGyroAxes();
-    void setAccelProperties();
-    void setGyroProperties();
-    void SetUp() override { InputMapperTest::SetUp(DEVICE_CLASSES | InputDeviceClass::SENSOR); }
+    void setupSensor(int32_t absCode, InputDeviceSensorType type, int32_t sensorDataIndex) {
+        EXPECT_CALL(mMockEventHub, mapSensor(EVENTHUB_ID, absCode))
+                .WillRepeatedly(Return(std::make_pair(type, sensorDataIndex)));
+    }
 };
 
-const int32_t SensorInputMapperTest::ACCEL_RAW_MIN = -32768;
-const int32_t SensorInputMapperTest::ACCEL_RAW_MAX = 32768;
-const int32_t SensorInputMapperTest::ACCEL_RAW_FUZZ = 16;
-const int32_t SensorInputMapperTest::ACCEL_RAW_FLAT = 0;
-const int32_t SensorInputMapperTest::ACCEL_RAW_RESOLUTION = 8192;
-
-const int32_t SensorInputMapperTest::GYRO_RAW_MIN = -2097152;
-const int32_t SensorInputMapperTest::GYRO_RAW_MAX = 2097152;
-const int32_t SensorInputMapperTest::GYRO_RAW_FUZZ = 16;
-const int32_t SensorInputMapperTest::GYRO_RAW_FLAT = 0;
-const int32_t SensorInputMapperTest::GYRO_RAW_RESOLUTION = 1024;
-
-const float SensorInputMapperTest::GRAVITY_MS2_UNIT = 9.80665f;
-const float SensorInputMapperTest::DEGREE_RADIAN_UNIT = 0.0174533f;
-
-void SensorInputMapperTest::prepareAccelAxes() {
-    mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_X, ACCEL_RAW_MIN, ACCEL_RAW_MAX, ACCEL_RAW_FUZZ,
-                                   ACCEL_RAW_FLAT, ACCEL_RAW_RESOLUTION);
-    mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_Y, ACCEL_RAW_MIN, ACCEL_RAW_MAX, ACCEL_RAW_FUZZ,
-                                   ACCEL_RAW_FLAT, ACCEL_RAW_RESOLUTION);
-    mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_Z, ACCEL_RAW_MIN, ACCEL_RAW_MAX, ACCEL_RAW_FUZZ,
-                                   ACCEL_RAW_FLAT, ACCEL_RAW_RESOLUTION);
-}
-
-void SensorInputMapperTest::prepareGyroAxes() {
-    mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_RX, GYRO_RAW_MIN, GYRO_RAW_MAX, GYRO_RAW_FUZZ,
-                                   GYRO_RAW_FLAT, GYRO_RAW_RESOLUTION);
-    mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_RY, GYRO_RAW_MIN, GYRO_RAW_MAX, GYRO_RAW_FUZZ,
-                                   GYRO_RAW_FLAT, GYRO_RAW_RESOLUTION);
-    mFakeEventHub->addAbsoluteAxis(EVENTHUB_ID, ABS_RZ, GYRO_RAW_MIN, GYRO_RAW_MAX, GYRO_RAW_FUZZ,
-                                   GYRO_RAW_FLAT, GYRO_RAW_RESOLUTION);
-}
-
-void SensorInputMapperTest::setAccelProperties() {
-    mFakeEventHub->addSensorAxis(EVENTHUB_ID, /* absCode */ 0, InputDeviceSensorType::ACCELEROMETER,
-                                 /* sensorDataIndex */ 0);
-    mFakeEventHub->addSensorAxis(EVENTHUB_ID, /* absCode */ 1, InputDeviceSensorType::ACCELEROMETER,
-                                 /* sensorDataIndex */ 1);
-    mFakeEventHub->addSensorAxis(EVENTHUB_ID, /* absCode */ 2, InputDeviceSensorType::ACCELEROMETER,
-                                 /* sensorDataIndex */ 2);
-    mFakeEventHub->setMscEvent(EVENTHUB_ID, MSC_TIMESTAMP);
-    addConfigurationProperty("sensor.accelerometer.reportingMode", "0");
-    addConfigurationProperty("sensor.accelerometer.maxDelay", "100000");
-    addConfigurationProperty("sensor.accelerometer.minDelay", "5000");
-    addConfigurationProperty("sensor.accelerometer.power", "1.5");
-}
-
-void SensorInputMapperTest::setGyroProperties() {
-    mFakeEventHub->addSensorAxis(EVENTHUB_ID, /* absCode */ 3, InputDeviceSensorType::GYROSCOPE,
-                                 /* sensorDataIndex */ 0);
-    mFakeEventHub->addSensorAxis(EVENTHUB_ID, /* absCode */ 4, InputDeviceSensorType::GYROSCOPE,
-                                 /* sensorDataIndex */ 1);
-    mFakeEventHub->addSensorAxis(EVENTHUB_ID, /* absCode */ 5, InputDeviceSensorType::GYROSCOPE,
-                                 /* sensorDataIndex */ 2);
-    mFakeEventHub->setMscEvent(EVENTHUB_ID, MSC_TIMESTAMP);
-    addConfigurationProperty("sensor.gyroscope.reportingMode", "0");
-    addConfigurationProperty("sensor.gyroscope.maxDelay", "100000");
-    addConfigurationProperty("sensor.gyroscope.minDelay", "5000");
-    addConfigurationProperty("sensor.gyroscope.power", "0.8");
-}
-
 TEST_F(SensorInputMapperTest, GetSources) {
-    SensorInputMapper& mapper = constructAndAddMapper<SensorInputMapper>();
+    mMapper = createInputMapper<SensorInputMapper>(*mDeviceContext,
+                                                   mFakePolicy->getReaderConfiguration());
 
-    ASSERT_EQ(static_cast<uint32_t>(AINPUT_SOURCE_SENSOR), mapper.getSources());
+    ASSERT_EQ(static_cast<uint32_t>(AINPUT_SOURCE_SENSOR), mMapper->getSources());
 }
 
 TEST_F(SensorInputMapperTest, ProcessAccelerometerSensor) {
-    setAccelProperties();
-    prepareAccelAxes();
-    SensorInputMapper& mapper = constructAndAddMapper<SensorInputMapper>();
+    EXPECT_CALL(mMockEventHub, hasMscEvent(EVENTHUB_ID, MSC_TIMESTAMP))
+            .WillRepeatedly(Return(true));
+    setupSensor(ABS_X, InputDeviceSensorType::ACCELEROMETER, /*sensorDataIndex=*/0);
+    setupSensor(ABS_Y, InputDeviceSensorType::ACCELEROMETER, /*sensorDataIndex=*/1);
+    setupSensor(ABS_Z, InputDeviceSensorType::ACCELEROMETER, /*sensorDataIndex=*/2);
+    setupAxis(ABS_X, /*valid=*/true, ACCEL_RAW_MIN, ACCEL_RAW_MAX, ACCEL_RAW_RESOLUTION,
+              ACCEL_RAW_FLAT, ACCEL_RAW_FUZZ);
+    setupAxis(ABS_Y, /*valid=*/true, ACCEL_RAW_MIN, ACCEL_RAW_MAX, ACCEL_RAW_RESOLUTION,
+              ACCEL_RAW_FLAT, ACCEL_RAW_FUZZ);
+    setupAxis(ABS_Z, /*valid=*/true, ACCEL_RAW_MIN, ACCEL_RAW_MAX, ACCEL_RAW_RESOLUTION,
+              ACCEL_RAW_FLAT, ACCEL_RAW_FUZZ);
+    mPropertyMap.addProperty("sensor.accelerometer.reportingMode", "0");
+    mPropertyMap.addProperty("sensor.accelerometer.maxDelay", "100000");
+    mPropertyMap.addProperty("sensor.accelerometer.minDelay", "5000");
+    mPropertyMap.addProperty("sensor.accelerometer.power", "1.5");
+    mMapper = createInputMapper<SensorInputMapper>(*mDeviceContext,
+                                                   mFakePolicy->getReaderConfiguration());
 
-    ASSERT_TRUE(mapper.enableSensor(InputDeviceSensorType::ACCELEROMETER,
-                                    std::chrono::microseconds(10000),
-                                    std::chrono::microseconds(0)));
-    ASSERT_TRUE(mFakeEventHub->isDeviceEnabled(EVENTHUB_ID));
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_ABS, ABS_X, 20000);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_ABS, ABS_Y, -20000);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_ABS, ABS_Z, 40000);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_MSC, MSC_TIMESTAMP, 1000);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
+    EXPECT_CALL(mMockEventHub, enableDevice(EVENTHUB_ID));
+    ASSERT_TRUE(mMapper->enableSensor(InputDeviceSensorType::ACCELEROMETER,
+                                      std::chrono::microseconds(10000),
+                                      std::chrono::microseconds(0)));
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_ABS, ABS_X, 20000);
+    args += process(ARBITRARY_TIME, EV_ABS, ABS_Y, -20000);
+    args += process(ARBITRARY_TIME, EV_ABS, ABS_Z, 40000);
+    args += process(ARBITRARY_TIME, EV_MSC, MSC_TIMESTAMP, 1000);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
 
-    NotifySensorArgs args;
     std::vector<float> values = {20000.0f / ACCEL_RAW_RESOLUTION * GRAVITY_MS2_UNIT,
                                  -20000.0f / ACCEL_RAW_RESOLUTION * GRAVITY_MS2_UNIT,
                                  40000.0f / ACCEL_RAW_RESOLUTION * GRAVITY_MS2_UNIT};
 
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifySensorWasCalled(&args));
-    ASSERT_EQ(args.source, AINPUT_SOURCE_SENSOR);
-    ASSERT_EQ(args.deviceId, DEVICE_ID);
-    ASSERT_EQ(args.sensorType, InputDeviceSensorType::ACCELEROMETER);
-    ASSERT_EQ(args.accuracy, InputDeviceSensorAccuracy::ACCURACY_HIGH);
-    ASSERT_EQ(args.hwTimestamp, ARBITRARY_TIME);
-    ASSERT_EQ(args.values, values);
-    mapper.flushSensor(InputDeviceSensorType::ACCELEROMETER);
+    ASSERT_EQ(args.size(), 1u);
+    const NotifySensorArgs& arg = std::get<NotifySensorArgs>(args.front());
+    ASSERT_EQ(arg.source, AINPUT_SOURCE_SENSOR);
+    ASSERT_EQ(arg.deviceId, DEVICE_ID);
+    ASSERT_EQ(arg.sensorType, InputDeviceSensorType::ACCELEROMETER);
+    ASSERT_EQ(arg.accuracy, InputDeviceSensorAccuracy::ACCURACY_HIGH);
+    ASSERT_EQ(arg.hwTimestamp, ARBITRARY_TIME);
+    ASSERT_EQ(arg.values, values);
+    mMapper->flushSensor(InputDeviceSensorType::ACCELEROMETER);
 }
 
 TEST_F(SensorInputMapperTest, ProcessGyroscopeSensor) {
-    setGyroProperties();
-    prepareGyroAxes();
-    SensorInputMapper& mapper = constructAndAddMapper<SensorInputMapper>();
+    EXPECT_CALL(mMockEventHub, hasMscEvent(EVENTHUB_ID, MSC_TIMESTAMP))
+            .WillRepeatedly(Return(true));
+    setupSensor(ABS_RX, InputDeviceSensorType::GYROSCOPE, /*sensorDataIndex=*/0);
+    setupSensor(ABS_RY, InputDeviceSensorType::GYROSCOPE, /*sensorDataIndex=*/1);
+    setupSensor(ABS_RZ, InputDeviceSensorType::GYROSCOPE, /*sensorDataIndex=*/2);
+    setupAxis(ABS_RX, /*valid=*/true, GYRO_RAW_MIN, GYRO_RAW_MAX, GYRO_RAW_RESOLUTION,
+              GYRO_RAW_FLAT, GYRO_RAW_FUZZ);
+    setupAxis(ABS_RY, /*valid=*/true, GYRO_RAW_MIN, GYRO_RAW_MAX, GYRO_RAW_RESOLUTION,
+              GYRO_RAW_FLAT, GYRO_RAW_FUZZ);
+    setupAxis(ABS_RZ, /*valid=*/true, GYRO_RAW_MIN, GYRO_RAW_MAX, GYRO_RAW_RESOLUTION,
+              GYRO_RAW_FLAT, GYRO_RAW_FUZZ);
+    mPropertyMap.addProperty("sensor.gyroscope.reportingMode", "0");
+    mPropertyMap.addProperty("sensor.gyroscope.maxDelay", "100000");
+    mPropertyMap.addProperty("sensor.gyroscope.minDelay", "5000");
+    mPropertyMap.addProperty("sensor.gyroscope.power", "0.8");
+    mMapper = createInputMapper<SensorInputMapper>(*mDeviceContext,
+                                                   mFakePolicy->getReaderConfiguration());
 
-    ASSERT_TRUE(mapper.enableSensor(InputDeviceSensorType::GYROSCOPE,
-                                    std::chrono::microseconds(10000),
-                                    std::chrono::microseconds(0)));
-    ASSERT_TRUE(mFakeEventHub->isDeviceEnabled(EVENTHUB_ID));
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_ABS, ABS_RX, 20000);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_ABS, ABS_RY, -20000);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_ABS, ABS_RZ, 40000);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_MSC, MSC_TIMESTAMP, 1000);
-    process(mapper, ARBITRARY_TIME, READ_TIME, EV_SYN, SYN_REPORT, 0);
+    EXPECT_CALL(mMockEventHub, enableDevice(EVENTHUB_ID));
+    ASSERT_TRUE(mMapper->enableSensor(InputDeviceSensorType::GYROSCOPE,
+                                      std::chrono::microseconds(10000),
+                                      std::chrono::microseconds(0)));
+    std::list<NotifyArgs> args;
+    args += process(ARBITRARY_TIME, EV_ABS, ABS_RX, 20000);
+    args += process(ARBITRARY_TIME, EV_ABS, ABS_RY, -20000);
+    args += process(ARBITRARY_TIME, EV_ABS, ABS_RZ, 40000);
+    args += process(ARBITRARY_TIME, EV_MSC, MSC_TIMESTAMP, 1000);
+    args += process(ARBITRARY_TIME, EV_SYN, SYN_REPORT, 0);
 
-    NotifySensorArgs args;
     std::vector<float> values = {20000.0f / GYRO_RAW_RESOLUTION * DEGREE_RADIAN_UNIT,
                                  -20000.0f / GYRO_RAW_RESOLUTION * DEGREE_RADIAN_UNIT,
                                  40000.0f / GYRO_RAW_RESOLUTION * DEGREE_RADIAN_UNIT};
 
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifySensorWasCalled(&args));
-    ASSERT_EQ(args.source, AINPUT_SOURCE_SENSOR);
-    ASSERT_EQ(args.deviceId, DEVICE_ID);
-    ASSERT_EQ(args.sensorType, InputDeviceSensorType::GYROSCOPE);
-    ASSERT_EQ(args.accuracy, InputDeviceSensorAccuracy::ACCURACY_HIGH);
-    ASSERT_EQ(args.hwTimestamp, ARBITRARY_TIME);
-    ASSERT_EQ(args.values, values);
-    mapper.flushSensor(InputDeviceSensorType::GYROSCOPE);
+    ASSERT_EQ(args.size(), 1u);
+    const NotifySensorArgs& arg = std::get<NotifySensorArgs>(args.front());
+    ASSERT_EQ(arg.source, AINPUT_SOURCE_SENSOR);
+    ASSERT_EQ(arg.deviceId, DEVICE_ID);
+    ASSERT_EQ(arg.sensorType, InputDeviceSensorType::GYROSCOPE);
+    ASSERT_EQ(arg.accuracy, InputDeviceSensorAccuracy::ACCURACY_HIGH);
+    ASSERT_EQ(arg.hwTimestamp, ARBITRARY_TIME);
+    ASSERT_EQ(arg.values, values);
+    mMapper->flushSensor(InputDeviceSensorType::GYROSCOPE);
 }
 
 } // namespace android

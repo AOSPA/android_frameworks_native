@@ -16,7 +16,7 @@ public:
 
     void qtiInit(SurfaceFlinger* flinger) override;
     QtiSurfaceFlingerExtensionIntf* qtiPostInit(android::impl::HWComposer& hwc,
-                                                Hwc2::impl::PowerAdvisor* powerAdvisor,
+                                                adpf::impl::PowerAdvisor* powerAdvisor,
                                                 VsyncConfiguration* vsyncConfig,
                                                 Hwc2::Composer* composerHal) override;
     void qtiSetVsyncConfiguration(VsyncConfiguration* vsyncConfig) override;

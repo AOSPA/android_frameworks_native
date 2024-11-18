@@ -25,6 +25,7 @@
 #include <compositionengine/LayerFE.h>
 #include <compositionengine/OutputLayer.h>
 #include <ui/FloatRect.h>
+#include <ui/PictureProfileHandle.h>
 #include <ui/Rect.h>
 
 #include <ui/DisplayIdentification.h>
@@ -48,6 +49,9 @@ public:
     void setHwcLayer(std::shared_ptr<HWC2::Layer>) override;
 
     void uncacheBuffers(const std::vector<uint64_t>& bufferIdsToUncache) override;
+    int64_t getPictureProfilePriority() const override;
+    const PictureProfileHandle& getPictureProfileHandle() const override;
+    void commitPictureProfileToCompositionState() override;
 
     void updateCompositionState(bool includeGeometry, bool forceClientComposition,
                                 ui::Transform::RotationFlags,

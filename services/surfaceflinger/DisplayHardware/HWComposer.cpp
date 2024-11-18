@@ -1052,6 +1052,24 @@ status_t HWComposer::setContentType(PhysicalDisplayId displayId, hal::ContentTyp
     return NO_ERROR;
 }
 
+int32_t HWComposer::getMaxLayerPictureProfiles(PhysicalDisplayId displayId) {
+    int32_t maxProfiles = 0;
+    RETURN_IF_INVALID_DISPLAY(displayId, 0);
+    const auto error = mDisplayData[displayId].hwcDisplay->getMaxLayerPictureProfiles(&maxProfiles);
+    RETURN_IF_HWC_ERROR(error, displayId, 0);
+    return maxProfiles;
+}
+
+status_t HWComposer::setDisplayPictureProfileHandle(PhysicalDisplayId displayId,
+                                                    const PictureProfileHandle& handle) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    const auto error = mDisplayData[displayId].hwcDisplay->setPictureProfileHandle(handle);
+    if (error != hal::Error::UNSUPPORTED) {
+        RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
+    }
+    return NO_ERROR;
+}
+
 const std::unordered_map<std::string, bool>& HWComposer::getSupportedLayerGenericMetadata() const {
     return mSupportedLayerGenericMetadata;
 }

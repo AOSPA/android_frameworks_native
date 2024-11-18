@@ -378,6 +378,11 @@ void SurfaceFrame::setAcquireFenceTime(nsecs_t acquireFenceTime) {
     }
 }
 
+void SurfaceFrame::setDesiredPresentTime(nsecs_t desiredPresentTime) {
+    std::scoped_lock lock(mMutex);
+    mActuals.desiredPresentTime = desiredPresentTime;
+}
+
 void SurfaceFrame::setDropTime(nsecs_t dropTime) {
     std::scoped_lock lock(mMutex);
     mDropTime = dropTime;
@@ -1462,6 +1467,30 @@ float FrameTimeline::computeFps(const std::unordered_set<int32_t>& layerIds) {
     // M frames / second
     return kOneSecond * static_cast<nsecs_t>((presentTimes.size() - 1)) /
             static_cast<float>(totalPresentToPresentWalls);
+}
+
+void FrameTimeline::generateFrameStats(int32_t layer, size_t count, FrameStats* outStats) const {
+    std::scoped_lock lock(mMutex);
+
+    // TODO: Include FPS calculation here
+    for (auto displayFrame : mDisplayFrames) {
+        if (!count--) {
+            break;
+        }
+
+        if (displayFrame->getActuals().presentTime <= 0) {
+            continue;
+        }
+
+        for (const auto& surfaceFrame : displayFrame->getSurfaceFrames()) {
+            if (surfaceFrame->getLayerId() == layer) {
+                outStats->actualPresentTimesNano.push_back(surfaceFrame->getActuals().presentTime);
+                outStats->desiredPresentTimesNano.push_back(
+                        surfaceFrame->getActuals().desiredPresentTime);
+                outStats->frameReadyTimesNano.push_back(surfaceFrame->getActuals().endTime);
+            }
+        }
+    }
 }
 
 std::optional<size_t> FrameTimeline::getFirstSignalFenceIndex() const {

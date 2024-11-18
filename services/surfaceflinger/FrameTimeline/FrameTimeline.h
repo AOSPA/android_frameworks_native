@@ -85,16 +85,20 @@ enum class FrameStartMetadata : int8_t {
  */
 struct TimelineItem {
     TimelineItem(const nsecs_t startTime = 0, const nsecs_t endTime = 0,
-                 const nsecs_t presentTime = 0)
-          : startTime(startTime), endTime(endTime), presentTime(presentTime) {}
+                 const nsecs_t presentTime = 0, const nsecs_t desiredPresentTime = 0)
+          : startTime(startTime),
+            endTime(endTime),
+            presentTime(presentTime),
+            desiredPresentTime(desiredPresentTime) {}
 
     nsecs_t startTime;
     nsecs_t endTime;
     nsecs_t presentTime;
+    nsecs_t desiredPresentTime;
 
     bool operator==(const TimelineItem& other) const {
         return startTime == other.startTime && endTime == other.endTime &&
-                presentTime == other.presentTime;
+                presentTime == other.presentTime && desiredPresentTime != other.desiredPresentTime;
     }
 
     bool operator!=(const TimelineItem& other) const { return !(*this == other); }
@@ -183,6 +187,7 @@ public:
     void setActualStartTime(nsecs_t actualStartTime);
     void setActualQueueTime(nsecs_t actualQueueTime);
     void setAcquireFenceTime(nsecs_t acquireFenceTime);
+    void setDesiredPresentTime(nsecs_t desiredPresentTime);
     void setDropTime(nsecs_t dropTime);
     void setPresentState(PresentState presentState, nsecs_t lastLatchTime = 0);
     void setRenderRate(Fps renderRate);
@@ -343,6 +348,9 @@ public:
     // The fps is compted from the linear timeline of present timestamps for DisplayFrames
     // containing at least one layer ID.
     virtual float computeFps(const std::unordered_set<int32_t>& layerIds) = 0;
+
+    // Supports the legacy FrameStats interface
+    virtual void generateFrameStats(int32_t layer, size_t count, FrameStats* outStats) const = 0;
 
     // Restores the max number of display frames to default. Called by SF backdoor.
     virtual void reset() = 0;
@@ -507,6 +515,7 @@ public:
     void parseArgs(const Vector<String16>& args, std::string& result) override;
     void setMaxDisplayFrames(uint32_t size) override;
     float computeFps(const std::unordered_set<int32_t>& layerIds) override;
+    void generateFrameStats(int32_t layer, size_t count, FrameStats* outStats) const override;
     void reset() override;
 
     // Sets up the perfetto tracing backend and data source.

@@ -218,6 +218,17 @@ public:
         mLifecycleManager.applyTransactions(transactions);
     }
 
+    void setAutoRefresh(uint32_t id, bool autoRefresh) {
+        std::vector<TransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+
+        transactions.back().states.front().state.what = layer_state_t::eAutoRefreshChanged;
+        transactions.back().states.front().layerId = id;
+        transactions.back().states.front().state.autoRefresh = autoRefresh;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
     void hideLayer(uint32_t id) {
         setFlags(id, layer_state_t::eLayerHidden, layer_state_t::eLayerHidden);
     }

@@ -22,14 +22,12 @@
 #include "compositionengine/LayerFE.h"
 #include "compositionengine/LayerFECompositionState.h"
 #include "renderengine/LayerSettings.h"
-#include "ui/LayerStack.h"
 
 #include <ftl/future.h>
 
 namespace android {
 
 struct CompositionResult {
-    std::vector<std::pair<ftl::SharedFuture<FenceResult>, ui::LayerStack>> releaseFences;
     sp<Fence> lastClientCompositionFence = nullptr;
 };
 
@@ -41,7 +39,6 @@ public:
     // compositionengine::LayerFE overrides
     const compositionengine::LayerFECompositionState* getCompositionState() const override;
     bool onPreComposition(bool updatingOutputGeometryThisFrame) override;
-    void onLayerDisplayed(ftl::SharedFuture<FenceResult>, ui::LayerStack) override;
     const char* getDebugName() const override;
     int32_t getSequence() const override;
     bool hasRoundedCorners() const override;

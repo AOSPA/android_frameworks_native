@@ -77,6 +77,7 @@ struct LayerSnapshot : public compositionengine::LayerFECompositionState {
     gui::LayerMetadata layerMetadata;
     gui::LayerMetadata relativeLayerMetadata;
     bool hasReadyFrame; // used in post composition to check if there is another frame ready
+    bool autoRefresh;
     ui::Transform localTransformInverse;
     gui::WindowInfo inputInfo;
     ui::Transform localTransform;

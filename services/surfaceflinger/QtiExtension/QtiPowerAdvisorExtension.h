@@ -3,11 +3,11 @@
  */
 #pragma once
 
-#include "../DisplayHardware/PowerAdvisor.h"
+#include "../PowerAdvisor/PowerAdvisor.h"
 
 namespace android {
 
-namespace Hwc2::impl {
+namespace adpf::impl {
 class PowerAdvisor;
 }
 
@@ -15,13 +15,13 @@ namespace surfaceflingerextension {
 
 class QtiPowerAdvisorExtension {
 public:
-    QtiPowerAdvisorExtension(Hwc2::impl::PowerAdvisor* powerAdvisor);
+    QtiPowerAdvisorExtension(adpf::impl::PowerAdvisor* powerAdvisor);
     ~QtiPowerAdvisorExtension() = default;
 
     bool qtiCanNotifyDisplayUpdateImminent();
 
 private:
-    Hwc2::impl::PowerAdvisor* mQtiPowerAdvisor = nullptr;
+    adpf::impl::PowerAdvisor* mQtiPowerAdvisor = nullptr;
 };
 
 } // namespace surfaceflingerextension

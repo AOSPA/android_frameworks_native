@@ -17,7 +17,7 @@
 #include <set>
 
 #include "../DisplayHardware/HWComposer.h"
-#include "../DisplayHardware/PowerAdvisor.h"
+#include "../PowerAdvisor/PowerAdvisor.h"
 #include "../SurfaceFlinger.h"
 #include "QtiFeatureManager.h"
 #include "QtiHWComposerExtensionIntf.h"
@@ -118,7 +118,7 @@ public:
 
     void qtiInit(SurfaceFlinger* flinger) override;
     QtiSurfaceFlingerExtensionIntf* qtiPostInit(android::impl::HWComposer& hwc,
-                                                Hwc2::impl::PowerAdvisor* powerAdvisor,
+                                                adpf::impl::PowerAdvisor* powerAdvisor,
                                                 VsyncConfiguration* vsyncConfig,
                                                 Hwc2::Composer* composerHal) override;
     void qtiSetVsyncConfiguration(VsyncConfiguration* vsyncConfig) override;

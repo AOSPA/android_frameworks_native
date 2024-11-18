@@ -306,7 +306,18 @@ Sensor::Sensor(struct sensor_t const& hwSensor, const uuid_t& uuid, int halVersi
         }
         if (halVersion > SENSORS_DEVICE_API_VERSION_1_0 && hwSensor.requiredPermission) {
             mRequiredPermission = hwSensor.requiredPermission;
-            if (!strcmp(mRequiredPermission, SENSOR_PERMISSION_BODY_SENSORS)) {
+            bool requiresBodySensorPermission =
+                    !strcmp(mRequiredPermission, SENSOR_PERMISSION_BODY_SENSORS);
+            if (android::permission::flags::replace_body_sensor_permission_enabled()) {
+                if (requiresBodySensorPermission) {
+                  ALOGE("Sensor %s using deprecated Body Sensor permission", mName.c_str());
+                }
+
+                AppOpsManager appOps;
+                // Lookup to see if an AppOp exists for the permission. If none
+                // does, the default value of -1 is used.
+                mRequiredAppOp = appOps.permissionToOpCode(String16(mRequiredPermission));
+            } else if (requiresBodySensorPermission) {
                 AppOpsManager appOps;
                 mRequiredAppOp = appOps.permissionToOpCode(String16(SENSOR_PERMISSION_BODY_SENSORS));
             }

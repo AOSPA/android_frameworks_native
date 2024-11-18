@@ -389,4 +389,34 @@ void LegacyResampler::resampleMotionEvent(nanoseconds frameTime, MotionEvent& mo
     mLastRealSample = *(mLatestSamples.end() - 1);
 }
 
+// --- FilteredLegacyResampler ---
+
+FilteredLegacyResampler::FilteredLegacyResampler(float minCutoffFreq, float beta)
+      : mResampler{}, mMinCutoffFreq{minCutoffFreq}, mBeta{beta} {}
+
+void FilteredLegacyResampler::resampleMotionEvent(std::chrono::nanoseconds requestedFrameTime,
+                                                  MotionEvent& motionEvent,
+                                                  const InputMessage* futureSample) {
+    mResampler.resampleMotionEvent(requestedFrameTime, motionEvent, futureSample);
+    const size_t numSamples = motionEvent.getHistorySize() + 1;
+    for (size_t sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
+        for (size_t pointerIndex = 0; pointerIndex < motionEvent.getPointerCount();
+             ++pointerIndex) {
+            const int32_t pointerId = motionEvent.getPointerProperties(pointerIndex)->id;
+            const nanoseconds eventTime =
+                    nanoseconds{motionEvent.getHistoricalEventTime(sampleIndex)};
+            // Refer to the static function `setMotionEventPointerCoords` for a justification of
+            // casting away const.
+            PointerCoords& pointerCoords = const_cast<PointerCoords&>(
+                    *(motionEvent.getHistoricalRawPointerCoords(pointerIndex, sampleIndex)));
+            const auto& [iter, _] = mFilteredPointers.try_emplace(pointerId, mMinCutoffFreq, mBeta);
+            iter->second.filter(eventTime, pointerCoords);
+        }
+    }
+}
+
+std::chrono::nanoseconds FilteredLegacyResampler::getResampleLatency() const {
+    return mResampler.getResampleLatency();
+}
+
 } // namespace android

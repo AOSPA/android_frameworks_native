@@ -14,7 +14,7 @@ QtiNullExtension::QtiNullExtension() {
 
 void QtiNullExtension::qtiInit(SurfaceFlinger* flinger) {}
 QtiSurfaceFlingerExtensionIntf* QtiNullExtension::qtiPostInit(
-        android::impl::HWComposer& hwc, Hwc2::impl::PowerAdvisor* powerAdvisor,
+        android::impl::HWComposer& hwc, adpf::impl::PowerAdvisor* powerAdvisor,
         scheduler::VsyncConfiguration* vsyncConfig, Hwc2::Composer* composerHal) {
     return this;
 }

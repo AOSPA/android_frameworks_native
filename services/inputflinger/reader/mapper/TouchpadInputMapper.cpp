@@ -375,6 +375,9 @@ std::list<NotifyArgs> TouchpadInputMapper::reconfigure(nsecs_t when,
         mPropertyProvider.getProperty("Button Right Click Zone Enable")
                 .setBoolValues({config.touchpadRightClickZoneEnabled});
         mTouchpadHardwareStateNotificationsEnabled = config.shouldNotifyTouchpadHardwareState;
+
+        mGestureConverter.setThreeFingerTapShortcutEnabled(
+                config.touchpadThreeFingerTapShortcutEnabled);
     }
     std::list<NotifyArgs> out;
     if ((!changes.any() && config.pointerCaptureRequest.isEnable()) ||

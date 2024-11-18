@@ -16,13 +16,7 @@
 
 #pragma once
 
-#include "binder/Status.h"
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wconversion"
-#include <aidl/android/hardware/power/IPower.h>
 #include <powermanager/PowerHintSessionWrapper.h>
-#pragma clang diagnostic pop
 
 #include <gmock/gmock.h>
 
@@ -34,7 +28,7 @@ using android::binder::Status;
 
 using namespace aidl::android::hardware::power;
 
-namespace android::Hwc2::mock {
+namespace android::adpf::mock {
 
 class MockPowerHintSessionWrapper : public power::PowerHintSessionWrapper {
 public:
@@ -52,4 +46,4 @@ public:
     MOCK_METHOD(power::HalResult<SessionConfig>, getSessionConfig, (), (override));
 };
 
-} // namespace android::Hwc2::mock
+} // namespace android::adpf::mock

@@ -288,6 +288,7 @@ public:
     void notifyTouchpadHardwareState(const SelfContainedHardwareState& schs,
                                      int32_t deviceId) override {}
     void notifyTouchpadGestureInfo(GestureType type, int32_t deviceId) override {}
+    void notifyTouchpadThreeFingerTap() override {}
     std::shared_ptr<KeyCharacterMap> getKeyboardLayoutOverlay(
             const InputDeviceIdentifier& identifier,
             const std::optional<KeyboardLayoutInfo> layoutInfo) override {

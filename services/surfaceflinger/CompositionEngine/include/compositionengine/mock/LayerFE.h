@@ -50,9 +50,6 @@ public:
                        std::optional<compositionengine::LayerFE::LayerSettings>(
                                compositionengine::LayerFE::ClientCompositionTargetSettings&));
 
-    MOCK_METHOD(void, onLayerDisplayed, (ftl::SharedFuture<FenceResult>, ui::LayerStack),
-                (override));
-
     MOCK_METHOD0(createReleaseFenceFuture, ftl::Future<FenceResult>());
     MOCK_METHOD1(setReleaseFence, void(const FenceResult&));
     MOCK_METHOD0(getReleaseFencePromiseStatus, LayerFE::ReleaseFencePromiseStatus());

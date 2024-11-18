@@ -76,6 +76,17 @@ flag {
 } # correct_dpi_with_display_size
 
 flag {
+  name: "deprecate_frame_tracker"
+  namespace: "core_graphics"
+  description: "Deprecate using FrameTracker to accumulate and provide FrameStats"
+  bug: "241394120"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+} # deprecate_frame_tracker
+
+flag {
   name: "deprecate_vsync_sf"
   namespace: "core_graphics"
   description: "Depracate eVsyncSourceSurfaceFlinger and use vsync_app everywhere"
