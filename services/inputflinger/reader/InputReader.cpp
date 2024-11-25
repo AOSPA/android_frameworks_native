@@ -19,6 +19,7 @@
 #include "InputReader.h"
 
 #include <android-base/stringprintf.h>
+#include <com_android_input_flags.h>
 #include <errno.h>
 #include <input/Keyboard.h>
 #include <input/VirtualKeyMap.h>
@@ -903,7 +904,9 @@ void InputReader::notifyMouseCursorFadedOnTyping() {
 
 bool InputReader::setKernelWakeEnabled(int32_t deviceId, bool enabled) {
     std::scoped_lock _l(mLock);
-
+    if (!com::android::input::flags::set_input_device_kernel_wake()){
+        return false;
+    }
     InputDevice* device = findInputDeviceLocked(deviceId);
     if (device) {
         return device->setKernelWakeEnabled(enabled);

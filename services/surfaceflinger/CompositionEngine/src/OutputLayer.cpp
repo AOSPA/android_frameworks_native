@@ -299,8 +299,13 @@ uint32_t OutputLayer::calculateOutputRelativeBufferTransform(
 }
 
 void OutputLayer::updateLuts(
-        std::shared_ptr<gui::DisplayLuts> layerFEStateLut,
+        const LayerFECompositionState& layerFEState,
         const std::optional<std::vector<std::optional<LutProperties>>>& properties) {
+    auto& luts = layerFEState.luts;
+    if (!luts) {
+        return;
+    }
+
     auto& state = editState();
 
     if (!properties) {
@@ -316,7 +321,7 @@ void OutputLayer::updateLuts(
         }
     }
 
-    for (const auto& inputLut : layerFEStateLut->lutProperties) {
+    for (const auto& inputLut : luts->lutProperties) {
         bool foundInHwcLuts = false;
         for (const auto& hwcLut : hwcLutProperties) {
             if (static_cast<int32_t>(hwcLut.dimension) ==
@@ -329,7 +334,7 @@ void OutputLayer::updateLuts(
                 break;
             }
         }
-        // if any lut properties of layerFEStateLut can not be found in hwcLutProperties,
+        // if any lut properties of luts can not be found in hwcLutProperties,
         // GPU composition instead
         if (!foundInHwcLuts) {
             state.forceClientComposition = true;
@@ -422,10 +427,7 @@ void OutputLayer::updateCompositionState(
         state.whitePointNits = layerBrightnessNits;
     }
 
-    const auto& layerFEStateLut = layerFEState->luts;
-    if (layerFEStateLut) {
-        updateLuts(layerFEStateLut, properties);
-    }
+    updateLuts(*layerFEState, properties);
 
     // These are evaluated every frame as they can potentially change at any
     // time.

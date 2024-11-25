@@ -959,6 +959,8 @@ status_t BufferQueueProducer::queueBuffer(int slot,
             &getFrameTimestamps);
     const Region& surfaceDamage = input.getSurfaceDamage();
     const HdrMetadata& hdrMetadata = input.getHdrMetadata();
+    const std::optional<PictureProfileHandle>& pictureProfileHandle =
+            input.getPictureProfileHandle();
 
     if (acquireFence == nullptr) {
         BQ_LOGE("queueBuffer: fence is NULL");
@@ -1074,6 +1076,7 @@ status_t BufferQueueProducer::queueBuffer(int slot,
         item.mIsAutoTimestamp = isAutoTimestamp;
         item.mDataSpace = dataSpace;
         item.mHdrMetadata = hdrMetadata;
+        item.mPictureProfileHandle = pictureProfileHandle;
         item.mFrameNumber = currentFrameNumber;
         item.mSlot = slot;
         item.mFence = acquireFence;

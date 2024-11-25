@@ -23,7 +23,9 @@
 #ifndef ANDROID_GUI_BLAST_BUFFER_QUEUE_H
 #define ANDROID_GUI_BLAST_BUFFER_QUEUE_H
 
-#include <com_android_graphics_libgui_flags.h>
+#include <optional>
+#include <queue>
+
 #include <gui/BufferItem.h>
 #include <gui/BufferItemConsumer.h>
 #include <gui/IGraphicBufferConsumer.h>
@@ -35,7 +37,6 @@
 #include <utils/RefBase.h>
 
 #include <system/window.h>
-#include <queue>
 
 #include <com_android_graphics_libgui_flags.h>
 
@@ -255,6 +256,10 @@ private:
     ui::Size mSize GUARDED_BY(mMutex);
     ui::Size mRequestedSize GUARDED_BY(mMutex);
     int32_t mFormat GUARDED_BY(mMutex);
+
+    // Keep a copy of the current picture profile handle, so it can be moved to a new
+    // SurfaceControl when BBQ migrates via ::update.
+    std::optional<PictureProfileHandle> mPictureProfileHandle;
 
     struct BufferInfo {
         bool hasBuffer = false;

@@ -39,7 +39,7 @@ public:
     static const PictureProfileHandle NONE;
 
     PictureProfileHandle() { *this = NONE; }
-    PictureProfileHandle(PictureProfileId id) : mId(id) {}
+    explicit PictureProfileHandle(PictureProfileId id) : mId(id) {}
 
     PictureProfileId const& getId() const { return mId; }
 

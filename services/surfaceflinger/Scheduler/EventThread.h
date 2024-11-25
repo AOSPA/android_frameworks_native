@@ -32,7 +32,6 @@
 #include <thread>
 #include <vector>
 
-#include "DisplayHardware/DisplayMode.h"
 #include "TracedOrdinal.h"
 #include "VSyncDispatch.h"
 #include "VsyncSchedule.h"
@@ -55,6 +54,7 @@ using gui::VsyncEventData;
 // ---------------------------------------------------------------------------
 
 using FrameRateOverride = DisplayEventReceiver::Event::FrameRateOverride;
+using BufferStuffingMap = ftl::SmallMap<uid_t, uint32_t, 10>;
 
 enum class VSyncRequest {
     None = -2,
@@ -136,6 +136,10 @@ public:
 
     virtual void onHdcpLevelsChanged(PhysicalDisplayId displayId, int32_t connectedLevel,
                                      int32_t maxLevel) = 0;
+
+    // An elevated number of queued buffers in the server is detected. This propagates a
+    // flag to Choreographer indicating that buffer stuffing recovery should begin.
+    virtual void addBufferStuffedUids(BufferStuffingMap bufferStuffedUids);
 };
 
 struct IEventThreadCallback {
@@ -188,6 +192,8 @@ public:
     void onHdcpLevelsChanged(PhysicalDisplayId displayId, int32_t connectedLevel,
                              int32_t maxLevel) override;
 
+    void addBufferStuffedUids(BufferStuffingMap bufferStuffedUids) override;
+
 private:
     friend EventThreadTest;
 
@@ -227,6 +233,10 @@ private:
     TimePoint mLastCommittedVsyncTime GUARDED_BY(mMutex) = TimePoint::now();
     scheduler::VSyncCallbackRegistration mVsyncRegistration GUARDED_BY(mMutex);
     frametimeline::TokenManager* const mTokenManager;
+
+    // All consumers that need to recover from buffer stuffing and the number
+    // of their queued buffers.
+    BufferStuffingMap mBufferStuffedUids GUARDED_BY(mMutex);
 
     IEventThreadCallback& mCallback;
 

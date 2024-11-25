@@ -294,6 +294,8 @@ enum class KeyboardType {
     NONE = AINPUT_KEYBOARD_TYPE_NONE,
     NON_ALPHABETIC = AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC,
     ALPHABETIC = AINPUT_KEYBOARD_TYPE_ALPHABETIC,
+    ftl_first = NONE,
+    ftl_last = ALPHABETIC,
 };
 
 bool isStylusToolType(ToolType toolType);

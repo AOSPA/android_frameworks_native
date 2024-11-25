@@ -19,9 +19,23 @@
  *
  * APerformanceHint allows apps to create performance hint sessions for groups
  * of threads, and provide hints to the system about the workload of those threads,
- * to help the system more accurately allocate power for them. It is the NDK
+ * to help the system more accurately allocate resources for them. It is the NDK
  * counterpart to the Java PerformanceHintManager SDK API.
  *
+ * This API is intended for periodic workloads, such as frame production. Clients are
+ * expected to create an instance of APerformanceHintManager, create a session with
+ * that, and then set a target duration for the session. Then, they can report the actual
+ * work duration at the end of each cycle to inform the framework about how long those
+ * workloads are taking. The framework will then compare the actual durations to the target
+ * duration and attempt to help the client reach a steady state under the target.
+ *
+ * Unlike reportActualWorkDuration, the "notify..." hints are intended to be sent in
+ * advance of large changes in the workload, to prevent them from going over the target
+ * when there is a sudden, unforseen change. Their effects are intended to last for only
+ * one cycle, after which reportActualWorkDuration will have a chance to catch up.
+ * These hints should be used judiciously, only in cases where the workload is changing
+ * substantially. To enforce that, they are tracked using a per-app rate limiter to avoid
+ * excessive hinting and encourage clients to be mindful about when to send them.
  * @{
  */
 
@@ -248,6 +262,54 @@ int APerformanceHint_setPreferPowerEfficiency(
 int APerformanceHint_reportActualWorkDuration2(
         APerformanceHintSession* _Nonnull session,
         AWorkDuration* _Nonnull workDuration) __INTRODUCED_IN(__ANDROID_API_V__);
+
+/**
+ * Informs the framework of an upcoming increase in the workload of a graphics pipeline
+ * bound to this session. The user can specify whether the increase is expected to be
+ * on the CPU, GPU, or both.
+ *
+ * Sending hints for both CPU and GPU counts as two separate hints for the purposes of the
+ * rate limiter.
+ *
+ * @param cpu Indicates if the workload increase is expected to affect the CPU.
+ * @param gpu Indicates if the workload increase is expected to affect the GPU.
+ * @param debugName A required string used to identify this specific hint during
+ *        tracing. This debug string will only be held for the duration of the
+ *        method, and can be safely discarded after.
+ *
+ * @return 0 on success.
+ *         EINVAL if no hints were requested.
+ *         EBUSY if the hint was rate limited.
+ *         EPIPE if communication with the system service has failed.
+ *         ENOTSUP if the hint is not supported.
+ */
+int APerformanceHint_notifyWorkloadIncrease(
+        APerformanceHintSession* _Nonnull session,
+        bool cpu, bool gpu, const char* _Nonnull debugName) __INTRODUCED_IN(36);
+
+/**
+ * Informs the framework of an upcoming reset in the workload of a graphics pipeline
+ * bound to this session, or the imminent start of a new workload. The user can specify
+ * whether the reset is expected to affect the CPU, GPU, or both.
+ *
+ * Sending hints for both CPU and GPU counts as two separate hints for the purposes of the
+ * this load tracking.
+ *
+ * @param cpu Indicates if the workload reset is expected to affect the CPU.
+ * @param gpu Indicates if the workload reset is expected to affect the GPU.
+ * @param debugName A required string used to identify this specific hint during
+ *        tracing. This debug string will only be held for the duration of the
+ *        method, and can be safely discarded after.
+ *
+ * @return 0 on success.
+ *         EINVAL if no hints were requested.
+ *         EBUSY if the hint was rate limited.
+ *         EPIPE if communication with the system service has failed.
+ *         ENOTSUP if the hint is not supported.
+ */
+int APerformanceHint_notifyWorkloadReset(
+        APerformanceHintSession* _Nonnull session,
+        bool cpu, bool gpu, const char* _Nonnull debugName) __INTRODUCED_IN(36);
 
 /**
  * Creates a new AWorkDuration. When the client finishes using {@link AWorkDuration}, it should

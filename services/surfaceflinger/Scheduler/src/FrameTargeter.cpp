@@ -86,6 +86,7 @@ void FrameTargeter::beginFrame(const BeginFrameArgs& args, const IVsyncSource& v
                                IsFencePendingFuncPtr isFencePendingFuncPtr) {
     mVsyncId = args.vsyncId;
     mFrameBeginTime = args.frameBeginTime;
+    mDebugPresentTimeDelay = args.debugPresentTimeDelay;
 
     // The `expectedVsyncTime`, which was predicted when this frame was scheduled, is normally in
     // the future relative to `frameBeginTime`, but may not be for delayed frames. Adjust

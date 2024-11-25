@@ -209,12 +209,16 @@ void Scheduler::run() {
 
 void Scheduler::onFrameSignal(ICompositor& compositor, VsyncId vsyncId,
                               TimePoint expectedVsyncTime) {
+    const auto debugPresentDelay = mDebugPresentDelay.load();
+    mDebugPresentDelay.store(std::nullopt);
+
     const FrameTargeter::BeginFrameArgs beginFrameArgs =
             {.frameBeginTime = SchedulerClock::now(),
              .vsyncId = vsyncId,
              .expectedVsyncTime = expectedVsyncTime,
              .sfWorkDuration = mVsyncModulator->getVsyncConfig().sfWorkDuration,
-             .hwcMinWorkDuration = mVsyncConfiguration->getCurrentConfigs().hwcMinWorkDuration};
+             .hwcMinWorkDuration = mVsyncConfiguration->getCurrentConfigs().hwcMinWorkDuration,
+             .debugPresentTimeDelay = debugPresentDelay};
 
     ftl::NonNull<const Display*> pacesetterPtr = pacesetterPtrLocked();
     pacesetterPtr->targeterPtr->beginFrame(beginFrameArgs, *pacesetterPtr->schedulePtr);
@@ -955,6 +959,11 @@ bool Scheduler::updateFrameRateOverridesLocked(GlobalSignals consideredSignals,
     // Note that RefreshRateSelector::supportsFrameRateOverrideByContent is checked when querying
     // the FrameRateOverrideMappings rather than here.
     return mFrameRateOverrideMappings.updateFrameRateOverridesByContent(frameRateOverrides);
+}
+
+void Scheduler::addBufferStuffedUids(BufferStuffingMap bufferStuffedUids) {
+    if (!mRenderEventThread) return;
+    mRenderEventThread->addBufferStuffedUids(std::move(bufferStuffedUids));
 }
 
 void Scheduler::promotePacesetterDisplay(PhysicalDisplayId pacesetterId, PromotionParams params) {

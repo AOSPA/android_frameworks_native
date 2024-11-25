@@ -99,6 +99,8 @@ std::string GestureConverter::dump() const {
     out << "Current classification: " << ftl::enum_string(mCurrentClassification) << "\n";
     out << "Is hovering: " << mIsHovering << "\n";
     out << "Enable Tap Timestamp: " << mWhenToEnableTapToClick << "\n";
+    out << "Three finger tap shortcut enabled: "
+        << (mThreeFingerTapShortcutEnabled ? "enabled" : "disabled") << "\n";
     return out.str();
 }
 

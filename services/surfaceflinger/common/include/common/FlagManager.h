@@ -58,6 +58,7 @@ public:
     bool connected_display() const;
     bool frame_rate_category_mrr() const;
     bool enable_small_area_detection() const;
+    bool stable_edid_ids() const;
     bool misc1() const;
     bool vrr_config() const;
     bool hotplug2() const;
@@ -97,6 +98,7 @@ public:
     bool display_config_error_hal() const;
     bool connected_display_hdr() const;
     bool deprecate_frame_tracker() const;
+    bool skip_invisible_windows_in_input() const;
 
 protected:
     // overridden for unit tests

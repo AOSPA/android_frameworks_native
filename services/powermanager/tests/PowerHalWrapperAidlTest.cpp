@@ -30,6 +30,8 @@
 
 using aidl::android::hardware::power::Boost;
 using aidl::android::hardware::power::ChannelConfig;
+using aidl::android::hardware::power::CpuHeadroomParams;
+using aidl::android::hardware::power::GpuHeadroomParams;
 using aidl::android::hardware::power::IPower;
 using aidl::android::hardware::power::IPowerHintSession;
 using aidl::android::hardware::power::Mode;
@@ -71,6 +73,14 @@ public:
     MOCK_METHOD(ndk::ScopedAStatus, getInterfaceHash, (std::string * hash), (override));
     MOCK_METHOD(ndk::SpAIBinder, asBinder, (), (override));
     MOCK_METHOD(bool, isRemote, (), (override));
+    MOCK_METHOD(ndk::ScopedAStatus, getCpuHeadroom,
+                (const CpuHeadroomParams& params, std::vector<float>* headroom), (override));
+    MOCK_METHOD(ndk::ScopedAStatus, getGpuHeadroom,
+                (const GpuHeadroomParams& params, float* headroom), (override));
+    MOCK_METHOD(ndk::ScopedAStatus, getCpuHeadroomMinIntervalMillis, (int64_t* interval),
+                (override));
+    MOCK_METHOD(ndk::ScopedAStatus, getGpuHeadroomMinIntervalMillis, (int64_t* interval),
+                (override));
 };
 
 // -------------------------------------------------------------------------------------------------
