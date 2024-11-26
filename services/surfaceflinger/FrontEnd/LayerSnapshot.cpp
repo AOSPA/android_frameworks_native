@@ -413,6 +413,13 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
     if (forceUpdate || requested.what & layer_state_t::eCropChanged) {
         geomCrop = requested.crop;
     }
+    if (forceUpdate || requested.what & layer_state_t::ePictureProfileHandleChanged) {
+        pictureProfileHandle = requested.pictureProfileHandle;
+    }
+    if (forceUpdate || requested.what & layer_state_t::eAppContentPriorityChanged) {
+        // TODO(b/337330263): Also consider the system-determined priority of the app
+        pictureProfilePriority = requested.appContentPriority;
+    }
 
     if (forceUpdate || requested.what & layer_state_t::eDefaultFrameRateCompatibilityChanged) {
         const auto compatibility =

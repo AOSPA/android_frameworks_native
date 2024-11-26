@@ -193,13 +193,6 @@ InputConsumerNoResampling::InputConsumerNoResampling(
 
 InputConsumerNoResampling::~InputConsumerNoResampling() {
     ensureCalledOnLooperThread(__func__);
-    while (!mOutboundQueue.empty()) {
-        processOutboundEvents();
-        // This is our last chance to ack the events. If we don't ack them here, we will get an ANR,
-        // so keep trying to send the events as long as they are present in the queue.
-    }
-
-    setFdEvents(0);
     // If there are any remaining unread batches, send an ack for them and don't deliver
     // them to callbacks.
     for (auto& [_, batches] : mBatches) {
@@ -207,6 +200,12 @@ InputConsumerNoResampling::~InputConsumerNoResampling() {
             finishInputEvent(batches.front().header.seq, /*handled=*/false);
             batches.pop();
         }
+    }
+
+    while (!mOutboundQueue.empty()) {
+        processOutboundEvents();
+        // This is our last chance to ack the events. If we don't ack them here, we will get an ANR,
+        // so keep trying to send the events as long as they are present in the queue.
     }
     // However, it is still up to the app to finish any events that have already been delivered
     // to the callbacks. If we wanted to change that behaviour and auto-finish all unfinished events
@@ -216,6 +215,10 @@ InputConsumerNoResampling::~InputConsumerNoResampling() {
     const size_t unfinishedEvents = mConsumeTimes.size();
     LOG_IF(INFO, unfinishedEvents != 0)
             << getName() << " has " << unfinishedEvents << " unfinished event(s)";
+    // Remove the fd from epoll, so that Looper does not call 'handleReceiveCallback' anymore.
+    // This must be done at the end of the destructor; otherwise, some of the other functions may
+    // call 'setFdEvents' as a side-effect, thus adding the fd back to the epoll set of the looper.
+    setFdEvents(0);
 }
 
 int InputConsumerNoResampling::handleReceiveCallback(int events) {

@@ -331,6 +331,11 @@ public:
     virtual void setSfPresent(nsecs_t sfPresentTime, const std::shared_ptr<FenceTime>& presentFence,
                               const std::shared_ptr<FenceTime>& gpuFence) = 0;
 
+    // Provides surface frames that have already been jank classified in the most recent
+    // flush of pending present fences. This allows buffer stuffing detection from SF.
+    virtual const std::vector<std::shared_ptr<frametimeline::SurfaceFrame>>& getPresentFrames()
+            const = 0;
+
     // Tells FrameTimeline that a frame was committed but not composited. This is used to flush
     // all the associated surface frames.
     virtual void onCommitNotComposited() = 0;
@@ -511,6 +516,8 @@ public:
     void setSfWakeUp(int64_t token, nsecs_t wakeupTime, Fps refreshRate, Fps renderRate) override;
     void setSfPresent(nsecs_t sfPresentTime, const std::shared_ptr<FenceTime>& presentFence,
                       const std::shared_ptr<FenceTime>& gpuFence = FenceTime::NO_FENCE) override;
+    const std::vector<std::shared_ptr<frametimeline::SurfaceFrame>>& getPresentFrames()
+            const override;
     void onCommitNotComposited() override;
     void parseArgs(const Vector<String16>& args, std::string& result) override;
     void setMaxDisplayFrames(uint32_t size) override;
@@ -561,6 +568,9 @@ private:
     // display frame, this is a good starting size for the vector so that we can avoid the
     // internal vector resizing that happens with push_back.
     static constexpr uint32_t kNumSurfaceFramesInitial = 10;
+    // Presented surface frames that have been jank classified and can
+    // indicate of potential buffer stuffing.
+    std::vector<std::shared_ptr<frametimeline::SurfaceFrame>> mPresentFrames;
 };
 
 } // namespace impl

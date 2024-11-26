@@ -163,7 +163,7 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
     uint64_t clientChanges = what | layer_state_t::diff(clientState);
     layer_state_t::merge(clientState);
     what = clientChanges;
-    LLOGV(layerId, "requested=%" PRIu64 "flags=%" PRIu64, clientState.what, clientChanges);
+    LLOGV(layerId, "requested=%" PRIu64 " flags=%" PRIu64 " ", clientState.what, clientChanges);
 
     if (clientState.what & layer_state_t::eFlagsChanged) {
         if ((oldFlags ^ flags) &
@@ -633,7 +633,7 @@ bool RequestedLayerState::isSimpleBufferUpdate(const layer_state_t& s) const {
             layer_state_t::eEdgeExtensionChanged | layer_state_t::eBufferCropChanged |
             layer_state_t::eDestinationFrameChanged | layer_state_t::eDimmingEnabledChanged |
             layer_state_t::eExtendedRangeBrightnessChanged |
-            layer_state_t::eDesiredHdrHeadroomChanged |
+            layer_state_t::eDesiredHdrHeadroomChanged | layer_state_t::eLutsChanged |
             (FlagManager::getInstance().latch_unsignaled_with_auto_refresh_changed()
                      ? layer_state_t::eFlagsChanged
                      : 0);

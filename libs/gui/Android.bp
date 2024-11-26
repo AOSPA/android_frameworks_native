@@ -274,6 +274,7 @@ filegroup {
         "LayerMetadata.cpp",
         "LayerStatePermissions.cpp",
         "LayerState.cpp",
+        "DisplayLuts.cpp",
         "OccupancyTracker.cpp",
         "StreamSplitter.cpp",
         "ScreenCaptureResults.cpp",

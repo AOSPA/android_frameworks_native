@@ -27,6 +27,7 @@
 #include <gui/Surface.h>
 
 #include <ui/GraphicBuffer.h>
+#include <ui/PictureProfileHandle.h>
 
 #include <android-base/properties.h>
 
@@ -1567,6 +1568,63 @@ TEST_F(BufferQueueTest, TestAdditionalOptions) {
     ASSERT_TRUE(buffer);
     dataSpace = AHardwareBuffer_getDataSpace(buffer);
     EXPECT_EQ(ADATASPACE_UNKNOWN, dataSpace);
+}
+
+TEST_F(BufferQueueTest, PassesThroughPictureProfileHandle) {
+    createBufferQueue();
+    sp<MockConsumer> mc(new MockConsumer);
+    mConsumer->consumerConnect(mc, false);
+
+    IGraphicBufferProducer::QueueBufferOutput qbo;
+    mProducer->connect(new StubProducerListener, NATIVE_WINDOW_API_CPU, false, &qbo);
+    mProducer->setMaxDequeuedBufferCount(2);
+    mConsumer->setMaxAcquiredBufferCount(2);
+
+    // First try to pass a valid picture profile handle
+    {
+        int slot;
+        sp<Fence> fence;
+        sp<GraphicBuffer> buf;
+        IGraphicBufferProducer::QueueBufferInput qbi(0, false, HAL_DATASPACE_UNKNOWN,
+                                                     Rect(0, 0, 1, 1),
+                                                     NATIVE_WINDOW_SCALING_MODE_FREEZE, 0,
+                                                     Fence::NO_FENCE);
+        qbi.setPictureProfileHandle(PictureProfileHandle(1));
+
+        EXPECT_EQ(IGraphicBufferProducer::BUFFER_NEEDS_REALLOCATION,
+                  mProducer->dequeueBuffer(&slot, &fence, 1, 1, 0, GRALLOC_USAGE_SW_READ_OFTEN,
+                                           nullptr, nullptr));
+        EXPECT_EQ(OK, mProducer->requestBuffer(slot, &buf));
+        EXPECT_EQ(OK, mProducer->queueBuffer(slot, qbi, &qbo));
+
+        BufferItem item;
+        EXPECT_EQ(OK, mConsumer->acquireBuffer(&item, 0));
+
+        ASSERT_TRUE(item.mPictureProfileHandle.has_value());
+        ASSERT_EQ(item.mPictureProfileHandle, PictureProfileHandle(1));
+    }
+
+    // Then validate that the picture profile handle isn't sticky and is reset for the next buffer
+    {
+        int slot;
+        sp<Fence> fence;
+        sp<GraphicBuffer> buf;
+        IGraphicBufferProducer::QueueBufferInput qbi(0, false, HAL_DATASPACE_UNKNOWN,
+                                                     Rect(0, 0, 1, 1),
+                                                     NATIVE_WINDOW_SCALING_MODE_FREEZE, 0,
+                                                     Fence::NO_FENCE);
+
+        EXPECT_EQ(IGraphicBufferProducer::BUFFER_NEEDS_REALLOCATION,
+                  mProducer->dequeueBuffer(&slot, &fence, 1, 1, 0, GRALLOC_USAGE_SW_READ_OFTEN,
+                                           nullptr, nullptr));
+        EXPECT_EQ(OK, mProducer->requestBuffer(slot, &buf));
+        EXPECT_EQ(OK, mProducer->queueBuffer(slot, qbi, &qbo));
+
+        BufferItem item;
+        EXPECT_EQ(OK, mConsumer->acquireBuffer(&item, 0));
+
+        ASSERT_FALSE(item.mPictureProfileHandle.has_value());
+    }
 }
 
 } // namespace android

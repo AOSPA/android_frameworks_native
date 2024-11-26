@@ -119,7 +119,7 @@ public:
             HdcpLevelsChange hdcpLevelsChange;
         };
     };
-    static_assert(sizeof(Event) == 216);
+    static_assert(sizeof(Event) == 224);
 
 public:
     /*

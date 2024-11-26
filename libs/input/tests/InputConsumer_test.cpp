@@ -70,11 +70,20 @@ protected:
                                            []() { return std::make_unique<LegacyResampler>(); });
     }
 
-    void invokeLooperCallback() const {
+    bool invokeLooperCallback() const {
         sp<LooperCallback> callback;
-        ASSERT_TRUE(mLooper->getFdStateDebug(mClientTestChannel->getFd(), /*ident=*/nullptr,
-                                             /*events=*/nullptr, &callback, /*data=*/nullptr));
+        const bool found =
+                mLooper->getFdStateDebug(mClientTestChannel->getFd(), /*ident=*/nullptr,
+                                         /*events=*/nullptr, &callback, /*data=*/nullptr);
+        if (!found) {
+            return false;
+        }
+        if (callback == nullptr) {
+            LOG(FATAL) << "Looper has the fd of interest, but the callback is null!";
+            return false;
+        }
         callback->handleEvent(mClientTestChannel->getFd(), ALOOPER_EVENT_INPUT, /*data=*/nullptr);
+        return true;
     }
 
     void assertOnBatchedInputEventPendingWasCalled() {
@@ -268,6 +277,27 @@ TEST_F(InputConsumerTest, UnhandledEventsNotFinishedInDestructor) {
     mConsumer.reset();
     mClientTestChannel->assertFinishMessage(/*seq=*/1, /*handled=*/false);
     mClientTestChannel->assertNoSentMessages();
+}
+
+/**
+ * Check what happens when looper invokes callback after consumer has been destroyed.
+ * This reproduces a crash where the LooperEventCallback was added back to the Looper during
+ * destructor, thus allowing the looper callback to be invoked onto a null consumer object.
+ */
+TEST_F(InputConsumerTest, LooperCallbackInvokedAfterConsumerDestroyed) {
+    mClientTestChannel->enqueueMessage(
+            InputMessageBuilder{InputMessage::Type::MOTION, /*seq=*/0}.action(ACTION_DOWN).build());
+    mClientTestChannel->enqueueMessage(
+            InputMessageBuilder{InputMessage::Type::MOTION, /*seq=*/1}.action(ACTION_MOVE).build());
+    ASSERT_TRUE(invokeLooperCallback());
+    assertOnBatchedInputEventPendingWasCalled();
+    assertReceivedMotionEvent(WithMotionAction(ACTION_DOWN));
+    mClientTestChannel->assertFinishMessage(/*seq=*/0, /*handled=*/true);
+
+    // Now, destroy the consumer and invoke the looper callback again after it's been destroyed.
+    mConsumer.reset();
+    mClientTestChannel->assertFinishMessage(/*seq=*/1, /*handled=*/false);
+    ASSERT_FALSE(invokeLooperCallback());
 }
 
 /**

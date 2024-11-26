@@ -28,7 +28,6 @@
 #include "ui/GraphicTypes.h"
 
 #include <com_android_graphics_libgui_flags.h>
-#include <com_android_graphics_surfaceflinger_flags.h>
 
 #define UPDATE_AND_VERIFY(BUILDER, ...)                                    \
     ({                                                                     \
@@ -1551,6 +1550,9 @@ TEST_F(LayerSnapshotTest, propagateDropInputMode) {
 }
 
 TEST_F(LayerSnapshotTest, NonVisibleLayerWithInput) {
+    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::
+                              skip_invisible_windows_in_input,
+                      false);
     LayerHierarchyTestBase::createRootLayer(3);
     setColor(3, {-1._hf, -1._hf, -1._hf});
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
@@ -1574,6 +1576,39 @@ TEST_F(LayerSnapshotTest, NonVisibleLayerWithInput) {
         }
     });
     EXPECT_TRUE(foundInputLayer);
+}
+
+TEST_F(LayerSnapshotTest, NonVisibleLayerWithInputShouldNotBeIncluded) {
+    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::
+                              skip_invisible_windows_in_input,
+                      true);
+    LayerHierarchyTestBase::createRootLayer(3);
+    setColor(3, {-1._hf, -1._hf, -1._hf});
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+
+    std::vector<TransactionState> transactions;
+    transactions.emplace_back();
+    transactions.back().states.push_back({});
+    transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
+    transactions.back().states.front().layerId = 3;
+    transactions.back().states.front().state.windowInfoHandle = sp<gui::WindowInfoHandle>::make();
+    auto inputInfo = transactions.back().states.front().state.windowInfoHandle->editInfo();
+    inputInfo->token = sp<BBinder>::make();
+    hideLayer(3);
+    mLifecycleManager.applyTransactions(transactions);
+
+    update(mSnapshotBuilder);
+
+    bool foundInputLayer = false;
+    mSnapshotBuilder.forEachInputSnapshot([&](const frontend::LayerSnapshot& snapshot) {
+        if (snapshot.uniqueSequence == 3) {
+            EXPECT_TRUE(
+                    snapshot.inputInfo.inputConfig.test(gui::WindowInfo::InputConfig::NOT_VISIBLE));
+            EXPECT_FALSE(snapshot.isVisible);
+            foundInputLayer = true;
+        }
+    });
+    EXPECT_FALSE(foundInputLayer);
 }
 
 TEST_F(LayerSnapshotTest, ForEachSnapshotsWithPredicate) {
@@ -1985,4 +2020,45 @@ TEST_F(LayerSnapshotTest, contentDirtyWhenParentGeometryChanges) {
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
     EXPECT_FALSE(getSnapshot(1)->contentDirty);
 }
+TEST_F(LayerSnapshotTest, shouldUpdatePictureProfileHandle) {
+    if (!com_android_graphics_libgui_flags_apply_picture_profiles()) {
+        GTEST_SKIP() << "Flag disabled, skipping test";
+    }
+    std::vector<TransactionState> transactions;
+    transactions.emplace_back();
+    transactions.back().states.push_back({});
+    transactions.back().states.front().layerId = 1;
+    transactions.back().states.front().state.layerId = 1;
+    transactions.back().states.front().state.what = layer_state_t::ePictureProfileHandleChanged;
+    transactions.back().states.front().state.pictureProfileHandle = PictureProfileHandle(3);
+
+    mLifecycleManager.applyTransactions(transactions);
+    EXPECT_EQ(mLifecycleManager.getGlobalChanges(), RequestedLayerState::Changes::Content);
+
+    update(mSnapshotBuilder);
+
+    EXPECT_EQ(getSnapshot(1)->clientChanges, layer_state_t::ePictureProfileHandleChanged);
+    EXPECT_EQ(getSnapshot(1)->pictureProfileHandle, PictureProfileHandle(3));
+}
+
+TEST_F(LayerSnapshotTest, shouldUpdatePictureProfilePriorityFromAppContentPriority) {
+    if (!com_android_graphics_libgui_flags_apply_picture_profiles()) {
+        GTEST_SKIP() << "Flag disabled, skipping test";
+    }
+    std::vector<TransactionState> transactions;
+    transactions.emplace_back();
+    transactions.back().states.push_back({});
+    transactions.back().states.front().layerId = 1;
+    transactions.back().states.front().state.layerId = 1;
+    transactions.back().states.front().state.what = layer_state_t::eAppContentPriorityChanged;
+    transactions.back().states.front().state.appContentPriority = 3;
+
+    mLifecycleManager.applyTransactions(transactions);
+    EXPECT_EQ(mLifecycleManager.getGlobalChanges(), RequestedLayerState::Changes::Content);
+
+    update(mSnapshotBuilder);
+
+    EXPECT_EQ(getSnapshot(1)->pictureProfilePriority, 3);
+}
+
 } // namespace android::surfaceflinger::frontend

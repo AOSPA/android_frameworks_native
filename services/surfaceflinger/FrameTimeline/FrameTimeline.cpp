@@ -29,6 +29,7 @@
 #include <cinttypes>
 #include <numeric>
 #include <unordered_set>
+#include <vector>
 
 #include "../Jank/JankTracker.h"
 
@@ -1010,6 +1011,11 @@ void FrameTimeline::setSfPresent(nsecs_t sfPresentTime,
     finalizeCurrentDisplayFrame();
 }
 
+const std::vector<std::shared_ptr<frametimeline::SurfaceFrame>>& FrameTimeline::getPresentFrames()
+        const {
+    return mPresentFrames;
+}
+
 void FrameTimeline::onCommitNotComposited() {
     SFTRACE_CALL();
     std::scoped_lock lock(mMutex);
@@ -1529,6 +1535,7 @@ void FrameTimeline::flushPendingPresentFences() {
         mPendingPresentFences.erase(mPendingPresentFences.begin());
     }
 
+    mPresentFrames.clear();
     for (size_t i = 0; i < mPendingPresentFences.size(); i++) {
         const auto& pendingPresentFence = mPendingPresentFences[i];
         nsecs_t signalTime = Fence::SIGNAL_TIME_INVALID;
@@ -1541,6 +1548,13 @@ void FrameTimeline::flushPendingPresentFences() {
 
         auto& displayFrame = pendingPresentFence.second;
         displayFrame->onPresent(signalTime, mPreviousActualPresentTime);
+
+        // Surface frames have been jank classified and can be provided to caller
+        // to detect if buffer stuffing is occurring.
+        for (const auto& frame : displayFrame->getSurfaceFrames()) {
+            mPresentFrames.push_back(frame);
+        }
+
         mPreviousPredictionPresentTime =
                 displayFrame->trace(mSurfaceFlingerPid, monoBootOffset,
                                     mPreviousPredictionPresentTime, mFilterFramesBeforeTraceStarts);

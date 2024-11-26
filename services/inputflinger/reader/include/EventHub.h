@@ -179,6 +179,8 @@ enum class InputLightClass : uint32_t {
     KEYBOARD_BACKLIGHT = 0x00000100,
     /* The input light has mic_mute name */
     KEYBOARD_MIC_MUTE = 0x00000200,
+    /* The input light has mute name */
+    KEYBOARD_VOLUME_MUTE = 0x00000400,
 };
 
 enum class InputBatteryClass : uint32_t {

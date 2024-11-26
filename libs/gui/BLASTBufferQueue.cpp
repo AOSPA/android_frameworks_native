@@ -309,18 +309,23 @@ void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width,
     if (surfaceControlChanged && mSurfaceControl != nullptr) {
         BQA_LOGD("Updating SurfaceControl without recreating BBQ");
     }
-    bool applyTransaction = false;
 
     // Always update the native object even though they might have the same layer handle, so we can
     // get the updated transform hint from WM.
     mSurfaceControl = surface;
     SurfaceComposerClient::Transaction t;
+    bool applyTransaction = false;
     if (surfaceControlChanged) {
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
         updateBufferReleaseProducer();
 #endif
         t.setFlags(mSurfaceControl, layer_state_t::eEnableBackpressure,
                    layer_state_t::eEnableBackpressure);
+        // Migrate the picture profile handle to the new surface control.
+        if (com_android_graphics_libgui_flags_apply_picture_profiles() &&
+            mPictureProfileHandle.has_value()) {
+            t.setPictureProfileHandle(mSurfaceControl, *mPictureProfileHandle);
+        }
         applyTransaction = true;
     }
     mTransformHint = mSurfaceControl->getTransformHint();
@@ -710,6 +715,17 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
     t->setAutoRefresh(mSurfaceControl, bufferItem.mAutoRefresh);
     if (!bufferItem.mIsAutoTimestamp) {
         t->setDesiredPresentTime(bufferItem.mTimestamp);
+    }
+    if (com_android_graphics_libgui_flags_apply_picture_profiles() &&
+        bufferItem.mPictureProfileHandle.has_value()) {
+        t->setPictureProfileHandle(mSurfaceControl, *bufferItem.mPictureProfileHandle);
+        // The current picture profile must be maintained in case the BBQ gets its
+        // SurfaceControl switched out.
+        mPictureProfileHandle = bufferItem.mPictureProfileHandle;
+        // Clear out the picture profile if the requestor has asked for it to be cleared
+        if (mPictureProfileHandle == PictureProfileHandle::NONE) {
+            mPictureProfileHandle = std::nullopt;
+        }
     }
 
     // Drop stale frame timeline infos

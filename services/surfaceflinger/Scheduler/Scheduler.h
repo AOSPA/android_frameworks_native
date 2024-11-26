@@ -48,7 +48,6 @@
 #include <ui/DisplayId.h>
 #include <ui/DisplayMap.h>
 
-#include "Display/DisplayModeRequest.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
 #include "ISchedulerCallback.h"
@@ -351,6 +350,12 @@ public:
         mPacesetterFrameDurationFractionToSkip = frameDurationFraction;
     }
 
+    // Propagates a flag to the EventThread indicating that buffer stuffing
+    // recovery should begin.
+    void addBufferStuffedUids(BufferStuffingMap bufferStuffedUids);
+
+    void setDebugPresentDelay(TimePoint delay) { mDebugPresentDelay = delay; }
+
 private:
     friend class TestableScheduler;
 
@@ -616,6 +621,8 @@ private:
 
     FrameRateOverrideMappings mFrameRateOverrideMappings;
     SmallAreaDetectionAllowMappings mSmallAreaDetectionAllowMappings;
+
+    std::atomic<std::optional<TimePoint>> mDebugPresentDelay;
 
     /* QTI_BEGIN */
     // Cache thermal Fps, and limit to the given level

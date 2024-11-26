@@ -114,6 +114,18 @@ APerformanceHintSession* APerformanceHint_createSessionInternal(APerformanceHint
  */
 void APerformanceHint_setUseFMQForTesting(bool enabled);
 
+/**
+ * Get the rate limiter properties for testing.
+ */
+void APerformanceHint_getRateLimiterPropertiesForTesting(
+        int32_t* maxLoadHintsPerInterval, int64_t* loadHintInterval);
+
+/*
+ * Forces the "new load hint" flag to be disabled for testing.
+ */
+void APerformanceHint_setUseNewLoadHintBehaviorForTesting(bool newBehavior);
+
+
 __END_DECLS
 
 #endif // ANDROID_PRIVATE_NATIVE_PERFORMANCE_HINT_PRIVATE_H

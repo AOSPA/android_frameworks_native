@@ -1398,6 +1398,8 @@ private:
     // Flag used to set override desired display mode from backdoor
     bool mDebugDisplayModeSetByBackdoor = false;
 
+    // Tracks the number of maximum queued buffers by layer owner Uid.
+    using BufferStuffingMap = ftl::SmallMap<uid_t, uint32_t, 10>;
     BufferCountTracker mBufferCountTracker;
 
     std::unordered_map<DisplayId, sp<HdrLayerInfoReporter>> mHdrLayerInfoListeners

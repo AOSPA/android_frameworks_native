@@ -100,9 +100,14 @@ std::list<NotifyArgs> InputMapperUnitTest::process(int32_t type, int32_t code, i
 
 std::list<NotifyArgs> InputMapperUnitTest::process(nsecs_t when, int32_t type, int32_t code,
                                                    int32_t value) {
+    return process(when, when, type, code, value);
+}
+
+std::list<NotifyArgs> InputMapperUnitTest::process(nsecs_t when, nsecs_t readTime, int32_t type,
+                                                   int32_t code, int32_t value) {
     RawEvent event;
     event.when = when;
-    event.readTime = when;
+    event.readTime = readTime;
     event.deviceId = mMapper->getDeviceContext().getEventHubId();
     event.type = type;
     event.code = code;

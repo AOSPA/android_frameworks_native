@@ -70,11 +70,13 @@
 #include <ftl/concat.h>
 #include <ftl/fake_guard.h>
 #include <ftl/future.h>
+#include <ftl/small_map.h>
 #include <ftl/unit.h>
 #include <gui/AidlUtil.h>
 #include <gui/BufferQueue.h>
 #include <gui/DebugEGLImageTracker.h>
 #include <gui/IProducerListener.h>
+#include <gui/JankInfo.h>
 #include <gui/LayerMetadata.h>
 #include <gui/LayerState.h>
 #include <gui/Surface.h>
@@ -1470,8 +1472,6 @@ status_t SurfaceFlinger::setActiveModeFromBackdoor(const sp<display::DisplayToke
     return future.get();
 }
 
-// TODO: b/241285876 - Restore thread safety analysis once mStateLock below is unconditional.
-[[clang::no_thread_safety_analysis]]
 void SurfaceFlinger::finalizeDisplayModeChange(PhysicalDisplayId displayId) {
     SFTRACE_NAME(ftl::Concat(__func__, ' ', displayId.value).c_str());
 
@@ -1487,8 +1487,6 @@ void SurfaceFlinger::finalizeDisplayModeChange(PhysicalDisplayId displayId) {
     if (const auto oldResolution =
                 mDisplayModeController.getActiveMode(displayId).modePtr->getResolution();
         oldResolution != activeMode.modePtr->getResolution()) {
-        ConditionalLock lock(mStateLock, !FlagManager::getInstance().connected_display());
-
         auto& state = mCurrentState.displays.editValueFor(getPhysicalDisplayTokenLocked(displayId));
         // We need to generate new sequenceId in order to recreate the display (and this
         // way the framebuffer).
@@ -2742,7 +2740,7 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     }
 
     {
-        ConditionalLock lock(mStateLock, FlagManager::getInstance().connected_display());
+        Mutex::Autolock lock(mStateLock);
 
         for (const auto [displayId, _] : frameTargets) {
             if (mDisplayModeController.isModeSetPending(displayId)) {
@@ -2845,13 +2843,6 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
         mScheduler->chooseRefreshRateForContent(&mLayerHierarchyBuilder.getHierarchy(),
                                                 updateAttachedChoreographer);
 
-        if (FlagManager::getInstance().connected_display()) {
-            initiateDisplayModeChanges();
-        }
-    }
-
-    if (!FlagManager::getInstance().connected_display()) {
-        ftl::FakeGuard guard(mStateLock);
         initiateDisplayModeChanges();
     }
 
@@ -3225,11 +3216,39 @@ void SurfaceFlinger::onCompositionPresented(PhysicalDisplayId pacesetterId,
 
     const TimePoint presentTime = TimePoint::now();
 
+    // The Uids of layer owners that are in buffer stuffing mode, and their elevated
+    // buffer counts. Messages to start recovery are sent exclusively to these Uids.
+    BufferStuffingMap bufferStuffedUids;
+
     // Set presentation information before calling Layer::releasePendingBuffer, such that jank
     // information from previous' frame classification is already available when sending jank info
     // to clients, so they get jank classification as early as possible.
     mFrameTimeline->setSfPresent(presentTime.ns(), pacesetterPresentFenceTime,
                                  pacesetterGpuCompositionDoneFenceTime);
+
+    // Find and register any layers that are in buffer stuffing mode
+    const auto& presentFrames = mFrameTimeline->getPresentFrames();
+
+    for (const auto& frame : presentFrames) {
+        const auto& layer = mLayerLifecycleManager.getLayerFromId(frame->getLayerId());
+        if (!layer) continue;
+        uint32_t numberQueuedBuffers = layer->pendingBuffers ? layer->pendingBuffers->load() : 0;
+        int32_t jankType = frame->getJankType().value_or(JankType::None);
+        if (jankType & JankType::BufferStuffing &&
+            layer->flags & layer_state_t::eRecoverableFromBufferStuffing) {
+            auto [it, wasEmplaced] =
+                    bufferStuffedUids.try_emplace(layer->ownerUid.val(), numberQueuedBuffers);
+            // Update with maximum number of queued buffers, allows clients drawing
+            // multiple windows to account for the most severely stuffed window
+            if (!wasEmplaced && it->second < numberQueuedBuffers) {
+                it->second = numberQueuedBuffers;
+            }
+        }
+    }
+
+    if (!bufferStuffedUids.empty()) {
+        mScheduler->addBufferStuffedUids(std::move(bufferStuffedUids));
+    }
 
     // We use the CompositionEngine::getLastFrameRefreshTimestamp() which might
     // be sampled a little later than when we started doing work for this frame,
@@ -3732,7 +3751,9 @@ std::optional<DisplayModeId> SurfaceFlinger::processHotplugConnect(PhysicalDispl
     }
     state.isProtected = true;
     state.displayName = std::move(info.name);
-
+    state.maxLayerPictureProfiles = getHwComposer().getMaxLayerPictureProfiles(displayId);
+    state.hasPictureProcessing =
+            getHwComposer().hasDisplayCapability(displayId, DisplayCapability::PICTURE_PROCESSING);
     mCurrentState.displays.add(token, state);
     ALOGI("Connecting %s", displayString);
     return activeModeId;
@@ -3911,6 +3932,8 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     builder.setPixels(resolution);
     builder.setIsSecure(state.isSecure);
     builder.setIsProtected(state.isProtected);
+    builder.setHasPictureProcessing(state.hasPictureProcessing);
+    builder.setMaxLayerPictureProfiles(state.maxLayerPictureProfiles);
     builder.setPowerAdvisor(mPowerAdvisor.get());
     builder.setName(state.displayName);
     auto compositionDisplay = getCompositionEngine().createDisplay(builder.build());
@@ -6577,7 +6600,7 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
     }
     // Numbers from 1000 to 1045 and 20000 to 20002 are currently used for backdoors. The code
     // in onTransact verifies that the user is root, and has access to use SF.
-    if ((code >= 1000 && code <= 1045) /* QTI_BEGIN */ ||
+    if ((code >= 1000 && code <= 1046) /* QTI_BEGIN */ ||
         (code >= 20000 && code <= 20002) /* QTI_END */) {
         ALOGV("Accessing SurfaceFlinger through backdoor code: %u", code);
         return OK;
@@ -7188,6 +7211,15 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                     return NO_ERROR;
                 }
                 return err;
+            }
+            // Introduce jank to HWC
+            case 1046: {
+                int32_t jankDelayMs = 0;
+                if (data.readInt32(&jankDelayMs) != NO_ERROR) {
+                    return BAD_VALUE;
+                }
+                mScheduler->setDebugPresentDelay(TimePoint::fromNs(ms2ns(jankDelayMs)));
+                return NO_ERROR;
             }
         }
     }
