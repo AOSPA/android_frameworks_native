@@ -51,7 +51,7 @@ using hardware::Return;
 using aidl::android::hardware::graphics::composer3::BnComposerCallback;
 using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness;
-using aidl::android::hardware::graphics::composer3::Lut;
+using aidl::android::hardware::graphics::composer3::Luts;
 using aidl::android::hardware::graphics::composer3::PowerMode;
 using aidl::android::hardware::graphics::composer3::VirtualDisplay;
 
@@ -1626,7 +1626,7 @@ Error AidlComposer::getRequestedLuts(Display display, std::vector<Layer>* outLay
     return error;
 }
 
-Error AidlComposer::setLayerLuts(Display display, Layer layer, std::vector<Lut>& luts) {
+Error AidlComposer::setLayerLuts(Display display, Layer layer, Luts& luts) {
     Error error = Error::NONE;
     mMutex.lock_shared();
     if (auto writer = getWriter(display)) {

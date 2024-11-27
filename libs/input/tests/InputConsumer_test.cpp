@@ -194,7 +194,7 @@ TEST_F(InputConsumerTest, MessageStreamBatchedInMotionEvent) {
     std::unique_ptr<MotionEvent> moveMotionEvent =
             assertReceivedMotionEvent(WithMotionAction(ACTION_MOVE));
     ASSERT_NE(moveMotionEvent, nullptr);
-    EXPECT_EQ(moveMotionEvent->getHistorySize() + 1, 3UL);
+    EXPECT_EQ(moveMotionEvent->getHistorySize() + 1, 2UL);
 
     mClientTestChannel->assertFinishMessage(/*seq=*/0, /*handled=*/true);
     mClientTestChannel->assertFinishMessage(/*seq=*/1, /*handled=*/true);
@@ -443,4 +443,5 @@ TEST_F(InputConsumerTest, MultiDeviceResampling) {
     mClientTestChannel->assertFinishMessage(/*seq=*/8, /*handled=*/true);
     mClientTestChannel->assertFinishMessage(/*seq=*/10, /*handled=*/true);
 }
+
 } // namespace android

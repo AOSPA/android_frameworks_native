@@ -25,7 +25,7 @@ parcelable LutProperties {
     enum Dimension { ONE_D = 1, THREE_D = 3 }
     Dimension dimension;
 
-    long size;
+    int size;
     @Backing(type="int")
     enum SamplingKey { RGB, MAX_RGB }
     SamplingKey[] samplingKeys;

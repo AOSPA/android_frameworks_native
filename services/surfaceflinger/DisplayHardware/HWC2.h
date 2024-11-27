@@ -46,7 +46,7 @@
 #include <aidl/android/hardware/graphics/composer3/Color.h>
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
-#include <aidl/android/hardware/graphics/composer3/Lut.h>
+#include <aidl/android/hardware/graphics/composer3/Luts.h>
 #include <aidl/android/hardware/graphics/composer3/OverlayProperties.h>
 #include <aidl/android/hardware/graphics/composer3/RefreshRateChangedDebugData.h>
 
@@ -109,9 +109,10 @@ public:
     virtual std::optional<ui::Size> getPhysicalSizeInMm() const = 0;
 
     static const int kLutFileDescriptorMapperSize = 20;
+    using LutOffsetAndProperties = std::vector<
+            std::pair<int32_t, aidl::android::hardware::graphics::composer3::LutProperties>>;
     using LayerLuts =
-            ftl::SmallMap<HWC2::Layer*, aidl::android::hardware::graphics::composer3::LutProperties,
-                          kLutFileDescriptorMapperSize>;
+            ftl::SmallMap<HWC2::Layer*, LutOffsetAndProperties, kLutFileDescriptorMapperSize>;
     using LutFileDescriptorMapper =
             ftl::SmallMap<HWC2::Layer*, ndk::ScopedFileDescriptor, kLutFileDescriptorMapperSize>;
 
@@ -375,7 +376,7 @@ public:
     [[nodiscard]] virtual hal::Error setBrightness(float brightness) = 0;
     [[nodiscard]] virtual hal::Error setBlockingRegion(const android::Region& region) = 0;
     [[nodiscard]] virtual hal::Error setLuts(
-            std::vector<aidl::android::hardware::graphics::composer3::Lut>& luts) = 0;
+            aidl::android::hardware::graphics::composer3::Luts& luts) = 0;
 };
 
 namespace impl {
@@ -432,8 +433,7 @@ public:
     // AIDL HAL
     hal::Error setBrightness(float brightness) override;
     hal::Error setBlockingRegion(const android::Region& region) override;
-    hal::Error setLuts(
-            std::vector<aidl::android::hardware::graphics::composer3::Lut>& luts) override;
+    hal::Error setLuts(aidl::android::hardware::graphics::composer3::Luts&) override;
 
 private:
     // These are references to data owned by HWComposer, which will outlive

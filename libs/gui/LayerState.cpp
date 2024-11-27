@@ -664,6 +664,10 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eShadowRadiusChanged;
         shadowRadius = other.shadowRadius;
     }
+    if (other.what & eLutsChanged) {
+        what |= eLutsChanged;
+        luts = other.luts;
+    }
     if (other.what & eDefaultFrameRateCompatibilityChanged) {
         what |= eDefaultFrameRateCompatibilityChanged;
         defaultFrameRateCompatibility = other.defaultFrameRateCompatibility;
@@ -821,6 +825,8 @@ uint64_t layer_state_t::diff(const layer_state_t& other) const {
     CHECK_DIFF(diff, eColorSpaceAgnosticChanged, other, colorSpaceAgnostic);
     CHECK_DIFF(diff, eDimmingEnabledChanged, other, dimmingEnabled);
     if (other.what & eBufferReleaseChannelChanged) diff |= eBufferReleaseChannelChanged;
+    if (other.what & eLutsChanged) diff |= eLutsChanged;
+
     return diff;
 }
 

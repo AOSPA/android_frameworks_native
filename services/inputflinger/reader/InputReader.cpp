@@ -901,6 +901,16 @@ void InputReader::notifyMouseCursorFadedOnTyping() {
     mPreventingTouchpadTaps = true;
 }
 
+bool InputReader::setKernelWakeEnabled(int32_t deviceId, bool enabled) {
+    std::scoped_lock _l(mLock);
+
+    InputDevice* device = findInputDeviceLocked(deviceId);
+    if (device) {
+        return device->setKernelWakeEnabled(enabled);
+    }
+    return false;
+}
+
 void InputReader::dump(std::string& dump) {
     std::scoped_lock _l(mLock);
 

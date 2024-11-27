@@ -18,6 +18,7 @@
 
 #include <compositionengine/ProjectionSpace.h>
 #include <compositionengine/impl/HwcBufferCache.h>
+#include <gui/DisplayLuts.h>
 #include <renderengine/ExternalTexture.h>
 #include <ui/FloatRect.h>
 #include <ui/GraphicTypes.h>
@@ -151,6 +152,9 @@ struct OutputLayerCompositionState {
 
         // True when this layer was skipped as part of SF-side layer caching.
         bool layerSkipped = false;
+
+        // lut information
+        std::shared_ptr<gui::DisplayLuts> luts;
     };
 
     // The HWC state is optional, and is only set up if there is any potential

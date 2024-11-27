@@ -34,15 +34,14 @@
 #include <ui/Rect.h>
 #include <ui/Region.h>
 
-#include <cmath>
 #include <cstdint>
 #include <variant>
 
 #include <common/FlagManager.h>
 #include <common/test/FlagUtils.h>
 #include "CallOrderStateMachineHelper.h"
-#include "MockHWC2.h"
 #include "RegionMatcher.h"
+#include "mock/DisplayHardware/MockHWC2.h"
 
 namespace android::compositionengine {
 namespace {
@@ -786,17 +785,20 @@ TEST_F(OutputUpdateAndWriteCompositionStateTest, updatesLayerContentForAllLayers
     InjectedLayer layer3;
 
     uint32_t z = 0;
-    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_180));
+    EXPECT_CALL(*layer1.outputLayer,
+                updateCompositionState(false, false, ui::Transform::ROT_180, _));
     EXPECT_CALL(*layer1.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer1.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_180));
+    EXPECT_CALL(*layer2.outputLayer,
+                updateCompositionState(false, false, ui::Transform::ROT_180, _));
     EXPECT_CALL(*layer2.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer2.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_180));
+    EXPECT_CALL(*layer3.outputLayer,
+                updateCompositionState(false, false, ui::Transform::ROT_180, _));
     EXPECT_CALL(*layer3.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
@@ -823,17 +825,17 @@ TEST_F(OutputUpdateAndWriteCompositionStateTest, updatesLayerGeometryAndContentF
     InjectedLayer layer3;
 
     uint32_t z = 0;
-    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer1.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ true, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer1.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer2.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ true, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer2.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer3.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ true, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
@@ -859,17 +861,17 @@ TEST_F(OutputUpdateAndWriteCompositionStateTest, forcesClientCompositionForAllLa
     InjectedLayer layer3;
 
     uint32_t z = 0;
-    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer1.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer1.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer2.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer2.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer3.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
@@ -897,11 +899,11 @@ TEST_F(OutputUpdateAndWriteCompositionStateTest, peekThroughLayerChangesOrder) {
     InjectedLayer layer3;
 
     InSequence seq;
-    EXPECT_CALL(*layer0.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0));
-    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer0.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0, _));
+    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer1.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0));
-    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0, _));
+    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(true, false, ui::Transform::ROT_0, _));
 
     uint32_t z = 0;
     EXPECT_CALL(*layer0.outputLayer,
@@ -3263,57 +3265,9 @@ TEST_F(OutputPostFramebufferTest, ifEnabledMustFlipThenPresentThenSendPresentCom
     mOutput.presentFrameAndReleaseLayers(kFlushEvenWhenDisabled);
 }
 
-TEST_F(OutputPostFramebufferTest, releaseFencesAreSentToLayerFE) {
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::ce_fence_promise, false);
-    ASSERT_FALSE(FlagManager::getInstance().ce_fence_promise());
-    // Simulate getting release fences from each layer, and ensure they are passed to the
-    // front-end layer interface for each layer correctly.
-
-    mOutput.mState.isEnabled = true;
-
-    // Create three unique fence instances
-    sp<Fence> layer1Fence = sp<Fence>::make();
-    sp<Fence> layer2Fence = sp<Fence>::make();
-    sp<Fence> layer3Fence = sp<Fence>::make();
-
-    Output::FrameFences frameFences;
-    frameFences.layerFences.emplace(&mLayer1.hwc2Layer, layer1Fence);
-    frameFences.layerFences.emplace(&mLayer2.hwc2Layer, layer2Fence);
-    frameFences.layerFences.emplace(&mLayer3.hwc2Layer, layer3Fence);
-
-    EXPECT_CALL(mOutput, presentFrame()).WillOnce(Return(frameFences));
-    EXPECT_CALL(*mRenderSurface, onPresentDisplayCompleted());
-
-    // Compare the pointers values of each fence to make sure the correct ones
-    // are passed. This happens to work with the current implementation, but
-    // would not survive certain calls like Fence::merge() which would return a
-    // new instance.
-    EXPECT_CALL(*mLayer1.layerFE, onLayerDisplayed(_, _))
-            .WillOnce([&layer1Fence](ftl::SharedFuture<FenceResult> futureFenceResult,
-                                     ui::LayerStack) {
-                EXPECT_EQ(FenceResult(layer1Fence), futureFenceResult.get());
-            });
-    EXPECT_CALL(*mLayer2.layerFE, onLayerDisplayed(_, _))
-            .WillOnce([&layer2Fence](ftl::SharedFuture<FenceResult> futureFenceResult,
-                                     ui::LayerStack) {
-                EXPECT_EQ(FenceResult(layer2Fence), futureFenceResult.get());
-            });
-    EXPECT_CALL(*mLayer3.layerFE, onLayerDisplayed(_, _))
-            .WillOnce([&layer3Fence](ftl::SharedFuture<FenceResult> futureFenceResult,
-                                     ui::LayerStack) {
-                EXPECT_EQ(FenceResult(layer3Fence), futureFenceResult.get());
-            });
-
-    constexpr bool kFlushEvenWhenDisabled = false;
-    mOutput.presentFrameAndReleaseLayers(kFlushEvenWhenDisabled);
-}
-
 TEST_F(OutputPostFramebufferTest, releaseFencesAreSetInLayerFE) {
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::ce_fence_promise, true);
-    ASSERT_TRUE(FlagManager::getInstance().ce_fence_promise());
     // Simulate getting release fences from each layer, and ensure they are passed to the
     // front-end layer interface for each layer correctly.
-
     mOutput.mState.isEnabled = true;
 
     // Create three unique fence instances
@@ -3350,37 +3304,7 @@ TEST_F(OutputPostFramebufferTest, releaseFencesAreSetInLayerFE) {
     mOutput.presentFrameAndReleaseLayers(kFlushEvenWhenDisabled);
 }
 
-TEST_F(OutputPostFramebufferTest, releaseFencesIncludeClientTargetAcquireFence) {
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::ce_fence_promise, false);
-    ASSERT_FALSE(FlagManager::getInstance().ce_fence_promise());
-
-    mOutput.mState.isEnabled = true;
-    mOutput.mState.usesClientComposition = true;
-
-    Output::FrameFences frameFences;
-    frameFences.clientTargetAcquireFence = sp<Fence>::make();
-    frameFences.layerFences.emplace(&mLayer1.hwc2Layer, sp<Fence>::make());
-    frameFences.layerFences.emplace(&mLayer2.hwc2Layer, sp<Fence>::make());
-    frameFences.layerFences.emplace(&mLayer3.hwc2Layer, sp<Fence>::make());
-
-    EXPECT_CALL(mOutput, presentFrame()).WillOnce(Return(frameFences));
-    EXPECT_CALL(*mRenderSurface, onPresentDisplayCompleted());
-
-    // Fence::merge is called, and since none of the fences are actually valid,
-    // Fence::NO_FENCE is returned and passed to each onLayerDisplayed() call.
-    // This is the best we can do without creating a real kernel fence object.
-    EXPECT_CALL(*mLayer1.layerFE, onLayerDisplayed).WillOnce(Return());
-    EXPECT_CALL(*mLayer2.layerFE, onLayerDisplayed).WillOnce(Return());
-    EXPECT_CALL(*mLayer3.layerFE, onLayerDisplayed).WillOnce(Return());
-
-    constexpr bool kFlushEvenWhenDisabled = false;
-    mOutput.presentFrameAndReleaseLayers(kFlushEvenWhenDisabled);
-}
-
 TEST_F(OutputPostFramebufferTest, setReleaseFencesIncludeClientTargetAcquireFence) {
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::ce_fence_promise, true);
-    ASSERT_TRUE(FlagManager::getInstance().ce_fence_promise());
-
     mOutput.mState.isEnabled = true;
     mOutput.mState.usesClientComposition = true;
 
@@ -3403,62 +3327,7 @@ TEST_F(OutputPostFramebufferTest, setReleaseFencesIncludeClientTargetAcquireFenc
     mOutput.presentFrameAndReleaseLayers(kFlushEvenWhenDisabled);
 }
 
-TEST_F(OutputPostFramebufferTest, releasedLayersSentPresentFence) {
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::ce_fence_promise, false);
-    ASSERT_FALSE(FlagManager::getInstance().ce_fence_promise());
-
-    mOutput.mState.isEnabled = true;
-    mOutput.mState.usesClientComposition = true;
-
-    // This should happen even if there are no (current) output layers.
-    EXPECT_CALL(mOutput, getOutputLayerCount()).WillOnce(Return(0u));
-
-    // Load up the released layers with some mock instances
-    sp<StrictMock<mock::LayerFE>> releasedLayer1 = sp<StrictMock<mock::LayerFE>>::make();
-    sp<StrictMock<mock::LayerFE>> releasedLayer2 = sp<StrictMock<mock::LayerFE>>::make();
-    sp<StrictMock<mock::LayerFE>> releasedLayer3 = sp<StrictMock<mock::LayerFE>>::make();
-    Output::ReleasedLayers layers;
-    layers.push_back(releasedLayer1);
-    layers.push_back(releasedLayer2);
-    layers.push_back(releasedLayer3);
-    mOutput.setReleasedLayers(std::move(layers));
-
-    // Set up a fake present fence
-    sp<Fence> presentFence = sp<Fence>::make();
-    Output::FrameFences frameFences;
-    frameFences.presentFence = presentFence;
-
-    EXPECT_CALL(mOutput, presentFrame()).WillOnce(Return(frameFences));
-    EXPECT_CALL(*mRenderSurface, onPresentDisplayCompleted());
-
-    // Each released layer should be given the presentFence.
-    EXPECT_CALL(*releasedLayer1, onLayerDisplayed(_, _))
-            .WillOnce([&presentFence](ftl::SharedFuture<FenceResult> futureFenceResult,
-                                      ui::LayerStack) {
-                EXPECT_EQ(FenceResult(presentFence), futureFenceResult.get());
-            });
-    EXPECT_CALL(*releasedLayer2, onLayerDisplayed(_, _))
-            .WillOnce([&presentFence](ftl::SharedFuture<FenceResult> futureFenceResult,
-                                      ui::LayerStack) {
-                EXPECT_EQ(FenceResult(presentFence), futureFenceResult.get());
-            });
-    EXPECT_CALL(*releasedLayer3, onLayerDisplayed(_, _))
-            .WillOnce([&presentFence](ftl::SharedFuture<FenceResult> futureFenceResult,
-                                      ui::LayerStack) {
-                EXPECT_EQ(FenceResult(presentFence), futureFenceResult.get());
-            });
-
-    constexpr bool kFlushEvenWhenDisabled = false;
-    mOutput.presentFrameAndReleaseLayers(kFlushEvenWhenDisabled);
-
-    // After the call the list of released layers should have been cleared.
-    EXPECT_TRUE(mOutput.getReleasedLayersForTest().empty());
-}
-
 TEST_F(OutputPostFramebufferTest, setReleasedLayersSentPresentFence) {
-    SET_FLAG_FOR_TEST(com::android::graphics::surfaceflinger::flags::ce_fence_promise, true);
-    ASSERT_TRUE(FlagManager::getInstance().ce_fence_promise());
-
     mOutput.mState.isEnabled = true;
     mOutput.mState.usesClientComposition = true;
 
@@ -5066,12 +4935,12 @@ TEST_F(OutputUpdateAndWriteCompositionStateTest, noBackgroundBlurWhenOpaque) {
 
     uint32_t z = 0;
     // Layer requesting blur, or below, should request client composition, unless opaque.
-    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer1.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer1.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer2.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
@@ -5100,17 +4969,17 @@ TEST_F(OutputUpdateAndWriteCompositionStateTest, handlesBackgroundBlurRequests) 
 
     uint32_t z = 0;
     // Layer requesting blur, or below, should request client composition.
-    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer1.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer1.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer2.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer2.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer3.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
@@ -5140,17 +5009,17 @@ TEST_F(OutputUpdateAndWriteCompositionStateTest, handlesBlurRegionRequests) {
 
     uint32_t z = 0;
     // Layer requesting blur, or below, should request client composition.
-    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer1.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer1.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer1.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer2.outputLayer, updateCompositionState(false, true, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer2.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));
     EXPECT_CALL(*layer2.outputLayer, requiresClientComposition()).WillRepeatedly(Return(false));
-    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_0));
+    EXPECT_CALL(*layer3.outputLayer, updateCompositionState(false, false, ui::Transform::ROT_0, _));
     EXPECT_CALL(*layer3.outputLayer,
                 writeStateToHWC(/*includeGeometry*/ false, /*skipLayer*/ false, z++,
                                 /*zIsOverridden*/ false, /*isPeekingThrough*/ false));

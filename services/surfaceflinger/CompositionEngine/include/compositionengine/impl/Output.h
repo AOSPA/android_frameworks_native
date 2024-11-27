@@ -170,6 +170,8 @@ protected:
     bool mustRecompose() const;
 
     const std::string& getNamePlusId() const { return mNamePlusId; }
+    const aidl::android::hardware::graphics::composer3::OverlayProperties* getOverlaySupport()
+            override;
 
 private:
     void dirtyEntireOutput();

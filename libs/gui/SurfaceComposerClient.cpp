@@ -33,6 +33,7 @@
 #include <android/gui/IWindowInfosListener.h>
 #include <android/gui/TrustedPresentationThresholds.h>
 #include <android/os/IInputConstants.h>
+#include <gui/DisplayLuts.h>
 #include <gui/FrameRateUtils.h>
 #include <gui/TraceUtils.h>
 #include <utils/Errors.h>
@@ -1964,15 +1965,19 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setDesir
 }
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setLuts(
-        const sp<SurfaceControl>& sc, const base::unique_fd& /*lutFd*/,
-        const std::vector<int32_t>& /*offsets*/, const std::vector<int32_t>& /*dimensions*/,
-        const std::vector<int32_t>& /*sizes*/, const std::vector<int32_t>& /*samplingKeys*/) {
+        const sp<SurfaceControl>& sc, const base::unique_fd& lutFd,
+        const std::vector<int32_t>& offsets, const std::vector<int32_t>& dimensions,
+        const std::vector<int32_t>& sizes, const std::vector<int32_t>& samplingKeys) {
     layer_state_t* s = getLayerState(sc);
     if (!s) {
         mStatus = BAD_INDEX;
         return *this;
     }
-    // TODO (b/329472856): update layer_state_t for lut(s)
+
+    s->luts = std::make_shared<gui::DisplayLuts>(base::unique_fd(dup(lutFd.get())), offsets,
+                                                 dimensions, sizes, samplingKeys);
+    s->what |= layer_state_t::eLutsChanged;
+
     registerSurfaceControlForCallback(sc);
     return *this;
 }

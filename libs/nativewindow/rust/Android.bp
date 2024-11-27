@@ -110,6 +110,7 @@ rust_defaults {
     name: "libnativewindow_defaults",
     srcs: ["src/lib.rs"],
     rustlibs: [
+        "android.hardware.common-V2-rust",
         "libbinder_rs",
         "libbitflags",
         "libnativewindow_bindgen",

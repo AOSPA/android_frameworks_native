@@ -420,8 +420,8 @@ void Display::applyLayerLutsToLayers(const LayerLuts& layerLuts) {
 
         if (auto lutsIt = layerLuts.find(hwcLayer); lutsIt != layerLuts.end()) {
             if (auto mapperIt = mapper.find(hwcLayer); mapperIt != mapper.end()) {
-                layer->applyDeviceLayerLut(lutsIt->second,
-                                           ndk::ScopedFileDescriptor(mapperIt->second.release()));
+                layer->applyDeviceLayerLut(ndk::ScopedFileDescriptor(mapperIt->second.release()),
+                                           lutsIt->second);
             }
         }
     }
@@ -509,6 +509,11 @@ void Display::setHintSessionGpuFence(std::unique_ptr<FenceTime>&& gpuFence) {
 
 void Display::setHintSessionRequiresRenderEngine(bool requiresRenderEngine) {
     mPowerAdvisor->setRequiresRenderEngine(mId, requiresRenderEngine);
+}
+
+const aidl::android::hardware::graphics::composer3::OverlayProperties*
+Display::getOverlaySupport() {
+    return &getCompositionEngine().getHwComposer().getOverlaySupport();
 }
 
 void Display::finishFrame(GpuCompositionResult&& result) {

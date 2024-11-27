@@ -17,8 +17,20 @@
 #pragma once
 
 #include <com_android_graphics_libgui_flags.h>
+#include <gui/IGraphicBufferProducer.h>
+#include <gui/Surface.h>
 
 #define WB_CAMERA3_AND_PROCESSORS_WITH_DEPENDENCIES                  \
     (COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CAMERA3_AND_PROCESSORS) && \
      COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ) &&  \
      COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS))
+
+#define WB_LIBCAMERASERVICE_WITH_DEPENDENCIES       \
+    (WB_CAMERA3_AND_PROCESSORS_WITH_DEPENDENCIES && \
+     COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_LIBCAMERASERVICE))
+
+#if WB_LIBCAMERASERVICE_WITH_DEPENDENCIES
+typedef android::Surface SurfaceType;
+#else
+typedef android::IGraphicBufferProducer SurfaceType;
+#endif

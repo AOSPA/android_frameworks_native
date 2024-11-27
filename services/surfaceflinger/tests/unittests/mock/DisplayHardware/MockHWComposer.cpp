@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 The Android Open Source Project
+ * Copyright 2018 The Android Open Source Project
 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,19 +14,13 @@
  * limitations under the License.
  */
 
-#include "MockHWC2.h"
+#include "MockHWComposer.h"
 
-namespace android::HWC2 {
-
-// This will go away once HWC2::Layer is moved into the "backend" library
-Layer::~Layer() = default;
-
-namespace mock {
+namespace android::mock {
 
 // The Google Mock documentation recommends explicit non-header instantiations
 // for better compile time performance.
-Layer::Layer() = default;
-Layer::~Layer() = default;
+HWComposer::HWComposer() = default;
+HWComposer::~HWComposer() = default;
 
-} // namespace mock
-} // namespace android::HWC2
+} // namespace android::mock

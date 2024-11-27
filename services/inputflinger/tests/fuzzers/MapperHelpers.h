@@ -269,6 +269,9 @@ public:
     status_t enableDevice(int32_t deviceId) override { return mFdp->ConsumeIntegral<status_t>(); }
     status_t disableDevice(int32_t deviceId) override { return mFdp->ConsumeIntegral<status_t>(); }
     void sysfsNodeChanged(const std::string& sysfsNodePath) override {}
+    bool setKernelWakeEnabled(int32_t deviceId, bool enabled) override {
+        return mFdp->ConsumeBool();
+    }
 };
 
 class FuzzInputReaderPolicy : public InputReaderPolicyInterface {

@@ -54,6 +54,7 @@ public:
     bool adpf_use_fmq_channel_fixed() const;
 
     /// Trunk stable readonly flags ///
+    bool adpf_fmq_sf() const;
     bool connected_display() const;
     bool frame_rate_category_mrr() const;
     bool enable_small_area_detection() const;
@@ -70,7 +71,6 @@ public:
     bool fp16_client_target() const;
     bool game_default_frame_rate() const;
     bool enable_layer_command_batching() const;
-    bool screenshot_fence_preservation() const;
     bool vulkan_renderengine() const;
     bool vrr_bugfix_24q4() const;
     bool vrr_bugfix_dropped_frame() const;
@@ -78,7 +78,6 @@ public:
     bool restore_blur_step() const;
     bool dont_skip_on_early_ro() const;
     bool protected_if_client() const;
-    bool ce_fence_promise() const;
     bool idle_screen_refresh_rate_timeout() const;
     bool graphite_renderengine() const;
     bool filter_frames_before_trace_starts() const;
@@ -95,6 +94,7 @@ public:
     bool single_hop_screenshot() const;
     bool trace_frame_rate_override() const;
     bool true_hdr_screenshots() const;
+    bool display_config_error_hal() const;
 
 protected:
     // overridden for unit tests

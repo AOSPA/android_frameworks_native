@@ -648,7 +648,15 @@ TEST_F(ResamplerTest, MultiplePointerDifferentIdOrderInterpolation) {
 
     mResampler->resampleMotionEvent(16ms, motionEvent, &futureSample);
 
-    assertMotionEventIsNotResampled(originalMotionEvent, motionEvent);
+    assertMotionEventIsResampledAndCoordsNear(originalMotionEvent, motionEvent,
+                                              {Pointer{.id = 0,
+                                                       .x = 1.4f,
+                                                       .y = 1.4f,
+                                                       .isResampled = true},
+                                               Pointer{.id = 1,
+                                                       .x = 2.4f,
+                                                       .y = 2.4f,
+                                                       .isResampled = true}});
 }
 
 TEST_F(ResamplerTest, MultiplePointerDifferentIdOrderExtrapolation) {
@@ -670,7 +678,15 @@ TEST_F(ResamplerTest, MultiplePointerDifferentIdOrderExtrapolation) {
 
     mResampler->resampleMotionEvent(16ms, secondMotionEvent, /*futureSample=*/nullptr);
 
-    assertMotionEventIsNotResampled(secondOriginalMotionEvent, secondMotionEvent);
+    assertMotionEventIsResampledAndCoordsNear(secondOriginalMotionEvent, secondMotionEvent,
+                                              {Pointer{.id = 1,
+                                                       .x = 4.4f,
+                                                       .y = 4.4f,
+                                                       .isResampled = true},
+                                               Pointer{.id = 0,
+                                                       .x = 3.4f,
+                                                       .y = 3.4f,
+                                                       .isResampled = true}});
 }
 
 TEST_F(ResamplerTest, MultiplePointerDifferentIdsInterpolation) {

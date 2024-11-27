@@ -745,6 +745,14 @@ void InputDevice::setKeyboardType(KeyboardType keyboardType) {
     }
 }
 
+bool InputDevice::setKernelWakeEnabled(bool enabled) {
+    bool success = false;
+    for_each_subdevice([&enabled, &success](InputDeviceContext& context) {
+        success |= context.setKernelWakeEnabled(enabled);
+    });
+    return success;
+}
+
 InputDeviceContext::InputDeviceContext(InputDevice& device, int32_t eventHubId)
       : mDevice(device),
         mContext(device.getContext()),

@@ -120,6 +120,8 @@ public:
 
     void notifyMouseCursorFadedOnTyping() override;
 
+    bool setKernelWakeEnabled(int32_t deviceId, bool enabled) override;
+
 protected:
     // These members are protected so they can be instrumented by test cases.
     virtual std::shared_ptr<InputDevice> createDeviceLocked(nsecs_t when, int32_t deviceId,

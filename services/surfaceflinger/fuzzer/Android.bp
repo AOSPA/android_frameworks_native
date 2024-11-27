@@ -34,6 +34,8 @@ cc_defaults {
         "libqticompositionengineextension",
     ],
     srcs: [
+        ":libsurfaceflinger_backend_mock_sources",
+        ":libsurfaceflinger_mock_sources",
         ":libsurfaceflinger_sources",
     ],
     defaults: [
@@ -41,6 +43,7 @@ cc_defaults {
         "libqtisurfaceflingerextension_defaults",
     ],
     header_libs: [
+        "libsurfaceflinger_backend_mock_headers",
         "libsurfaceflinger_headers",
     ],
     cflags: [

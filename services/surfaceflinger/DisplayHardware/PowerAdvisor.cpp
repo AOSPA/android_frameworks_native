@@ -247,7 +247,8 @@ bool PowerAdvisor::ensurePowerHintSessionRunning() {
                                                                  &mSessionConfig);
             if (ret.isOk()) {
                 mHintSession = ret.value();
-                if (FlagManager::getInstance().adpf_use_fmq_channel_fixed()) {
+                if (FlagManager::getInstance().adpf_use_fmq_channel_fixed() &&
+                    FlagManager::getInstance().adpf_fmq_sf()) {
                     setUpFmq();
                 }
             }

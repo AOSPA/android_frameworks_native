@@ -29,11 +29,11 @@
 using aidl::android::hardware::vibrator::Braking;
 using aidl::android::hardware::vibrator::CompositeEffect;
 using aidl::android::hardware::vibrator::CompositePrimitive;
+using aidl::android::hardware::vibrator::CompositePwleV2;
 using aidl::android::hardware::vibrator::Effect;
 using aidl::android::hardware::vibrator::EffectStrength;
+using aidl::android::hardware::vibrator::FrequencyAccelerationMapEntry;
 using aidl::android::hardware::vibrator::PrimitivePwle;
-using aidl::android::hardware::vibrator::PwleV2OutputMapEntry;
-using aidl::android::hardware::vibrator::PwleV2Primitive;
 using aidl::android::hardware::vibrator::VendorEffect;
 
 using std::chrono::milliseconds;
@@ -131,8 +131,7 @@ HalResult<void> HalWrapper::performPwleEffect(const std::vector<PrimitivePwle>&,
     return HalResult<void>::unsupported();
 }
 
-HalResult<void> HalWrapper::composePwleV2(const std::vector<PwleV2Primitive>&,
-                                          const std::function<void()>&) {
+HalResult<void> HalWrapper::composePwleV2(const CompositePwleV2&, const std::function<void()>&) {
     ALOGV("Skipped composePwleV2 because it's not available in Vibrator HAL");
     return HalResult<void>::unsupported();
 }
@@ -243,11 +242,11 @@ HalResult<milliseconds> HalWrapper::getMaxEnvelopeEffectControlPointDurationInte
     return HalResult<milliseconds>::unsupported();
 }
 
-HalResult<std::vector<PwleV2OutputMapEntry>>
+HalResult<std::vector<FrequencyAccelerationMapEntry>>
 HalWrapper::getFrequencyToOutputAccelerationMapInternal() {
     ALOGV("Skipped getFrequencyToOutputAccelerationMapInternal because it's not "
           "available in Vibrator HAL");
-    return HalResult<std::vector<PwleV2OutputMapEntry>>::unsupported();
+    return HalResult<std::vector<FrequencyAccelerationMapEntry>>::unsupported();
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -360,7 +359,7 @@ HalResult<void> AidlHalWrapper::performPwleEffect(const std::vector<PrimitivePwl
     return HalResultFactory::fromStatus(getHal()->composePwle(primitives, cb));
 }
 
-HalResult<void> AidlHalWrapper::composePwleV2(const std::vector<PwleV2Primitive>& composite,
+HalResult<void> AidlHalWrapper::composePwleV2(const CompositePwleV2& composite,
                                               const std::function<void()>& completionCallback) {
     // This method should always support callbacks, so no need to double check.
     auto cb = ndk::SharedRefBase::make<HalCallbackWrapper>(completionCallback);
@@ -498,13 +497,13 @@ HalResult<milliseconds> AidlHalWrapper::getMaxEnvelopeEffectControlPointDuration
     return HalResultFactory::fromStatus<milliseconds>(std::move(status), milliseconds(durationMs));
 }
 
-HalResult<std::vector<PwleV2OutputMapEntry>>
+HalResult<std::vector<FrequencyAccelerationMapEntry>>
 AidlHalWrapper::getFrequencyToOutputAccelerationMapInternal() {
-    std::vector<PwleV2OutputMapEntry> frequencyToOutputAccelerationMap;
-    auto status =
-            getHal()->getPwleV2FrequencyToOutputAccelerationMap(&frequencyToOutputAccelerationMap);
+    std::vector<FrequencyAccelerationMapEntry> frequencyToOutputAccelerationMap;
+    auto status = getHal()->getFrequencyToOutputAccelerationMap(&frequencyToOutputAccelerationMap);
     return HalResultFactory::fromStatus<
-            std::vector<PwleV2OutputMapEntry>>(std::move(status), frequencyToOutputAccelerationMap);
+            std::vector<FrequencyAccelerationMapEntry>>(std::move(status),
+                                                        frequencyToOutputAccelerationMap);
 }
 
 std::shared_ptr<Aidl::IVibrator> AidlHalWrapper::getHal() {

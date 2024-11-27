@@ -329,6 +329,8 @@ protected:
     virtual bool isPowerHintSessionGpuReportingEnabled() = 0;
     virtual void cacheClientCompositionRequests(uint32_t cacheSize) = 0;
     virtual bool canPredictCompositionStrategy(const CompositionRefreshArgs&) = 0;
+    virtual const aidl::android::hardware::graphics::composer3::OverlayProperties*
+    getOverlaySupport() = 0;
 };
 
 } // namespace compositionengine

@@ -176,6 +176,9 @@ public:
 private:
     friend class BLASTBufferQueueHelper;
     friend class BBQBufferQueueProducer;
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
+    friend class BBQBufferQueueCore;
+#endif
 
     /* QTI_BEGIN */
     friend class libguiextension::QtiBLASTBufferQueueExtension;
@@ -351,48 +354,52 @@ private:
     std::unordered_set<uint64_t> mSyncedFrameNumbers GUARDED_BY(mMutex);
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
+    // BufferReleaseChannel is used to communicate buffer releases from SurfaceFlinger to the
+    // client.
+    std::unique_ptr<gui::BufferReleaseChannel::ConsumerEndpoint> mBufferReleaseConsumer;
+    std::shared_ptr<gui::BufferReleaseChannel::ProducerEndpoint> mBufferReleaseProducer;
+
     class BufferReleaseReader {
     public:
-        BufferReleaseReader() = default;
-        BufferReleaseReader(std::unique_ptr<gui::BufferReleaseChannel::ConsumerEndpoint>);
-        BufferReleaseReader& operator=(BufferReleaseReader&&);
+        explicit BufferReleaseReader(BLASTBufferQueue&);
+
+        BufferReleaseReader(const BufferReleaseReader&) = delete;
+        BufferReleaseReader& operator=(const BufferReleaseReader&) = delete;
 
         // Block until we can read a buffer release message.
         //
         // Returns:
         // * OK if a ReleaseCallbackId and Fence were successfully read.
         // * WOULD_BLOCK if the blocking read was interrupted by interruptBlockingRead.
+        // * TIMED_OUT if the blocking read timed out.
         // * UNKNOWN_ERROR if something went wrong.
         status_t readBlocking(ReleaseCallbackId& outId, sp<Fence>& outReleaseFence,
-                              uint32_t& outMaxAcquiredBufferCount);
+                              uint32_t& outMaxAcquiredBufferCount, nsecs_t timeout);
 
-        // Signals the reader's eventfd to wake up any threads waiting on readBlocking.
         void interruptBlockingRead();
+        void clearInterrupts();
 
     private:
-        std::mutex mMutex;
-        std::unique_ptr<gui::BufferReleaseChannel::ConsumerEndpoint> mEndpoint GUARDED_BY(mMutex);
+        BLASTBufferQueue& mBbq;
+
         android::base::unique_fd mEpollFd;
         android::base::unique_fd mEventFd;
     };
 
-    // BufferReleaseChannel is used to communicate buffer releases from SurfaceFlinger to
-    // the client. See BBQBufferQueueProducer::dequeueBuffer for details.
-    std::shared_ptr<BufferReleaseReader> mBufferReleaseReader;
-    std::shared_ptr<gui::BufferReleaseChannel::ProducerEndpoint> mBufferReleaseProducer;
+    std::optional<BufferReleaseReader> mBufferReleaseReader;
+
+    std::atomic<int> mThreadsBlockingOnDequeue = 0;
 
     class BufferReleaseThread {
     public:
-        BufferReleaseThread() = default;
+        BufferReleaseThread(const sp<BLASTBufferQueue>&);
         ~BufferReleaseThread();
-        void start(const sp<BLASTBufferQueue>&);
 
     private:
-        std::shared_ptr<std::atomic_bool> mRunning;
-        std::shared_ptr<BufferReleaseReader> mReader;
+        int mEventFd;
     };
 
-    BufferReleaseThread mBufferReleaseThread;
+    std::optional<BufferReleaseThread> mBufferReleaseThread;
 #endif
 };
 

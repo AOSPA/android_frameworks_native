@@ -140,6 +140,8 @@ public:
     MOCK_METHOD(void, setHintSessionRequiresRenderEngine, (bool requiresRenderEngine));
     MOCK_METHOD(bool, isPowerHintSessionEnabled, ());
     MOCK_METHOD(bool, isPowerHintSessionGpuReportingEnabled, ());
+    MOCK_METHOD((const aidl::android::hardware::graphics::composer3::OverlayProperties*),
+                getOverlaySupport, ());
 };
 
 } // namespace android::compositionengine::mock

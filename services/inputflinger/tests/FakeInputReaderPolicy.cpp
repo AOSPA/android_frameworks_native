@@ -217,7 +217,6 @@ float FakeInputReaderPolicy::getPointerGestureZoomSpeedRatio() {
 }
 
 void FakeInputReaderPolicy::setVelocityControlParams(const VelocityControlParameters& params) {
-    mConfig.pointerVelocityControlParameters = params;
     mConfig.wheelVelocityControlParameters = params;
 }
 

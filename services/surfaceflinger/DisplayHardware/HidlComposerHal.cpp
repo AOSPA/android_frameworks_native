@@ -53,7 +53,7 @@ using aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrig
 using aidl::android::hardware::graphics::composer3::DimmingStage;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
 using aidl::android::hardware::graphics::composer3::DisplayLuts;
-using aidl::android::hardware::graphics::composer3::Lut;
+using aidl::android::hardware::graphics::composer3::Luts;
 using aidl::android::hardware::graphics::composer3::OverlayProperties;
 
 namespace android {
@@ -1493,7 +1493,7 @@ Error HidlComposer::getRequestedLuts(Display, std::vector<Layer>*,
     return Error::NONE;
 }
 
-Error HidlComposer::setLayerLuts(Display, Layer, std::vector<Lut>&) {
+Error HidlComposer::setLayerLuts(Display, Layer, Luts&) {
     return Error::NONE;
 }
 

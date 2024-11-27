@@ -93,7 +93,10 @@ public:
     // transform, if needed.
     virtual void updateCompositionState(
             bool includeGeometry, bool forceClientComposition,
-            ui::Transform::RotationFlags internalDisplayRotationFlags) = 0;
+            ui::Transform::RotationFlags internalDisplayRotationFlags,
+            const std::optional<std::vector<
+                    std::optional<aidl::android::hardware::graphics::composer3::LutProperties>>>
+                    properties) = 0;
 
     // Writes the geometry state to the HWC, or does nothing if this layer does
     // not use the HWC. If includeGeometry is false, the geometry state can be
@@ -129,8 +132,10 @@ public:
     virtual void applyDeviceLayerRequest(Hwc2::IComposerClient::LayerRequest request) = 0;
 
     // Applies a HWC device layer lut
-    virtual void applyDeviceLayerLut(aidl::android::hardware::graphics::composer3::LutProperties,
-                                     ndk::ScopedFileDescriptor) = 0;
+    virtual void applyDeviceLayerLut(
+            ndk::ScopedFileDescriptor,
+            std::vector<std::pair<
+                    int, aidl::android::hardware::graphics::composer3::LutProperties>>) = 0;
 
     // Returns true if the composition settings scale pixels
     virtual bool needsFiltering() const = 0;

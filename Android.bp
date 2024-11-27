@@ -125,3 +125,9 @@ filegroup {
     srcs: ["aidl/android/hardware/display/IDeviceProductInfoConstants.aidl"],
     path: "aidl",
 }
+
+dirgroup {
+    name: "trusty_dirgroup_frameworks_native",
+    dirs: ["libs/binder"],
+    visibility: ["//trusty/vendor/google/aosp/scripts"],
+}
