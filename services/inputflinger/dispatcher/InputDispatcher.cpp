@@ -6802,14 +6802,15 @@ std::unique_ptr<const KeyEntry> InputDispatcher::afterKeyEventLockedInterruptabl
         // The fallback keycode cannot change at any other point in the lifecycle.
         if (initialDown) {
             if (fallback) {
-                *fallbackKeyCode = event.getKeyCode();
+                fallbackKeyCode = event.getKeyCode();
             } else {
-                *fallbackKeyCode = AKEYCODE_UNKNOWN;
+                fallbackKeyCode = AKEYCODE_UNKNOWN;
             }
             connection->inputState.setFallbackKey(originalKeyCode, *fallbackKeyCode);
         }
 
-        ALOG_ASSERT(fallbackKeyCode);
+        LOG_IF(FATAL, !fallbackKeyCode)
+                << "fallbackKeyCode is not initialized. initialDown = " << initialDown;
 
         // Cancel the fallback key if the policy decides not to send it anymore.
         // We will continue to dispatch the key to the policy but we will no

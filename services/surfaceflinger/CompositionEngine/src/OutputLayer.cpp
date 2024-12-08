@@ -32,6 +32,7 @@
 #include <ui/FloatRect.h>
 #include <ui/HdrRenderTypeUtils.h>
 #include <cstdint>
+#include <limits>
 #include "system/graphics-base-v1.0.h"
 
 #include <com_android_graphics_libgui_flags.h>
@@ -409,11 +410,22 @@ void OutputLayer::updateCompositionState(
     // For hdr content, treat the white point as the display brightness - HDR content should not be
     // boosted or dimmed.
     // If the layer explicitly requests to disable dimming, then don't dim either.
-    if (hdrRenderType == HdrRenderType::GENERIC_HDR ||
-        getOutput().getState().displayBrightnessNits == getOutput().getState().sdrWhitePointNits ||
-        getOutput().getState().displayBrightnessNits == 0.f || !layerFEState->dimmingEnabled) {
+    if (getOutput().getState().displayBrightnessNits == getOutput().getState().sdrWhitePointNits ||
+        getOutput().getState().displayBrightnessNits <= 0.f || !layerFEState->dimmingEnabled) {
         state.dimmingRatio = 1.f;
         state.whitePointNits = getOutput().getState().displayBrightnessNits;
+    } else if (hdrRenderType == HdrRenderType::GENERIC_HDR) {
+        float deviceHeadroom = getOutput().getState().displayBrightnessNits /
+                getOutput().getState().sdrWhitePointNits;
+        float idealizedMaxHeadroom = deviceHeadroom;
+
+        if (FlagManager::getInstance().begone_bright_hlg()) {
+            idealizedMaxHeadroom =
+                    std::min(idealizedMaxHeadroom, getIdealizedMaxHeadroom(state.dataspace));
+        }
+
+        state.dimmingRatio = std::min(idealizedMaxHeadroom / deviceHeadroom, 1.0f);
+        state.whitePointNits = getOutput().getState().displayBrightnessNits * state.dimmingRatio;
     } else {
         float layerBrightnessNits = getOutput().getState().sdrWhitePointNits;
         // RANGE_EXTENDED can "self-promote" to HDR, but is still rendered for a particular
@@ -443,7 +455,7 @@ void OutputLayer::commitPictureProfileToCompositionState() {
     }
     const auto* layerState = getLayerFE().getCompositionState();
     if (layerState) {
-        editState().pictureProfileHandle = getLayerFE().getCompositionState()->pictureProfileHandle;
+        editState().pictureProfileHandle = layerState->pictureProfileHandle;
     }
 }
 

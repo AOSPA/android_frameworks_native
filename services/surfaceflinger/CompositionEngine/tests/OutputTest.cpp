@@ -5117,6 +5117,11 @@ TEST_F(OutputUpdateAndWriteCompositionStateTest, assignsDisplayProfileBasedOnLay
     // Sets display picture profile to the highest priority layer's profile
     EXPECT_CALL(mHwComposer, setDisplayPictureProfileHandle(_, Eq(profileForLayer2)));
 
+    // Marks only the highest priority layer as committed
+    EXPECT_CALL(*layer1.layerFE, onPictureProfileCommitted).Times(0);
+    EXPECT_CALL(*layer2.layerFE, onPictureProfileCommitted);
+    EXPECT_CALL(*layer3.layerFE, onPictureProfileCommitted).Times(0);
+
     mOutput->editState().isEnabled = true;
     CompositionRefreshArgs args;
     args.updatingGeometryThisFrame = false;
@@ -5171,6 +5176,11 @@ TEST_F(OutputUpdateAndWriteCompositionStateTest, assignsLayerProfileBasedOnLayer
     EXPECT_CALL(*layer1.outputLayer, commitPictureProfileToCompositionState).Times(0);
     EXPECT_CALL(*layer2.outputLayer, commitPictureProfileToCompositionState);
     EXPECT_CALL(*layer3.outputLayer, commitPictureProfileToCompositionState);
+
+    // Marks only the highest priority layers as committed
+    EXPECT_CALL(*layer1.layerFE, onPictureProfileCommitted).Times(0);
+    EXPECT_CALL(*layer2.layerFE, onPictureProfileCommitted);
+    EXPECT_CALL(*layer3.layerFE, onPictureProfileCommitted);
 
     // No display picture profile is sent
     EXPECT_CALL(mHwComposer, setDisplayPictureProfileHandle).Times(0);

@@ -18,6 +18,9 @@
 
 #include <android/gui/CachingHint.h>
 #include <gui/LayerMetadata.h>
+#include <ui/LayerStack.h>
+#include <ui/PictureProfileHandle.h>
+
 #include "FrontEnd/LayerSnapshot.h"
 #include "compositionengine/LayerFE.h"
 #include "compositionengine/LayerFECompositionState.h"
@@ -29,6 +32,10 @@ namespace android {
 
 struct CompositionResult {
     sp<Fence> lastClientCompositionFence = nullptr;
+    bool wasPictureProfileCommitted = false;
+    // TODO(b/337330263): Why does LayerFE coming from SF have a null composition state?
+    // It would be better not to duplicate this information
+    PictureProfileHandle pictureProfileHandle = PictureProfileHandle::NONE;
 };
 
 class LayerFE : public virtual RefBase, public virtual compositionengine::LayerFE {
@@ -47,10 +54,11 @@ public:
     const gui::LayerMetadata* getRelativeMetadata() const override;
     std::optional<compositionengine::LayerFE::LayerSettings> prepareClientComposition(
             compositionengine::LayerFE::ClientCompositionTargetSettings&) const;
-    CompositionResult&& stealCompositionResult();
+    CompositionResult stealCompositionResult();
     ftl::Future<FenceResult> createReleaseFenceFuture() override;
     void setReleaseFence(const FenceResult& releaseFence) override;
     LayerFE::ReleaseFencePromiseStatus getReleaseFencePromiseStatus() override;
+    void onPictureProfileCommitted() override;
 
     /* QTI_BEGIN */
     int32_t getLayerId() const override;

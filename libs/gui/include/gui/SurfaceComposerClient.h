@@ -298,6 +298,8 @@ public:
     static status_t removeHdrLayerInfoListener(const sp<IBinder>& displayToken,
                                                const sp<gui::IHdrLayerInfoListener>& listener);
 
+    static status_t setActivePictureListener(const sp<gui::IActivePictureListener>& listener);
+
     /*
      * Sends a power boost to the composer. This function is asynchronous.
      *
@@ -342,6 +344,15 @@ public:
     getDisplayDecorationSupport(const sp<IBinder>& displayToken);
 
     static bool flagEdgeExtensionEffectUseShader();
+
+    /**
+     * Returns how many picture profiles are supported by the display.
+     *
+     * displayToken
+     *      The token of the display.
+     */
+    static status_t getMaxLayerPictureProfiles(const sp<IBinder>& displayToken,
+                                               int32_t* outMaxProfiles);
 
     // ------------------------------------------------------------------------
     // surface creation / destruction

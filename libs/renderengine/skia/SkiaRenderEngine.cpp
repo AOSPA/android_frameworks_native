@@ -572,8 +572,10 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
         }
 
         // disable tonemapping if we already locally tonemapped
-        auto inputDataspace =
-                usingLocalTonemap ? parameters.outputDataSpace : parameters.layer.sourceDataspace;
+        // skip tonemapping if the luts is in use
+        auto inputDataspace = usingLocalTonemap || (graphicBuffer && parameters.layer.luts)
+                ? parameters.outputDataSpace
+                : parameters.layer.sourceDataspace;
         auto effect =
                 shaders::LinearEffect{.inputDataspace = inputDataspace,
                                       .outputDataspace = parameters.outputDataSpace,

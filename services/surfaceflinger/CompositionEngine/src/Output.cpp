@@ -843,11 +843,13 @@ void Output::commitPictureProfilesToCompositionState() {
         for (int i = 0; i < getMaxLayerPictureProfiles() && !layersWithProfiles.empty();
              layersWithProfiles.pop(), ++i) {
             layersWithProfiles.top()->commitPictureProfileToCompositionState();
+            layersWithProfiles.top()->getLayerFE().onPictureProfileCommitted();
         }
         // No layer-specific picture processing, so apply the highest priority picture profile to
         // the entire display.
     } else if (!layersWithProfiles.empty()) {
         editState().pictureProfileHandle = layersWithProfiles.top()->getPictureProfileHandle();
+        layersWithProfiles.top()->getLayerFE().onPictureProfileCommitted();
     }
 }
 

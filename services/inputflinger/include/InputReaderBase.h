@@ -362,6 +362,9 @@ public:
     /* Toggle Caps Lock */
     virtual void toggleCapsLockState(int32_t deviceId) = 0;
 
+    /* Resets locked modifier state */
+    virtual void resetLockedModifierState() = 0;
+
     /* Determine whether physical keys exist for the given framework-domain key codes. */
     virtual bool hasKeys(int32_t deviceId, uint32_t sourceMask,
                          const std::vector<int32_t>& keyCodes, uint8_t* outFlags) = 0;

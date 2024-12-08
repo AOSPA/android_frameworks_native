@@ -200,6 +200,7 @@ filegroup {
     name: "libsurfaceflinger_sources",
     srcs: [
         ":libsurfaceflinger_backend_sources",
+        "ActivePictureUpdater.cpp",
         "BackgroundExecutor.cpp",
         "Client.cpp",
         "ClientCache.cpp",

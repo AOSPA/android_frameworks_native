@@ -342,8 +342,15 @@ void LayerFE::prepareShadowClientComposition(LayerFE::LayerSettings& caster,
     caster.shadow = state;
 }
 
-CompositionResult&& LayerFE::stealCompositionResult() {
-    return std::move(mCompositionResult);
+void LayerFE::onPictureProfileCommitted() {
+    mCompositionResult.wasPictureProfileCommitted = true;
+    mCompositionResult.pictureProfileHandle = mSnapshot->pictureProfileHandle;
+}
+
+CompositionResult LayerFE::stealCompositionResult() {
+    CompositionResult result;
+    std::swap(mCompositionResult, result);
+    return result;
 }
 
 const char* LayerFE::getDebugName() const {

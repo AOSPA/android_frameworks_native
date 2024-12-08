@@ -107,14 +107,18 @@ ABinderRpc_AccessorProvider* ABinderRpc_registerAccessorProvider(
         ABinderRpc_AccessorProvider_getAccessorCallback provider,
         const char* const* const instances, size_t numInstances, void* data,
         ABinderRpc_AccessorProviderUserData_deleteCallback onDelete) {
-    if (provider == nullptr) {
-        ALOGE("Null provider passed to ABinderRpc_registerAccessorProvider");
-        return nullptr;
-    }
     if (data && onDelete == nullptr) {
         ALOGE("If a non-null data ptr is passed to ABinderRpc_registerAccessorProvider, then a "
               "ABinderRpc_AccessorProviderUserData_deleteCallback must also be passed to delete "
               "the data object once the ABinderRpc_AccessorProvider is removed.");
+        return nullptr;
+    }
+    // call the onDelete when the last reference of this goes away (when the
+    // last reference to the generate std::function goes away).
+    std::shared_ptr<OnDeleteProviderHolder> onDeleteHolder =
+            std::make_shared<OnDeleteProviderHolder>(data, onDelete);
+    if (provider == nullptr) {
+        ALOGE("Null provider passed to ABinderRpc_registerAccessorProvider");
         return nullptr;
     }
     if (numInstances == 0 || instances == nullptr) {
@@ -126,10 +130,6 @@ ABinderRpc_AccessorProvider* ABinderRpc_registerAccessorProvider(
     for (size_t i = 0; i < numInstances; i++) {
         instanceStrings.emplace(instances[i]);
     }
-    // call the onDelete when the last reference of this goes away (when the
-    // last reference to the generate std::function goes away).
-    std::shared_ptr<OnDeleteProviderHolder> onDeleteHolder =
-            std::make_shared<OnDeleteProviderHolder>(data, onDelete);
     android::RpcAccessorProvider generate = [provider,
                                              onDeleteHolder](const String16& name) -> sp<IBinder> {
         ABinderRpc_Accessor* accessor = provider(String8(name).c_str(), onDeleteHolder->mData);

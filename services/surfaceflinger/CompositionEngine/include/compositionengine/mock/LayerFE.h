@@ -58,6 +58,7 @@ public:
     MOCK_CONST_METHOD0(hasRoundedCorners, bool());
     MOCK_CONST_METHOD0(getMetadata, gui::LayerMetadata*());
     MOCK_CONST_METHOD0(getRelativeMetadata, gui::LayerMetadata*());
+    MOCK_METHOD0(onPictureProfileCommitted, void());
 
     /* QTI_BEGIN */
     MOCK_CONST_METHOD0(getLayerId, int32_t());

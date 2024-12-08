@@ -69,6 +69,8 @@ public:
 
     void toggleCapsLockState(int32_t deviceId) override;
 
+    void resetLockedModifierState() override;
+
     bool hasKeys(int32_t deviceId, uint32_t sourceMask, const std::vector<int32_t>& keyCodes,
                  uint8_t* outFlags) override;
 

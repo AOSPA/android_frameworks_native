@@ -139,6 +139,8 @@ typedef void (*ABinderRpc_AccessorProviderUserData_deleteCallback)(void* _Nullab
  *         registered. In the error case of duplicate instances, if data was
  *         provided with a ABinderRpc_AccessorProviderUserData_deleteCallback,
  *         the callback will be called to delete the data.
+ *         If nullptr is returned, ABinderRpc_AccessorProviderUserData_deleteCallback
+ *         will be called on data immediately.
  *         Otherwise returns a pointer to the ABinderRpc_AccessorProvider that
  *         can be used to remove with ABinderRpc_unregisterAccessorProvider.
  */
