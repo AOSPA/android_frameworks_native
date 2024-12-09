@@ -926,6 +926,33 @@ TEST_F(KeyboardInputMapperTest, Process_toggleCapsLockState) {
     ASSERT_EQ(AMETA_CAPS_LOCK_ON, mapper.getMetaState());
 }
 
+TEST_F(KeyboardInputMapperTest, Process_ResetLockedModifierState) {
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_CAPSLOCK, 0, AKEYCODE_CAPS_LOCK, 0);
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_NUMLOCK, 0, AKEYCODE_NUM_LOCK, 0);
+    mFakeEventHub->addKey(EVENTHUB_ID, KEY_SCROLLLOCK, 0, AKEYCODE_SCROLL_LOCK, 0);
+
+    KeyboardInputMapper& mapper =
+            constructAndAddMapper<KeyboardInputMapper>(AINPUT_SOURCE_KEYBOARD);
+    // Initial metastate is AMETA_NONE.
+    ASSERT_EQ(AMETA_NONE, mapper.getMetaState());
+
+    // Toggle caps lock on.
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_CAPSLOCK, 1);
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_CAPSLOCK, 0);
+
+    // Toggle num lock on.
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_NUMLOCK, 1);
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_NUMLOCK, 0);
+
+    // Toggle scroll lock on.
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_SCROLLLOCK, 1);
+    process(mapper, ARBITRARY_TIME, READ_TIME, EV_KEY, KEY_SCROLLLOCK, 0);
+    ASSERT_EQ(AMETA_CAPS_LOCK_ON | AMETA_NUM_LOCK_ON | AMETA_SCROLL_LOCK_ON, mapper.getMetaState());
+
+    mReader->resetLockedModifierState();
+    ASSERT_EQ(AMETA_NONE, mapper.getMetaState());
+}
+
 TEST_F(KeyboardInputMapperTest, Process_LockedKeysShouldToggleInMultiDevices) {
     // keyboard 1.
     mFakeEventHub->addLed(EVENTHUB_ID, LED_CAPSL, true /*initially on*/);

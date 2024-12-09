@@ -590,6 +590,11 @@ void InputReader::toggleCapsLockState(int32_t deviceId) {
     }
 }
 
+void InputReader::resetLockedModifierState() {
+    std::scoped_lock _l(mLock);
+    updateLedMetaStateLocked(0);
+}
+
 bool InputReader::hasKeys(int32_t deviceId, uint32_t sourceMask,
                           const std::vector<int32_t>& keyCodes, uint8_t* outFlags) {
     std::scoped_lock _l(mLock);

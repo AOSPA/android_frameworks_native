@@ -472,8 +472,10 @@ status_t BufferQueueProducer::dequeueBuffer(int* outSlot, sp<android::Fence>* ou
     }
 
     status_t returnFlags = NO_ERROR;
+#if !COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
     EGLDisplay eglDisplay = EGL_NO_DISPLAY;
     EGLSyncKHR eglFence = EGL_NO_SYNC_KHR;
+#endif
     bool attachedByConsumer = false;
 
     sp<IConsumerListener> listener;
@@ -590,8 +592,10 @@ status_t BufferQueueProducer::dequeueBuffer(int* outSlot, sp<android::Fence>* ou
             mSlots[found].mAcquireCalled = false;
             mSlots[found].mGraphicBuffer = nullptr;
             mSlots[found].mRequestBufferCalled = false;
+#if !COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
             mSlots[found].mEglDisplay = EGL_NO_DISPLAY;
             mSlots[found].mEglFence = EGL_NO_SYNC_KHR;
+#endif
             mSlots[found].mFence = Fence::NO_FENCE;
             mCore->mBufferAge = 0;
             mCore->mIsAllocating = true;
@@ -616,14 +620,18 @@ status_t BufferQueueProducer::dequeueBuffer(int* outSlot, sp<android::Fence>* ou
                     found, buffer->width, buffer->height, buffer->format);
         }
 
+#if !COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
         eglDisplay = mSlots[found].mEglDisplay;
         eglFence = mSlots[found].mEglFence;
+#endif
         // Don't return a fence in shared buffer mode, except for the first
         // frame.
         *outFence = (mCore->mSharedBufferMode &&
                 mCore->mSharedBufferSlot == found) ?
                 Fence::NO_FENCE : mSlots[found].mFence;
+#if !COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
         mSlots[found].mEglFence = EGL_NO_SYNC_KHR;
+#endif
         mSlots[found].mFence = Fence::NO_FENCE;
 
         // If shared buffer mode has just been enabled, cache the slot of the
@@ -712,6 +720,7 @@ status_t BufferQueueProducer::dequeueBuffer(int* outSlot, sp<android::Fence>* ou
         returnFlags |= BUFFER_NEEDS_REALLOCATION;
     }
 
+#if !COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
     if (eglFence != EGL_NO_SYNC_KHR) {
         EGLint result = eglClientWaitSyncKHR(eglDisplay, eglFence, 0,
                 1000000000);
@@ -726,6 +735,7 @@ status_t BufferQueueProducer::dequeueBuffer(int* outSlot, sp<android::Fence>* ou
         }
         eglDestroySyncKHR(eglDisplay, eglFence);
     }
+#endif
 
     BQ_LOGV("dequeueBuffer: returning slot=%d/%" PRIu64 " buf=%p flags=%#x",
             *outSlot,
@@ -929,7 +939,9 @@ status_t BufferQueueProducer::attachBuffer(int* outSlot,
 
     mSlots[*outSlot].mGraphicBuffer = buffer;
     mSlots[*outSlot].mBufferState.attachProducer();
+#if !COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
     mSlots[*outSlot].mEglFence = EGL_NO_SYNC_KHR;
+#endif
     mSlots[*outSlot].mFence = Fence::NO_FENCE;
     mSlots[*outSlot].mRequestBufferCalled = true;
     mSlots[*outSlot].mAcquireCalled = false;

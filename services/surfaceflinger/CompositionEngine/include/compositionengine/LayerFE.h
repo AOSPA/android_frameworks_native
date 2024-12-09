@@ -161,6 +161,9 @@ public:
     // Checks if the buffer's release fence has been set
     virtual LayerFE::ReleaseFencePromiseStatus getReleaseFencePromiseStatus() = 0;
 
+    // Indicates that the picture profile request was applied to this layer.
+    virtual void onPictureProfileCommitted() = 0;
+
     // Gets some kind of identifier for the layer for debug purposes.
     virtual const char* getDebugName() const = 0;
 

@@ -6,3 +6,7 @@ per-file input_transfer_token.h = file:platform/frameworks/base:/services/core/j
 
 # CoGS
 per-file *luts* = file:platform/frameworks/base:/graphics/java/android/graphics/OWNERS
+
+# ADPF
+per-file performance_hint.h = file:platform/frameworks/base:/ADPF_OWNERS
+per-file thermal.h = file:platform/frameworks/base:/ADPF_OWNERS

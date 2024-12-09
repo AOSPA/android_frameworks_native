@@ -14,15 +14,18 @@
  * limitations under the License.
  */
 
+#include <TestEventMatchers.h>
 #include <android-base/logging.h>
 #include <attestation/HmacKeyManager.h>
 #include <ftl/enum.h>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <input/BlockingQueue.h>
 #include <input/InputConsumerNoResampling.h>
 #include <input/InputTransport.h>
 
 using android::base::Result;
+using ::testing::Matcher;
 
 namespace android {
 
@@ -278,7 +281,7 @@ protected:
     void SetUp() override {
         std::unique_ptr<InputChannel> serverChannel;
         status_t result =
-                InputChannel::openInputChannelPair("channel name", serverChannel, mClientChannel);
+                InputChannel::openInputChannelPair("test channel", serverChannel, mClientChannel);
         ASSERT_EQ(OK, result);
 
         mPublisher = std::make_unique<InputPublisher>(std::move(serverChannel));
@@ -336,6 +339,8 @@ protected:
     // accessed on the test thread.
     BlockingQueue<bool> mProbablyHasInputResponses;
 
+    std::unique_ptr<MotionEvent> assertReceivedMotionEvent(const Matcher<MotionEvent>& matcher);
+
 private:
     sp<MessageHandler> mMessageHandler;
     void handleMessage(const Message& message);
@@ -387,6 +392,20 @@ private:
 void InputPublisherAndConsumerNoResamplingTest::sendMessage(LooperMessage message) {
     Message msg{ftl::to_underlying(message)};
     mLooper->sendMessage(mMessageHandler, msg);
+}
+
+std::unique_ptr<MotionEvent> InputPublisherAndConsumerNoResamplingTest::assertReceivedMotionEvent(
+        const Matcher<MotionEvent>& matcher) {
+    std::optional<std::unique_ptr<MotionEvent>> event = mMotionEvents.popWithTimeout(TIMEOUT);
+    if (!event) {
+        ADD_FAILURE() << "No event was received, but expected motion " << matcher;
+        return nullptr;
+    }
+    if (*event == nullptr) {
+        LOG(FATAL) << "Event was received, but it was null";
+    }
+    EXPECT_THAT(**event, matcher);
+    return std::move(*event);
 }
 
 void InputPublisherAndConsumerNoResamplingTest::handleMessage(const Message& message) {
@@ -572,8 +591,7 @@ void InputPublisherAndConsumerNoResamplingTest::publishAndConsumeSinglePointerMu
     const nsecs_t publishTimeOfDown = systemTime(SYSTEM_TIME_MONOTONIC);
     publishMotionEvent(*mPublisher, argsDown);
 
-    // Consume the DOWN event.
-    ASSERT_TRUE(mMotionEvents.popWithTimeout(TIMEOUT).has_value());
+    assertReceivedMotionEvent(WithMotionAction(AMOTION_EVENT_ACTION_DOWN));
 
     verifyFinishedSignal(*mPublisher, mSeq, publishTimeOfDown);
 
@@ -622,10 +640,10 @@ void InputPublisherAndConsumerNoResamplingTest::publishAndConsumeSinglePointerMu
     // the motion as a batched event, or as a sequence of multiple single-sample MotionEvents (or a
     // mix of those)
     while (singleSampledMotionEvents.size() != nSamples) {
-        const std::optional<std::unique_ptr<MotionEvent>> batchedMotionEvent =
-                mMotionEvents.popWithTimeout(TIMEOUT);
+        const std::unique_ptr<MotionEvent> batchedMotionEvent =
+                assertReceivedMotionEvent(WithMotionAction(ACTION_MOVE));
         // The events received by these calls are never null
-        std::vector<MotionEvent> splitMotionEvents = splitBatchedMotionEvent(**batchedMotionEvent);
+        std::vector<MotionEvent> splitMotionEvents = splitBatchedMotionEvent(*batchedMotionEvent);
         singleSampledMotionEvents.insert(singleSampledMotionEvents.end(), splitMotionEvents.begin(),
                                          splitMotionEvents.end());
     }
@@ -681,10 +699,7 @@ void InputPublisherAndConsumerNoResamplingTest::publishAndConsumeBatchedMotionMo
     }
     mNotifyLooperMayProceed.notify_all();
 
-    std::optional<std::unique_ptr<MotionEvent>> optMotion = mMotionEvents.popWithTimeout(TIMEOUT);
-    ASSERT_TRUE(optMotion.has_value());
-    std::unique_ptr<MotionEvent> motion = std::move(*optMotion);
-    ASSERT_EQ(ACTION_MOVE, motion->getAction());
+    assertReceivedMotionEvent(WithMotionAction(ACTION_MOVE));
 
     verifyFinishedSignal(*mPublisher, seq, publishTime);
 }
@@ -696,9 +711,7 @@ void InputPublisherAndConsumerNoResamplingTest::publishAndConsumeMotionEvent(
     nsecs_t publishTime = systemTime(SYSTEM_TIME_MONOTONIC);
     publishMotionEvent(*mPublisher, args);
 
-    std::optional<std::unique_ptr<MotionEvent>> optMotion = mMotionEvents.popWithTimeout(TIMEOUT);
-    ASSERT_TRUE(optMotion.has_value());
-    std::unique_ptr<MotionEvent> event = std::move(*optMotion);
+    std::unique_ptr<MotionEvent> event = assertReceivedMotionEvent(WithMotionAction(action));
 
     verifyArgsEqualToEvent(args, *event);
 

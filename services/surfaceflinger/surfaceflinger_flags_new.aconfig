@@ -19,6 +19,13 @@ flag {
 } # adpf_gpu_sf
 
 flag {
+  name: "adpf_native_session_manager"
+  namespace: "game"
+  description: "Controls ADPF SessionManager being enabled in SF"
+  bug: "367803904"
+} # adpf_sessionmanager
+
+flag {
   name: "arr_setframerate_api"
   namespace: "core_graphics"
   description: "New SDK Surface#setFrameRate API and Surface.FrameRateParams for Android 16"
@@ -33,6 +40,14 @@ flag {
   bug: "356987016"
   is_fixed_read_only: true
 } # arr_surfacecontrol_setframerate_api
+
+flag {
+  name: "begone_bright_hlg"
+  namespace: "core_graphics"
+  description: "Caps HLG brightness relative to SDR"
+  bug: "362510107"
+  is_fixed_read_only: true
+} # begone_bright_hlg
 
 flag {
   name: "ce_fence_promise"

@@ -51,6 +51,7 @@ public:
     bool refresh_rate_overlay_on_external_display() const;
     bool adpf_gpu_sf() const;
     bool adpf_use_fmq_channel() const;
+    bool adpf_native_session_manager() const;
     bool adpf_use_fmq_channel_fixed() const;
 
     /// Trunk stable readonly flags ///
@@ -61,7 +62,6 @@ public:
     bool stable_edid_ids() const;
     bool misc1() const;
     bool vrr_config() const;
-    bool hotplug2() const;
     bool hdcp_level_hal() const;
     bool multithreaded_present() const;
     bool add_sf_skipped_frames_to_trace() const;
@@ -99,6 +99,7 @@ public:
     bool connected_display_hdr() const;
     bool deprecate_frame_tracker() const;
     bool skip_invisible_windows_in_input() const;
+    bool begone_bright_hlg() const;
 
 protected:
     // overridden for unit tests

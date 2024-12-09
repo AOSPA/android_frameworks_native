@@ -54,6 +54,8 @@ public:
     MOCK_METHOD(HalResult<aidl::android::hardware::power::ChannelConfig>, getSessionChannel,
                 (int tgid, int uid), (override));
     MOCK_METHOD(HalResult<void>, closeSessionChannel, (int tgid, int uid), (override));
+    MOCK_METHOD(HalResult<aidl::android::hardware::power::SupportInfo>, getSupportInfo, (),
+                (override));
 };
 
 } // namespace android::adpf::mock

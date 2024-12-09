@@ -154,8 +154,7 @@ status_t EGLConsumer::releaseTexImage(SurfaceTexture& st) {
             }
         }
 
-        err = st.releaseBufferLocked(buf, st.mSlots[buf].mGraphicBuffer, mEglDisplay,
-                                     EGL_NO_SYNC_KHR);
+        err = st.releaseBufferLocked(buf, st.mSlots[buf].mGraphicBuffer);
         if (err < NO_ERROR) {
             EGC_LOGE("releaseTexImage: failed to release buffer: %s (%d)", strerror(-err), err);
             return err;
@@ -238,14 +237,14 @@ status_t EGLConsumer::updateAndReleaseLocked(const BufferItem& item, PendingRele
     if (st.mOpMode != SurfaceTexture::OpMode::attachedToGL) {
         EGC_LOGE("updateAndRelease: EGLConsumer is not attached to an OpenGL "
                  "ES context");
-        st.releaseBufferLocked(slot, st.mSlots[slot].mGraphicBuffer, mEglDisplay, EGL_NO_SYNC_KHR);
+        st.releaseBufferLocked(slot, st.mSlots[slot].mGraphicBuffer);
         return INVALID_OPERATION;
     }
 
     // Confirm state.
     err = checkAndUpdateEglStateLocked(st);
     if (err != NO_ERROR) {
-        st.releaseBufferLocked(slot, st.mSlots[slot].mGraphicBuffer, mEglDisplay, EGL_NO_SYNC_KHR);
+        st.releaseBufferLocked(slot, st.mSlots[slot].mGraphicBuffer);
         return err;
     }
 
@@ -258,7 +257,7 @@ status_t EGLConsumer::updateAndReleaseLocked(const BufferItem& item, PendingRele
     if (err != NO_ERROR) {
         EGC_LOGW("updateAndRelease: unable to createImage on display=%p slot=%d", mEglDisplay,
                  slot);
-        st.releaseBufferLocked(slot, st.mSlots[slot].mGraphicBuffer, mEglDisplay, EGL_NO_SYNC_KHR);
+        st.releaseBufferLocked(slot, st.mSlots[slot].mGraphicBuffer);
         return UNKNOWN_ERROR;
     }
 
@@ -270,8 +269,7 @@ status_t EGLConsumer::updateAndReleaseLocked(const BufferItem& item, PendingRele
             // release the old buffer, so instead we just drop the new frame.
             // As we are still under lock since acquireBuffer, it is safe to
             // release by slot.
-            st.releaseBufferLocked(slot, st.mSlots[slot].mGraphicBuffer, mEglDisplay,
-                                   EGL_NO_SYNC_KHR);
+            st.releaseBufferLocked(slot, st.mSlots[slot].mGraphicBuffer);
             return err;
         }
     }
