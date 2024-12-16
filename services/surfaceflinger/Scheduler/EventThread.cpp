@@ -43,6 +43,7 @@
 #include <utils/Errors.h>
 
 #include <common/FlagManager.h>
+#include <scheduler/FrameRateMode.h>
 #include <scheduler/VsyncConfig.h>
 #include "FrameTimeline.h"
 #include "VSyncDispatch.h"
@@ -102,6 +103,10 @@ std::string toString(const DisplayEventReceiver::Event& event) {
                                 to_string(event.header.displayId).c_str(),
                                 event.hdcpLevelsChange.connectedLevel,
                                 event.hdcpLevelsChange.maxLevel);
+        case DisplayEventReceiver::DISPLAY_EVENT_MODE_REJECTION:
+            return StringPrintf("ModeRejected{displayId=%s, modeId=%u}",
+                                to_string(event.header.displayId).c_str(),
+                                event.modeRejection.modeId);
         default:
             return "Event{}";
     }
@@ -183,6 +188,18 @@ DisplayEventReceiver::Event makeHdcpLevelsChange(PhysicalDisplayId displayId,
                     },
             .hdcpLevelsChange.connectedLevel = connectedLevel,
             .hdcpLevelsChange.maxLevel = maxLevel,
+    };
+}
+
+DisplayEventReceiver::Event makeModeRejection(PhysicalDisplayId displayId, DisplayModeId modeId) {
+    return DisplayEventReceiver::Event{
+            .header =
+                    DisplayEventReceiver::Event::Header{
+                            .type = DisplayEventReceiver::DISPLAY_EVENT_MODE_REJECTION,
+                            .displayId = displayId,
+                            .timestamp = systemTime(),
+                    },
+            .modeRejection.modeId = ftl::to_underlying(modeId),
     };
 }
 
@@ -478,6 +495,13 @@ void EventThread::onHdcpLevelsChanged(PhysicalDisplayId displayId, int32_t conne
     std::lock_guard<std::mutex> lock(mMutex);
 
     mPendingEvents.push_back(makeHdcpLevelsChange(displayId, connectedLevel, maxLevel));
+    mCondition.notify_all();
+}
+
+void EventThread::onModeRejected(PhysicalDisplayId displayId, DisplayModeId modeId) {
+    std::lock_guard<std::mutex> lock(mMutex);
+
+    mPendingEvents.push_back(makeModeRejection(displayId, modeId));
     mCondition.notify_all();
 }
 

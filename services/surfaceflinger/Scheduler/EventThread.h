@@ -21,6 +21,7 @@
 #include <gui/DisplayEventReceiver.h>
 #include <private/gui/BitTube.h>
 #include <sys/types.h>
+#include <ui/DisplayId.h>
 #include <utils/Errors.h>
 
 #include <scheduler/FrameRateMode.h>
@@ -32,6 +33,7 @@
 #include <thread>
 #include <vector>
 
+#include "DisplayHardware/DisplayMode.h"
 #include "TracedOrdinal.h"
 #include "VSyncDispatch.h"
 #include "VsyncSchedule.h"
@@ -115,6 +117,9 @@ public:
     // called when SF changes the active mode and apps needs to be notified about the change
     virtual void onModeChanged(const scheduler::FrameRateMode&) = 0;
 
+    // called when SF rejects the mode change request
+    virtual void onModeRejected(PhysicalDisplayId displayId, DisplayModeId modeId) = 0;
+
     // called when SF updates the Frame Rate Override list
     virtual void onFrameRateOverridesChanged(PhysicalDisplayId displayId,
                                              std::vector<FrameRateOverride> overrides) = 0;
@@ -178,6 +183,8 @@ public:
     void onHotplugConnectionError(int32_t connectionError) override;
 
     void onModeChanged(const scheduler::FrameRateMode&) override;
+
+    void onModeRejected(PhysicalDisplayId displayId, DisplayModeId modeId) override;
 
     void onFrameRateOverridesChanged(PhysicalDisplayId displayId,
                                      std::vector<FrameRateOverride> overrides) override;

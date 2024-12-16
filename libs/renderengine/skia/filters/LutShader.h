@@ -21,6 +21,7 @@
 
 #include <aidl/android/hardware/graphics/composer3/LutProperties.h>
 #include <gui/DisplayLuts.h>
+#include <ui/GraphicTypes.h>
 
 namespace android {
 namespace renderengine {
@@ -29,13 +30,13 @@ namespace skia {
 class LutShader {
 public:
     sk_sp<SkShader> lutShader(sk_sp<SkShader>& input, std::shared_ptr<gui::DisplayLuts> displayLuts,
-                              sk_sp<SkColorSpace> outColorSpace);
+                              ui::Dataspace srcDataspace, sk_sp<SkColorSpace> outColorSpace);
 
 private:
     sk_sp<SkShader> generateLutShader(sk_sp<SkShader> input, const std::vector<float>& buffers,
                                       const int32_t offset, const int32_t length,
                                       const int32_t dimension, const int32_t size,
-                                      const int32_t samplingKey);
+                                      const int32_t samplingKey, ui::Dataspace srcDataspace);
     std::unique_ptr<SkRuntimeShaderBuilder> mBuilder;
 };
 

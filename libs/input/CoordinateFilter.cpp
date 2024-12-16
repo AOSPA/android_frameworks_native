@@ -23,7 +23,7 @@ namespace android {
 CoordinateFilter::CoordinateFilter(float minCutoffFreq, float beta)
       : mXFilter{minCutoffFreq, beta}, mYFilter{minCutoffFreq, beta} {}
 
-void CoordinateFilter::filter(std::chrono::duration<float> timestamp, PointerCoords& coords) {
+void CoordinateFilter::filter(std::chrono::nanoseconds timestamp, PointerCoords& coords) {
     coords.setAxisValue(AMOTION_EVENT_AXIS_X, mXFilter.filter(timestamp, coords.getX()));
     coords.setAxisValue(AMOTION_EVENT_AXIS_Y, mYFilter.filter(timestamp, coords.getY()));
 }

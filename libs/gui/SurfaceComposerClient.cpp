@@ -2897,6 +2897,11 @@ void SurfaceComposerClient::getDynamicDisplayInfoInternal(gui::DynamicDisplayInf
     outInfo->hasArrSupport = ginfo.hasArrSupport;
     outInfo->frameRateCategoryRate = ui::FrameRateCategoryRate(ginfo.frameRateCategoryRate.normal,
                                                                ginfo.frameRateCategoryRate.high);
+    outInfo->supportedRefreshRates.clear();
+    outInfo->supportedRefreshRates.reserve(ginfo.supportedRefreshRates.size());
+    for (const auto rate : ginfo.supportedRefreshRates) {
+        outInfo->supportedRefreshRates.push_back(static_cast<float>(rate));
+    }
 }
 
 status_t SurfaceComposerClient::getDynamicDisplayInfoFromId(int64_t displayId,

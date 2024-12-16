@@ -28,6 +28,7 @@
 
 #include <sys/cdefs.h>
 
+#include <android/display_luts.h>
 #include <android/choreographer.h>
 #include <android/data_space.h>
 #include <android/hardware_buffer.h>
@@ -713,6 +714,23 @@ void ASurfaceTransaction_setDesiredHdrHeadroom(ASurfaceTransaction* _Nonnull tra
         __INTRODUCED_IN(__ANDROID_API_V__);
 
 /**
+ * Sets the Lut(s) to be applied for the layer.
+ *
+ * The function makes a deep copy of the provided `luts`.
+ * Any modifications made to the `luts` object after calling this function
+ * will not affect the Lut(s) applied to the layer.
+ *
+ * @param surface_control The layer where Lut(s) is being applied
+ * @param luts The Lut(s) to be applied
+ *
+ * Available since API level 36.
+ */
+void ASurfaceTransaction_setLuts(ASurfaceTransaction* _Nonnull transaction,
+                                 ASurfaceControl* _Nonnull surface_control,
+                                 const struct ADisplayLuts* _Nullable luts)
+        __INTRODUCED_IN(36);
+
+/**
  * Same as ASurfaceTransaction_setFrameRateWithChangeStrategy(transaction, surface_control,
  * frameRate, compatibility, ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS).
  *
@@ -761,69 +779,6 @@ void ASurfaceTransaction_setFrameRateWithChangeStrategy(ASurfaceTransaction* _No
                                                         float frameRate, int8_t compatibility,
                                                         int8_t changeFrameRateStrategy)
                                                         __INTRODUCED_IN(31);
-
-/**
- * Sets the intended frame rate for the given \a surface_control.
- *
- * On devices that are capable of running the display at different frame rates,
- * the system may choose a display refresh rate to better match this surface's frame
- * rate. Usage of this API won't introduce frame rate throttling, or affect other
- * aspects of the application's frame production pipeline. However, because the system
- * may change the display refresh rate, calls to this function may result in changes
- * to Choreographer callback timings, and changes to the time interval at which the
- * system releases buffers back to the application.
- *
- * You can register for changes in the refresh rate using
- * \a AChoreographer_registerRefreshRateCallback.
- *
- * See ASurfaceTransaction_clearFrameRate().
- *
- * Available since API level 36.
- *
- * \param desiredMinRate The desired minimum frame rate (inclusive) for the surface, specifying that
- * the surface prefers the device render rate to be at least `desiredMinRate`.
- *
- * <p>Set `desiredMinRate` = `desiredMaxRate` to indicate the surface prefers an exact frame rate.
- *
- * <p>Set `desiredMinRate` = 0 to indicate the surface has no preference
- * and any frame rate is acceptable.
- *
- * <p>The value should be greater than or equal to 0.
- *
- * \param desiredMaxRate The desired maximum frame rate (inclusive) for the surface, specifying that
- * the surface prefers the device render rate to be at most `desiredMaxRate`.
- *
- * <p>Set `desiredMaxRate` = `desiredMinRate` to indicate the surface prefers an exact frame rate.
- *
- * <p>Set `desiredMaxRate` = positive infinity to indicate the surface has no preference
- * and any frame rate is acceptable.
- *
- * <p>The value should be greater than or equal to `desiredMinRate`.
- *
- * \param fixedSourceRate The "fixed source" frame rate of the surface if the content has an
- * inherently fixed frame rate, e.g. a video that has a specific frame rate.
- *
- * <p>When the frame rate chosen for the surface is the `fixedSourceRate` or a
- * multiple, the surface can render without frame pulldown, for optimal smoothness. For
- * example, a 30 fps video (`fixedSourceRate`=30) renders just as smoothly on 30 fps,
- * 60 fps, 90 fps, 120 fps, and so on.
- *
- * <p>Setting the fixed source rate can also be used together with a desired
- * frame rate min and max via setting `desiredMinRate` and `desiredMaxRate`. This still
- * means the surface's content has a fixed frame rate of `fixedSourceRate`, but additionally
- * specifies the preference to be in the range [`desiredMinRate`, `desiredMaxRate`]. For example, an
- * app might want to specify there is 30 fps video (`fixedSourceRate`=30) as well as a smooth
- * animation on the same surface which looks good when drawing within a frame rate range such as
- * [`desiredMinRate`, `desiredMaxRate`] = [60,120].
- *
- * \param changeFrameRateStrategy Whether display refresh rate transitions caused by this surface
- * should be seamless. A seamless transition is one that doesn't have any visual interruptions, such
- * as a black screen for a second or two.
- */
-void ASurfaceTransaction_setFrameRateParams(
-        ASurfaceTransaction* _Nonnull transaction, ASurfaceControl* _Nonnull surface_control,
-        float desiredMinRate, float desiredMaxRate, float fixedSourceRate,
-        ANativeWindow_ChangeFrameRateStrategy changeFrameRateStrategy) __INTRODUCED_IN(36);
 
 /**
  * Clears the frame rate which is set for \a surface_control.

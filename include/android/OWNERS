@@ -9,4 +9,5 @@ per-file *luts* = file:platform/frameworks/base:/graphics/java/android/graphics/
 
 # ADPF
 per-file performance_hint.h = file:platform/frameworks/base:/ADPF_OWNERS
+per-file system_health.h = file:platform/frameworks/base:/ADPF_OWNERS
 per-file thermal.h = file:platform/frameworks/base:/ADPF_OWNERS

@@ -264,6 +264,7 @@ filegroup {
         "DisplayEventDispatcher.cpp",
         "DisplayEventReceiver.cpp",
         "FenceMonitor.cpp",
+        "Flags.cpp",
         "GLConsumer.cpp",
         "IConsumerListener.cpp",
         "IGraphicBufferConsumer.cpp",

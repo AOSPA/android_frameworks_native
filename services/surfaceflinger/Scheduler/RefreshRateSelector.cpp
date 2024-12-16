@@ -1532,6 +1532,9 @@ void RefreshRateSelector::constructAvailableRefreshRates() {
 
     mPrimaryFrameRates = filterRefreshRates(policy->primaryRanges, "primary");
     mAppRequestFrameRates = filterRefreshRates(policy->appRequestRanges, "app request");
+    mAllFrameRates = filterRefreshRates(FpsRanges(getSupportedFrameRateRangeLocked(),
+                                                  getSupportedFrameRateRangeLocked()),
+                                        "full frame rates");
 }
 
 bool RefreshRateSelector::isVrrDevice() const {
@@ -1555,6 +1558,27 @@ Fps RefreshRateSelector::findClosestKnownFrameRate(Fps frameRate) const {
     const auto distance1 = std::abs(frameRate.getValue() - lowerBound->getValue());
     const auto distance2 = std::abs(frameRate.getValue() - std::prev(lowerBound)->getValue());
     return distance1 < distance2 ? *lowerBound : *std::prev(lowerBound);
+}
+
+std::vector<float> RefreshRateSelector::getSupportedFrameRates() const {
+    std::scoped_lock lock(mLock);
+    // TODO(b/356986687) Remove the limit once we have the anchor list implementation.
+    const size_t frameRatesSize = std::min<size_t>(11, mAllFrameRates.size());
+    std::vector<float> supportedFrameRates;
+    supportedFrameRates.reserve(frameRatesSize);
+    std::transform(mAllFrameRates.rbegin(),
+                   mAllFrameRates.rbegin() + static_cast<int>(frameRatesSize),
+                   std::back_inserter(supportedFrameRates),
+                   [](FrameRateMode mode) { return mode.fps.getValue(); });
+    return supportedFrameRates;
+}
+
+FpsRange RefreshRateSelector::getSupportedFrameRateRangeLocked() const {
+    using fps_approx_ops::operator<;
+    if (mMaxRefreshRateModeIt->second->getPeakFps() < kMinSupportedFrameRate) {
+        return {mMaxRefreshRateModeIt->second->getPeakFps(), kMinSupportedFrameRate};
+    }
+    return {kMinSupportedFrameRate, mMaxRefreshRateModeIt->second->getPeakFps()};
 }
 
 auto RefreshRateSelector::getIdleTimerAction() const -> KernelIdleTimerAction {

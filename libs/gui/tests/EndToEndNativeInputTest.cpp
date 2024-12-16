@@ -75,7 +75,7 @@ sp<IInputFlinger> getInputFlinger() {
     if (input == nullptr) {
         ALOGE("Failed to link to input service");
     } else {
-        ALOGE("Linked to input");
+        ALOGI("Linked to input");
     }
     return interface_cast<IInputFlinger>(input);
 }

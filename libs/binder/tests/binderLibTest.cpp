@@ -223,6 +223,8 @@ class BinderLibTestEnv : public ::testing::Environment {
             ASSERT_GT(m_serverpid, 0);
 
             sp<IServiceManager> sm = defaultServiceManager();
+            // disable caching during addService.
+            sm->enableAddServiceCache(false);
             //printf("%s: pid %d, get service\n", __func__, m_pid);
             LIBBINDER_IGNORE("-Wdeprecated-declarations")
             m_server = sm->getService(binderLibTestServiceName);
@@ -298,6 +300,9 @@ class BinderLibTest : public ::testing::Test {
         virtual void SetUp() {
             m_server = static_cast<BinderLibTestEnv *>(binder_env)->getServer();
             IPCThreadState::self()->restoreCallingWorkSource(0);
+            sp<IServiceManager> sm = defaultServiceManager();
+            // disable caching during addService.
+            sm->enableAddServiceCache(false);
         }
         virtual void TearDown() {
         }
@@ -1765,6 +1770,7 @@ TEST_F(BinderLibTest, TooManyFdsFlattenable) {
 
 TEST(ServiceNotifications, Unregister) {
     auto sm = defaultServiceManager();
+    sm->enableAddServiceCache(false);
     using LocalRegistrationCallback = IServiceManager::LocalRegistrationCallback;
     class LocalRegistrationCallbackImpl : public virtual LocalRegistrationCallback {
         void onServiceRegistration(const String16 &, const sp<IBinder> &) override {}
@@ -2529,6 +2535,8 @@ int run_server(int index, int readypipefd, bool usePoll)
 
     status_t ret;
     sp<IServiceManager> sm = defaultServiceManager();
+    sm->enableAddServiceCache(false);
+
     BinderLibTestService* testServicePtr;
     {
         sp<BinderLibTestService> testService = new BinderLibTestService(index);

@@ -79,6 +79,7 @@
 #include "BackgroundExecutor.h"
 #include "Display/DisplayModeController.h"
 #include "Display/PhysicalDisplay.h"
+#include "Display/VirtualDisplaySnapshot.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWC2.h"
 #include "DisplayIdGenerator.h"
@@ -724,7 +725,7 @@ private:
     void onChoreographerAttached() override;
     void onExpectedPresentTimePosted(TimePoint expectedPresentTime, ftl::NonNull<DisplayModePtr>,
                                      Fps renderRate) override;
-    void onCommitNotComposited(PhysicalDisplayId pacesetterDisplayId) override
+    void onCommitNotComposited() override
             REQUIRES(kMainThreadContext);
     void vrrDisplayIdle(bool idle) override;
 
@@ -1103,8 +1104,20 @@ private:
     void enableHalVirtualDisplays(bool);
 
     // Virtual display lifecycle for ID generation and HAL allocation.
-    VirtualDisplayId acquireVirtualDisplay(ui::Size, ui::PixelFormat) REQUIRES(mStateLock);
+    VirtualDisplayId acquireVirtualDisplay(ui::Size, ui::PixelFormat, const std::string& uniqueId)
+            REQUIRES(mStateLock);
+    template <typename ID>
+    void acquireVirtualDisplaySnapshot(ID displayId, const std::string& uniqueId) {
+        std::lock_guard lock(mVirtualDisplaysMutex);
+        const bool emplace_success =
+                mVirtualDisplays.try_emplace(displayId, displayId, uniqueId).second;
+        if (!emplace_success) {
+            ALOGW("%s: Virtual display snapshot with the same ID already exists", __func__);
+        }
+    }
+
     void releaseVirtualDisplay(VirtualDisplayId);
+    void releaseVirtualDisplaySnapshot(VirtualDisplayId displayId);
 
     // Returns a display other than `mActiveDisplayId` that can be activated, if any.
     sp<DisplayDevice> getActivatableDisplay() const REQUIRES(mStateLock, kMainThreadContext);
@@ -1304,6 +1317,10 @@ private:
     ui::DisplayMap<wp<IBinder>, const sp<DisplayDevice>> mDisplays GUARDED_BY(mStateLock);
 
     display::PhysicalDisplays mPhysicalDisplays GUARDED_BY(mStateLock);
+
+    mutable std::mutex mVirtualDisplaysMutex;
+    ftl::SmallMap<VirtualDisplayId, const display::VirtualDisplaySnapshot, 2> mVirtualDisplays
+            GUARDED_BY(mVirtualDisplaysMutex);
 
     // The inner or outer display for foldables, while unfolded or folded, respectively.
     std::atomic<PhysicalDisplayId> mActiveDisplayId;

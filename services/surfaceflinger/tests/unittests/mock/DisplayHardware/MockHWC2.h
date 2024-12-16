@@ -17,6 +17,7 @@
 #pragma once
 
 #include <gmock/gmock.h>
+#include <cstdint>
 
 #include "DisplayHardware/HWC2.h"
 
@@ -85,8 +86,8 @@ public:
     MOCK_METHOD(ftl::Future<hal::Error>, setDisplayBrightness,
                 (float, float, const Hwc2::Composer::DisplayBrightnessOptions &), (override));
     MOCK_METHOD(hal::Error, setActiveConfigWithConstraints,
-                (hal::HWConfigId, const hal::VsyncPeriodChangeConstraints &,
-                 hal::VsyncPeriodChangeTimeline *),
+                (hal::HWConfigId, const hal::VsyncPeriodChangeConstraints&,
+                 hal::VsyncPeriodChangeTimeline*),
                 (override));
     MOCK_METHOD(hal::Error, setBootDisplayConfig, (hal::HWConfigId), (override));
     MOCK_METHOD(hal::Error, clearBootDisplayConfig, (), (override));

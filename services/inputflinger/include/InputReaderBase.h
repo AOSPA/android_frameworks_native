@@ -245,6 +245,9 @@ struct InputReaderConfiguration {
     // True to use three-finger tap as a customizable shortcut; false to use it as a middle-click.
     bool touchpadThreeFingerTapShortcutEnabled;
 
+    // True to enable system gestures (three- and four-finger swipes) on touchpads.
+    bool touchpadSystemGesturesEnabled;
+
     // The set of currently disabled input devices.
     std::set<int32_t> disabledDevices;
 
@@ -297,6 +300,7 @@ struct InputReaderConfiguration {
             shouldNotifyTouchpadHardwareState(false),
             touchpadRightClickZoneEnabled(false),
             touchpadThreeFingerTapShortcutEnabled(false),
+            touchpadSystemGesturesEnabled(true),
             stylusButtonMotionEventsEnabled(true),
             stylusPointerIconEnabled(false),
             mouseReverseVerticalScrollingEnabled(false),

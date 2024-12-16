@@ -76,6 +76,8 @@ __BEGIN_DECLS
 struct APerformanceHintManager;
 struct APerformanceHintSession;
 struct AWorkDuration;
+struct ANativeWindow;
+struct ASurfaceControl;
 
 /**
  * {@link AWorkDuration} is an opaque type that represents the breakdown of the
@@ -149,6 +151,9 @@ typedef struct ASessionCreationConfig ASessionCreationConfig;
  * All timings should be from `std::chrono::steady_clock` or `clock_gettime(CLOCK_MONOTONIC, ...)`
  */
 typedef struct APerformanceHintSession APerformanceHintSession;
+
+typedef struct ANativeWindow ANativeWindow;
+typedef struct ASurfaceControl ASurfaceControl;
 
 /**
   * Acquire an instance of the performance hint manager.
@@ -354,6 +359,39 @@ int APerformanceHint_notifyWorkloadReset(
         bool cpu, bool gpu, const char* _Nonnull debugName) __INTRODUCED_IN(36);
 
 /**
+ * Associates a session with any {@link ASurfaceControl} or {@link ANativeWindow}
+ * instances managed by this session.
+ *
+ * This method is primarily intended for sessions that manage the timing of an entire
+ * graphics pipeline end-to-end, such as those using the
+ * {@link ASessionCreationConfig_setGraphicsPipeline} API. However, any session directly
+ * or indirectly managing a graphics pipeline should still associate themselves with
+ * directly relevant ASurfaceControl or ANativeWindow instances for better optimization.
+ *
+ * To see any benefit from this method, the client must make sure they are updating the framerate
+ * of attached surfaces using methods such as {@link ANativeWindow_setFrameRate}, or by updating
+ * any associated ASurfaceControls with transactions that have {ASurfaceTransaction_setFrameRate}.
+ *
+ * @param session The {@link APerformanceHintSession} instance to update.
+ * @param nativeWindows A pointer to a list of ANativeWindows associated with this session.
+ *        nullptr can be passed to indicate there are no associated ANativeWindows.
+ * @param nativeWindowsSize The number of ANativeWindows in the list.
+ * @param surfaceControls A pointer to a list of ASurfaceControls associated with this session.
+ *        nullptr can be passed to indicate there are no associated ASurfaceControls.
+ * @param surfaceControlsSize The number of ASurfaceControls in the list.
+ *
+ * @return 0 on success.
+ *         EPIPE if communication has failed.
+ *         ENOTSUP if unsupported.
+ *         EINVAL if invalid or empty arguments passed.
+ */
+
+int APerformanceHint_setNativeSurfaces(APerformanceHintSession* _Nonnull session,
+        ANativeWindow* _Nonnull* _Nullable nativeWindows, int nativeWindowsSize,
+        ASurfaceControl* _Nonnull* _Nullable surfaceControls, int surfaceControlsSize)
+        __INTRODUCED_IN(36);
+
+/**
  * Creates a new AWorkDuration. When the client finishes using {@link AWorkDuration}, it should
  * call {@link AWorkDuration_release()} to destroy {@link AWorkDuration} and release all resources
  * associated with it.
@@ -518,7 +556,64 @@ int ASessionCreationConfig_setPreferPowerEfficiency(
                   pipeline is reached.
  */
 int ASessionCreationConfig_setGraphicsPipeline(
-        ASessionCreationConfig* _Nonnull confi, bool enabled)  __INTRODUCED_IN(36);
+        ASessionCreationConfig* _Nonnull config, bool enabled)  __INTRODUCED_IN(36);
+
+/**
+ * Associates a session with any {@link ASurfaceControl} or {@link ANativeWindow}
+ * instances managed by this session. See {@link APerformanceHint_setNativeSurfaces}
+ * for more details.
+ *
+ * @param config The {@link ASessionCreationConfig}
+ *        created by calling {@link ASessionCreationConfig_create()}.
+ * @param nativeWindows A pointer to a list of ANativeWindows associated with this session.
+ *        nullptr can be passed to indicate there are no associated ANativeWindows.
+ * @param nativeWindowsSize The number of ANativeWindows in the list.
+ * @param surfaceControls A pointer to a list of ASurfaceControls associated with this session.
+ *        nullptr can be passed to indicate there are no associated ASurfaceControls.
+ * @param surfaceControlsSize The number of ASurfaceControls in the list.
+ *
+ * @return 0 on success.
+ *         ENOTSUP if unsupported.
+ *         EINVAL if invalid or empty arguments passed.
+ */
+int ASessionCreationConfig_setNativeSurfaces(
+        ASessionCreationConfig* _Nonnull config,
+        ANativeWindow* _Nonnull* _Nullable nativeWindows, int nativeWindowsSize,
+        ASurfaceControl* _Nonnull* _Nullable surfaceControls, int surfaceControlsSize)
+        __INTRODUCED_IN(36);
+
+/**
+ * Enable automatic timing mode for sessions using the GRAPHICS_PIPELINE API with an attached
+ * surface. In this mode, sessions do not need to report actual durations and only need
+ * to keep their thread list up-to-date, set a native surface, call
+ * {@link ASessionCreationConfig_setGraphicsPipeline()} to signal that the session is in
+ * "graphics pipeline" mode, and then set whether automatic timing is desired for the
+ * CPU, GPU, or both, using this method.
+ *
+ * It is still be beneficial to set an accurate target time, as this may help determine
+ * timing information for some workloads where there is less information available from
+ * the framework, such as games. Additionally, reported CPU durations will be ignored
+ * while automatic CPU timing is enabled, and similarly GPU durations will be ignored
+ * when automatic GPU timing is enabled. When both are enabled, the entire
+ * reportActualWorkDuration call will be ignored, and the session will be managed
+ * completely automatically.
+ *
+ * This mode will not work unless the client makes sure they are updating the framerate
+ * of attached surfaces with methods such as {@link ANativeWindow_setFrameRate}, or updating
+ * any associated ASurfaceControls with transactions that have {ASurfaceTransaction_setFrameRate}.
+ *
+ * @param config The {@link ASessionCreationConfig}
+ *        created by calling {@link ASessionCreationConfig_create()}.
+ * @param cpu Whether to enable automatic timing for the CPU for this session.
+ * @param gpu Whether to enable automatic timing for the GPU for this session.
+ *
+ * @return 0 on success.
+ *         ENOTSUP if unsupported.
+ */
+int ASessionCreationConfig_setUseAutoTiming(
+        ASessionCreationConfig* _Nonnull config,
+        bool cpu, bool gpu)
+        __INTRODUCED_IN(36);
 
 __END_DECLS
 

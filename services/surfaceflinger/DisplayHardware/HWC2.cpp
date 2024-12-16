@@ -33,6 +33,8 @@
 #include <ui/GraphicBuffer.h>
 #include <ui/PictureProfileHandle.h>
 
+#include "DisplayHardware/Hal.h"
+
 #include <algorithm>
 #include <cinttypes>
 #include <iterator>
