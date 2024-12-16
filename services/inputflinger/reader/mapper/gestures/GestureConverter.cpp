@@ -132,6 +132,15 @@ std::list<NotifyArgs> GestureConverter::reset(nsecs_t when) {
     return out;
 }
 
+std::list<NotifyArgs> GestureConverter::setEnableSystemGestures(nsecs_t when, bool enable) {
+    std::list<NotifyArgs> out;
+    if (!enable && mCurrentClassification == MotionClassification::MULTI_FINGER_SWIPE) {
+        out += handleMultiFingerSwipeLift(when, when);
+    }
+    mEnableSystemGestures = enable;
+    return out;
+}
+
 void GestureConverter::populateMotionRanges(InputDeviceInfo& info) const {
     info.addMotionRange(AMOTION_EVENT_AXIS_PRESSURE, SOURCE, 0.0f, 1.0f, 0, 0, 0);
 
@@ -461,6 +470,9 @@ std::list<NotifyArgs> GestureConverter::endScroll(nsecs_t when, nsecs_t readTime
                                                                              uint32_t fingerCount,
                                                                              float dx, float dy) {
     std::list<NotifyArgs> out = {};
+    if (!mEnableSystemGestures) {
+        return out;
+    }
 
     if (mCurrentClassification != MotionClassification::MULTI_FINGER_SWIPE) {
         // If the user changes the number of fingers mid-way through a swipe (e.g. they start with

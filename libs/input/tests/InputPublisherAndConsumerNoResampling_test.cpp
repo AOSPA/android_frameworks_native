@@ -319,6 +319,8 @@ protected:
 
 protected:
     // Interaction with the looper thread
+    void blockLooper();
+    void unblockLooper();
     enum class LooperMessage : int {
         CALL_PROBABLY_HAS_INPUT,
         CREATE_CONSUMER,
@@ -388,6 +390,26 @@ private:
         mConsumer->finishInputEvent(seq, true);
     };
 };
+
+void InputPublisherAndConsumerNoResamplingTest::blockLooper() {
+    {
+        std::scoped_lock l(mLock);
+        mLooperMayProceed = false;
+    }
+    sendMessage(LooperMessage::BLOCK_LOOPER);
+    {
+        std::unique_lock l(mLock);
+        mNotifyLooperWaiting.wait(l, [this] { return mLooperIsBlocked; });
+    }
+}
+
+void InputPublisherAndConsumerNoResamplingTest::unblockLooper() {
+    {
+        std::scoped_lock l(mLock);
+        mLooperMayProceed = true;
+    }
+    mNotifyLooperMayProceed.notify_all();
+}
 
 void InputPublisherAndConsumerNoResamplingTest::sendMessage(LooperMessage message) {
     Message msg{ftl::to_underlying(message)};
@@ -600,15 +622,7 @@ void InputPublisherAndConsumerNoResamplingTest::publishAndConsumeSinglePointerMu
     std::queue<uint32_t> publishedSequenceNumbers;
 
     // Block Looper to increase the chance of batching events
-    {
-        std::scoped_lock l(mLock);
-        mLooperMayProceed = false;
-    }
-    sendMessage(LooperMessage::BLOCK_LOOPER);
-    {
-        std::unique_lock l(mLock);
-        mNotifyLooperWaiting.wait(l, [this] { return mLooperIsBlocked; });
-    }
+    blockLooper();
 
     uint32_t firstSampleId;
     for (size_t i = 0; i < nSamples; ++i) {
@@ -629,12 +643,7 @@ void InputPublisherAndConsumerNoResamplingTest::publishAndConsumeSinglePointerMu
 
     std::vector<MotionEvent> singleSampledMotionEvents;
 
-    // Unblock Looper
-    {
-        std::scoped_lock l(mLock);
-        mLooperMayProceed = true;
-    }
-    mNotifyLooperMayProceed.notify_all();
+    unblockLooper();
 
     // We have no control over the socket behavior, so the consumer can receive
     // the motion as a batched event, or as a sequence of multiple single-sample MotionEvents (or a
@@ -807,6 +816,15 @@ void InputPublisherAndConsumerNoResamplingTest::publishAndConsumeTouchModeEvent(
     EXPECT_EQ(touchModeEnabled, touchModeEvent.isInTouchMode());
 
     verifyFinishedSignal(*mPublisher, seq, publishTime);
+}
+
+/**
+ * If the publisher has died, consumer should not crash when trying to send an outgoing message.
+ */
+TEST_F(InputPublisherAndConsumerNoResamplingTest, ConsumerWritesAfterPublisherDies) {
+    mPublisher.reset(); // The publisher has died
+    mReportTimelineArgs.emplace(/*inputEventId=*/10, /*gpuCompletedTime=*/20, /*presentTime=*/30);
+    sendMessage(LooperMessage::CALL_REPORT_TIMELINE);
 }
 
 TEST_F(InputPublisherAndConsumerNoResamplingTest, SendTimeline) {

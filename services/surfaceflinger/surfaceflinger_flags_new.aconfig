@@ -31,7 +31,16 @@ flag {
   description: "New SDK Surface#setFrameRate API and Surface.FrameRateParams for Android 16"
   bug: "356987016"
   is_fixed_read_only: true
+  is_exported: true
 } # arr_setframerate_api
+
+flag {
+  name: "arr_setframerate_gte_enum"
+  namespace: "core_graphics"
+  description: "Exposes GTE (greater than or equal to) enum for Android 16"
+  bug: "380949716"
+  is_fixed_read_only: true
+} # arr_setframerate_gte_enum
 
 flag {
   name: "arr_surfacecontrol_setframerate_api"
@@ -39,6 +48,7 @@ flag {
   description: "New SDK SurfaceControl.Transaction#setFrameRate API for Android 16"
   bug: "356987016"
   is_fixed_read_only: true
+  is_exported: true
 } # arr_surfacecontrol_setframerate_api
 
 flag {
@@ -171,6 +181,13 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 } # frame_rate_category_mrr
+
+flag {
+  name: "graphite_renderengine_preview_rollout"
+  namespace: "core_graphics"
+  description: "R/W flag to enable Skia's Graphite Vulkan backend in RenderEngine, IF it is already compiled with force_compile_graphite_renderengine, AND the debug.renderengine.graphite_preview_optin sysprop is set to true."
+  bug: "293371537"
+} # graphite_renderengine_preview_rollout
 
 flag {
   name: "latch_unsignaled_with_auto_refresh_changed"

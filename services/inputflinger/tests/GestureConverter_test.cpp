@@ -48,6 +48,7 @@ const auto TOUCHPAD_PALM_REJECTION_V2 =
 using testing::AllOf;
 using testing::Each;
 using testing::ElementsAre;
+using testing::IsEmpty;
 using testing::VariantWith;
 
 class GestureConverterTest : public testing::Test {
@@ -847,6 +848,107 @@ TEST_F(GestureConverterTest, FourFingerSwipe_Horizontal) {
                 Each(VariantWith<NotifyMotionArgs>(
                         AllOf(WithToolType(ToolType::FINGER),
                               WithDisplayId(ui::LogicalDisplayId::DEFAULT)))));
+}
+
+TEST_F(GestureConverterTest, DisablingSystemGestures_IgnoresMultiFingerSwipe) {
+    InputDeviceContext deviceContext(*mDevice, EVENTHUB_ID);
+    GestureConverter converter(*mReader->getContext(), deviceContext, DEVICE_ID);
+    converter.setDisplayId(ui::LogicalDisplayId::DEFAULT);
+
+    std::list<NotifyArgs> args = converter.setEnableSystemGestures(ARBITRARY_TIME, false);
+    ASSERT_THAT(args, IsEmpty());
+
+    Gesture startGesture(kGestureSwipe, ARBITRARY_GESTURE_TIME, ARBITRARY_GESTURE_TIME, /*dx=*/0,
+                         /*dy=*/10);
+    Gesture continueGesture(kGestureSwipe, ARBITRARY_GESTURE_TIME, ARBITRARY_GESTURE_TIME, /*dx=*/0,
+                            /*dy=*/5);
+    Gesture liftGesture(kGestureSwipeLift, ARBITRARY_GESTURE_TIME, ARBITRARY_GESTURE_TIME);
+
+    args += converter.handleGesture(ARBITRARY_TIME, READ_TIME, ARBITRARY_TIME, startGesture);
+    args += converter.handleGesture(ARBITRARY_TIME, READ_TIME, ARBITRARY_TIME, continueGesture);
+    args += converter.handleGesture(ARBITRARY_TIME, READ_TIME, ARBITRARY_TIME, liftGesture);
+    ASSERT_THAT(args, IsEmpty());
+
+    args = converter.setEnableSystemGestures(ARBITRARY_TIME, true);
+    ASSERT_THAT(args, IsEmpty());
+
+    args = converter.handleGesture(ARBITRARY_TIME, READ_TIME, ARBITRARY_TIME, startGesture);
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    WithMotionAction(AMOTION_EVENT_ACTION_DOWN)),
+                            VariantWith<NotifyMotionArgs>(WithMotionAction(
+                                    AMOTION_EVENT_ACTION_POINTER_DOWN |
+                                    1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT)),
+                            VariantWith<NotifyMotionArgs>(WithMotionAction(
+                                    AMOTION_EVENT_ACTION_POINTER_DOWN |
+                                    2 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT)),
+                            VariantWith<NotifyMotionArgs>(
+                                    WithMotionAction(AMOTION_EVENT_ACTION_MOVE))));
+    ASSERT_THAT(args,
+                Each(VariantWith<NotifyMotionArgs>(
+                        WithMotionClassification(MotionClassification::MULTI_FINGER_SWIPE))));
+}
+
+TEST_F(GestureConverterTest, DisablingSystemGestures_EndsOngoingMultiFingerSwipe) {
+    InputDeviceContext deviceContext(*mDevice, EVENTHUB_ID);
+    GestureConverter converter(*mReader->getContext(), deviceContext, DEVICE_ID);
+    converter.setDisplayId(ui::LogicalDisplayId::DEFAULT);
+
+    Gesture startGesture(kGestureSwipe, ARBITRARY_GESTURE_TIME, ARBITRARY_GESTURE_TIME, /*dx=*/0,
+                         /*dy=*/10);
+    std::list<NotifyArgs> args;
+    args = converter.handleGesture(ARBITRARY_TIME, READ_TIME, ARBITRARY_TIME, startGesture);
+    ASSERT_FALSE(args.empty());
+
+    // Disabling system gestures should end the swipe early.
+    args = converter.setEnableSystemGestures(ARBITRARY_TIME, false);
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(
+                                                  AMOTION_EVENT_ACTION_POINTER_UP |
+                                                  2 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
+                                          WithGestureOffset(0, 0, EPSILON),
+                                          WithMotionClassification(
+                                                  MotionClassification::MULTI_FINGER_SWIPE),
+                                          WithPointerCount(3u))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(
+                                                  AMOTION_EVENT_ACTION_POINTER_UP |
+                                                  1 << AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
+                                          WithGestureOffset(0, 0, EPSILON),
+                                          WithMotionClassification(
+                                                  MotionClassification::MULTI_FINGER_SWIPE),
+                                          WithPointerCount(2u))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP),
+                                          WithGestureOffset(0, 0, EPSILON),
+                                          WithMotionClassification(
+                                                  MotionClassification::MULTI_FINGER_SWIPE),
+                                          WithPointerCount(1u))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_ENTER),
+                                          WithMotionClassification(MotionClassification::NONE)))));
+    ASSERT_THAT(args,
+                Each(VariantWith<NotifyMotionArgs>(
+                        AllOf(WithToolType(ToolType::FINGER),
+                              WithDisplayId(ui::LogicalDisplayId::DEFAULT)))));
+
+    // Further movement in the same swipe should be ignored.
+    Gesture continueGesture(kGestureSwipe, ARBITRARY_GESTURE_TIME, ARBITRARY_GESTURE_TIME, /*dx=*/0,
+                            /*dy=*/5);
+    args = converter.handleGesture(ARBITRARY_TIME, READ_TIME, ARBITRARY_TIME, continueGesture);
+    ASSERT_THAT(args, IsEmpty());
+    Gesture liftGesture(kGestureSwipeLift, ARBITRARY_GESTURE_TIME, ARBITRARY_GESTURE_TIME);
+    args = converter.handleGesture(ARBITRARY_TIME, READ_TIME, ARBITRARY_TIME, liftGesture);
+    ASSERT_THAT(args, IsEmpty());
+
+    // But single-finger pointer motion should be reported.
+    Gesture moveGesture(kGestureMove, ARBITRARY_GESTURE_TIME, ARBITRARY_GESTURE_TIME, -5, 10);
+    args = converter.handleGesture(ARBITRARY_TIME, READ_TIME, ARBITRARY_TIME, moveGesture);
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                        AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
+                              WithRelativeMotion(-5, 10), WithButtonState(0)))));
 }
 
 TEST_F(GestureConverterTest, Pinch_Inwards) {

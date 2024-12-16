@@ -17,6 +17,7 @@ cc_test {
         "IdGenerator_test.cpp",
         "InputChannel_test.cpp",
         "InputConsumer_test.cpp",
+        "InputConsumerFilteredResampling_test.cpp",
         "InputConsumerResampling_test.cpp",
         "InputDevice_test.cpp",
         "InputEvent_test.cpp",

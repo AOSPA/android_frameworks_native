@@ -54,6 +54,22 @@ class Surface : public Parcelable {
     sp<android::Surface> toSurface() const;
 
     status_t getUniqueId(/* out */ uint64_t* id) const;
+
+    bool isEmpty() const;
+
+    bool operator==(const Surface& other) const {
+        return graphicBufferProducer == other.graphicBufferProducer;
+    }
+    bool operator!=(const Surface& other) const { return !(*this == other); }
+    bool operator==(const sp<android::Surface> other) const {
+        if (other == nullptr) return graphicBufferProducer == nullptr;
+        return graphicBufferProducer == other->getIGraphicBufferProducer();
+    }
+    bool operator!=(const sp<android::Surface> other) const { return !(*this == other); }
+    bool operator<(const Surface& other) const {
+        return graphicBufferProducer < other.graphicBufferProducer;
+    }
+    bool operator>(const Surface& other) const { return other < *this; }
 #endif
 
     virtual status_t writeToParcel(Parcel* parcel) const override;

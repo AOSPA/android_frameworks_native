@@ -299,6 +299,9 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
                     case Layer::FrameRateCompatibility::Exact:
                         return LayerVoteType::ExplicitExact;
                     case Layer::FrameRateCompatibility::Gte:
+                        if (frameRate.isNoVote()) {
+                            return LayerVoteType::NoVote;
+                        }
                         if (isVrrDevice) {
                             return LayerVoteType::ExplicitGte;
                         } else {
@@ -327,11 +330,14 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
                 const auto setFrameRateVoteType =
                         info->isVisible() ? voteType : LayerVoteType::NoVote;
 
-                const bool hasSetFrameRateOpinion = frameRate.isValid() && !frameRate.isNoVote();
+                const bool hasSetFrameRateOpinion =
+                        frameRate.isValuelessType() || frameRate.vote.rate.isValid();
                 const bool hasCategoryOpinion =
                         frameRate.category != FrameRateCategory::NoPreference &&
                         frameRate.category != FrameRateCategory::Default;
-                const bool hasFrameRateOpinion = hasSetFrameRateOpinion || hasCategoryOpinion;
+                const bool hasFrameRateOpinionAboveGameDefault =
+                        hasSetFrameRateOpinion || hasCategoryOpinion;
+                const bool hasFrameRateOpinionArr = frameRate.isValid() && !frameRate.isNoVote();
 
                 if (gameModeFrameRateOverride.isValid()) {
                     info->setLayerVote({gameFrameRateOverrideVoteType, gameModeFrameRateOverride});
@@ -340,7 +346,8 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
                         trace(*info, gameFrameRateOverrideVoteType,
                               gameModeFrameRateOverride.getIntValue());
                     }
-                } else if (hasFrameRateOpinion && frameRate.isVoteValidForMrr(isVrrDevice)) {
+                } else if (hasFrameRateOpinionAboveGameDefault &&
+                           frameRate.isVoteValidForMrr(isVrrDevice)) {
                     info->setLayerVote({setFrameRateVoteType,
                                         isValuelessVote ? 0_Hz : frameRate.vote.rate,
                                         frameRate.vote.seamlessness, frameRate.category});
@@ -356,8 +363,18 @@ void LayerHistory::partitionLayers(nsecs_t now, bool isVrrDevice) {
                         trace(*info, gameFrameRateOverrideVoteType,
                               gameDefaultFrameRateOverride.getIntValue());
                     }
+                } else if (hasFrameRateOpinionArr && frameRate.isVoteValidForMrr(isVrrDevice)) {
+                    // This allows NoPreference votes on ARR devices after considering the
+                    // gameDefaultFrameRateOverride (above).
+                    info->setLayerVote({setFrameRateVoteType,
+                                        isValuelessVote ? 0_Hz : frameRate.vote.rate,
+                                        frameRate.vote.seamlessness, frameRate.category});
+                    if (CC_UNLIKELY(mTraceEnabled)) {
+                        trace(*info, gameFrameRateOverrideVoteType,
+                              frameRate.vote.rate.getIntValue());
+                    }
                 } else {
-                    if (hasFrameRateOpinion && !frameRate.isVoteValidForMrr(isVrrDevice)) {
+                    if (hasFrameRateOpinionArr && !frameRate.isVoteValidForMrr(isVrrDevice)) {
                         SFTRACE_FORMAT_INSTANT("Reset layer to ignore explicit vote on MRR %s: %s "
                                                "%s %s",
                                                info->getName().c_str(),

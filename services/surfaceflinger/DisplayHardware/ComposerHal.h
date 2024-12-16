@@ -32,6 +32,8 @@
 #include <ui/PictureProfileHandle.h>
 #include <utils/StrongPointer.h>
 
+#include "DisplayHardware/Hal.h"
+
 #include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
 #include <aidl/android/hardware/graphics/common/HdrConversionCapability.h>
 #include <aidl/android/hardware/graphics/common/HdrConversionStrategy.h>
@@ -73,9 +75,9 @@ using types::V1_2::ColorMode;
 using types::V1_2::Dataspace;
 using types::V1_2::PixelFormat;
 
+using hardware::graphics::composer::hal::Error;
 using V2_1::Config;
 using V2_1::Display;
-using V2_1::Error;
 using V2_1::Layer;
 using V2_4::CommandReaderBase;
 using V2_4::CommandWriterBase;
@@ -261,7 +263,7 @@ public:
             Display display, IComposerClient::DisplayConnectionType* outType) = 0;
     virtual V2_4::Error getDisplayVsyncPeriod(Display display,
                                               VsyncPeriodNanos* outVsyncPeriod) = 0;
-    virtual V2_4::Error setActiveConfigWithConstraints(
+    virtual Error setActiveConfigWithConstraints(
             Display display, Config config,
             const IComposerClient::VsyncPeriodChangeConstraints& vsyncPeriodChangeConstraints,
             VsyncPeriodChangeTimeline* outTimeline) = 0;

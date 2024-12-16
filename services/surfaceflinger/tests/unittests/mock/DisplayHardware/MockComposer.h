@@ -20,6 +20,7 @@
 
 #include "DisplayHardware/ComposerHal.h"
 #include "DisplayHardware/HWC2.h"
+#include "DisplayHardware/Hal.h"
 
 namespace android {
 
@@ -34,9 +35,9 @@ using android::hardware::graphics::common::V1_2::ColorMode;
 using android::hardware::graphics::common::V1_2::Dataspace;
 using android::hardware::graphics::common::V1_2::PixelFormat;
 
+using android::hardware::graphics::composer::hal::Error;
 using android::hardware::graphics::composer::V2_1::Config;
 using android::hardware::graphics::composer::V2_1::Display;
-using android::hardware::graphics::composer::V2_1::Error;
 using android::hardware::graphics::composer::V2_1::IComposer;
 using android::hardware::graphics::composer::V2_1::Layer;
 using android::hardware::graphics::composer::V2_4::IComposerCallback;
@@ -142,8 +143,8 @@ public:
                  V2_4::Error(Display, Config, std::vector<VsyncPeriodNanos>*));
     MOCK_METHOD2(getDisplayVsyncPeriod, V2_4::Error(Display, VsyncPeriodNanos*));
     MOCK_METHOD4(setActiveConfigWithConstraints,
-                 V2_4::Error(Display, Config, const IComposerClient::VsyncPeriodChangeConstraints&,
-                             VsyncPeriodChangeTimeline*));
+                 Error(Display, Config, const IComposerClient::VsyncPeriodChangeConstraints&,
+                       VsyncPeriodChangeTimeline*));
     MOCK_METHOD2(setAutoLowLatencyMode, V2_4::Error(Display, bool));
     MOCK_METHOD2(setBootDisplayConfig, Error(Display, Config));
     MOCK_METHOD1(clearBootDisplayConfig, Error(Display));

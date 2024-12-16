@@ -16,6 +16,7 @@
 #include "BackendUnifiedServiceManager.h"
 
 #include <android/os/IAccessor.h>
+#include <android/os/IServiceManager.h>
 #include <binder/RpcSession.h>
 
 #if defined(__BIONIC__) && !defined(__ANDROID_VNDK__)
@@ -28,6 +29,18 @@ namespace android {
 constexpr bool kUseCache = true;
 #else
 constexpr bool kUseCache = false;
+#endif
+
+#ifdef LIBBINDER_ADDSERVICE_CACHE
+constexpr bool kUseCacheInAddService = true;
+#else
+constexpr bool kUseCacheInAddService = false;
+#endif
+
+#ifdef LIBBINDER_REMOVE_CACHE_STATIC_LIST
+constexpr bool kRemoveStaticList = true;
+#else
+constexpr bool kRemoveStaticList = false;
 #endif
 
 using AidlServiceManager = android::os::IServiceManager;
@@ -104,6 +117,13 @@ static const char* kStaticCachableList[] = {
         // go/keep-sorted end
 };
 
+os::ServiceWithMetadata createServiceWithMetadata(const sp<IBinder>& service, bool isLazyService) {
+    os::ServiceWithMetadata out = os::ServiceWithMetadata();
+    out.service = service;
+    out.isLazyService = isLazyService;
+    return out;
+}
+
 bool BinderCacheWithInvalidation::isClientSideCachingEnabled(const std::string& serviceName) {
     sp<ProcessState> self = ProcessState::selfOrNull();
     if (!self || self->getThreadPoolMaxTotalThreadCount() <= 0) {
@@ -125,31 +145,44 @@ Status BackendUnifiedServiceManager::updateCache(const std::string& serviceName,
     if (!kUseCache) {
         return Status::ok();
     }
+
+    if (service.getTag() == os::Service::Tag::serviceWithMetadata) {
+        auto serviceWithMetadata = service.get<os::Service::Tag::serviceWithMetadata>();
+        return updateCache(serviceName, serviceWithMetadata.service,
+                           serviceWithMetadata.isLazyService);
+    }
+    return Status::ok();
+}
+
+Status BackendUnifiedServiceManager::updateCache(const std::string& serviceName,
+                                                 const sp<IBinder>& binder, bool isServiceLazy) {
     std::string traceStr;
+    // Don't cache if service is lazy
+    if (kRemoveStaticList && isServiceLazy) {
+        return Status::ok();
+    }
     if (atrace_is_tag_enabled(ATRACE_TAG_AIDL)) {
         traceStr = "BinderCacheWithInvalidation::updateCache : " + serviceName;
     }
     binder::ScopedTrace aidlTrace(ATRACE_TAG_AIDL, traceStr.c_str());
-
-    if (service.getTag() == os::Service::Tag::binder) {
-        sp<IBinder> binder = service.get<os::Service::Tag::binder>();
-        if (!binder) {
-            binder::ScopedTrace
-                    aidlTrace(ATRACE_TAG_AIDL,
-                              "BinderCacheWithInvalidation::updateCache failed: binder_null");
-        } else if (!binder->isBinderAlive()) {
-            binder::ScopedTrace aidlTrace(ATRACE_TAG_AIDL,
-                                          "BinderCacheWithInvalidation::updateCache failed: "
-                                          "isBinderAlive_false");
-        } else if (mCacheForGetService->isClientSideCachingEnabled(serviceName)) {
-            binder::ScopedTrace aidlTrace(ATRACE_TAG_AIDL,
-                                          "BinderCacheWithInvalidation::updateCache successful");
-            return mCacheForGetService->setItem(serviceName, binder);
-        } else {
-            binder::ScopedTrace aidlTrace(ATRACE_TAG_AIDL,
-                                          "BinderCacheWithInvalidation::updateCache failed: "
-                                          "caching_not_enabled");
-        }
+    if (!binder) {
+        binder::ScopedTrace
+                aidlTrace(ATRACE_TAG_AIDL,
+                          "BinderCacheWithInvalidation::updateCache failed: binder_null");
+    } else if (!binder->isBinderAlive()) {
+        binder::ScopedTrace aidlTrace(ATRACE_TAG_AIDL,
+                                      "BinderCacheWithInvalidation::updateCache failed: "
+                                      "isBinderAlive_false");
+    }
+    // If we reach here with kRemoveStaticList=true then we know service isn't lazy
+    else if (kRemoveStaticList || mCacheForGetService->isClientSideCachingEnabled(serviceName)) {
+        binder::ScopedTrace aidlTrace(ATRACE_TAG_AIDL,
+                                      "BinderCacheWithInvalidation::updateCache successful");
+        return mCacheForGetService->setItem(serviceName, binder);
+    } else {
+        binder::ScopedTrace aidlTrace(ATRACE_TAG_AIDL,
+                                      "BinderCacheWithInvalidation::updateCache failed: "
+                                      "caching_not_enabled");
     }
     return Status::ok();
 }
@@ -162,7 +195,7 @@ bool BackendUnifiedServiceManager::returnIfCached(const std::string& serviceName
     sp<IBinder> item = mCacheForGetService->getItem(serviceName);
     // TODO(b/363177618): Enable caching for binders which are always null.
     if (item != nullptr && item->isBinderAlive()) {
-        *_out = os::Service::make<os::Service::Tag::binder>(item);
+        *_out = createServiceWithMetadata(item, false);
         return true;
     }
     return false;
@@ -177,7 +210,7 @@ Status BackendUnifiedServiceManager::getService(const ::std::string& name,
                                                 sp<IBinder>* _aidl_return) {
     os::Service service;
     Status status = getService2(name, &service);
-    *_aidl_return = service.get<os::Service::Tag::binder>();
+    *_aidl_return = service.get<os::Service::Tag::serviceWithMetadata>().service;
     return status;
 }
 
@@ -216,14 +249,16 @@ Status BackendUnifiedServiceManager::checkService(const ::std::string& name, os:
 Status BackendUnifiedServiceManager::toBinderService(const ::std::string& name,
                                                      const os::Service& in, os::Service* _out) {
     switch (in.getTag()) {
-        case os::Service::Tag::binder: {
-            if (in.get<os::Service::Tag::binder>() == nullptr) {
+        case os::Service::Tag::serviceWithMetadata: {
+            auto serviceWithMetadata = in.get<os::Service::Tag::serviceWithMetadata>();
+            if (serviceWithMetadata.service == nullptr) {
                 // failed to find a service. Check to see if we have any local
                 // injected Accessors for this service.
                 os::Service accessor;
                 Status status = getInjectedAccessor(name, &accessor);
                 if (!status.isOk()) {
-                    *_out = os::Service::make<os::Service::Tag::binder>(nullptr);
+                    *_out = os::Service::make<os::Service::Tag::serviceWithMetadata>(
+                            createServiceWithMetadata(nullptr, false));
                     return status;
                 }
                 if (accessor.getTag() == os::Service::Tag::accessor &&
@@ -244,7 +279,8 @@ Status BackendUnifiedServiceManager::toBinderService(const ::std::string& name,
             sp<IAccessor> accessor = interface_cast<IAccessor>(accessorBinder);
             if (accessor == nullptr) {
                 ALOGE("Service#accessor doesn't have accessor. VM is maybe starting...");
-                *_out = os::Service::make<os::Service::Tag::binder>(nullptr);
+                *_out = os::Service::make<os::Service::Tag::serviceWithMetadata>(
+                        createServiceWithMetadata(nullptr, false));
                 return Status::ok();
             }
             auto request = [=] {
@@ -265,7 +301,8 @@ Status BackendUnifiedServiceManager::toBinderService(const ::std::string& name,
                 return Status::fromStatusT(status);
             }
             session->setSessionSpecificRoot(accessorBinder);
-            *_out = os::Service::make<os::Service::Tag::binder>(session->getRootObject());
+            *_out = os::Service::make<os::Service::Tag::serviceWithMetadata>(
+                    createServiceWithMetadata(session->getRootObject(), false));
             return Status::ok();
         }
         default: {
@@ -277,7 +314,13 @@ Status BackendUnifiedServiceManager::toBinderService(const ::std::string& name,
 Status BackendUnifiedServiceManager::addService(const ::std::string& name,
                                                 const sp<IBinder>& service, bool allowIsolated,
                                                 int32_t dumpPriority) {
-    return mTheRealServiceManager->addService(name, service, allowIsolated, dumpPriority);
+    Status status = mTheRealServiceManager->addService(name, service, allowIsolated, dumpPriority);
+    // mEnableAddServiceCache is true by default.
+    if (kUseCacheInAddService && mEnableAddServiceCache && status.isOk()) {
+        return updateCache(name, service,
+                           dumpPriority & android::os::IServiceManager::FLAG_IS_LAZY_SERVICE);
+    }
+    return status;
 }
 Status BackendUnifiedServiceManager::listServices(int32_t dumpPriority,
                                                   ::std::vector<::std::string>* _aidl_return) {

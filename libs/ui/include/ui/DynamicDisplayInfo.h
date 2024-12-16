@@ -59,6 +59,9 @@ struct DynamicDisplayInfo {
 
     // Represents frame rate for FrameRateCategory Normal and High.
     ui::FrameRateCategoryRate frameRateCategoryRate;
+
+    // All the refresh rates supported for the default display mode.
+    std::vector<float> supportedRefreshRates;
 };
 
 } // namespace android::ui

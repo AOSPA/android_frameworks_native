@@ -37,6 +37,7 @@ cc_fuzz {
     ],
 
     shared_libs: [
+        "libegl_flags",
         "libz",
     ],
 

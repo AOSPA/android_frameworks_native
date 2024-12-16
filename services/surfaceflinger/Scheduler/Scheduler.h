@@ -42,12 +42,14 @@
 #include <ftl/non_null.h>
 #include <ftl/optional.h>
 #include <scheduler/Features.h>
+#include <scheduler/FrameRateMode.h>
 #include <scheduler/FrameTargeter.h>
 #include <scheduler/Time.h>
 #include <scheduler/VsyncConfig.h>
 #include <ui/DisplayId.h>
 #include <ui/DisplayMap.h>
 
+#include "DisplayHardware/DisplayMode.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
 #include "ISchedulerCallback.h"
@@ -162,6 +164,8 @@ public:
     // Returns true if the PhysicalDisplayId is the pacesetter.
     bool onDisplayModeChanged(PhysicalDisplayId, const FrameRateMode&,
                               bool clearContentRequirements) EXCLUDES(mPolicyLock);
+
+    void onDisplayModeRejected(PhysicalDisplayId, DisplayModeId);
 
     void enableSyntheticVsync(bool = true) REQUIRES(kMainThreadContext);
     void omitVsyncDispatching(bool) REQUIRES(kMainThreadContext);

@@ -18,7 +18,6 @@ using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
 namespace types = hardware::graphics::common;
 namespace V2_1 = hardware::graphics::composer::V2_1;
 
-using Hwc2::Error;
 using V2_1::Display;
 using V2_1_Layer = V2_1::Layer;
 
@@ -32,13 +31,13 @@ class QtiHidlComposerHalExtension : public QtiComposerHalExtension {
 public:
     QtiHidlComposerHalExtension(Hwc2::Composer* composerHal);
 
-    Error qtiSetDisplayElapseTime(Display display, uint64_t timeStamp) override;
-    Error qtiSetLayerType(Display display, V2_1_Layer layer, uint32_t type) override;
-    Error qtiSetLayerFlag(Display display, V2_1_Layer layer,
+    V2_1::Error qtiSetDisplayElapseTime(Display display, uint64_t timeStamp) override;
+    V2_1::Error qtiSetLayerType(Display display, V2_1_Layer layer, uint32_t type) override;
+    V2_1::Error qtiSetLayerFlag(Display display, V2_1_Layer layer,
                           uint32_t layerFlag) override;
-    Error qtiSetClientTarget_3_1(Display display, int32_t slot, int acquireFence,
+    V2_1::Error qtiSetClientTarget_3_1(Display display, int32_t slot, int acquireFence,
                                  uint32_t dataspace) override;
-    Error qtiTryDrawMethod(Display display, uint32_t drawMethod) override;
+    V2_1::Error qtiTryDrawMethod(Display display, uint32_t drawMethod) override;
 
 private:
     Hwc2::HidlComposer* mQtiHidlComposer = nullptr;

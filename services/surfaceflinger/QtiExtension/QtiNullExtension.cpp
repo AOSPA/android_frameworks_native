@@ -114,10 +114,10 @@ status_t QtiNullExtension::qtiBinderSetWideModePreference(uint64_t displayId, in
  */
 
 std::optional<android::VirtualDisplayId> QtiNullExtension::qtiAcquireVirtualDisplay(
-        ui::Size resolution, ui::PixelFormat format, bool canAllocateHwcForVDS) {
+        ui::Size resolution, ui::PixelFormat format, const std::string& uniqueId, bool canAllocateHwcForVDS) {
     ConditionalLock lock(mQtiFlinger->mStateLock,
                          std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
-    return mQtiFlinger->acquireVirtualDisplay(resolution, format);
+    return mQtiFlinger->acquireVirtualDisplay(resolution, format, uniqueId);
 }
 bool QtiNullExtension::qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) {
     return false;

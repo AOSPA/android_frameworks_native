@@ -183,6 +183,7 @@
 
 #include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
+#include <aidl/android/hardware/graphics/composer3/OutputType.h>
 #include <aidl/android/hardware/graphics/composer3/RenderIntent.h>
 
 #undef NO_THREAD_SAFETY_ANALYSIS
@@ -667,11 +668,12 @@ void SurfaceFlinger::enableHalVirtualDisplays(bool enable) {
     }
 }
 
-VirtualDisplayId SurfaceFlinger::acquireVirtualDisplay(ui::Size resolution,
-                                                       ui::PixelFormat format) {
+VirtualDisplayId SurfaceFlinger::acquireVirtualDisplay(ui::Size resolution, ui::PixelFormat format,
+                                                       const std::string& uniqueId) {
     if (auto& generator = mVirtualDisplayIdGenerators.hal) {
         if (const auto id = generator->generateId()) {
             if (getHwComposer().allocateVirtualDisplay(*id, resolution, &format)) {
+                acquireVirtualDisplaySnapshot(*id, uniqueId);
                 return *id;
             }
 
@@ -685,6 +687,7 @@ VirtualDisplayId SurfaceFlinger::acquireVirtualDisplay(ui::Size resolution,
 
     const auto id = mVirtualDisplayIdGenerators.gpu.generateId();
     LOG_ALWAYS_FATAL_IF(!id, "Failed to generate ID for GPU virtual display");
+    acquireVirtualDisplaySnapshot(*id, uniqueId);
     return *id;
 }
 
@@ -692,6 +695,7 @@ void SurfaceFlinger::releaseVirtualDisplay(VirtualDisplayId displayId) {
     if (const auto id = HalVirtualDisplayId::tryCast(displayId)) {
         if (auto& generator = mVirtualDisplayIdGenerators.hal) {
             generator->releaseId(*id);
+            releaseVirtualDisplaySnapshot(*id);
         }
         return;
     }
@@ -699,6 +703,14 @@ void SurfaceFlinger::releaseVirtualDisplay(VirtualDisplayId displayId) {
     const auto id = GpuVirtualDisplayId::tryCast(displayId);
     LOG_ALWAYS_FATAL_IF(!id);
     mVirtualDisplayIdGenerators.gpu.releaseId(*id);
+    releaseVirtualDisplaySnapshot(*id);
+}
+
+void SurfaceFlinger::releaseVirtualDisplaySnapshot(VirtualDisplayId displayId) {
+    std::lock_guard lock(mVirtualDisplaysMutex);
+    if (!mVirtualDisplays.erase(displayId)) {
+        ALOGW("%s: Virtual display snapshot was not removed", __func__);
+    }
 }
 
 std::vector<PhysicalDisplayId> SurfaceFlinger::getPhysicalDisplayIdsLocked() const {
@@ -818,6 +830,12 @@ void SurfaceFlinger::bootFinished() {
     }));
 }
 
+bool shouldUseGraphiteIfCompiledAndSupported() {
+    return FlagManager::getInstance().graphite_renderengine() ||
+            (FlagManager::getInstance().graphite_renderengine_preview_rollout() &&
+             base::GetBoolProperty(PROPERTY_DEBUG_RENDERENGINE_GRAPHITE_PREVIEW_OPTIN, false));
+}
+
 void chooseRenderEngineType(renderengine::RenderEngineCreationArgs::Builder& builder) {
     char prop[PROPERTY_VALUE_MAX];
     property_get(PROPERTY_DEBUG_RENDERENGINE_BACKEND, prop, "");
@@ -846,14 +864,13 @@ void chooseRenderEngineType(renderengine::RenderEngineCreationArgs::Builder& bui
 // is used by layertracegenerator (which also needs SurfaceFlinger.cpp). :)
 #if COM_ANDROID_GRAPHICS_SURFACEFLINGER_FLAGS_GRAPHITE_RENDERENGINE || \
         COM_ANDROID_GRAPHICS_SURFACEFLINGER_FLAGS_FORCE_COMPILE_GRAPHITE_RENDERENGINE
-        const bool useGraphite = FlagManager::getInstance().graphite_renderengine() &&
+        const bool useGraphite = shouldUseGraphiteIfCompiledAndSupported() &&
                 renderengine::RenderEngine::canSupport(kVulkan);
 #else
         const bool useGraphite = false;
-        if (FlagManager::getInstance().graphite_renderengine()) {
-            ALOGE("RenderEngine's Graphite Skia backend was requested with the "
-                  "debug.renderengine.graphite system property, but it is not compiled in this "
-                  "build! Falling back to Ganesh backend selection logic.");
+        if (shouldUseGraphiteIfCompiledAndSupported()) {
+            ALOGE("RenderEngine's Graphite Skia backend was requested, but it is not compiled in "
+                  "this build! Falling back to Ganesh backend selection logic.");
         }
 #endif
         const bool useVulkan = useGraphite ||
@@ -1264,6 +1281,8 @@ void SurfaceFlinger::getDynamicDisplayInfoInternal(ui::DynamicDisplayInfo*& info
     const auto [normal, high] = display->refreshRateSelector().getFrameRateCategoryRates();
     ui::FrameRateCategoryRate frameRateCategoryRate(normal.getValue(), high.getValue());
     info->frameRateCategoryRate = frameRateCategoryRate;
+
+    info->supportedRefreshRates = display->refreshRateSelector().getSupportedFrameRates();
     info->activeColorMode = display->getCompositionDisplay()->getState().colorMode;
     info->hdrCapabilities = filterOut4k30(display->getHdrCapabilities());
 
@@ -1577,8 +1596,15 @@ void SurfaceFlinger::initiateDisplayModeChanges() {
         constraints.seamlessRequired = false;
         hal::VsyncPeriodChangeTimeline outTimeline;
 
-        if (!mDisplayModeController.initiateModeChange(displayId, std::move(*desiredModeOpt),
-                                                       constraints, outTimeline)) {
+        const auto error =
+                mDisplayModeController.initiateModeChange(displayId, std::move(*desiredModeOpt),
+                                                          constraints, outTimeline);
+        if (error != display::DisplayModeController::ModeChangeResult::Changed) {
+            dropModeRequest(displayId);
+            if (FlagManager::getInstance().display_config_error_hal() &&
+                error == display::DisplayModeController::ModeChangeResult::Rejected) {
+                mScheduler->onDisplayModeRejected(displayId, desiredModeId);
+            }
             continue;
         }
 
@@ -3655,6 +3681,9 @@ std::pair<DisplayModes, DisplayModePtr> SurfaceFlinger::loadDisplayModes(
     DisplayModes newModes;
     for (const auto& hwcMode : hwcModes) {
         const auto id = nextModeId++;
+        OutputType hdrOutputType = FlagManager::getInstance().connected_display_hdr()
+                ? hwcMode.hdrOutputType
+                : OutputType::INVALID;
         newModes.try_emplace(id,
                              DisplayMode::Builder(hwcMode.hwcId)
                                      .setId(id)
@@ -3665,6 +3694,7 @@ std::pair<DisplayModes, DisplayModePtr> SurfaceFlinger::loadDisplayModes(
                                      .setDpiX(hwcMode.dpiX)
                                      .setDpiY(hwcMode.dpiY)
                                      .setGroup(hwcMode.configGroup)
+                                     .setHdrOutputType(hdrOutputType)
                                      .build());
     }
 
@@ -3975,7 +4005,7 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     } else {
         /* QTI_BEGIN */
         auto qtiVirtualDisplayId =
-                mQtiSFExtnIntf->qtiAcquireVirtualDisplay(resolution, pixelFormat,
+                mQtiSFExtnIntf->qtiAcquireVirtualDisplay(resolution, pixelFormat, state.uniqueId,
                                                          qtiCanAllocateHwcForVDS);
         if (!qtiVirtualDisplayId.has_value()) {
             ALOGE("%s: Failed to retrieve virtual display id, returning.", __func__);
@@ -4662,7 +4692,7 @@ void SurfaceFlinger::sendNotifyExpectedPresentHint(PhysicalDisplayId displayId) 
     scheduleNotifyExpectedPresentHint(displayId);
 }
 
-void SurfaceFlinger::onCommitNotComposited(PhysicalDisplayId pacesetterDisplayId) {
+void SurfaceFlinger::onCommitNotComposited() {
     if (FlagManager::getInstance().commit_not_composited()) {
         mFrameTimeline->onCommitNotComposited();
     }
@@ -6118,6 +6148,14 @@ void SurfaceFlinger::dumpDisplays(std::string& result) const {
             utils::Dumper::Section section(dumper,
                                            ftl::Concat("Virtual Display ", displayId.value).str());
             display->dump(dumper);
+
+            if (const auto virtualIdOpt = VirtualDisplayId::tryCast(displayId)) {
+                std::lock_guard lock(mVirtualDisplaysMutex);
+                const auto virtualSnapshotIt = mVirtualDisplays.find(virtualIdOpt.value());
+                if (virtualSnapshotIt != mVirtualDisplays.end()) {
+                    virtualSnapshotIt->second.dump(dumper);
+                }
+            }
         }
     }
 }
@@ -9094,6 +9132,11 @@ void SurfaceComposerAIDL::getDynamicDisplayInfoInternal(ui::DynamicDisplayInfo& 
     gui::FrameRateCategoryRate& frameRateCategoryRate = outInfo->frameRateCategoryRate;
     frameRateCategoryRate.normal = info.frameRateCategoryRate.getNormal();
     frameRateCategoryRate.high = info.frameRateCategoryRate.getHigh();
+    outInfo->supportedRefreshRates.clear();
+    outInfo->supportedRefreshRates.reserve(info.supportedRefreshRates.size());
+    for (float supportedRefreshRate : info.supportedRefreshRates) {
+        outInfo->supportedRefreshRates.push_back(supportedRefreshRate);
+    }
 
     outInfo->supportedColorModes.clear();
     outInfo->supportedColorModes.reserve(info.supportedColorModes.size());
@@ -9622,26 +9665,46 @@ binder::Status SurfaceComposerAIDL::setGameDefaultFrameRateOverride(int32_t uid,
 }
 
 binder::Status SurfaceComposerAIDL::enableRefreshRateOverlay(bool active) {
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
     mFlinger->sfdo_enableRefreshRateOverlay(active);
     return binder::Status::ok();
 }
 
 binder::Status SurfaceComposerAIDL::setDebugFlash(int delay) {
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
     mFlinger->sfdo_setDebugFlash(delay);
     return binder::Status::ok();
 }
 
 binder::Status SurfaceComposerAIDL::scheduleComposite() {
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
     mFlinger->sfdo_scheduleComposite();
     return binder::Status::ok();
 }
 
 binder::Status SurfaceComposerAIDL::scheduleCommit() {
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
     mFlinger->sfdo_scheduleCommit();
     return binder::Status::ok();
 }
 
 binder::Status SurfaceComposerAIDL::forceClientComposition(bool enabled) {
+    status_t status = checkAccessPermission();
+    if (status != OK) {
+        return binderStatusFromStatusT(status);
+    }
     mFlinger->sfdo_forceClientComposition(enabled);
     return binder::Status::ok();
 }

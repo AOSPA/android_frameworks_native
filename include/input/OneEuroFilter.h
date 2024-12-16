@@ -56,7 +56,7 @@ public:
      * provided in the previous call.
      * @param rawPosition Position to be filtered.
      */
-    float filter(std::chrono::duration<float> timestamp, float rawPosition);
+    float filter(std::chrono::nanoseconds timestamp, float rawPosition);
 
 private:
     /**
@@ -67,7 +67,7 @@ private:
 
     /**
      * Slope of the cutoff frequency criterion. This is the term scaling the absolute value of the
-     * filtered signal's speed. The data member is dimensionless, that is, it does not have units.
+     * filtered signal's speed. Units are 1 / position.
      */
     const float mBeta;
 
@@ -78,9 +78,9 @@ private:
     const float mSpeedCutoffFreq;
 
     /**
-     * The timestamp from the previous call. Units are seconds.
+     * The timestamp from the previous call.
      */
-    std::optional<std::chrono::duration<float>> mPrevTimestamp;
+    std::optional<std::chrono::nanoseconds> mPrevTimestamp;
 
     /**
      * The raw position from the previous call.
@@ -88,7 +88,7 @@ private:
     std::optional<float> mPrevRawPosition;
 
     /**
-     * The filtered velocity from the previous call. Units are position per second.
+     * The filtered velocity from the previous call. Units are position per nanosecond.
      */
     std::optional<float> mPrevFilteredVelocity;
 
