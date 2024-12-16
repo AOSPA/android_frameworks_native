@@ -39,7 +39,7 @@
 #include "ftl/future.h"
 #include "mock/DisplayHardware/MockHWC2.h"
 #include "mock/DisplayHardware/MockHWComposer.h"
-#include "mock/DisplayHardware/MockPowerAdvisor.h"
+#include "mock/PowerAdvisor/MockPowerAdvisor.h"
 
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 
@@ -192,7 +192,7 @@ struct DisplayTestCommon : public testing::Test {
     }
 
     StrictMock<android::mock::HWComposer> mHwComposer;
-    StrictMock<Hwc2::mock::PowerAdvisor> mPowerAdvisor;
+    StrictMock<adpf::mock::PowerAdvisor> mPowerAdvisor;
     StrictMock<renderengine::mock::RenderEngine> mRenderEngine;
     StrictMock<mock::CompositionEngine> mCompositionEngine;
     sp<mock::NativeWindow> mNativeWindow = sp<StrictMock<mock::NativeWindow>>::make();
@@ -1035,7 +1035,7 @@ struct DisplayFunctionalTest : public testing::Test {
     }
 
     NiceMock<android::mock::HWComposer> mHwComposer;
-    NiceMock<Hwc2::mock::PowerAdvisor> mPowerAdvisor;
+    NiceMock<adpf::mock::PowerAdvisor> mPowerAdvisor;
     NiceMock<mock::CompositionEngine> mCompositionEngine;
     sp<mock::NativeWindow> mNativeWindow = sp<NiceMock<mock::NativeWindow>>::make();
     sp<mock::DisplaySurface> mDisplaySurface = sp<NiceMock<mock::DisplaySurface>>::make();

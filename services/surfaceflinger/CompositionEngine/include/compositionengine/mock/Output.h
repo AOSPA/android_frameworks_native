@@ -34,7 +34,7 @@ public:
     virtual ~Output();
 
     MOCK_CONST_METHOD0(isValid, bool());
-    MOCK_CONST_METHOD0(getDisplayId, std::optional<DisplayId>());
+    MOCK_CONST_METHOD0(getDisplayId, ftl::Optional<DisplayId>());
 
     MOCK_METHOD1(setCompositionEnabled, void(bool));
     MOCK_METHOD1(setLayerCachingEnabled, void(bool));
@@ -142,6 +142,9 @@ public:
     MOCK_METHOD(bool, isPowerHintSessionGpuReportingEnabled, ());
     MOCK_METHOD((const aidl::android::hardware::graphics::composer3::OverlayProperties*),
                 getOverlaySupport, ());
+    MOCK_METHOD(bool, hasPictureProcessing, (), (const));
+    MOCK_METHOD(int32_t, getMaxLayerPictureProfiles, (), (const));
+    MOCK_METHOD(void, applyPictureProfile, ());
 };
 
 } // namespace android::compositionengine::mock

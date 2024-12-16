@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 The Android Open Source Project
+ * Copyright 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,11 +14,19 @@
  * limitations under the License.
  */
 
-#include "MockPowerHalController.h"
+package android.gui;
 
-namespace android::Hwc2::mock {
+/**
+ * Visible content that is using picture processing.
+ * @hide
+ */
+parcelable ActivePicture {
+    /** The layer ID that is using picture processing. */
+    int layerId;
 
-MockPowerHalController::MockPowerHalController() = default;
-MockPowerHalController::~MockPowerHalController() = default;
+    /** UID that owns layer using picture processing. */
+    int ownerUid;
 
-} // namespace android::Hwc2::mock
+    /** ID of the picture profile that was used to configure the picture processing. */
+    long pictureProfileId;
+}

@@ -1851,6 +1851,11 @@ Dumpstate::RunStatus Dumpstate::dumpstate() {
         RunCommand("DUMP VENDOR RIL LOGS", {"vril-dump"}, options.Build());
     }
 
+    /* Dump USB information */
+    RunCommand("typec_connector_class", {"typec_connector_class"},
+               CommandOptions::WithTimeout(10).AsRootIfAvailable().Build());
+    RunCommand("lsusb", {"lsusb"}, CommandOptions::WithTimeout(10).AsRootIfAvailable().Build());
+
     printf("========================================================\n");
     printf("== Android Framework Services\n");
     printf("========================================================\n");
@@ -4664,7 +4669,7 @@ void Dumpstate::UpdateProgress(int32_t delta_sec) {
 void Dumpstate::TakeScreenshot(const std::string& path) {
     const std::string& real_path = path.empty() ? screenshot_path_ : path;
     int status =
-        RunCommand("", {"/system/bin/screencap", "-p", real_path},
+        RunCommand("", {"screencap", "-p", real_path},
                    CommandOptions::WithTimeout(10).Always().DropRoot().RedirectStderr().Build());
     if (status == 0) {
         MYLOGD("Screenshot saved on %s\n", real_path.c_str());

@@ -113,16 +113,17 @@ void FlagManager::dump(std::string& result) const {
     /// Trunk stable server flags ///
     DUMP_SERVER_FLAG(refresh_rate_overlay_on_external_display);
     DUMP_SERVER_FLAG(adpf_gpu_sf);
+    DUMP_SERVER_FLAG(adpf_native_session_manager);
     DUMP_SERVER_FLAG(adpf_use_fmq_channel);
 
     /// Trunk stable readonly flags ///
     DUMP_READ_ONLY_FLAG(adpf_fmq_sf);
     DUMP_READ_ONLY_FLAG(connected_display);
     DUMP_READ_ONLY_FLAG(enable_small_area_detection);
+    DUMP_READ_ONLY_FLAG(stable_edid_ids);
     DUMP_READ_ONLY_FLAG(frame_rate_category_mrr);
     DUMP_READ_ONLY_FLAG(misc1);
     DUMP_READ_ONLY_FLAG(vrr_config);
-    DUMP_READ_ONLY_FLAG(hotplug2);
     DUMP_READ_ONLY_FLAG(hdcp_level_hal);
     DUMP_READ_ONLY_FLAG(multithreaded_present);
     DUMP_READ_ONLY_FLAG(add_sf_skipped_frames_to_trace);
@@ -139,6 +140,7 @@ void FlagManager::dump(std::string& result) const {
     DUMP_READ_ONLY_FLAG(vrr_bugfix_dropped_frame);
     DUMP_READ_ONLY_FLAG(restore_blur_step);
     DUMP_READ_ONLY_FLAG(dont_skip_on_early_ro);
+    DUMP_READ_ONLY_FLAG(no_vsyncs_on_screen_off);
     DUMP_READ_ONLY_FLAG(protected_if_client);
     DUMP_READ_ONLY_FLAG(idle_screen_refresh_rate_timeout);
     DUMP_READ_ONLY_FLAG(graphite_renderengine);
@@ -153,10 +155,13 @@ void FlagManager::dump(std::string& result) const {
     DUMP_READ_ONLY_FLAG(override_trusted_overlay);
     DUMP_READ_ONLY_FLAG(flush_buffer_slots_to_uncache);
     DUMP_READ_ONLY_FLAG(force_compile_graphite_renderengine);
-    DUMP_READ_ONLY_FLAG(single_hop_screenshot);
     DUMP_READ_ONLY_FLAG(trace_frame_rate_override);
     DUMP_READ_ONLY_FLAG(true_hdr_screenshots);
     DUMP_READ_ONLY_FLAG(display_config_error_hal);
+    DUMP_READ_ONLY_FLAG(connected_display_hdr);
+    DUMP_READ_ONLY_FLAG(deprecate_frame_tracker);
+    DUMP_READ_ONLY_FLAG(skip_invisible_windows_in_input);
+    DUMP_READ_ONLY_FLAG(begone_bright_hlg);
 
 #undef DUMP_READ_ONLY_FLAG
 #undef DUMP_SERVER_FLAG
@@ -225,10 +230,10 @@ FLAG_MANAGER_LEGACY_SERVER_FLAG(use_skia_tracing, PROPERTY_SKIA_ATRACE_ENABLED,
 FLAG_MANAGER_READ_ONLY_FLAG(adpf_fmq_sf, "")
 FLAG_MANAGER_READ_ONLY_FLAG(connected_display, "")
 FLAG_MANAGER_READ_ONLY_FLAG(enable_small_area_detection, "")
+FLAG_MANAGER_READ_ONLY_FLAG(stable_edid_ids, "debug.sf.stable_edid_ids")
 FLAG_MANAGER_READ_ONLY_FLAG(frame_rate_category_mrr, "debug.sf.frame_rate_category_mrr")
 FLAG_MANAGER_READ_ONLY_FLAG(misc1, "")
 FLAG_MANAGER_READ_ONLY_FLAG(vrr_config, "debug.sf.enable_vrr_config")
-FLAG_MANAGER_READ_ONLY_FLAG(hotplug2, "")
 FLAG_MANAGER_READ_ONLY_FLAG(hdcp_level_hal, "")
 FLAG_MANAGER_READ_ONLY_FLAG(multithreaded_present, "debug.sf.multithreaded_present")
 FLAG_MANAGER_READ_ONLY_FLAG(add_sf_skipped_frames_to_trace, "")
@@ -244,6 +249,7 @@ FLAG_MANAGER_READ_ONLY_FLAG(vulkan_renderengine, "debug.renderengine.vulkan")
 FLAG_MANAGER_READ_ONLY_FLAG(renderable_buffer_usage, "")
 FLAG_MANAGER_READ_ONLY_FLAG(restore_blur_step, "debug.renderengine.restore_blur_step")
 FLAG_MANAGER_READ_ONLY_FLAG(dont_skip_on_early_ro, "")
+FLAG_MANAGER_READ_ONLY_FLAG(no_vsyncs_on_screen_off, "debug.sf.no_vsyncs_on_screen_off")
 FLAG_MANAGER_READ_ONLY_FLAG(protected_if_client, "")
 FLAG_MANAGER_READ_ONLY_FLAG(vrr_bugfix_24q4, "");
 FLAG_MANAGER_READ_ONLY_FLAG(vrr_bugfix_dropped_frame, "")
@@ -259,13 +265,17 @@ FLAG_MANAGER_READ_ONLY_FLAG(local_tonemap_screenshots, "debug.sf.local_tonemap_s
 FLAG_MANAGER_READ_ONLY_FLAG(override_trusted_overlay, "");
 FLAG_MANAGER_READ_ONLY_FLAG(flush_buffer_slots_to_uncache, "");
 FLAG_MANAGER_READ_ONLY_FLAG(force_compile_graphite_renderengine, "");
-FLAG_MANAGER_READ_ONLY_FLAG(single_hop_screenshot, "");
 FLAG_MANAGER_READ_ONLY_FLAG(true_hdr_screenshots, "debug.sf.true_hdr_screenshots");
 FLAG_MANAGER_READ_ONLY_FLAG(display_config_error_hal, "");
+FLAG_MANAGER_READ_ONLY_FLAG(connected_display_hdr, "");
+FLAG_MANAGER_READ_ONLY_FLAG(deprecate_frame_tracker, "");
+FLAG_MANAGER_READ_ONLY_FLAG(skip_invisible_windows_in_input, "");
+FLAG_MANAGER_READ_ONLY_FLAG(begone_bright_hlg, "debug.sf.begone_bright_hlg");
 
 /// Trunk stable server flags ///
 FLAG_MANAGER_SERVER_FLAG(refresh_rate_overlay_on_external_display, "")
 FLAG_MANAGER_SERVER_FLAG(adpf_gpu_sf, "")
+FLAG_MANAGER_SERVER_FLAG(adpf_native_session_manager, "");
 
 /// Trunk stable server flags from outside SurfaceFlinger ///
 FLAG_MANAGER_SERVER_FLAG_IMPORTED(adpf_use_fmq_channel, "", android::os)

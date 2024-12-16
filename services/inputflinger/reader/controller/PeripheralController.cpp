@@ -514,6 +514,8 @@ void PeripheralController::configureLights() {
             type = InputDeviceLightType::KEYBOARD_BACKLIGHT;
         } else if (rawInfo.flags.test(InputLightClass::KEYBOARD_MIC_MUTE)) {
             type = InputDeviceLightType::KEYBOARD_MIC_MUTE;
+        } else if (rawInfo.flags.test(InputLightClass::KEYBOARD_VOLUME_MUTE)) {
+            type = InputDeviceLightType::KEYBOARD_VOLUME_MUTE;
         } else {
             type = InputDeviceLightType::INPUT;
         }

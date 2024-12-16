@@ -48,7 +48,6 @@
 #include <ui/DisplayId.h>
 #include <ui/DisplayMap.h>
 
-#include "Display/DisplayModeRequest.h"
 #include "EventThread.h"
 #include "FrameRateOverrideMappings.h"
 #include "ISchedulerCallback.h"
@@ -161,9 +160,11 @@ public:
     void dispatchHotplugError(int32_t errorCode);
 
     // Returns true if the PhysicalDisplayId is the pacesetter.
-    bool onDisplayModeChanged(PhysicalDisplayId, const FrameRateMode&) EXCLUDES(mPolicyLock);
+    bool onDisplayModeChanged(PhysicalDisplayId, const FrameRateMode&,
+                              bool clearContentRequirements) EXCLUDES(mPolicyLock);
 
     void enableSyntheticVsync(bool = true) REQUIRES(kMainThreadContext);
+    void omitVsyncDispatching(bool) REQUIRES(kMainThreadContext);
 
     void onHdcpLevelsChanged(Cycle, PhysicalDisplayId, int32_t, int32_t);
 
@@ -348,6 +349,12 @@ public:
     void injectPacesetterDelay(float frameDurationFraction) REQUIRES(kMainThreadContext) {
         mPacesetterFrameDurationFractionToSkip = frameDurationFraction;
     }
+
+    // Propagates a flag to the EventThread indicating that buffer stuffing
+    // recovery should begin.
+    void addBufferStuffedUids(BufferStuffingMap bufferStuffedUids);
+
+    void setDebugPresentDelay(TimePoint delay) { mDebugPresentDelay = delay; }
 
 private:
     friend class TestableScheduler;
@@ -614,6 +621,8 @@ private:
 
     FrameRateOverrideMappings mFrameRateOverrideMappings;
     SmallAreaDetectionAllowMappings mSmallAreaDetectionAllowMappings;
+
+    std::atomic<std::optional<TimePoint>> mDebugPresentDelay;
 
     /* QTI_BEGIN */
     // Cache thermal Fps, and limit to the given level

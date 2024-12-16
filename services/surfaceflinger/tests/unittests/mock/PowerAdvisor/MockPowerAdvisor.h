@@ -18,11 +18,11 @@
 
 #include <gmock/gmock.h>
 
-#include "DisplayHardware/PowerAdvisor.h"
+#include "PowerAdvisor/PowerAdvisor.h"
 
-namespace android::Hwc2::mock {
+namespace android::adpf::mock {
 
-class PowerAdvisor : public android::Hwc2::PowerAdvisor {
+class PowerAdvisor : public android::adpf::PowerAdvisor {
 public:
     PowerAdvisor();
     ~PowerAdvisor() override;
@@ -65,4 +65,4 @@ public:
     MOCK_METHOD(void, setTotalFrameTargetWorkDuration, (Duration targetDuration), (override));
 };
 
-} // namespace android::Hwc2::mock
+} // namespace android::adpf::mock

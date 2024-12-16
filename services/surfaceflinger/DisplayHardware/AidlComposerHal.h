@@ -263,6 +263,9 @@ public:
             std::vector<aidl::android::hardware::graphics::composer3::DisplayLuts::LayerLut>*
                     outLuts) override;
     Error setLayerLuts(Display display, Layer layer, Luts& luts) override;
+    Error getMaxLayerPictureProfiles(Display, int32_t* outMaxProfiles) override;
+    Error setDisplayPictureProfileId(Display, PictureProfileId id) override;
+    Error setLayerPictureProfileId(Display, Layer, PictureProfileId id) override;
 
 private:
     /* QTI_BEGIN */

@@ -20,7 +20,7 @@
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
-//#define LOG_NDEBUG 0
+// #define LOG_NDEBUG 0
 
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include <cinttypes>
 #include <cstdint>
+#include <functional>
 #include <optional>
 
 #include <android-base/properties.h>
@@ -39,45 +40,29 @@
 
 #include <binder/IServiceManager.h>
 
-#include "../SurfaceFlingerProperties.h"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wconversion"
+#include <powermanager/PowerHalController.h>
+#include <powermanager/PowerHintSessionWrapper.h>
+#pragma clang diagnostic pop
 
+#include <common/FlagManager.h>
 #include "PowerAdvisor.h"
-#include "SurfaceFlinger.h"
 
-namespace android {
-namespace Hwc2 {
+namespace hal = aidl::android::hardware::power;
 
-PowerAdvisor::~PowerAdvisor() = default;
+namespace android::adpf::impl {
 
-namespace impl {
-
-using aidl::android::hardware::power::Boost;
-using aidl::android::hardware::power::ChannelConfig;
-using aidl::android::hardware::power::Mode;
-using aidl::android::hardware::power::SessionHint;
-using aidl::android::hardware::power::SessionTag;
-using aidl::android::hardware::power::WorkDuration;
-using aidl::android::hardware::power::WorkDurationFixedV1;
-
-using aidl::android::hardware::common::fmq::MQDescriptor;
 using aidl::android::hardware::common::fmq::SynchronizedReadWrite;
-using aidl::android::hardware::power::ChannelMessage;
 using android::hardware::EventFlag;
 
-using ChannelMessageContents = ChannelMessage::ChannelMessageContents;
-using MsgQueue = android::AidlMessageQueue<ChannelMessage, SynchronizedReadWrite>;
+using ChannelMessageContents = hal::ChannelMessage::ChannelMessageContents;
+using MsgQueue = android::AidlMessageQueue<hal::ChannelMessage, SynchronizedReadWrite>;
 using FlagQueue = android::AidlMessageQueue<int8_t, SynchronizedReadWrite>;
 
 PowerAdvisor::~PowerAdvisor() = default;
 
 namespace {
-std::chrono::milliseconds getUpdateTimeout() {
-    // Default to a timeout of 80ms if nothing else is specified
-    static std::chrono::milliseconds timeout =
-            std::chrono::milliseconds(sysprop::display_update_imminent_timeout_ms(80));
-    return timeout;
-}
-
 void traceExpensiveRendering(bool enabled) {
     if (enabled) {
         SFTRACE_ASYNC_BEGIN("ExpensiveRendering", 0);
@@ -88,29 +73,31 @@ void traceExpensiveRendering(bool enabled) {
 
 } // namespace
 
-PowerAdvisor::PowerAdvisor(SurfaceFlinger& flinger)
-      : mPowerHal(std::make_unique<power::PowerHalController>()), mFlinger(flinger) {
-    if (getUpdateTimeout() > 0ms) {
-        mScreenUpdateTimer.emplace("UpdateImminentTimer", getUpdateTimeout(),
+PowerAdvisor::PowerAdvisor(std::function<void()>&& sfDisableExpensiveFn,
+                           std::chrono::milliseconds timeout)
+      : mPowerHal(std::make_unique<power::PowerHalController>()) {
+    if (timeout > 0ms) {
+        mScreenUpdateTimer.emplace("UpdateImminentTimer", timeout,
                                    /* resetCallback */ /* QTI_BEGIN */
                                    [this] { mSendUpdateImminent.store(false); } /* QTI_END */,
                                    /* timeoutCallback */
-                                   [this] {
+                                   [this, disableExpensiveFn = std::move(sfDisableExpensiveFn),
+                                    timeout] {
                                        while (true) {
                                            auto timeSinceLastUpdate = std::chrono::nanoseconds(
                                                    systemTime() - mLastScreenUpdatedTime.load());
-                                           if (timeSinceLastUpdate >= getUpdateTimeout()) {
+                                           if (timeSinceLastUpdate >= timeout) {
                                                break;
                                            }
                                            // We may try to disable expensive rendering and allow
                                            // for sending DISPLAY_UPDATE_IMMINENT hints too early if
                                            // we idled very shortly after updating the screen, so
                                            // make sure we wait enough time.
-                                           std::this_thread::sleep_for(getUpdateTimeout() -
+                                           std::this_thread::sleep_for(timeout -
                                                                        timeSinceLastUpdate);
                                        }
                                        mSendUpdateImminent.store(true);
-                                       mFlinger.disableExpensiveRendering();
+                                       disableExpensiveFn();
                                    });
     }
 }
@@ -139,7 +126,7 @@ void PowerAdvisor::setExpensiveRenderingExpected(DisplayId displayId, bool expec
 
     const bool expectsExpensiveRendering = !mExpensiveDisplays.empty();
     if (mNotifiedExpensiveRendering != expectsExpensiveRendering) {
-        auto ret = getPowerHal().setMode(Mode::EXPENSIVE_RENDERING, expectsExpensiveRendering);
+        auto ret = getPowerHal().setMode(hal::Mode::EXPENSIVE_RENDERING, expectsExpensiveRendering);
         if (!ret.isOk()) {
             if (ret.isUnsupported()) {
                 mHasExpensiveRendering = false;
@@ -158,7 +145,7 @@ void PowerAdvisor::notifyCpuLoadUp() {
     if (!mBootFinished.load()) {
         return;
     }
-    sendHintSessionHint(SessionHint::CPU_LOAD_UP);
+    sendHintSessionHint(hal::SessionHint::CPU_LOAD_UP);
 }
 
 void PowerAdvisor::notifyDisplayUpdateImminentAndCpuReset() {
@@ -170,12 +157,12 @@ void PowerAdvisor::notifyDisplayUpdateImminentAndCpuReset() {
 
     if (mSendUpdateImminent.exchange(false)) {
         ALOGV("AIDL notifyDisplayUpdateImminentAndCpuReset");
-        sendHintSessionHint(SessionHint::CPU_LOAD_RESET);
+        sendHintSessionHint(hal::SessionHint::CPU_LOAD_RESET);
 
         if (!mHasDisplayUpdateImminent) {
             ALOGV("Skipped sending DISPLAY_UPDATE_IMMINENT because HAL doesn't support it");
         } else {
-            auto ret = getPowerHal().setBoost(Boost::DISPLAY_UPDATE_IMMINENT, 0);
+            auto ret = getPowerHal().setBoost(hal::Boost::DISPLAY_UPDATE_IMMINENT, 0);
             if (ret.isUnsupported()) {
                 mHasDisplayUpdateImminent = false;
             }
@@ -212,7 +199,7 @@ bool PowerAdvisor::shouldCreateSessionWithConfig() {
             FlagManager::getInstance().adpf_use_fmq_channel();
 }
 
-void PowerAdvisor::sendHintSessionHint(SessionHint hint) {
+void PowerAdvisor::sendHintSessionHint(hal::SessionHint hint) {
     if (!mBootFinished || !usePowerHintSession()) {
         ALOGV("Power hint session is not enabled, skip sending session hint");
         return;
@@ -243,7 +230,7 @@ bool PowerAdvisor::ensurePowerHintSessionRunning() {
                                                                  static_cast<int32_t>(getuid()),
                                                                  mHintSessionThreadIds,
                                                                  mTargetDuration.ns(),
-                                                                 SessionTag::SURFACEFLINGER,
+                                                                 hal::SessionTag::SURFACEFLINGER,
                                                                  &mSessionConfig);
             if (ret.isOk()) {
                 mHintSession = ret.value();
@@ -333,7 +320,7 @@ void PowerAdvisor::reportActualWorkDuration() {
         return;
     }
     SFTRACE_CALL();
-    std::optional<WorkDuration> actualDuration = estimateWorkDuration();
+    std::optional<hal::WorkDuration> actualDuration = estimateWorkDuration();
     if (!actualDuration.has_value() || actualDuration->durationNanos < 0) {
         ALOGV("Failed to send actual work duration, skipping");
         return;
@@ -384,7 +371,7 @@ void PowerAdvisor::reportActualWorkDuration() {
     mHintSessionQueue.clear();
 }
 
-template <ChannelMessage::ChannelMessageContents::Tag T, class In>
+template <hal::ChannelMessage::ChannelMessageContents::Tag T, class In>
 bool PowerAdvisor::writeHintSessionMessage(In* contents, size_t count) {
     if (!mMsgQueue) {
         ALOGV("Skip using FMQ with message tag %hhd as it's not supported", T);
@@ -402,13 +389,13 @@ bool PowerAdvisor::writeHintSessionMessage(In* contents, size_t count) {
     }
     for (size_t i = 0; i < count; ++i) {
         if constexpr (T == ChannelMessageContents::Tag::workDuration) {
-            const WorkDuration& duration = contents[i];
-            new (tx.getSlot(i)) ChannelMessage{
+            const hal::WorkDuration& duration = contents[i];
+            new (tx.getSlot(i)) hal::ChannelMessage{
                     .sessionID = static_cast<int32_t>(mSessionConfig.id),
                     .timeStampNanos =
                             (i == count - 1) ? ::android::uptimeNanos() : duration.timeStampNanos,
                     .data = ChannelMessageContents::make<ChannelMessageContents::Tag::workDuration,
-                                                         WorkDurationFixedV1>({
+                                                         hal::WorkDurationFixedV1>({
                             .durationNanos = duration.durationNanos,
                             .workPeriodStartTimestampNanos = duration.workPeriodStartTimestampNanos,
                             .cpuDurationNanos = duration.cpuDurationNanos,
@@ -416,7 +403,7 @@ bool PowerAdvisor::writeHintSessionMessage(In* contents, size_t count) {
                     }),
             };
         } else {
-            new (tx.getSlot(i)) ChannelMessage{
+            new (tx.getSlot(i)) hal::ChannelMessage{
                     .sessionID = static_cast<int32_t>(mSessionConfig.id),
                     .timeStampNanos = ::android::uptimeNanos(),
                     .data = ChannelMessageContents::make<T, In>(std::move(contents[i])),
@@ -579,7 +566,7 @@ std::vector<DisplayId> PowerAdvisor::getOrderedDisplayIds(
     return sortedDisplays;
 }
 
-std::optional<WorkDuration> PowerAdvisor::estimateWorkDuration() {
+std::optional<hal::WorkDuration> PowerAdvisor::estimateWorkDuration() {
     if (!mExpectedPresentTimes.isFull() || !mCommitStartTimes.isFull()) {
         return std::nullopt;
     }
@@ -664,7 +651,7 @@ std::optional<WorkDuration> PowerAdvisor::estimateWorkDuration() {
     Duration combinedDuration = combineTimingEstimates(totalDuration, flingerDuration);
     Duration cpuDuration = combineTimingEstimates(totalDurationWithoutGpu, flingerDuration);
 
-    WorkDuration duration{
+    hal::WorkDuration duration{
             .timeStampNanos = TimePoint::now().ns(),
             .durationNanos = combinedDuration.ns(),
             .workPeriodStartTimestampNanos = mCommitStartTimes[0].ns(),
@@ -767,6 +754,4 @@ power::PowerHalController& PowerAdvisor::getPowerHal() {
     return *mPowerHal;
 }
 
-} // namespace impl
-} // namespace Hwc2
-} // namespace android
+} // namespace android::adpf::impl

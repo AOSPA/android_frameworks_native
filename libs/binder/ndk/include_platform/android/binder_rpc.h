@@ -139,13 +139,16 @@ typedef void (*ABinderRpc_AccessorProviderUserData_deleteCallback)(void* _Nullab
  *         registered. In the error case of duplicate instances, if data was
  *         provided with a ABinderRpc_AccessorProviderUserData_deleteCallback,
  *         the callback will be called to delete the data.
+ *         If nullptr is returned, ABinderRpc_AccessorProviderUserData_deleteCallback
+ *         will be called on data immediately.
  *         Otherwise returns a pointer to the ABinderRpc_AccessorProvider that
  *         can be used to remove with ABinderRpc_unregisterAccessorProvider.
  */
 ABinderRpc_AccessorProvider* _Nullable ABinderRpc_registerAccessorProvider(
         ABinderRpc_AccessorProvider_getAccessorCallback _Nonnull provider,
-        const char* _Nullable* _Nonnull instances, size_t numInstances, void* _Nullable data,
-        ABinderRpc_AccessorProviderUserData_deleteCallback _Nullable onDelete) __INTRODUCED_IN(36);
+        const char* _Nullable const* const _Nonnull instances, size_t numInstances,
+        void* _Nullable data, ABinderRpc_AccessorProviderUserData_deleteCallback _Nullable onDelete)
+        __INTRODUCED_IN(36);
 
 /**
  * Remove an ABinderRpc_AccessorProvider from libbinder. This will remove references

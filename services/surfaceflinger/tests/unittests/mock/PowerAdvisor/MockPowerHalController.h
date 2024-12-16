@@ -19,10 +19,7 @@
 #include <gmock/gmock.h>
 #include <scheduler/Time.h>
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wconversion"
 #include <powermanager/PowerHalController.h>
-#pragma clang diagnostic pop
 
 namespace android {
 namespace hardware {
@@ -32,7 +29,7 @@ class IPower;
 } // namespace hardware
 } // namespace android
 
-namespace android::Hwc2::mock {
+namespace android::adpf::mock {
 
 using android::power::HalResult;
 
@@ -57,6 +54,8 @@ public:
     MOCK_METHOD(HalResult<aidl::android::hardware::power::ChannelConfig>, getSessionChannel,
                 (int tgid, int uid), (override));
     MOCK_METHOD(HalResult<void>, closeSessionChannel, (int tgid, int uid), (override));
+    MOCK_METHOD(HalResult<aidl::android::hardware::power::SupportInfo>, getSupportInfo, (),
+                (override));
 };
 
-} // namespace android::Hwc2::mock
+} // namespace android::adpf::mock

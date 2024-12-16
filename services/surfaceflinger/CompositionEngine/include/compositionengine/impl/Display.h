@@ -30,7 +30,7 @@
 #include <ui/DisplayIdentification.h>
 
 #include "DisplayHardware/HWComposer.h"
-#include "DisplayHardware/PowerAdvisor.h"
+#include "PowerAdvisor/PowerAdvisor.h"
 
 namespace android::compositionengine {
 
@@ -45,7 +45,7 @@ public:
     virtual ~Display();
 
     // compositionengine::Output overrides
-    std::optional<DisplayId> getDisplayId() const override;
+    ftl::Optional<DisplayId> getDisplayId() const override;
     bool isValid() const override;
     void dump(std::string&) const override;
     using compositionengine::impl::Output::setReleasedLayers;
@@ -105,9 +105,14 @@ private:
     void setHintSessionGpuStart(TimePoint startTime) override;
     void setHintSessionGpuFence(std::unique_ptr<FenceTime>&& gpuFence) override;
     void setHintSessionRequiresRenderEngine(bool requiresRenderEngine) override;
+    const aidl::android::hardware::graphics::composer3::OverlayProperties* getOverlaySupport()
+            override;
+    bool hasPictureProcessing() const override;
+    int32_t getMaxLayerPictureProfiles() const override;
+
     DisplayId mId;
     bool mIsDisconnected = false;
-    Hwc2::PowerAdvisor* mPowerAdvisor = nullptr;
+    adpf::PowerAdvisor* mPowerAdvisor = nullptr;
 
     /* QTI_BEGIN */
     bool mQtiIsColorModeChanged = false;
@@ -115,8 +120,8 @@ private:
                                      ui::RenderIntent::COLORIMETRIC};
     /* QTI_END */
 
-    const aidl::android::hardware::graphics::composer3::OverlayProperties* getOverlaySupport()
-            override;
+    bool mHasPictureProcessing = false;
+    int32_t mMaxLayerPictureProfiles = 0;
 };
 
 // This template factory function standardizes the implementation details of the

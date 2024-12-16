@@ -1400,6 +1400,26 @@ TEST_F(BinderARpcNdk, ARpcProviderNewDelete) {
     EXPECT_TRUE(isDeleted);
 }
 
+TEST_F(BinderARpcNdk, ARpcProviderDeleteOnError) {
+    bool isDeleted = false;
+    AccessorProviderData* data = new AccessorProviderData{{}, 0, &isDeleted};
+
+    ABinderRpc_AccessorProvider* provider =
+            ABinderRpc_registerAccessorProvider(getAccessor, kARpcSupportedServices, 0, data,
+                                                accessorProviderDataOnDelete);
+
+    ASSERT_EQ(provider, nullptr);
+    EXPECT_TRUE(isDeleted);
+}
+
+TEST_F(BinderARpcNdk, ARpcProvideOnErrorNoDeleteCbNoCrash) {
+    ABinderRpc_AccessorProvider* provider =
+            ABinderRpc_registerAccessorProvider(getAccessor, kARpcSupportedServices, 0, nullptr,
+                                                nullptr);
+
+    ASSERT_EQ(provider, nullptr);
+}
+
 TEST_F(BinderARpcNdk, ARpcProviderDuplicateInstance) {
     const char* instance = "some.instance.name.IFoo/default";
     const uint32_t numInstances = 2;

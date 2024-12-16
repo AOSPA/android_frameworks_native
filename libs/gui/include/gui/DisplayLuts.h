@@ -16,16 +16,24 @@
 #pragma once
 
 #include <android-base/unique_fd.h>
+#include <binder/Parcel.h>
+#include <binder/Parcelable.h>
 #include <vector>
 
 namespace android::gui {
 
-struct DisplayLuts {
+struct DisplayLuts : public Parcelable {
 public:
-    struct Entry {
+    struct Entry : public Parcelable {
+        Entry() {};
+        Entry(int32_t lutDimension, int32_t lutSize, int32_t lutSamplingKey)
+              : dimension(lutDimension), size(lutSize), samplingKey(lutSamplingKey) {}
         int32_t dimension;
         int32_t size;
         int32_t samplingKey;
+
+        status_t writeToParcel(android::Parcel* parcel) const override;
+        status_t readFromParcel(const android::Parcel* parcel) override;
     };
 
     DisplayLuts() {}
@@ -42,7 +50,10 @@ public:
         }
     }
 
-    base::unique_fd& getLutFileDescriptor() { return fd; }
+    status_t writeToParcel(android::Parcel* parcel) const override;
+    status_t readFromParcel(const android::Parcel* parcel) override;
+
+    const base::unique_fd& getLutFileDescriptor() const { return fd; }
 
     std::vector<Entry> lutProperties;
     std::vector<int32_t> offsets;

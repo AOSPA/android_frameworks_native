@@ -242,6 +242,9 @@ struct InputReaderConfiguration {
     // context (a.k.a. "right") clicks.
     bool touchpadRightClickZoneEnabled;
 
+    // True to use three-finger tap as a customizable shortcut; false to use it as a middle-click.
+    bool touchpadThreeFingerTapShortcutEnabled;
+
     // The set of currently disabled input devices.
     std::set<int32_t> disabledDevices;
 
@@ -293,6 +296,7 @@ struct InputReaderConfiguration {
             touchpadTapDraggingEnabled(false),
             shouldNotifyTouchpadHardwareState(false),
             touchpadRightClickZoneEnabled(false),
+            touchpadThreeFingerTapShortcutEnabled(false),
             stylusButtonMotionEventsEnabled(true),
             stylusPointerIconEnabled(false),
             mouseReverseVerticalScrollingEnabled(false),
@@ -357,6 +361,9 @@ public:
 
     /* Toggle Caps Lock */
     virtual void toggleCapsLockState(int32_t deviceId) = 0;
+
+    /* Resets locked modifier state */
+    virtual void resetLockedModifierState() = 0;
 
     /* Determine whether physical keys exist for the given framework-domain key codes. */
     virtual bool hasKeys(int32_t deviceId, uint32_t sourceMask,
@@ -495,6 +502,9 @@ public:
 
     /* Sends the Info of gestures that happen on the touchpad. */
     virtual void notifyTouchpadGestureInfo(GestureType type, int32_t deviceId) = 0;
+
+    /* Notifies the policy that the user has performed a three-finger touchpad tap. */
+    virtual void notifyTouchpadThreeFingerTap() = 0;
 
     /* Gets the keyboard layout for a particular input device. */
     virtual std::shared_ptr<KeyCharacterMap> getKeyboardLayoutOverlay(

@@ -141,7 +141,7 @@ private:
         }
 
     private:
-        std::function<int(int events)> mCallback;
+        const std::function<int(int events)> mCallback;
     };
     sp<LooperEventCallback> mCallback;
     /**

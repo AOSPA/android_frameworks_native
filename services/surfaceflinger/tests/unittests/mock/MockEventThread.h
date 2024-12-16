@@ -30,6 +30,7 @@ public:
     MOCK_METHOD(sp<EventThreadConnection>, createEventConnection, (EventRegistrationFlags),
                 (const, override));
     MOCK_METHOD(void, enableSyntheticVsync, (bool), (override));
+    MOCK_METHOD(void, omitVsyncDispatching, (bool), (override));
     MOCK_METHOD(void, onHotplugReceived, (PhysicalDisplayId, bool), (override));
     MOCK_METHOD(void, onHotplugConnectionError, (int32_t), (override));
     MOCK_METHOD(void, onModeChanged, (const scheduler::FrameRateMode&), (override));
@@ -52,6 +53,7 @@ public:
     MOCK_METHOD(void, onHdcpLevelsChanged,
                 (PhysicalDisplayId displayId, int32_t connectedLevel, int32_t maxLevel),
                 (override));
+    MOCK_METHOD(void, addBufferStuffedUids, (BufferStuffingMap), (override));
 };
 
 } // namespace android::mock

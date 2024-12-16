@@ -222,6 +222,8 @@ int32_t ANativeWindow_setBuffersDataSpace(ANativeWindow* window, int32_t dataSpa
         static_cast<int>(HAL_DATASPACE_BT2020_ITU_HLG));
     static_assert(static_cast<int>(ADATASPACE_DEPTH) == static_cast<int>(HAL_DATASPACE_DEPTH));
     static_assert(static_cast<int>(ADATASPACE_DYNAMIC_DEPTH) == static_cast<int>(HAL_DATASPACE_DYNAMIC_DEPTH));
+    static_assert(static_cast<int>(ADATASPACE_DISPLAY_BT2020) ==
+                  static_cast<int>(HAL_DATASPACE_DISPLAY_BT2020));
 
     if (!window || !query(window, NATIVE_WINDOW_IS_VALID)) {
         return -EINVAL;
@@ -261,6 +263,16 @@ int32_t ANativeWindow_setFrameRateWithChangeStrategy(ANativeWindow* window, floa
         return -EINVAL;
     }
     return native_window_set_frame_rate(window, frameRate, compatibility, changeFrameRateStrategy);
+}
+
+int32_t ANativeWindow_setFrameRateParams(
+        ANativeWindow* window, float desiredMinRate, float desiredMaxRate, float fixedSourceRate,
+        ANativeWindow_ChangeFrameRateStrategy changeFrameRateStrategy) {
+    if (!window || !query(window, NATIVE_WINDOW_IS_VALID)) {
+        return -EINVAL;
+    }
+    return native_window_set_frame_rate_params(window, desiredMinRate, desiredMaxRate,
+                                               fixedSourceRate, changeFrameRateStrategy);
 }
 
 /**************************************************************************************************

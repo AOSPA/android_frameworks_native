@@ -261,20 +261,25 @@ void updateVisibility(LayerSnapshot& snapshot, bool visible) {
     }
     snapshot.isVisible = visible;
 
-    // TODO(b/238781169) we are ignoring this compat for now, since we will have
-    // to remove any optimization based on visibility.
+    if (FlagManager::getInstance().skip_invisible_windows_in_input()) {
+        snapshot.inputInfo.setInputConfig(gui::WindowInfo::InputConfig::NOT_VISIBLE, !visible);
+    } else {
+        // TODO(b/238781169) we are ignoring this compat for now, since we will have
+        // to remove any optimization based on visibility.
 
-    // For compatibility reasons we let layers which can receive input
-    // receive input before they have actually submitted a buffer. Because
-    // of this we use canReceiveInput instead of isVisible to check the
-    // policy-visibility, ignoring the buffer state. However for layers with
-    // hasInputInfo()==false we can use the real visibility state.
-    // We are just using these layers for occlusion detection in
-    // InputDispatcher, and obviously if they aren't visible they can't occlude
-    // anything.
-    const bool visibleForInput =
-            snapshot.hasInputInfo() ? snapshot.canReceiveInput() : snapshot.isVisible;
-    snapshot.inputInfo.setInputConfig(gui::WindowInfo::InputConfig::NOT_VISIBLE, !visibleForInput);
+        // For compatibility reasons we let layers which can receive input
+        // receive input before they have actually submitted a buffer. Because
+        // of this we use canReceiveInput instead of isVisible to check the
+        // policy-visibility, ignoring the buffer state. However for layers with
+        // hasInputInfo()==false we can use the real visibility state.
+        // We are just using these layers for occlusion detection in
+        // InputDispatcher, and obviously if they aren't visible they can't occlude
+        // anything.
+        const bool visibleForInput =
+                snapshot.hasInputInfo() ? snapshot.canReceiveInput() : snapshot.isVisible;
+        snapshot.inputInfo.setInputConfig(gui::WindowInfo::InputConfig::NOT_VISIBLE,
+                                          !visibleForInput);
+    }
     LLOGV(snapshot.sequence, "updating visibility %s %s", visible ? "true" : "false",
           snapshot.getDebugString().c_str());
 }
@@ -314,8 +319,8 @@ void updateMetadataAndGameMode(LayerSnapshot& snapshot, const RequestedLayerStat
 void clearChanges(LayerSnapshot& snapshot) {
     snapshot.changes.clear();
     snapshot.clientChanges = 0;
-    snapshot.contentDirty = false;
-    snapshot.hasReadyFrame = false;
+    snapshot.contentDirty = snapshot.autoRefresh;
+    snapshot.hasReadyFrame = snapshot.autoRefresh;
     snapshot.sidebandStreamHasFrame = false;
     snapshot.surfaceDamage.clear();
 }
@@ -724,10 +729,12 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
     if (args.displayChanges) snapshot.changes |= RequestedLayerState::Changes::Geometry;
     snapshot.reachablilty = LayerSnapshot::Reachablilty::Reachable;
     snapshot.clientChanges |= (parentSnapshot.clientChanges & layer_state_t::AFFECTS_CHILDREN);
+    // mark the content as dirty if the parent state changes can dirty the child's content (for
+    // example alpha)
+    snapshot.contentDirty |= (snapshot.clientChanges & layer_state_t::CONTENT_DIRTY) != 0;
     snapshot.isHiddenByPolicyFromParent = parentSnapshot.isHiddenByPolicyFromParent ||
             parentSnapshot.invalidTransform || requested.isHiddenByPolicy() ||
             (args.excludeLayerIds.find(path.id) != args.excludeLayerIds.end());
-
     const bool forceUpdate = args.forceUpdate == ForceUpdateFlags::ALL ||
             snapshot.clientChanges & layer_state_t::eReparent ||
             snapshot.changes.any(RequestedLayerState::Changes::Visibility |
@@ -1258,6 +1265,10 @@ void LayerSnapshotBuilder::forEachInputSnapshot(const ConstVisitor& visitor) con
     for (int i = mNumInterestingSnapshots - 1; i >= 0; i--) {
         LayerSnapshot& snapshot = *mSnapshots[(size_t)i];
         if (!snapshot.hasInputInfo()) continue;
+        if (FlagManager::getInstance().skip_invisible_windows_in_input() &&
+            snapshot.inputInfo.inputConfig.test(gui::WindowInfo::InputConfig::NOT_VISIBLE)) {
+            continue;
+        }
         visitor(snapshot);
     }
 }

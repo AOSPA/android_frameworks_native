@@ -19,6 +19,7 @@
 #include "InputReader.h"
 
 #include <android-base/stringprintf.h>
+#include <com_android_input_flags.h>
 #include <errno.h>
 #include <input/Keyboard.h>
 #include <input/VirtualKeyMap.h>
@@ -589,6 +590,11 @@ void InputReader::toggleCapsLockState(int32_t deviceId) {
     }
 }
 
+void InputReader::resetLockedModifierState() {
+    std::scoped_lock _l(mLock);
+    updateLedMetaStateLocked(0);
+}
+
 bool InputReader::hasKeys(int32_t deviceId, uint32_t sourceMask,
                           const std::vector<int32_t>& keyCodes, uint8_t* outFlags) {
     std::scoped_lock _l(mLock);
@@ -903,7 +909,9 @@ void InputReader::notifyMouseCursorFadedOnTyping() {
 
 bool InputReader::setKernelWakeEnabled(int32_t deviceId, bool enabled) {
     std::scoped_lock _l(mLock);
-
+    if (!com::android::input::flags::set_input_device_kernel_wake()){
+        return false;
+    }
     InputDevice* device = findInputDeviceLocked(deviceId);
     if (device) {
         return device->setKernelWakeEnabled(enabled);

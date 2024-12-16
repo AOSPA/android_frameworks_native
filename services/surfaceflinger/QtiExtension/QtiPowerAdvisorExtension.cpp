@@ -6,7 +6,7 @@
 
 namespace android::surfaceflingerextension {
 
-QtiPowerAdvisorExtension::QtiPowerAdvisorExtension(Hwc2::impl::PowerAdvisor* powerAdvisor)
+QtiPowerAdvisorExtension::QtiPowerAdvisorExtension(adpf::impl::PowerAdvisor* powerAdvisor)
       : mQtiPowerAdvisor(powerAdvisor) {
     if (!mQtiPowerAdvisor) {
         ALOGW("Invalid pointer to PowerAdvisor passed");

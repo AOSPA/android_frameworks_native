@@ -19,12 +19,35 @@ flag {
 } # adpf_gpu_sf
 
 flag {
+  name: "adpf_native_session_manager"
+  namespace: "game"
+  description: "Controls ADPF SessionManager being enabled in SF"
+  bug: "367803904"
+} # adpf_sessionmanager
+
+flag {
   name: "arr_setframerate_api"
   namespace: "core_graphics"
-  description: "New setFrameRate API for Android 16"
+  description: "New SDK Surface#setFrameRate API and Surface.FrameRateParams for Android 16"
   bug: "356987016"
   is_fixed_read_only: true
 } # arr_setframerate_api
+
+flag {
+  name: "arr_surfacecontrol_setframerate_api"
+  namespace: "core_graphics"
+  description: "New SDK SurfaceControl.Transaction#setFrameRate API for Android 16"
+  bug: "356987016"
+  is_fixed_read_only: true
+} # arr_surfacecontrol_setframerate_api
+
+flag {
+  name: "begone_bright_hlg"
+  namespace: "core_graphics"
+  description: "Caps HLG brightness relative to SDR"
+  bug: "362510107"
+  is_fixed_read_only: true
+} # begone_bright_hlg
 
 flag {
   name: "ce_fence_promise"
@@ -49,6 +72,14 @@ flag {
 } # commit_not_composited
 
 flag {
+  name: "connected_display_hdr"
+  namespace: "core_graphics"
+  description: "enable connected display hdr capability"
+  bug: "374182788"
+  is_fixed_read_only: true
+} # connected_display_hdr
+
+flag {
   name: "correct_dpi_with_display_size"
   namespace: "core_graphics"
   description: "indicate whether missing or likely incorrect dpi should be corrected using the display size."
@@ -58,6 +89,17 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 } # correct_dpi_with_display_size
+
+flag {
+  name: "deprecate_frame_tracker"
+  namespace: "core_graphics"
+  description: "Deprecate using FrameTracker to accumulate and provide FrameStats"
+  bug: "241394120"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+} # deprecate_frame_tracker
 
 flag {
   name: "deprecate_vsync_sf"
@@ -150,6 +192,14 @@ flag {
 } # local_tonemap_screenshots
 
 flag {
+  name: "no_vsyncs_on_screen_off"
+  namespace: "core_graphics"
+  description: "Stop vsync / Choreographer callbacks to apps when the screen is off"
+  bug: "331636736"
+  is_fixed_read_only: true
+} # no_vsyncs_on_screen_off
+
+flag {
   name: "single_hop_screenshot"
   namespace: "window_surfaces"
   description: "Only access SF main thread once during a screenshot"
@@ -159,6 +209,25 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
  } # single_hop_screenshot
+
+flag {
+  name: "skip_invisible_windows_in_input"
+  namespace: "window_surfaces"
+  description: "Only send visible windows to input list"
+  bug: "305254099"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+ } # skip_invisible_windows_in_input
+
+flag {
+  name: "stable_edid_ids"
+  namespace: "core_graphics"
+  description: "Guard use of the new stable EDID-based display IDs system."
+  bug: "352320847"
+  is_fixed_read_only: true
+} # stable_edid_ids
 
 flag {
   name: "true_hdr_screenshots"

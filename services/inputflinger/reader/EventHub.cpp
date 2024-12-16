@@ -129,7 +129,8 @@ static const std::unordered_map<std::string, InputLightClass> LIGHT_CLASSES =
          {"multi_intensity", InputLightClass::MULTI_INTENSITY},
          {"max_brightness", InputLightClass::MAX_BRIGHTNESS},
          {"kbd_backlight", InputLightClass::KEYBOARD_BACKLIGHT},
-         {"mic_mute", InputLightClass::KEYBOARD_MIC_MUTE}};
+         {"mic_mute", InputLightClass::KEYBOARD_MIC_MUTE},
+         {"mute", InputLightClass::KEYBOARD_VOLUME_MUTE}};
 
 // Mapping for input multicolor led class node names.
 // https://www.kernel.org/doc/html/latest/leds/leds-class-multicolor.html

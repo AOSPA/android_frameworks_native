@@ -836,13 +836,9 @@ bool isStylusActiveInDisplay(ui::LogicalDisplayId displayId,
 }
 
 Result<void> validateWindowInfosUpdate(const gui::WindowInfosUpdate& update) {
-    struct HashFunction {
-        size_t operator()(const WindowInfo& info) const { return info.id; }
-    };
-
-    std::unordered_set<WindowInfo, HashFunction> windowSet;
+    std::unordered_set<int32_t> windowIds;
     for (const WindowInfo& info : update.windowInfos) {
-        const auto [_, inserted] = windowSet.insert(info);
+        const auto [_, inserted] = windowIds.insert(info.id);
         if (!inserted) {
             return Error() << "Duplicate entry for " << info;
         }
@@ -6806,14 +6802,15 @@ std::unique_ptr<const KeyEntry> InputDispatcher::afterKeyEventLockedInterruptabl
         // The fallback keycode cannot change at any other point in the lifecycle.
         if (initialDown) {
             if (fallback) {
-                *fallbackKeyCode = event.getKeyCode();
+                fallbackKeyCode = event.getKeyCode();
             } else {
-                *fallbackKeyCode = AKEYCODE_UNKNOWN;
+                fallbackKeyCode = AKEYCODE_UNKNOWN;
             }
             connection->inputState.setFallbackKey(originalKeyCode, *fallbackKeyCode);
         }
 
-        ALOG_ASSERT(fallbackKeyCode);
+        LOG_IF(FATAL, !fallbackKeyCode)
+                << "fallbackKeyCode is not initialized. initialDown = " << initialDown;
 
         // Cancel the fallback key if the policy decides not to send it anymore.
         // We will continue to dispatch the key to the policy but we will no

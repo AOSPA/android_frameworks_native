@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 The Android Open Source Project
+ * Copyright (C) 2009 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,12 +14,16 @@
  * limitations under the License.
  */
 
-#include "MockPowerAdvisor.h"
+#include <ui/PictureProfileHandle.h>
 
-namespace android::Hwc2::mock {
+#include <format>
 
-// Explicit default instantiation is recommended.
-PowerAdvisor::PowerAdvisor() = default;
-PowerAdvisor::~PowerAdvisor() = default;
+namespace android {
 
-} // namespace android::Hwc2::mock
+const PictureProfileHandle PictureProfileHandle::NONE(0);
+
+::std::string toString(const PictureProfileHandle& handle) {
+    return std::format("{:#010x}", handle.getId());
+}
+
+} // namespace android

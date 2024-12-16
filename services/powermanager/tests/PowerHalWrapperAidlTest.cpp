@@ -30,11 +30,14 @@
 
 using aidl::android::hardware::power::Boost;
 using aidl::android::hardware::power::ChannelConfig;
+using aidl::android::hardware::power::CpuHeadroomParams;
+using aidl::android::hardware::power::GpuHeadroomParams;
 using aidl::android::hardware::power::IPower;
 using aidl::android::hardware::power::IPowerHintSession;
 using aidl::android::hardware::power::Mode;
 using aidl::android::hardware::power::SessionConfig;
 using aidl::android::hardware::power::SessionTag;
+using aidl::android::hardware::power::SupportInfo;
 using android::binder::Status;
 
 using namespace android;
@@ -65,10 +68,19 @@ public:
                 (int32_t tgid, int32_t uid, ChannelConfig* _aidl_return), (override));
     MOCK_METHOD(ndk::ScopedAStatus, closeSessionChannel, (int32_t tgid, int32_t uid), (override));
     MOCK_METHOD(ndk::ScopedAStatus, getHintSessionPreferredRate, (int64_t * rate), (override));
+    MOCK_METHOD(ndk::ScopedAStatus, getSupportInfo, (SupportInfo * _aidl_return), (override));
     MOCK_METHOD(ndk::ScopedAStatus, getInterfaceVersion, (int32_t * version), (override));
     MOCK_METHOD(ndk::ScopedAStatus, getInterfaceHash, (std::string * hash), (override));
     MOCK_METHOD(ndk::SpAIBinder, asBinder, (), (override));
     MOCK_METHOD(bool, isRemote, (), (override));
+    MOCK_METHOD(ndk::ScopedAStatus, getCpuHeadroom,
+                (const CpuHeadroomParams& params, std::vector<float>* headroom), (override));
+    MOCK_METHOD(ndk::ScopedAStatus, getGpuHeadroom,
+                (const GpuHeadroomParams& params, float* headroom), (override));
+    MOCK_METHOD(ndk::ScopedAStatus, getCpuHeadroomMinIntervalMillis, (int64_t* interval),
+                (override));
+    MOCK_METHOD(ndk::ScopedAStatus, getGpuHeadroomMinIntervalMillis, (int64_t* interval),
+                (override));
 };
 
 // -------------------------------------------------------------------------------------------------

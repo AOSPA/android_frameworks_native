@@ -14,12 +14,22 @@
  * limitations under the License.
  */
 
-#include "mock/DisplayHardware/MockPowerHintSessionWrapper.h"
+#pragma once
 
-namespace android::Hwc2::mock {
+namespace android::ui {
 
-// Explicit default instantiation is recommended.
-MockPowerHintSessionWrapper::MockPowerHintSessionWrapper()
-      : power::PowerHintSessionWrapper(nullptr) {}
+// Represents frame rate for FrameRateCategory Normal and High.
+class FrameRateCategoryRate {
+public:
+    FrameRateCategoryRate(float normal = 0, float high = 0) : mNormal(normal), mHigh(high) {}
 
-} // namespace android::Hwc2::mock
+    float getNormal() const { return mNormal; }
+
+    float getHigh() const { return mHigh; }
+
+private:
+    float mNormal;
+    float mHigh;
+};
+
+} // namespace android::ui

@@ -75,12 +75,18 @@ public:
     using is_gtest_matcher = void;
     explicit WithMotionActionMatcher(int32_t action) : mAction(action) {}
 
-    bool MatchAndExplain(const MotionEvent& event, std::ostream*) const {
-        bool matches = mAction == event.getAction();
-        if (event.getAction() == AMOTION_EVENT_ACTION_CANCEL) {
-            matches &= (event.getFlags() & AMOTION_EVENT_FLAG_CANCELED) != 0;
+    bool MatchAndExplain(const MotionEvent& event, testing::MatchResultListener* listener) const {
+        if (mAction != event.getAction()) {
+            *listener << "expected " << MotionEvent::actionToString(mAction) << ", but got "
+                      << MotionEvent::actionToString(event.getAction());
+            return false;
         }
-        return matches;
+        if (event.getAction() == AMOTION_EVENT_ACTION_CANCEL &&
+            (event.getFlags() & AMOTION_EVENT_FLAG_CANCELED) == 0) {
+            *listener << "event with CANCEL action is missing FLAG_CANCELED";
+            return false;
+        }
+        return true;
     }
 
     void DescribeTo(std::ostream* os) const {

@@ -1156,6 +1156,23 @@ static inline int native_window_set_frame_rate(struct ANativeWindow* window, flo
                            (int)compatibility, (int)changeFrameRateStrategy);
 }
 
+static inline int native_window_set_frame_rate_params(struct ANativeWindow* window,
+                                                      float desiredMinRate, float desiredMaxRate,
+                                                      float fixedSourceRate,
+                                                      int8_t changeFrameRateStrategy) {
+    // TODO(b/362798998): Fix plumbing to send whole params
+    int compatibility = fixedSourceRate == 0 ? ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT
+                                             : ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE;
+    double frameRate = compatibility == ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE
+            ? fixedSourceRate
+            : desiredMinRate;
+    if (desiredMaxRate < desiredMinRate) {
+        return -EINVAL;
+    }
+    return window->perform(window, NATIVE_WINDOW_SET_FRAME_RATE, frameRate, compatibility,
+                           changeFrameRateStrategy);
+}
+
 struct ANativeWindowFrameTimelineInfo {
     // Frame Id received from ANativeWindow_getNextFrameId.
     uint64_t frameNumber;

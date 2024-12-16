@@ -23,7 +23,9 @@
 #ifndef ANDROID_GUI_BLAST_BUFFER_QUEUE_H
 #define ANDROID_GUI_BLAST_BUFFER_QUEUE_H
 
-#include <com_android_graphics_libgui_flags.h>
+#include <optional>
+#include <queue>
+
 #include <gui/BufferItem.h>
 #include <gui/BufferItemConsumer.h>
 #include <gui/IGraphicBufferConsumer.h>
@@ -35,7 +37,6 @@
 #include <utils/RefBase.h>
 
 #include <system/window.h>
-#include <queue>
 
 #include <com_android_graphics_libgui_flags.h>
 
@@ -256,6 +257,10 @@ private:
     ui::Size mRequestedSize GUARDED_BY(mMutex);
     int32_t mFormat GUARDED_BY(mMutex);
 
+    // Keep a copy of the current picture profile handle, so it can be moved to a new
+    // SurfaceControl when BBQ migrates via ::update.
+    std::optional<PictureProfileHandle> mPictureProfileHandle;
+
     struct BufferInfo {
         bool hasBuffer = false;
         uint32_t width;
@@ -359,6 +364,14 @@ private:
     std::unique_ptr<gui::BufferReleaseChannel::ConsumerEndpoint> mBufferReleaseConsumer;
     std::shared_ptr<gui::BufferReleaseChannel::ProducerEndpoint> mBufferReleaseProducer;
 
+    void updateBufferReleaseProducer() REQUIRES(mMutex);
+    void drainBufferReleaseConsumer();
+
+    // BufferReleaseReader is used to do blocking but interruptible reads from the buffer
+    // release channel. To implement this, BufferReleaseReader owns an epoll file descriptor that
+    // is configured to wake up when either the BufferReleaseReader::ConsumerEndpoint or an eventfd
+    // becomes readable. Interrupts are necessary because a free buffer may become available for
+    // reasons other than a buffer release from the producer.
     class BufferReleaseReader {
     public:
         explicit BufferReleaseReader(BLASTBufferQueue&);
@@ -387,19 +400,6 @@ private:
     };
 
     std::optional<BufferReleaseReader> mBufferReleaseReader;
-
-    std::atomic<int> mThreadsBlockingOnDequeue = 0;
-
-    class BufferReleaseThread {
-    public:
-        BufferReleaseThread(const sp<BLASTBufferQueue>&);
-        ~BufferReleaseThread();
-
-    private:
-        int mEventFd;
-    };
-
-    std::optional<BufferReleaseThread> mBufferReleaseThread;
 #endif
 };
 

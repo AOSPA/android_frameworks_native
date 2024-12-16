@@ -22,6 +22,7 @@
 #include <renderengine/ExternalTexture.h>
 #include <ui/FloatRect.h>
 #include <ui/GraphicTypes.h>
+#include <ui/PictureProfileHandle.h>
 #include <ui/Rect.h>
 #include <ui/Region.h>
 
@@ -100,6 +101,9 @@ struct OutputLayerCompositionState {
     // A hint to the HWC that this region is transparent and may be skipped in
     // order to save power.
     Region outputSpaceBlockingRegionHint;
+
+    // The picture profile for this layer.
+    PictureProfileHandle pictureProfileHandle;
 
     // Overrides the buffer, acquire fence, and display frame stored in LayerFECompositionState
     struct {

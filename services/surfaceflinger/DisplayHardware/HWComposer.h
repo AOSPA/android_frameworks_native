@@ -35,6 +35,7 @@
 #include <ftl/future.h>
 #include <ui/DisplayIdentification.h>
 #include <ui/FenceTime.h>
+#include <ui/PictureProfileHandle.h>
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -77,6 +78,7 @@ class GraphicBuffer;
 class TestableSurfaceFlinger;
 struct HWComposerTest;
 struct CompositionInfo;
+class PictureProfileHandle;
 
 namespace Hwc2 {
 class Composer;
@@ -308,7 +310,7 @@ public:
     virtual std::optional<PhysicalDisplayId> toPhysicalDisplayId(hal::HWDisplayId) const = 0;
     virtual std::optional<hal::HWDisplayId> fromPhysicalDisplayId(PhysicalDisplayId) const = 0;
 
-    // Composer 3.0
+    // AIDL Composer
     virtual status_t setBootDisplayMode(PhysicalDisplayId, hal::HWConfigId) = 0;
     virtual status_t clearBootDisplayMode(PhysicalDisplayId) = 0;
     virtual std::optional<hal::HWConfigId> getPreferredBootDisplayMode(PhysicalDisplayId) = 0;
@@ -327,8 +329,10 @@ public:
     virtual status_t setRefreshRateChangedCallbackDebugEnabled(PhysicalDisplayId, bool enabled) = 0;
     virtual status_t notifyExpectedPresent(PhysicalDisplayId, TimePoint expectedPresentTime,
                                            Fps frameInterval) = 0;
-    // mapper
     virtual HWC2::Display::LutFileDescriptorMapper& getLutFileDescriptorMapper() = 0;
+    virtual int32_t getMaxLayerPictureProfiles(PhysicalDisplayId) = 0;
+    virtual status_t setDisplayPictureProfileHandle(PhysicalDisplayId,
+                                                    const PictureProfileHandle& handle) = 0;
 };
 
 static inline bool operator==(const android::HWComposer::DeviceRequestedChanges& lhs,
@@ -492,9 +496,10 @@ public:
     status_t setRefreshRateChangedCallbackDebugEnabled(PhysicalDisplayId, bool enabled) override;
     status_t notifyExpectedPresent(PhysicalDisplayId, TimePoint expectedPresentTime,
                                    Fps frameInterval) override;
-
-    // get a mapper
     HWC2::Display::LutFileDescriptorMapper& getLutFileDescriptorMapper() override;
+    int32_t getMaxLayerPictureProfiles(PhysicalDisplayId) override;
+    status_t setDisplayPictureProfileHandle(PhysicalDisplayId,
+                                            const android::PictureProfileHandle& profile) override;
 
     // for debugging ----------------------------------------------------------
     void dump(std::string& out) const override;

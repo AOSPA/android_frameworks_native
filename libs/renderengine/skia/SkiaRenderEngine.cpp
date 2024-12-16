@@ -543,6 +543,11 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
         }
     }
 
+    if (graphicBuffer && parameters.layer.luts) {
+        shader = mLutShader.lutShader(shader, parameters.layer.luts,
+                                      toSkColorSpace(parameters.outputDataSpace));
+    }
+
     if (parameters.requiresLinearEffect) {
         const auto format = targetBuffer != nullptr
                 ? std::optional<ui::PixelFormat>(
@@ -567,8 +572,10 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
         }
 
         // disable tonemapping if we already locally tonemapped
-        auto inputDataspace =
-                usingLocalTonemap ? parameters.outputDataSpace : parameters.layer.sourceDataspace;
+        // skip tonemapping if the luts is in use
+        auto inputDataspace = usingLocalTonemap || (graphicBuffer && parameters.layer.luts)
+                ? parameters.outputDataSpace
+                : parameters.layer.sourceDataspace;
         auto effect =
                 shaders::LinearEffect{.inputDataspace = inputDataspace,
                                       .outputDataspace = parameters.outputDataSpace,

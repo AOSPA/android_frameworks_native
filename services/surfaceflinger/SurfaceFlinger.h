@@ -30,9 +30,11 @@
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 #include <android-base/thread_annotations.h>
+#include <android/gui/ActivePicture.h>
 #include <android/gui/BnSurfaceComposer.h>
 #include <android/gui/DisplayStatInfo.h>
 #include <android/gui/DisplayState.h>
+#include <android/gui/IActivePictureListener.h>
 #include <android/gui/IJankListener.h>
 #include <android/gui/ISurfaceComposerClient.h>
 #include <common/trace.h>
@@ -63,6 +65,7 @@
 #include <utils/threads.h>
 
 #include <compositionengine/OutputColorSetting.h>
+#include <compositionengine/impl/OutputCompositionState.h>
 #include <scheduler/Fps.h>
 #include <scheduler/PresentLatencyTracker.h>
 #include <scheduler/Time.h>
@@ -72,11 +75,12 @@
 #include <ui/FenceResult.h>
 
 #include <common/FlagManager.h>
+#include "ActivePictureUpdater.h"
+#include "BackgroundExecutor.h"
 #include "Display/DisplayModeController.h"
 #include "Display/PhysicalDisplay.h"
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWC2.h"
-#include "DisplayHardware/PowerAdvisor.h"
 #include "DisplayIdGenerator.h"
 #include "Effects/Daltonizer.h"
 #include "FrontEnd/DisplayInfo.h"
@@ -87,6 +91,7 @@
 #include "FrontEnd/TransactionHandler.h"
 #include "LayerVector.h"
 #include "MutexUtils.h"
+#include "PowerAdvisor/PowerAdvisor.h"
 #include "Scheduler/ISchedulerCallback.h"
 #include "Scheduler/RefreshRateSelector.h"
 #include "Scheduler/Scheduler.h"
@@ -98,6 +103,7 @@
 #include "TransactionState.h"
 #include "Utils/OnceFuture.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -614,6 +620,7 @@ private:
     status_t getHdrOutputConversionSupport(bool* outSupport) const;
     void setAutoLowLatencyMode(const sp<IBinder>& displayToken, bool on);
     void setGameContentType(const sp<IBinder>& displayToken, bool on);
+    status_t getMaxLayerPictureProfiles(const sp<IBinder>& displayToken, int32_t* outMaxProfiles);
     void setPowerMode(const sp<IBinder>& displayToken, int mode);
     status_t overrideHdrTypes(const sp<IBinder>& displayToken,
                               const std::vector<ui::Hdr>& hdrTypes);
@@ -682,6 +689,8 @@ private:
             int pid, std::optional<TransactionHandler::StalledTransactionInfo>& result);
 
     void updateHdcpLevels(hal::HWDisplayId hwcDisplayId, int32_t connectedLevel, int32_t maxLevel);
+
+    void setActivePictureListener(const sp<gui::IActivePictureListener>& listener);
 
     // IBinder::DeathRecipient overrides:
     void binderDied(const wp<IBinder>& who) override;
@@ -877,13 +886,14 @@ private:
     void attachReleaseFenceFutureToLayer(Layer* layer, LayerFE* layerFE, ui::LayerStack layerStack);
 
     // Checks if a protected layer exists in a list of layers.
-    bool layersHasProtectedLayer(const std::vector<sp<LayerFE>>& layers) const;
+    bool layersHasProtectedLayer(const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const;
 
     using OutputCompositionState = compositionengine::impl::OutputCompositionState;
 
     std::optional<OutputCompositionState> getSnapshotsFromMainThread(
             RenderAreaBuilderVariant& renderAreaBuilder,
-            GetLayerSnapshotsFunction getLayerSnapshotsFn, std::vector<sp<LayerFE>>& layerFEs);
+            GetLayerSnapshotsFunction getLayerSnapshotsFn,
+            std::vector<std::pair<Layer*, sp<LayerFE>>>& layers);
 
     void captureScreenCommon(RenderAreaBuilderVariant, GetLayerSnapshotsFunction,
                              ui::Size bufferSize, ui::PixelFormat, bool allowProtected,
@@ -892,32 +902,19 @@ private:
     std::optional<OutputCompositionState> getDisplayStateFromRenderAreaBuilder(
             RenderAreaBuilderVariant& renderAreaBuilder) REQUIRES(kMainThreadContext);
 
-    // Legacy layer raw pointer is not safe to access outside the main thread.
-    // Creates a new vector consisting only of LayerFEs, which can be safely
-    // accessed outside the main thread.
-    std::vector<sp<LayerFE>> extractLayerFEs(
-            const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const;
-
     ftl::SharedFuture<FenceResult> captureScreenshot(
             const RenderAreaBuilderVariant& renderAreaBuilder,
             const std::shared_ptr<renderengine::ExternalTexture>& buffer, bool regionSampling,
             bool grayscale, bool isProtected, bool attachGainmap,
             const sp<IScreenCaptureListener>& captureListener,
             std::optional<OutputCompositionState>& displayState,
-            std::vector<sp<LayerFE>>& layerFEs);
-
-    ftl::SharedFuture<FenceResult> captureScreenshotLegacy(
-            RenderAreaBuilderVariant, GetLayerSnapshotsFunction,
-            const std::shared_ptr<renderengine::ExternalTexture>&, bool regionSampling,
-            bool grayscale, bool isProtected, bool attachGainmap,
-            const sp<IScreenCaptureListener>&);
+            std::vector<std::pair<Layer*, sp<LayerFE>>>& layers);
 
     ftl::SharedFuture<FenceResult> renderScreenImpl(
             const RenderArea*, const std::shared_ptr<renderengine::ExternalTexture>&,
-            bool regionSampling, bool grayscale, bool isProtected, bool attachGainmap,
-            ScreenCaptureResults&, std::optional<OutputCompositionState>& displayState,
-            std::vector<std::pair<Layer*, sp<LayerFE>>>& layers,
-            std::vector<sp<LayerFE>>& layerFEs);
+            bool regionSampling, bool grayscale, bool isProtected, ScreenCaptureResults&,
+            std::optional<OutputCompositionState>& displayState,
+            std::vector<std::pair<Layer*, sp<LayerFE>>>& layers);
 
     void readPersistentProperties();
 
@@ -1281,7 +1278,6 @@ private:
     // latched.
     std::unordered_set<std::pair<sp<Layer>, gui::GameMode>, LayerIntHash> mLayersWithQueuedFrames;
     std::unordered_set<sp<Layer>, SpHash<Layer>> mLayersWithBuffersRemoved;
-    std::unordered_set<uint32_t> mLayersIdsWithQueuedFrames;
 
     // Sorted list of layers that were composed during previous frame. This is used to
     // avoid an expensive traversal of the layer hierarchy when there are no
@@ -1401,7 +1397,7 @@ private:
     sp<os::IInputFlinger> mInputFlinger;
     InputWindowCommands mInputWindowCommands;
 
-    std::unique_ptr<Hwc2::PowerAdvisor> mPowerAdvisor;
+    std::unique_ptr<adpf::PowerAdvisor> mPowerAdvisor;
 
     void enableRefreshRateOverlay(bool enable) REQUIRES(mStateLock, kMainThreadContext);
 
@@ -1410,10 +1406,16 @@ private:
     // Flag used to set override desired display mode from backdoor
     bool mDebugDisplayModeSetByBackdoor = false;
 
+    // Tracks the number of maximum queued buffers by layer owner Uid.
+    using BufferStuffingMap = ftl::SmallMap<uid_t, uint32_t, 10>;
     BufferCountTracker mBufferCountTracker;
 
     std::unordered_map<DisplayId, sp<HdrLayerInfoReporter>> mHdrLayerInfoListeners
             GUARDED_BY(mStateLock);
+
+    sp<gui::IActivePictureListener> mActivePictureListener GUARDED_BY(mStateLock);
+    bool mHaveNewActivePictureListener GUARDED_BY(mStateLock);
+    ActivePictureUpdater mActivePictureUpdater GUARDED_BY(kMainThreadContext);
 
     std::atomic<ui::Transform::RotationFlags> mActiveDisplayTransformHint;
 
@@ -1450,6 +1452,11 @@ private:
     bool mPowerHintSessionEnabled;
     // Whether a display should be turned on when initialized
     bool mSkipPowerOnForQuiescent;
+
+    // used for omitting vsync callbacks to apps when the display is not updatable
+    int mRefreshableDisplays GUARDED_BY(mStateLock) = 0;
+    void incRefreshableDisplays() REQUIRES(mStateLock);
+    void decRefreshableDisplays() REQUIRES(mStateLock);
 
     frontend::LayerLifecycleManager mLayerLifecycleManager GUARDED_BY(kMainThreadContext);
     frontend::LayerHierarchyBuilder mLayerHierarchyBuilder GUARDED_BY(kMainThreadContext);
@@ -1560,6 +1567,8 @@ public:
     binder::Status getHdrOutputConversionSupport(bool* outSupport) override;
     binder::Status setAutoLowLatencyMode(const sp<IBinder>& display, bool on) override;
     binder::Status setGameContentType(const sp<IBinder>& display, bool on) override;
+    binder::Status getMaxLayerPictureProfiles(const sp<IBinder>& display,
+                                              int32_t* outMaxProfiles) override;
     binder::Status captureDisplay(const DisplayCaptureArgs&,
                                   const sp<IScreenCaptureListener>&) override;
     binder::Status captureDisplayById(int64_t, const CaptureArgs&,
@@ -1648,12 +1657,15 @@ public:
     binder::Status flushJankData(int32_t layerId) override;
     binder::Status removeJankListener(int32_t layerId, const sp<gui::IJankListener>& listener,
                                       int64_t afterVsync) override;
+    binder::Status setActivePictureListener(const sp<gui::IActivePictureListener>& listener);
+    binder::Status clearActivePictureListener();
 
 private:
     static const constexpr bool kUsePermissionCache = true;
     status_t checkAccessPermission(bool usePermissionCache = kUsePermissionCache);
     status_t checkControlDisplayBrightnessPermission();
     status_t checkReadFrameBufferPermission();
+    status_t checkObservePictureProfilesPermission();
     static void getDynamicDisplayInfoInternal(ui::DynamicDisplayInfo& info,
                                               gui::DynamicDisplayInfo*& outInfo);
 

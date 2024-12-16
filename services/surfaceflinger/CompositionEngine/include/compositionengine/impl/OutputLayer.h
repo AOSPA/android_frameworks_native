@@ -25,6 +25,7 @@
 #include <compositionengine/LayerFE.h>
 #include <compositionengine/OutputLayer.h>
 #include <ui/FloatRect.h>
+#include <ui/PictureProfileHandle.h>
 #include <ui/Rect.h>
 
 #include <ui/DisplayIdentification.h>
@@ -48,6 +49,9 @@ public:
     void setHwcLayer(std::shared_ptr<HWC2::Layer>) override;
 
     void uncacheBuffers(const std::vector<uint64_t>& bufferIdsToUncache) override;
+    int64_t getPictureProfilePriority() const override;
+    const PictureProfileHandle& getPictureProfileHandle() const override;
+    void commitPictureProfileToCompositionState() override;
 
     void updateCompositionState(bool includeGeometry, bool forceClientComposition,
                                 ui::Transform::RotationFlags,
@@ -101,7 +105,7 @@ private:
             aidl::android::hardware::graphics::composer3::Composition from,
             aidl::android::hardware::graphics::composer3::Composition to) const;
     bool isClientCompositionForced(bool isPeekingThrough) const;
-    void updateLuts(std::shared_ptr<gui::DisplayLuts> luts,
+    void updateLuts(const LayerFECompositionState&,
                     const std::optional<std::vector<std::optional<LutProperties>>>& properties);
 };
 

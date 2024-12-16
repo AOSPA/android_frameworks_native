@@ -25,6 +25,7 @@ cc_test {
         "InputVerifier_test.cpp",
         "MotionPredictor_test.cpp",
         "MotionPredictorMetricsManager_test.cpp",
+        "OneEuroFilter_test.cpp",
         "Resampler_test.cpp",
         "RingBuffer_test.cpp",
         "TestInputChannel.cpp",
