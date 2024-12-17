@@ -62,7 +62,7 @@ TEST(FrameRateUtilsTest, ValidateFrameRate) {
     // Invalid compatibility.
     EXPECT_FALSE(
             ValidateFrameRate(60.0f, -1, ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS, ""));
-    EXPECT_FALSE(ValidateFrameRate(60.0f, 2, ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS, ""));
+    EXPECT_FALSE(ValidateFrameRate(60.0f, 3, ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS, ""));
 
     // Invalid change frame rate strategy.
     if (flags::bq_setframerate()) {

@@ -1012,7 +1012,7 @@ void SkiaRenderEngine::drawLayersInternal(
             const auto& item = layer.source.buffer;
             auto imageTextureRef = getOrCreateBackendTexture(item.buffer->getBuffer(), false);
 
-            // if the layer's buffer has a fence, then we must must respect the fence prior to using
+            // if the layer's buffer has a fence, then we must respect the fence prior to using
             // the buffer.
             if (layer.source.buffer.fence != nullptr) {
                 waitFence(context, layer.source.buffer.fence->get());

@@ -359,6 +359,31 @@ int APerformanceHint_notifyWorkloadReset(
         bool cpu, bool gpu, const char* _Nonnull debugName) __INTRODUCED_IN(36);
 
 /**
+ * Informs the framework of an upcoming one-off expensive frame for a graphics pipeline
+ * bound to this session. This frame will be treated as not representative of the workload as a
+ * whole, and it will be discarded the purposes of load tracking. The user can specify
+ * whether the workload spike is expected to be on the CPU, GPU, or both.
+ *
+ * Sending hints for both CPU and GPU counts as two separate hints for the purposes of the
+ * rate limiter.
+ *
+ * @param cpu Indicates if the workload spike is expected to affect the CPU.
+ * @param gpu Indicates if the workload spike is expected to affect the GPU.
+ * @param debugName A required string used to identify this specific hint during
+ *        tracing. This debug string will only be held for the duration of the
+ *        method, and can be safely discarded after.
+ *
+ * @return 0 on success.
+ *         EINVAL if no hints were requested.
+ *         EBUSY if the hint was rate limited.
+ *         EPIPE if communication with the system service has failed.
+ *         ENOTSUP if the hint is not supported.
+ */
+int APerformanceHint_notifyWorkloadSpike(
+        APerformanceHintSession* _Nonnull session,
+        bool cpu, bool gpu, const char* _Nonnull debugName) __INTRODUCED_IN(36);
+
+/**
  * Associates a session with any {@link ASurfaceControl} or {@link ANativeWindow}
  * instances managed by this session.
  *

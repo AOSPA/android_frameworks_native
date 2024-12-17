@@ -27,6 +27,7 @@
 #include <cinttypes>
 
 #include <android_os.h>
+#include <android_hardware_flags.h>
 #include <com_android_graphics_libgui_flags.h>
 #include <com_android_graphics_surfaceflinger_flags.h>
 #include <com_android_server_display_feature_flags.h>
@@ -164,6 +165,7 @@ void FlagManager::dump(std::string& result) const {
     DUMP_ACONFIG_FLAG(deprecate_frame_tracker);
     DUMP_ACONFIG_FLAG(skip_invisible_windows_in_input);
     DUMP_ACONFIG_FLAG(begone_bright_hlg);
+    DUMP_ACONFIG_FLAG(window_blur_kawase2);
 
 #undef DUMP_ACONFIG_FLAG
 #undef DUMP_LEGACY_SERVER_FLAG
@@ -263,6 +265,7 @@ FLAG_MANAGER_ACONFIG_FLAG(connected_display_hdr, "debug.sf.connected_display_hdr
 FLAG_MANAGER_ACONFIG_FLAG(deprecate_frame_tracker, "");
 FLAG_MANAGER_ACONFIG_FLAG(skip_invisible_windows_in_input, "");
 FLAG_MANAGER_ACONFIG_FLAG(begone_bright_hlg, "debug.sf.begone_bright_hlg");
+FLAG_MANAGER_ACONFIG_FLAG(window_blur_kawase2, "");
 
 /// Trunk stable server (R/W) flags ///
 FLAG_MANAGER_ACONFIG_FLAG(refresh_rate_overlay_on_external_display, "")
@@ -279,5 +282,6 @@ FLAG_MANAGER_ACONFIG_FLAG_IMPORTED(idle_screen_refresh_rate_timeout, "",
 FLAG_MANAGER_ACONFIG_FLAG_IMPORTED(adpf_use_fmq_channel_fixed, "", android::os)
 FLAG_MANAGER_ACONFIG_FLAG_IMPORTED(trace_frame_rate_override, "",
                                    com::android::graphics::libgui::flags);
-
+FLAG_MANAGER_ACONFIG_FLAG_IMPORTED(luts_api, "",
+                                   android::hardware::flags);
 } // namespace android
