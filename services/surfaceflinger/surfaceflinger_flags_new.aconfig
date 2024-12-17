@@ -295,4 +295,11 @@ flag {
   }
 } # vrr_bugfix_dropped_frame
 
+flag {
+  name: "window_blur_kawase2"
+  namespace: "core_graphics"
+  description: "Flag for using Kawase2 algorithm for window blur"
+  bug: "353826438"
+} # window_blur_kawase2
+
 # IMPORTANT - please keep alphabetize to reduce merge conflicts

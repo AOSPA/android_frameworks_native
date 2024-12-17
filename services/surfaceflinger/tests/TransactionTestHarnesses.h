@@ -58,7 +58,7 @@ public:
                         GRALLOC_USAGE_HW_VIDEO_ENCODER | GRALLOC_USAGE_SW_READ_OFTEN);
                 sp<BufferListener> listener = sp<BufferListener>::make(this);
                 itemConsumer->setFrameAvailableListener(listener);
-                itemConsumer->setName(String8("Virtual disp consumer"));
+                itemConsumer->setName(String8("Virtual disp consumer (TransactionTest)"));
                 itemConsumer->setDefaultBufferSize(resolution.getWidth(), resolution.getHeight());
 #else
                 sp<IGraphicBufferProducer> producer;
@@ -66,7 +66,7 @@ public:
                 sp<BufferItemConsumer> itemConsumer;
                 BufferQueue::createBufferQueue(&producer, &consumer);
 
-                consumer->setConsumerName(String8("Virtual disp consumer"));
+                consumer->setConsumerName(String8("Virtual disp consumer (TransactionTest)"));
                 consumer->setDefaultBufferSize(resolution.getWidth(), resolution.getHeight());
 
                 itemConsumer = sp<BufferItemConsumer>::make(consumer,
