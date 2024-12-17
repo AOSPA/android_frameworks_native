@@ -2666,6 +2666,10 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
         frontend::LayerSnapshot* snapshot = mLayerSnapshotBuilder.getSnapshot(it->second->sequence);
         gui::GameMode gameMode = (snapshot) ? snapshot->gameMode : gui::GameMode::Unsupported;
         mLayersWithQueuedFrames.emplace(it->second, gameMode);
+
+        /* QTI_BEGIN */
+        snapshot->qtiLayerClass = it->second->qtiGetLayerClass();
+        /* QTI_END */
     }
 
     updateLayerHistory(latchTime);
