@@ -1094,8 +1094,8 @@ void LayerSnapshotBuilder::updateInput(LayerSnapshot& snapshot,
     bool noValidDisplay = !displayInfoOpt.has_value();
     auto displayInfo = displayInfoOpt.value_or(sDefaultInfo);
 
-    if (!requested.windowInfoHandle) {
-        snapshot.inputInfo.inputConfig = InputConfig::NO_INPUT_CHANNEL;
+    if (!requested.hasInputInfo()) {
+        snapshot.inputInfo.inputConfig |= InputConfig::NO_INPUT_CHANNEL;
     }
     fillInputFrameInfo(snapshot.inputInfo, displayInfo.transform, snapshot);
 
