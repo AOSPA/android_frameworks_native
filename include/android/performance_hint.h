@@ -478,8 +478,13 @@ void AWorkDuration_setActualGpuDurationNanos(AWorkDuration* _Nonnull aWorkDurati
 /**
  * Return the APerformanceHintSession wrapped by a Java PerformanceHintManager.Session object.
  *
- * The Java session maintains ownership over the wrapped native session, so it cannot be
- * closed using {@link APerformanceHint_closeSession}.
+ * The Java session maintains ownership over the wrapped native session, so it cannot be closed
+ * using {@link APerformanceHint_closeSession}. The return value is valid until the Java object
+ * containing this value dies.
+ *
+ * The returned pointer is intended to be used by JNI calls to access native performance APIs using
+ * a Java hint session wrapper, and then immediately discarded. Using the pointer after the death of
+ * the Java container results in undefined behavior.
  *
  * @param env The Java environment where the PerformanceHintManager.Session lives.
  * @param sessionObj The Java Session to unwrap.

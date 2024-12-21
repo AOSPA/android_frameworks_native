@@ -118,7 +118,8 @@ public:
     // isPeekingThrough specifies whether this layer will be shown through a
     // hole punch in a layer above it.
     virtual void writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t z,
-                                 bool zIsOverridden, bool isPeekingThrough) = 0;
+                                 bool zIsOverridden, bool isPeekingThrough,
+                                 bool isLutSupported) = 0;
 
     // Updates the cursor position with the HWC
     virtual void writeCursorPositionToHWC() const = 0;

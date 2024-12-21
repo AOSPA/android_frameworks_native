@@ -947,11 +947,13 @@ public:
         FakeDisplayDeviceInjector(TestableSurfaceFlinger& flinger,
                                   std::shared_ptr<compositionengine::Display> display,
                                   std::optional<ui::DisplayConnectionType> connectionType,
+                                  std::optional<uint8_t> port,
                                   std::optional<hal::HWDisplayId> hwcDisplayId, bool isPrimary)
               : mFlinger(flinger),
                 mCreationArgs(flinger.mFlinger, flinger.mFlinger->getHwComposer(), mDisplayToken,
                               display),
                 mConnectionType(connectionType),
+                mPort(port),
                 mHwcDisplayId(hwcDisplayId) {
             mCreationArgs.isPrimary = isPrimary;
             mCreationArgs.initialPowerMode = hal::PowerMode::ON;
@@ -1100,11 +1102,12 @@ public:
                                   .hwcDisplayId = *mHwcDisplayId,
                                   .activeMode = activeModeOpt->get()};
 
-                const auto it = mFlinger.mutablePhysicalDisplays()
-                                        .emplace_or_replace(*physicalId, mDisplayToken, *physicalId,
-                                                            *mConnectionType, std::move(modes),
-                                                            ui::ColorModes(), std::nullopt)
-                                        .first;
+                const auto it =
+                        mFlinger.mutablePhysicalDisplays()
+                                .emplace_or_replace(*physicalId, mDisplayToken, *physicalId, *mPort,
+                                                    *mConnectionType, std::move(modes),
+                                                    ui::ColorModes(), std::nullopt)
+                                .first;
 
                 mFlinger.mutableDisplayModeController()
                         .registerDisplay(*physicalId, it->second.snapshot(),
@@ -1138,6 +1141,7 @@ public:
         DisplayModeId mActiveModeId;
         bool mSchedulerRegistration = true;
         const std::optional<ui::DisplayConnectionType> mConnectionType;
+        const std::optional<uint8_t> mPort;
         const std::optional<hal::HWDisplayId> mHwcDisplayId;
     };
 

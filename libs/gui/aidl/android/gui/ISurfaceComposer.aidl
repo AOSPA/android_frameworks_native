@@ -607,8 +607,14 @@ interface ISurfaceComposer {
     oneway void removeJankListener(int layerId, IJankListener listener, long afterVsync);
 
     /**
-     * Sets the listener used to monitor visible content that is being processed with picture
+     * Adds a listener used to monitor visible content that is being processed with picture
      * profiles.
      */
-    oneway void setActivePictureListener(IActivePictureListener listener);
+    oneway void addActivePictureListener(IActivePictureListener listener);
+
+    /**
+     * Removes a listener used to monitor visible content that is being processed with picture
+     * profiles.
+     */
+    oneway void removeActivePictureListener(IActivePictureListener listener);
 }

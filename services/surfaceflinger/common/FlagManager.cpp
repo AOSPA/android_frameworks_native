@@ -112,60 +112,63 @@ void FlagManager::dump(std::string& result) const {
     DUMP_LEGACY_SERVER_FLAG(use_skia_tracing);
 
     /// Trunk stable server (R/W) flags ///
-    DUMP_ACONFIG_FLAG(refresh_rate_overlay_on_external_display);
     DUMP_ACONFIG_FLAG(adpf_gpu_sf);
     DUMP_ACONFIG_FLAG(adpf_native_session_manager);
     DUMP_ACONFIG_FLAG(adpf_use_fmq_channel);
     DUMP_ACONFIG_FLAG(graphite_renderengine_preview_rollout);
+    DUMP_ACONFIG_FLAG(refresh_rate_overlay_on_external_display);
 
     /// Trunk stable readonly flags ///
-    DUMP_ACONFIG_FLAG(adpf_fmq_sf);
-    DUMP_ACONFIG_FLAG(arr_setframerate_gte_enum);
-    DUMP_ACONFIG_FLAG(connected_display);
-    DUMP_ACONFIG_FLAG(enable_small_area_detection);
-    DUMP_ACONFIG_FLAG(stable_edid_ids);
-    DUMP_ACONFIG_FLAG(frame_rate_category_mrr);
-    DUMP_ACONFIG_FLAG(misc1);
-    DUMP_ACONFIG_FLAG(vrr_config);
-    DUMP_ACONFIG_FLAG(hdcp_level_hal);
-    DUMP_ACONFIG_FLAG(multithreaded_present);
+    /// IMPORTANT - please keep alphabetize to reduce merge conflicts
     DUMP_ACONFIG_FLAG(add_sf_skipped_frames_to_trace);
-    DUMP_ACONFIG_FLAG(use_known_refresh_rate_for_fps_consistency);
-    DUMP_ACONFIG_FLAG(cache_when_source_crop_layer_only_moved);
-    DUMP_ACONFIG_FLAG(enable_fro_dependent_features);
-    DUMP_ACONFIG_FLAG(display_protected);
-    DUMP_ACONFIG_FLAG(fp16_client_target);
-    DUMP_ACONFIG_FLAG(game_default_frame_rate);
-    DUMP_ACONFIG_FLAG(enable_layer_command_batching);
-    DUMP_ACONFIG_FLAG(vulkan_renderengine);
-    DUMP_ACONFIG_FLAG(renderable_buffer_usage);
-    DUMP_ACONFIG_FLAG(vrr_bugfix_24q4);
-    DUMP_ACONFIG_FLAG(vrr_bugfix_dropped_frame);
-    DUMP_ACONFIG_FLAG(restore_blur_step);
-    DUMP_ACONFIG_FLAG(dont_skip_on_early_ro);
-    DUMP_ACONFIG_FLAG(no_vsyncs_on_screen_off);
-    DUMP_ACONFIG_FLAG(protected_if_client);
-    DUMP_ACONFIG_FLAG(idle_screen_refresh_rate_timeout);
-    DUMP_ACONFIG_FLAG(graphite_renderengine);
-    DUMP_ACONFIG_FLAG(filter_frames_before_trace_starts);
-    DUMP_ACONFIG_FLAG(latch_unsignaled_with_auto_refresh_changed);
-    DUMP_ACONFIG_FLAG(deprecate_vsync_sf);
+    DUMP_ACONFIG_FLAG(adpf_fmq_sf);
     DUMP_ACONFIG_FLAG(allow_n_vsyncs_in_targeter);
-    DUMP_ACONFIG_FLAG(detached_mirror);
+    DUMP_ACONFIG_FLAG(arr_setframerate_gte_enum);
+    DUMP_ACONFIG_FLAG(begone_bright_hlg);
+    DUMP_ACONFIG_FLAG(cache_when_source_crop_layer_only_moved);
     DUMP_ACONFIG_FLAG(commit_not_composited);
+    DUMP_ACONFIG_FLAG(connected_display);
+    DUMP_ACONFIG_FLAG(connected_display_hdr);
     DUMP_ACONFIG_FLAG(correct_dpi_with_display_size);
-    DUMP_ACONFIG_FLAG(local_tonemap_screenshots);
-    DUMP_ACONFIG_FLAG(override_trusted_overlay);
+    DUMP_ACONFIG_FLAG(deprecate_frame_tracker);
+    DUMP_ACONFIG_FLAG(deprecate_vsync_sf);
+    DUMP_ACONFIG_FLAG(detached_mirror);
+    DUMP_ACONFIG_FLAG(display_config_error_hal);
+    DUMP_ACONFIG_FLAG(display_protected);
+    DUMP_ACONFIG_FLAG(dont_skip_on_early_ro);
+    DUMP_ACONFIG_FLAG(enable_fro_dependent_features);
+    DUMP_ACONFIG_FLAG(enable_layer_command_batching);
+    DUMP_ACONFIG_FLAG(enable_small_area_detection);
+    DUMP_ACONFIG_FLAG(filter_frames_before_trace_starts);
     DUMP_ACONFIG_FLAG(flush_buffer_slots_to_uncache);
     DUMP_ACONFIG_FLAG(force_compile_graphite_renderengine);
+    DUMP_ACONFIG_FLAG(fp16_client_target);
+    DUMP_ACONFIG_FLAG(frame_rate_category_mrr);
+    DUMP_ACONFIG_FLAG(game_default_frame_rate);
+    DUMP_ACONFIG_FLAG(graphite_renderengine);
+    DUMP_ACONFIG_FLAG(hdcp_level_hal);
+    DUMP_ACONFIG_FLAG(idle_screen_refresh_rate_timeout);
+    DUMP_ACONFIG_FLAG(latch_unsignaled_with_auto_refresh_changed);
+    DUMP_ACONFIG_FLAG(local_tonemap_screenshots);
+    DUMP_ACONFIG_FLAG(misc1);
+    DUMP_ACONFIG_FLAG(multithreaded_present);
+    DUMP_ACONFIG_FLAG(no_vsyncs_on_screen_off);
+    DUMP_ACONFIG_FLAG(override_trusted_overlay);
+    DUMP_ACONFIG_FLAG(protected_if_client);
+    DUMP_ACONFIG_FLAG(reject_dupe_layerstacks);
+    DUMP_ACONFIG_FLAG(renderable_buffer_usage);
+    DUMP_ACONFIG_FLAG(restore_blur_step);
+    DUMP_ACONFIG_FLAG(skip_invisible_windows_in_input);
+    DUMP_ACONFIG_FLAG(stable_edid_ids);
     DUMP_ACONFIG_FLAG(trace_frame_rate_override);
     DUMP_ACONFIG_FLAG(true_hdr_screenshots);
-    DUMP_ACONFIG_FLAG(display_config_error_hal);
-    DUMP_ACONFIG_FLAG(connected_display_hdr);
-    DUMP_ACONFIG_FLAG(deprecate_frame_tracker);
-    DUMP_ACONFIG_FLAG(skip_invisible_windows_in_input);
-    DUMP_ACONFIG_FLAG(begone_bright_hlg);
+    DUMP_ACONFIG_FLAG(use_known_refresh_rate_for_fps_consistency);
+    DUMP_ACONFIG_FLAG(vrr_bugfix_24q4);
+    DUMP_ACONFIG_FLAG(vrr_bugfix_dropped_frame);
+    DUMP_ACONFIG_FLAG(vrr_config);
+    DUMP_ACONFIG_FLAG(vulkan_renderengine);
     DUMP_ACONFIG_FLAG(window_blur_kawase2);
+    /// IMPORTANT - please keep alphabetize to reduce merge conflicts
 
 #undef DUMP_ACONFIG_FLAG
 #undef DUMP_LEGACY_SERVER_FLAG
@@ -266,6 +269,7 @@ FLAG_MANAGER_ACONFIG_FLAG(deprecate_frame_tracker, "");
 FLAG_MANAGER_ACONFIG_FLAG(skip_invisible_windows_in_input, "");
 FLAG_MANAGER_ACONFIG_FLAG(begone_bright_hlg, "debug.sf.begone_bright_hlg");
 FLAG_MANAGER_ACONFIG_FLAG(window_blur_kawase2, "");
+FLAG_MANAGER_ACONFIG_FLAG(reject_dupe_layerstacks, "");
 
 /// Trunk stable server (R/W) flags ///
 FLAG_MANAGER_ACONFIG_FLAG(refresh_rate_overlay_on_external_display, "")

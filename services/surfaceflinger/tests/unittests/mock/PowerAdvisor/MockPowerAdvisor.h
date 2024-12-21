@@ -63,6 +63,8 @@ public:
     MOCK_METHOD(void, setCompositeEnd, (TimePoint compositeEndTime), (override));
     MOCK_METHOD(void, setDisplays, (std::vector<DisplayId> & displayIds), (override));
     MOCK_METHOD(void, setTotalFrameTargetWorkDuration, (Duration targetDuration), (override));
+    MOCK_METHOD(std::shared_ptr<SessionManager>, getSessionManager, (), (override));
+    MOCK_METHOD(sp<IBinder>, getOrCreateSessionManagerForBinder, (uid_t uid), (override));
 };
 
 } // namespace android::adpf::mock

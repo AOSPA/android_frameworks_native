@@ -823,7 +823,7 @@ void Output::commitPictureProfilesToCompositionState() {
     }
     auto compare = [](const ::android::compositionengine::OutputLayer* lhs,
                       const ::android::compositionengine::OutputLayer* rhs) {
-        return lhs->getPictureProfilePriority() > rhs->getPictureProfilePriority();
+        return lhs->getPictureProfilePriority() < rhs->getPictureProfilePriority();
     };
     std::priority_queue<::android::compositionengine::OutputLayer*,
                         std::vector<::android::compositionengine::OutputLayer*>, decltype(compare)>
@@ -922,6 +922,9 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
 
     applyPictureProfile();
 
+    auto* properties = getOverlaySupport();
+    bool hasLutsProperties = properties && properties->lutProperties.has_value();
+
     compositionengine::OutputLayer* peekThroughLayer = nullptr;
     sp<GraphicBuffer> previousOverride = nullptr;
     bool includeGeometry = refreshArgs.updatingGeometryThisFrame;
@@ -953,7 +956,7 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
                     includeGeometry = true;
                     constexpr bool isPeekingThrough = true;
                     peekThroughLayer->writeStateToHWC(includeGeometry, false, z++, overrideZ,
-                                                      isPeekingThrough);
+                                                      isPeekingThrough, hasLutsProperties);
                     outputLayerHash ^= android::hashCombine(
                             reinterpret_cast<uint64_t>(&peekThroughLayer->getLayerFE()),
                             z, includeGeometry, overrideZ, isPeekingThrough,
@@ -965,7 +968,8 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
         }
 
         constexpr bool isPeekingThrough = false;
-        layer->writeStateToHWC(includeGeometry, skipLayer, z++, overrideZ, isPeekingThrough);
+        layer->writeStateToHWC(includeGeometry, skipLayer, z++, overrideZ, isPeekingThrough,
+                               hasLutsProperties);
         if (!skipLayer) {
             outputLayerHash ^= android::hashCombine(
                     reinterpret_cast<uint64_t>(&layer->getLayerFE()),

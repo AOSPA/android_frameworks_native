@@ -42,6 +42,7 @@ struct DetailedTimingDescriptor {
 struct DisplayIdentificationInfo {
     PhysicalDisplayId id;
     std::string name;
+    uint8_t port;
     std::optional<DeviceProductInfo> deviceProductInfo;
     std::optional<DetailedTimingDescriptor> preferredDetailedTimingDescriptor;
 };

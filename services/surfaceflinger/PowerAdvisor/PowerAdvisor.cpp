@@ -34,22 +34,19 @@
 #include <optional>
 
 #include <android-base/properties.h>
+#include <android/binder_libbinder.h>
 #include <common/trace.h>
 #include <utils/Log.h>
 #include <utils/Mutex.h>
 
 #include <binder/IServiceManager.h>
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wconversion"
 #include <powermanager/PowerHalController.h>
 #include <powermanager/PowerHintSessionWrapper.h>
-#pragma clang diagnostic pop
 
 #include <common/FlagManager.h>
 #include "PowerAdvisor.h"
-
-namespace hal = aidl::android::hardware::power;
+#include "SessionManager.h"
 
 namespace android::adpf::impl {
 
@@ -550,6 +547,18 @@ void PowerAdvisor::setDisplays(std::vector<DisplayId>& displayIds) {
 
 void PowerAdvisor::setTotalFrameTargetWorkDuration(Duration targetDuration) {
     mTotalFrameTargetDuration = targetDuration;
+}
+
+std::shared_ptr<SessionManager> PowerAdvisor::getSessionManager() {
+    return mSessionManager;
+}
+
+sp<IBinder> PowerAdvisor::getOrCreateSessionManagerForBinder(uid_t uid) {
+    // Flag guards the creation of SessionManager
+    if (mSessionManager == nullptr && FlagManager::getInstance().adpf_native_session_manager()) {
+        mSessionManager = ndk::SharedRefBase::make<SessionManager>(uid);
+    }
+    return AIBinder_toPlatformBinder(mSessionManager->asBinder().get());
 }
 
 std::vector<DisplayId> PowerAdvisor::getOrderedDisplayIds(

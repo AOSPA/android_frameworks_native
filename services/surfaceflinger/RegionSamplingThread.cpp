@@ -346,7 +346,6 @@ void RegionSamplingThread::captureSample() {
     constexpr bool kRegionSampling = true;
     constexpr bool kGrayscale = false;
     constexpr bool kIsProtected = false;
-    constexpr bool kAttachGainmap = false;
 
     SurfaceFlinger::RenderAreaBuilderVariant
             renderAreaBuilder(std::in_place_type<DisplayRenderAreaBuilder>, sampledBounds,
@@ -358,7 +357,7 @@ void RegionSamplingThread::captureSample() {
             mFlinger.getSnapshotsFromMainThread(renderAreaBuilder, getLayerSnapshotsFn, layers);
     FenceResult fenceResult =
             mFlinger.captureScreenshot(renderAreaBuilder, buffer, kRegionSampling, kGrayscale,
-                                       kIsProtected, kAttachGainmap, nullptr, displayState, layers)
+                                       kIsProtected, nullptr, displayState, layers)
                     .get();
     if (fenceResult.ok()) {
         fenceResult.value()->waitForever(LOG_TAG);

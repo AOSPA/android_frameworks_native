@@ -567,9 +567,7 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
         if (usingLocalTonemap) {
             const float inputRatio =
                     hdrType == HdrRenderType::GENERIC_HDR ? 1.0f : parameters.layerDimmingRatio;
-            static MouriMap kMapper;
-            shader = kMapper.mouriMap(getActiveContext(), shader, inputRatio,
-                                      parameters.display.targetHdrSdrRatio);
+            shader = localTonemap(shader, inputRatio, parameters.display.targetHdrSdrRatio);
         }
 
         // disable tonemapping if we already locally tonemapped
@@ -608,6 +606,12 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
                                         hardwareBuffer, parameters.display.renderIntent);
     }
     return shader;
+}
+
+sk_sp<SkShader> SkiaRenderEngine::localTonemap(sk_sp<SkShader> shader, float inputMultiplier,
+                                               float targetHdrSdrRatio) {
+    static MouriMap kMapper;
+    return kMapper.mouriMap(getActiveContext(), shader, inputMultiplier, targetHdrSdrRatio);
 }
 
 void SkiaRenderEngine::initCanvas(SkCanvas* canvas, const DisplaySettings& display) {
@@ -1215,44 +1219,58 @@ void SkiaRenderEngine::drawLayersInternal(
     resultPromise->set_value(std::move(drawFence));
 }
 
-void SkiaRenderEngine::drawGainmapInternal(
+void SkiaRenderEngine::tonemapAndDrawGainmapInternal(
         const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
-        const std::shared_ptr<ExternalTexture>& sdr, base::borrowed_fd&& sdrFence,
         const std::shared_ptr<ExternalTexture>& hdr, base::borrowed_fd&& hdrFence,
-        float hdrSdrRatio, ui::Dataspace dataspace,
+        float hdrSdrRatio, ui::Dataspace dataspace, const std::shared_ptr<ExternalTexture>& sdr,
         const std::shared_ptr<ExternalTexture>& gainmap) {
     std::lock_guard<std::mutex> lock(mRenderingMutex);
     auto context = getActiveContext();
-    auto surfaceTextureRef = getOrCreateBackendTexture(gainmap->getBuffer(), true);
-    sk_sp<SkSurface> dstSurface =
-            surfaceTextureRef->getOrCreateSurface(ui::Dataspace::V0_SRGB_LINEAR);
+    auto gainmapTextureRef = getOrCreateBackendTexture(gainmap->getBuffer(), true);
+    sk_sp<SkSurface> gainmapSurface =
+            gainmapTextureRef->getOrCreateSurface(ui::Dataspace::V0_SRGB_LINEAR);
 
-    waitFence(context, sdrFence);
-    const auto sdrTextureRef = getOrCreateBackendTexture(sdr->getBuffer(), false);
-    const auto sdrImage = sdrTextureRef->makeImage(dataspace, kPremul_SkAlphaType);
-    const auto sdrShader =
-            sdrImage->makeShader(SkTileMode::kClamp, SkTileMode::kClamp,
-                                 SkSamplingOptions({SkFilterMode::kLinear, SkMipmapMode::kNone}),
-                                 nullptr);
+    auto sdrTextureRef = getOrCreateBackendTexture(sdr->getBuffer(), true);
+    sk_sp<SkSurface> sdrSurface = sdrTextureRef->getOrCreateSurface(dataspace);
+
     waitFence(context, hdrFence);
     const auto hdrTextureRef = getOrCreateBackendTexture(hdr->getBuffer(), false);
     const auto hdrImage = hdrTextureRef->makeImage(dataspace, kPremul_SkAlphaType);
     const auto hdrShader =
             hdrImage->makeShader(SkTileMode::kClamp, SkTileMode::kClamp,
-                                 SkSamplingOptions({SkFilterMode::kLinear, SkMipmapMode::kNone}),
+                                 SkSamplingOptions({SkFilterMode::kNearest, SkMipmapMode::kNone}),
                                  nullptr);
 
+    const auto tonemappedShader = localTonemap(hdrShader, 1.0f, 1.0f);
+
     static GainmapFactory kGainmapFactory;
-    const auto gainmapShader = kGainmapFactory.createSkShader(sdrShader, hdrShader, hdrSdrRatio);
+    const auto gainmapShader =
+            kGainmapFactory.createSkShader(tonemappedShader, hdrShader, hdrSdrRatio);
 
-    const auto canvas = dstSurface->getCanvas();
-    SkPaint paint;
-    paint.setShader(gainmapShader);
-    paint.setBlendMode(SkBlendMode::kSrc);
-    canvas->drawPaint(paint);
+    sp<Fence> drawFence;
 
-    auto drawFence = sp<Fence>::make(flushAndSubmit(context, dstSurface));
-    trace(drawFence);
+    {
+        const auto canvas = sdrSurface->getCanvas();
+        SkPaint paint;
+        paint.setShader(tonemappedShader);
+        paint.setBlendMode(SkBlendMode::kSrc);
+        canvas->drawPaint(paint);
+
+        drawFence = sp<Fence>::make(flushAndSubmit(context, sdrSurface));
+        trace(drawFence);
+    }
+
+    {
+        const auto canvas = gainmapSurface->getCanvas();
+        SkPaint paint;
+        paint.setShader(gainmapShader);
+        paint.setBlendMode(SkBlendMode::kSrc);
+        canvas->drawPaint(paint);
+
+        auto gmFence = sp<Fence>::make(flushAndSubmit(context, gainmapSurface));
+        trace(gmFence);
+        drawFence = Fence::merge("gm-ss", drawFence, gmFence);
+    }
     resultPromise->set_value(std::move(drawFence));
 }
 
