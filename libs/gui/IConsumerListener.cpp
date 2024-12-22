@@ -31,7 +31,8 @@ enum class Tag : uint32_t {
     ON_FRAME_DEQUEUED,
     ON_FRAME_CANCELLED,
     ON_FRAME_DETACHED,
-    LAST = ON_FRAME_DETACHED,
+    ON_SLOT_COUNT_CHANGED,
+    LAST = ON_SLOT_COUNT_CHANGED,
 };
 
 } // Anonymous namespace
@@ -85,6 +86,14 @@ public:
                                   FrameEventHistoryDelta* /*outDelta*/) override {
         LOG_ALWAYS_FATAL("IConsumerListener::addAndGetFrameTimestamps cannot be proxied");
     }
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    void onSlotCountChanged(int slotCount) override {
+        callRemoteAsync<
+                decltype(&IConsumerListener::onSlotCountChanged)>(Tag::ON_SLOT_COUNT_CHANGED,
+                                                                  slotCount);
+    }
+#endif
 };
 
 // Out-of-line virtual method definitions to trigger vtable emission in this translation unit (see
@@ -116,6 +125,13 @@ status_t BnConsumerListener::onTransact(uint32_t code, const Parcel& data, Parce
             return callLocalAsync(data, reply, &IConsumerListener::onFrameCancelled);
         case Tag::ON_FRAME_DETACHED:
             return callLocalAsync(data, reply, &IConsumerListener::onFrameDetached);
+        case Tag::ON_SLOT_COUNT_CHANGED: {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+            return callLocalAsync(data, reply, &IConsumerListener::onSlotCountChanged);
+#else
+            return INVALID_OPERATION;
+#endif
+        }
     }
 }
 

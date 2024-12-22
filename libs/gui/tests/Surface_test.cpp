@@ -14,10 +14,6 @@
  * limitations under the License.
  */
 
-#include "gui/view/Surface.h"
-#include "Constants.h"
-#include "MockConsumer.h"
-
 #include <gtest/gtest.h>
 
 #include <SurfaceFlingerProperties.h>
@@ -36,10 +32,13 @@
 #include <gui/IConsumerListener.h>
 #include <gui/IGraphicBufferConsumer.h>
 #include <gui/IGraphicBufferProducer.h>
+#include <gui/IProducerListener.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
 #include <gui/SyncScreenCaptureListener.h>
+#include <gui/view/Surface.h>
+#include <nativebase/nativebase.h>
 #include <private/gui/ComposerService.h>
 #include <private/gui/ComposerServiceAIDL.h>
 #include <sys/types.h>
@@ -47,6 +46,7 @@
 #include <ui/BufferQueueDefs.h>
 #include <ui/DisplayMode.h>
 #include <ui/GraphicBuffer.h>
+#include <ui/PixelFormat.h>
 #include <ui/Rect.h>
 #include <utils/Errors.h>
 #include <utils/String8.h>
@@ -55,9 +55,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <future>
+#include <iterator>
 #include <limits>
 #include <thread>
 
+#include "Constants.h"
+#include "MockConsumer.h"
 #include "testserver/TestServerClient.h"
 
 namespace android {
@@ -2533,4 +2536,128 @@ TEST_F(SurfaceTest, QueueBufferOutput_TracksReplacements_Plural) {
 }
 #endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+TEST_F(SurfaceTest, UnlimitedSlots_FailsOnIncompatibleConsumer) {
+    sp<IGraphicBufferProducer> producer;
+    sp<IGraphicBufferConsumer> consumer;
+    BufferQueue::createBufferQueue(&producer, &consumer);
+
+    sp<IConsumerListener> consumerListener = sp<FakeConsumer>::make();
+
+    EXPECT_EQ(OK, consumer->allowUnlimitedSlots(false));
+    EXPECT_EQ(OK, consumer->consumerConnect(consumerListener, /* consumerListener */ true));
+
+    sp<Surface> surface = sp<Surface>::make(producer);
+    sp<SurfaceListener> surfaceListener = sp<StubSurfaceListener>::make();
+    EXPECT_EQ(OK, surface->connect(NATIVE_WINDOW_API_CPU, surfaceListener));
+
+    EXPECT_NE(OK, surface->setMaxDequeuedBufferCount(128))
+            << "We shouldn't be able to set high max buffer counts if the consumer doesn't allow "
+               "it";
+}
+
+TEST_F(SurfaceTest, UnlimitedSlots_CanDequeueAndQueueMoreThanOldMaximum) {
+    sp<IGraphicBufferProducer> producer;
+    sp<IGraphicBufferConsumer> consumer;
+    BufferQueue::createBufferQueue(&producer, &consumer);
+
+    sp<IConsumerListener> consumerListener = sp<FakeConsumer>::make();
+
+    EXPECT_EQ(OK, consumer->allowUnlimitedSlots(true));
+    EXPECT_EQ(OK, consumer->consumerConnect(consumerListener, /* consumerListener */ true));
+    EXPECT_EQ(OK, consumer->setDefaultBufferFormat(PIXEL_FORMAT_RGBA_8888));
+    EXPECT_EQ(OK, consumer->setConsumerUsageBits(AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN));
+
+    sp<Surface> surface = sp<Surface>::make(producer);
+    sp<SurfaceListener> surfaceListener = sp<StubSurfaceListener>::make();
+    EXPECT_EQ(OK, surface->connect(NATIVE_WINDOW_API_CPU, surfaceListener));
+
+    EXPECT_EQ(OK, surface->setMaxDequeuedBufferCount(128))
+            << "If unlimited slots are allowed, we should be able increase the max dequeued buffer "
+               "count arbitrarily";
+
+    std::vector<std::tuple<sp<GraphicBuffer>, sp<Fence>, int>> buffers;
+    for (int i = 0; i < 128; i++) {
+        sp<GraphicBuffer> buffer;
+        sp<Fence> fence;
+        ASSERT_EQ(OK, surface->dequeueBuffer(&buffer, &fence)) << "Unable to dequeue buffer #" << i;
+        buffers.push_back({buffer, fence, i});
+    }
+
+    for (auto& [buffer, fence, idx] : buffers) {
+        ASSERT_EQ(OK, surface->queueBuffer(buffer, fence)) << "Unable to queue buffer #" << idx;
+    }
+}
+
+TEST_F(SurfaceTest, UnlimitedSlots_CanDequeueAndDetachMoreThanOldMaximum) {
+    sp<IGraphicBufferProducer> producer;
+    sp<IGraphicBufferConsumer> consumer;
+    BufferQueue::createBufferQueue(&producer, &consumer);
+
+    sp<IConsumerListener> consumerListener = sp<FakeConsumer>::make();
+
+    EXPECT_EQ(OK, consumer->allowUnlimitedSlots(true));
+    EXPECT_EQ(OK, consumer->consumerConnect(consumerListener, /* consumerListener */ true));
+    EXPECT_EQ(OK, consumer->setDefaultBufferFormat(PIXEL_FORMAT_RGBA_8888));
+    EXPECT_EQ(OK, consumer->setConsumerUsageBits(AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN));
+
+    sp<Surface> surface = sp<Surface>::make(producer);
+    sp<SurfaceListener> surfaceListener = sp<StubSurfaceListener>::make();
+    EXPECT_EQ(OK, surface->connect(NATIVE_WINDOW_API_CPU, surfaceListener));
+
+    EXPECT_EQ(OK, surface->setMaxDequeuedBufferCount(128))
+            << "If unlimited slots are allowed, we should be able increase the max dequeued buffer "
+               "count arbitrarily";
+
+    std::vector<std::tuple<sp<GraphicBuffer>, sp<Fence>, int>> buffers;
+    for (int i = 0; i < 128; i++) {
+        sp<GraphicBuffer> buffer;
+        sp<Fence> fence;
+        ASSERT_EQ(OK, surface->dequeueBuffer(&buffer, &fence)) << "Unable to dequeue buffer #" << i;
+        buffers.push_back({buffer, fence, i});
+    }
+
+    for (auto& [buffer, _, idx] : buffers) {
+        ASSERT_EQ(OK, surface->detachBuffer(buffer)) << "Unable to detach buffer #" << idx;
+    }
+}
+
+TEST_F(SurfaceTest, UnlimitedSlots_BatchOperations) {
+    sp<IGraphicBufferProducer> producer;
+    sp<IGraphicBufferConsumer> consumer;
+    BufferQueue::createBufferQueue(&producer, &consumer);
+
+    sp<IConsumerListener> consumerListener = sp<FakeConsumer>::make();
+
+    EXPECT_EQ(OK, consumer->allowUnlimitedSlots(true));
+    EXPECT_EQ(OK, consumer->consumerConnect(consumerListener, /* consumerListener */ true));
+    EXPECT_EQ(OK, consumer->setDefaultBufferFormat(PIXEL_FORMAT_RGBA_8888));
+    EXPECT_EQ(OK, consumer->setConsumerUsageBits(AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN));
+
+    sp<Surface> surface = sp<Surface>::make(producer);
+    sp<SurfaceListener> surfaceListener = sp<StubSurfaceListener>::make();
+    EXPECT_EQ(OK, surface->connect(NATIVE_WINDOW_API_CPU, surfaceListener));
+
+    EXPECT_EQ(OK, surface->setMaxDequeuedBufferCount(128))
+            << "If unlimited slots are allowed, we should be able increase the max dequeued buffer "
+               "count arbitrarily";
+
+    std::vector<Surface::BatchBuffer> buffers(128);
+    EXPECT_EQ(OK, surface->dequeueBuffers(&buffers));
+    EXPECT_EQ(128u, buffers.size());
+
+    std::vector<Surface::BatchQueuedBuffer> queuedBuffers;
+    std::transform(buffers.begin(), buffers.end(), std::back_inserter(queuedBuffers),
+                   [](Surface::BatchBuffer& buffer) {
+                       Surface::BatchQueuedBuffer out;
+                       out.buffer = buffer.buffer;
+                       out.fenceFd = buffer.fenceFd;
+                       return out;
+                   });
+
+    std::vector<SurfaceQueueBufferOutput> outputs;
+    EXPECT_EQ(OK, surface->queueBuffers(queuedBuffers, &outputs));
+    EXPECT_EQ(128u, outputs.size());
+}
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
 } // namespace android

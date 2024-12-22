@@ -2633,16 +2633,14 @@ protected:
                            ui::ROTATION_0),
     };
 
-    std::unordered_map<ui::LogicalDisplayId, std::vector<PointerChoreographer::AdjacentDisplay>>
-            mTopology{
-                    {DISPLAY_CENTER_ID,
-                     {{DISPLAY_TOP_ID, PointerChoreographer::DisplayPosition::TOP, 10.0f},
-                      {DISPLAY_RIGHT_ID, PointerChoreographer::DisplayPosition::RIGHT, 10.0f},
-                      {DISPLAY_BOTTOM_ID, PointerChoreographer::DisplayPosition::BOTTOM, 10.0f},
-                      {DISPLAY_LEFT_ID, PointerChoreographer::DisplayPosition::LEFT, 10.0f},
-                      {DISPLAY_TOP_RIGHT_CORNER_ID, PointerChoreographer::DisplayPosition::RIGHT,
-                       -90.0f}}},
-            };
+    DisplayTopologyGraph mTopology{DISPLAY_CENTER_ID,
+                                   {{DISPLAY_CENTER_ID,
+                                     {{DISPLAY_TOP_ID, DisplayTopologyPosition::TOP, 10.0f},
+                                      {DISPLAY_RIGHT_ID, DisplayTopologyPosition::RIGHT, 10.0f},
+                                      {DISPLAY_BOTTOM_ID, DisplayTopologyPosition::BOTTOM, 10.0f},
+                                      {DISPLAY_LEFT_ID, DisplayTopologyPosition::LEFT, 10.0f},
+                                      {DISPLAY_TOP_RIGHT_CORNER_ID, DisplayTopologyPosition::RIGHT,
+                                       -90.0f}}}}};
 
 private:
     DisplayViewport createViewport(ui::LogicalDisplayId displayId, int32_t width, int32_t height,
@@ -2706,6 +2704,11 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(
                 // Note: Upon viewport transition cursor will be positioned at the boundary of the
                 // destination, as we drop any unconsumed delta.
+                std::make_tuple("PrimaryDisplayIsDefault", AINPUT_SOURCE_MOUSE,
+                                ControllerType::MOUSE, ToolType::MOUSE,
+                                vec2(50, 50) /* initial x/y */, vec2(0, 0) /* delta x/y */,
+                                PointerChoreographerDisplayTopologyTestFixture::DISPLAY_CENTER_ID,
+                                vec2(50, 50) /* destination x/y */),
                 std::make_tuple("UnchangedDisplay", AINPUT_SOURCE_MOUSE, ControllerType::MOUSE,
                                 ToolType::MOUSE, vec2(50, 50) /* initial x/y */,
                                 vec2(25, 25) /* delta x/y */,

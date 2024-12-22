@@ -128,7 +128,7 @@ status_t IGraphicBufferProducer::QueueBufferInput::unflatten(
 constexpr size_t IGraphicBufferProducer::QueueBufferOutput::minFlattenedSize() {
     return sizeof(width) + sizeof(height) + sizeof(transformHint) + sizeof(numPendingBuffers) +
             sizeof(nextFrameNumber) + sizeof(bufferReplaced) + sizeof(maxBufferCount) +
-            sizeof(result);
+            sizeof(result) + sizeof(isSlotExpansionAllowed);
 }
 size_t IGraphicBufferProducer::QueueBufferOutput::getFlattenedSize() const {
     return minFlattenedSize() + frameTimestamps.getFlattenedSize();
@@ -152,6 +152,7 @@ status_t IGraphicBufferProducer::QueueBufferOutput::flatten(
     FlattenableUtils::write(buffer, size, nextFrameNumber);
     FlattenableUtils::write(buffer, size, bufferReplaced);
     FlattenableUtils::write(buffer, size, maxBufferCount);
+    FlattenableUtils::write(buffer, size, isSlotExpansionAllowed);
 
     status_t result = frameTimestamps.flatten(buffer, size, fds, count);
     if (result != NO_ERROR) {
@@ -175,6 +176,7 @@ status_t IGraphicBufferProducer::QueueBufferOutput::unflatten(
     FlattenableUtils::read(buffer, size, nextFrameNumber);
     FlattenableUtils::read(buffer, size, bufferReplaced);
     FlattenableUtils::read(buffer, size, maxBufferCount);
+    FlattenableUtils::read(buffer, size, isSlotExpansionAllowed);
 
     status_t result = frameTimestamps.unflatten(buffer, size, fds, count);
     if (result != NO_ERROR) {

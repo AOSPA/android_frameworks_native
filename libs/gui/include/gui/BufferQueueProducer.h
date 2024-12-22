@@ -68,6 +68,11 @@ public:
     // flags indicating that previously-returned buffers are no longer valid.
     virtual status_t requestBuffer(int slot, sp<GraphicBuffer>* buf);
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    // see IGraphicsBufferProducer::extendSlotCount
+    virtual status_t extendSlotCount(int size) override;
+#endif
+
     // see IGraphicsBufferProducer::setMaxDequeuedBufferCount
     virtual status_t setMaxDequeuedBufferCount(int maxDequeuedBuffers);
 

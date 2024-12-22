@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <com_android_graphics_libgui_flags.h>
 #include <gui/OccupancyTracker.h>
 
 #include <binder/IInterface.h>
@@ -35,6 +36,10 @@ class Fence;
 class GraphicBuffer;
 class IConsumerListener;
 class NativeHandle;
+
+/*
+ * See IGraphicBufferProducer for details on SLOT_COUNT.
+ */
 #ifndef NO_BINDER
 class IGraphicBufferConsumer : public IInterface {
 public:
@@ -92,7 +97,7 @@ public:
     //
     // Return of a value other than NO_ERROR means an error has occurred:
     // * BAD_VALUE - the given slot number is invalid, either because it is out of the range
-    //               [0, NUM_BUFFER_SLOTS) or because the slot it refers to is not
+    //               [0, SLOT_COUNT) or because the slot it refers to is not
     //               currently acquired.
     virtual status_t detachBuffer(int slot) = 0;
 
@@ -173,12 +178,45 @@ public:
     // * NO_INIT - the BufferQueue has been abandoned.
     virtual status_t getReleasedBuffers(uint64_t* slotMask) = 0;
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    // getReleasedBuffersExtended for each slot, sets slotMask[slot] to 1 if it
+    // corresponds to a released buffer slot. In particular, a released buffer
+    // is one that has been released by the BufferQueue but has not yet been
+    // released by the consumer.
+    //
+    // This should be called from the onBuffersReleased() callback.
+    //
+    // Return of a value other than NO_ERROR means an error has occurred:
+    // * NO_INIT - the BufferQueue has been abandoned.
+    virtual status_t getReleasedBuffersExtended(std::vector<bool>* slotMask) = 0;
+#endif
+
     // setDefaultBufferSize is used to set the size of buffers returned by dequeueBuffer when a
     // width and height of zero is requested. Default is 1x1.
     //
     // Return of a value other than NO_ERROR means an error has occurred:
     // * BAD_VALUE - either w or h was zero
     virtual status_t setDefaultBufferSize(uint32_t w, uint32_t h) = 0;
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    // allowUnlimitedSlots allows the producer to set the upper bound on slots.
+    //
+    // Must be called before the producer is connected. If the producer
+    // increases the slot count, an IConsumerListener::onSlotCountChanged
+    // update is sent.
+    //
+    // This can not be used with setMaxBufferCount. Calls after
+    // setMaxBufferCount will fail and calls to setMaxBufferCount after setting
+    // this to true will fail.
+    //
+    // Return of a value other than NO_ERROR means an error has occurred:
+    // * NO_INIT - the BufferQueue has been abandoned
+    // * INVALID_OPERATION - one of the following errors has occurred:
+    //                       * Producer has been connected
+    //                       * setMaxBufferCount has been called and shrunk the
+    //                         BufferQueue.
+    virtual status_t allowUnlimitedSlots(bool allowUnlimitedSlots) = 0;
+#endif
 
     // setMaxBufferCount sets the maximum value for the number of buffers used in the BufferQueue
     // (the initial default is NUM_BUFFER_SLOTS). If a call to setMaxAcquiredBufferCount (by the

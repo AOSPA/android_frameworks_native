@@ -76,6 +76,9 @@ public:
         void onSetFrameRate(float frameRate, int8_t compatibility,
                             int8_t changeFrameRateStrategy) override;
 #endif
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        void onSlotCountChanged(int slotCount) override;
+#endif
     private:
         // mConsumerListener is a weak reference to the IConsumerListener.  This is
         // the raison d'etre of ProxyConsumerListener.

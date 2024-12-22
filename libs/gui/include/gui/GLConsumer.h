@@ -266,6 +266,9 @@ protected:
     virtual status_t acquireBufferLocked(BufferItem *item, nsecs_t presentWhen,
             uint64_t maxFrameNumber = 0) override;
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    virtual void onSlotCountChanged(int slotCount) override;
+#endif
     // releaseBufferLocked overrides the ConsumerBase method to update the
     // mEglSlots array in addition to the ConsumerBase.
     virtual status_t releaseBufferLocked(int slot, const sp<GraphicBuffer> graphicBuffer,
@@ -496,8 +499,11 @@ private:
     // slot that has not yet been used. The buffer allocated to a slot will also
     // be replaced if the requested buffer usage or geometry differs from that
     // of the buffer allocated to a slot.
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    std::vector<EglSlot> mEglSlots;
+#else
     EglSlot mEglSlots[BufferQueueDefs::NUM_BUFFER_SLOTS];
-
+#endif
     // mCurrentTexture is the buffer slot index of the buffer that is currently
     // bound to the OpenGL texture. It is initialized to INVALID_BUFFER_SLOT,
     // indicating that no buffer slot is currently bound to the texture. Note,

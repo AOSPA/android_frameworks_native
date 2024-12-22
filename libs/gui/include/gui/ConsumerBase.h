@@ -185,7 +185,9 @@ protected:
     virtual void onFrameDetached(const uint64_t bufferId) override;
     virtual void onBuffersReleased() override;
     virtual void onSidebandStreamChanged() override;
-
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    virtual void onSlotCountChanged(int slotCount) override;
+#endif
     virtual int getSlotForBufferLocked(const sp<GraphicBuffer>& buffer);
 
     virtual status_t detachBufferLocked(int slotIndex);
@@ -284,7 +286,11 @@ protected:
     // slot that has not yet been used. The buffer allocated to a slot will also
     // be replaced if the requested buffer usage or geometry differs from that
     // of the buffer allocated to a slot.
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    std::vector<Slot> mSlots;
+#else
     Slot mSlots[BufferQueueDefs::NUM_BUFFER_SLOTS];
+#endif
 
     // mAbandoned indicates that the BufferQueue will no longer be used to
     // consume images buffers pushed to it using the IGraphicBufferProducer

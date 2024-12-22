@@ -44,6 +44,7 @@
 #include <utils/NativeHandle.h>
 #include <utils/Trace.h>
 
+#include <ui/BufferQueueDefs.h>
 #include <ui/DynamicDisplayInfo.h>
 #include <ui/Fence.h>
 #include <ui/GraphicBuffer.h>
@@ -108,7 +109,10 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
       : mGraphicBufferProducer(bufferProducer),
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
         mSurfaceDeathListener(nullptr),
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+#endif
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        mSlots(NUM_BUFFER_SLOTS),
+#endif
         mCrop(Rect::EMPTY_RECT),
         mBufferAge(0),
         mGenerationNumber(0),
@@ -233,7 +237,7 @@ void Surface::allocateBuffers() {
 status_t Surface::allowAllocation(bool allowAllocation) {
     return mGraphicBufferProducer->allowAllocation(allowAllocation);
 }
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+#endif
 
 status_t Surface::setGenerationNumber(uint32_t generation) {
     status_t result = mGraphicBufferProducer->setGenerationNumber(generation);
@@ -706,7 +710,11 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
         return result;
     }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    if (buf < 0 || buf >= (int)mSlots.size()) {
+#else
     if (buf < 0 || buf >= NUM_BUFFER_SLOTS) {
+#endif
         ALOGE("dequeueBuffer: IGraphicBufferProducer returned invalid slot number %d", buf);
         android_errorWriteLog(0x534e4554, "36991414"); // SafetyNet logging
         return FAILED_TRANSACTION;
@@ -805,7 +813,11 @@ status_t Surface::detachBuffer(const sp<GraphicBuffer>& buffer) {
     Mutex::Autolock lock(mMutex);
 
     uint64_t bufferId = buffer->getId();
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    for (int slot = 0; slot < (int)mSlots.size(); ++slot) {
+#else
     for (int slot = 0; slot < Surface::NUM_BUFFER_SLOTS; ++slot) {
+#endif
         auto& bufferSlot = mSlots[slot];
         if (bufferSlot.buffer != nullptr && bufferSlot.buffer->getId() == bufferId) {
             bufferSlot.buffer = nullptr;
@@ -894,7 +906,11 @@ int Surface::dequeueBuffers(std::vector<BatchBuffer>* buffers) {
             return output.result;
         }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        if (output.slot < 0 || output.slot >= (int)mSlots.size()) {
+#else
         if (output.slot < 0 || output.slot >= NUM_BUFFER_SLOTS) {
+#endif
             mGraphicBufferProducer->cancelBuffers(cancelBufferInputs, &cancelBufferOutputs);
             ALOGE("%s: IGraphicBufferProducer returned invalid slot number %d",
                     __FUNCTION__, output.slot);
@@ -1081,7 +1097,11 @@ int Surface::getSlotFromBufferLocked(
         return BAD_VALUE;
     }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    for (int i = 0; i < (int)mSlots.size(); i++) {
+#else
     for (int i = 0; i < NUM_BUFFER_SLOTS; i++) {
+#endif
         if (mSlots[i].buffer != nullptr &&
                 mSlots[i].buffer->handle == buffer->handle) {
             return i;
@@ -2172,6 +2192,9 @@ int Surface::connect(int api, const sp<SurfaceListener>& listener, bool reportBu
         mDefaultHeight = output.height;
         mNextFrameNumber = output.nextFrameNumber;
         mMaxBufferCount = output.maxBufferCount;
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        mIsSlotExpansionAllowed = output.isSlotExpansionAllowed;
+#endif
 
         // Ignore transform hint if sticky transform is set or transform to display inverse flag is
         // set. Transform hint should be ignored if the client is expected to always submit buffers
@@ -2281,7 +2304,11 @@ int Surface::detachNextBuffer(sp<GraphicBuffer>* outBuffer,
         *outFence = Fence::NO_FENCE;
     }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    for (int i = 0; i < (int)mSlots.size(); i++) {
+#else
     for (int i = 0; i < NUM_BUFFER_SLOTS; i++) {
+#endif
         if (mSlots[i].buffer != nullptr &&
                 mSlots[i].buffer->getId() == buffer->getId()) {
             if (mReportRemovedBuffers) {
@@ -2383,8 +2410,35 @@ int Surface::setMaxDequeuedBufferCount(int maxDequeuedBuffers) {
     ALOGV("Surface::setMaxDequeuedBufferCount");
     Mutex::Autolock lock(mMutex);
 
-    status_t err = mGraphicBufferProducer->setMaxDequeuedBufferCount(
-            maxDequeuedBuffers);
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    if (maxDequeuedBuffers > BufferQueueDefs::NUM_BUFFER_SLOTS && !mIsSlotExpansionAllowed) {
+        return BAD_VALUE;
+    }
+
+    int minUndequeuedBuffers = 0;
+    status_t err = mGraphicBufferProducer->query(NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS,
+                                                 &minUndequeuedBuffers);
+    if (err != OK) {
+        ALOGE("IGraphicBufferProducer::query(NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS) returned %s",
+              strerror(-err));
+        return err;
+    }
+
+    if (maxDequeuedBuffers > (int)mSlots.size()) {
+        int newSlotCount = minUndequeuedBuffers + maxDequeuedBuffers;
+        err = mGraphicBufferProducer->extendSlotCount(newSlotCount);
+        if (err != OK) {
+            ALOGE("IGraphicBufferProducer::extendSlotCount(%d) returned %s", newSlotCount,
+                  strerror(-err));
+            return err;
+        }
+
+        mSlots.resize(newSlotCount);
+    }
+    err = mGraphicBufferProducer->setMaxDequeuedBufferCount(maxDequeuedBuffers);
+#else
+    status_t err = mGraphicBufferProducer->setMaxDequeuedBufferCount(maxDequeuedBuffers);
+#endif
     ALOGE_IF(err, "IGraphicBufferProducer::setMaxDequeuedBufferCount(%d) "
             "returned %s", maxDequeuedBuffers, strerror(-err));
 
@@ -2592,7 +2646,11 @@ void Surface::freeAllBuffers() {
         ALOGE("%s: %zu buffers were freed while being dequeued!",
                 __FUNCTION__, mDequeuedSlots.size());
     }
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    for (int i = 0; i < (int)mSlots.size(); i++) {
+#else
     for (int i = 0; i < NUM_BUFFER_SLOTS; i++) {
+#endif
         mSlots[i].buffer = nullptr;
     }
 }
@@ -2601,7 +2659,11 @@ status_t Surface::getAndFlushBuffersFromSlots(const std::vector<int32_t>& slots,
         std::vector<sp<GraphicBuffer>>* outBuffers) {
     ALOGV("Surface::getAndFlushBuffersFromSlots");
     for (int32_t i : slots) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        if (i < 0 || i >= (int)mSlots.size()) {
+#else
         if (i < 0 || i >= NUM_BUFFER_SLOTS) {
+#endif
             ALOGE("%s: Invalid slotIndex: %d", __FUNCTION__, i);
             return BAD_VALUE;
         }
@@ -2761,7 +2823,11 @@ status_t Surface::lock(
             newDirtyRegion.set(bounds);
             mDirtyRegion.clear();
             Mutex::Autolock lock(mMutex);
-            for (size_t i=0 ; i<NUM_BUFFER_SLOTS ; i++) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+            for (int i = 0; i < (int)mSlots.size(); i++) {
+#else
+            for (int i = 0; i < NUM_BUFFER_SLOTS; i++) {
+#endif
                 mSlots[i].dirtyRegion.clear();
             }
         }
