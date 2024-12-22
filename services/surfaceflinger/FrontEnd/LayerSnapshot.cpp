@@ -418,7 +418,7 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
     }
     if (forceUpdate || requested.what & layer_state_t::eAppContentPriorityChanged) {
         // TODO(b/337330263): Also consider the system-determined priority of the app
-        pictureProfilePriority = requested.appContentPriority;
+        pictureProfilePriority = int64_t(requested.appContentPriority) + INT_MAX;
     }
 
     if (forceUpdate || requested.what & layer_state_t::eDefaultFrameRateCompatibilityChanged) {

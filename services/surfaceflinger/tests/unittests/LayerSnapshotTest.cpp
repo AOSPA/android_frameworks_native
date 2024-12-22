@@ -2021,16 +2021,13 @@ TEST_F(LayerSnapshotTest, contentDirtyWhenParentGeometryChanges) {
     EXPECT_FALSE(getSnapshot(1)->contentDirty);
 }
 TEST_F(LayerSnapshotTest, shouldUpdatePictureProfileHandle) {
-    if (!com_android_graphics_libgui_flags_apply_picture_profiles()) {
-        GTEST_SKIP() << "Flag disabled, skipping test";
-    }
     std::vector<TransactionState> transactions;
     transactions.emplace_back();
     transactions.back().states.push_back({});
-    transactions.back().states.front().layerId = 1;
-    transactions.back().states.front().state.layerId = 1;
-    transactions.back().states.front().state.what = layer_state_t::ePictureProfileHandleChanged;
-    transactions.back().states.front().state.pictureProfileHandle = PictureProfileHandle(3);
+    transactions.back().states.back().layerId = 1;
+    transactions.back().states.back().state.layerId = 1;
+    transactions.back().states.back().state.what = layer_state_t::ePictureProfileHandleChanged;
+    transactions.back().states.back().state.pictureProfileHandle = PictureProfileHandle(3);
 
     mLifecycleManager.applyTransactions(transactions);
     EXPECT_EQ(mLifecycleManager.getGlobalChanges(), RequestedLayerState::Changes::Content);
@@ -2042,23 +2039,50 @@ TEST_F(LayerSnapshotTest, shouldUpdatePictureProfileHandle) {
 }
 
 TEST_F(LayerSnapshotTest, shouldUpdatePictureProfilePriorityFromAppContentPriority) {
-    if (!com_android_graphics_libgui_flags_apply_picture_profiles()) {
-        GTEST_SKIP() << "Flag disabled, skipping test";
+    {
+        std::vector<TransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+        transactions.back().states.back().layerId = 1;
+        transactions.back().states.back().state.layerId = 1;
+        transactions.back().states.back().state.what = layer_state_t::eAppContentPriorityChanged;
+        transactions.back().states.back().state.appContentPriority = 1;
+        transactions.back().states.push_back({});
+        transactions.back().states.back().layerId = 2;
+        transactions.back().states.back().state.layerId = 2;
+        transactions.back().states.back().state.what = layer_state_t::eAppContentPriorityChanged;
+        transactions.back().states.back().state.appContentPriority = -1;
+
+        mLifecycleManager.applyTransactions(transactions);
+        EXPECT_EQ(mLifecycleManager.getGlobalChanges(), RequestedLayerState::Changes::Content);
+
+        update(mSnapshotBuilder);
+
+        EXPECT_GT(getSnapshot(1)->pictureProfilePriority, getSnapshot(2)->pictureProfilePriority);
+        EXPECT_EQ(getSnapshot(1)->pictureProfilePriority - getSnapshot(2)->pictureProfilePriority,
+                  2);
     }
-    std::vector<TransactionState> transactions;
-    transactions.emplace_back();
-    transactions.back().states.push_back({});
-    transactions.back().states.front().layerId = 1;
-    transactions.back().states.front().state.layerId = 1;
-    transactions.back().states.front().state.what = layer_state_t::eAppContentPriorityChanged;
-    transactions.back().states.front().state.appContentPriority = 3;
+    {
+        std::vector<TransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+        transactions.back().states.back().layerId = 1;
+        transactions.back().states.back().state.layerId = 1;
+        transactions.back().states.back().state.what = layer_state_t::eAppContentPriorityChanged;
+        transactions.back().states.back().state.appContentPriority = INT_MIN;
+        transactions.back().states.push_back({});
+        transactions.back().states.back().layerId = 2;
+        transactions.back().states.back().state.layerId = 2;
+        transactions.back().states.back().state.what = layer_state_t::eAppContentPriorityChanged;
+        transactions.back().states.back().state.appContentPriority = INT_MAX;
 
-    mLifecycleManager.applyTransactions(transactions);
-    EXPECT_EQ(mLifecycleManager.getGlobalChanges(), RequestedLayerState::Changes::Content);
+        mLifecycleManager.applyTransactions(transactions);
+        EXPECT_EQ(mLifecycleManager.getGlobalChanges(), RequestedLayerState::Changes::Content);
 
-    update(mSnapshotBuilder);
+        update(mSnapshotBuilder);
 
-    EXPECT_EQ(getSnapshot(1)->pictureProfilePriority, 3);
+        EXPECT_GT(getSnapshot(2)->pictureProfilePriority, getSnapshot(1)->pictureProfilePriority);
+    }
 }
 
 } // namespace android::surfaceflinger::frontend

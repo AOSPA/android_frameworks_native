@@ -203,6 +203,9 @@ public:
     [[nodiscard]] virtual hal::Error getMaxLayerPictureProfiles(int32_t* maxProfiles) = 0;
     [[nodiscard]] virtual hal::Error setPictureProfileHandle(
             const PictureProfileHandle& handle) = 0;
+    [[nodiscard]] virtual hal::Error getLuts(
+            const std::vector<android::sp<android::GraphicBuffer>>&,
+            std::vector<aidl::android::hardware::graphics::composer3::Luts>*) = 0;
 };
 
 namespace impl {
@@ -288,6 +291,8 @@ public:
     hal::Error setIdleTimerEnabled(std::chrono::milliseconds timeout) override;
     hal::Error getMaxLayerPictureProfiles(int32_t* maxProfiles) override;
     hal::Error setPictureProfileHandle(const android::PictureProfileHandle& handle) override;
+    hal::Error getLuts(const std::vector<android::sp<android::GraphicBuffer>>&,
+                       std::vector<aidl::android::hardware::graphics::composer3::Luts>*) override;
 
     // Other Display methods
     hal::HWDisplayId getId() const override { return mId; }

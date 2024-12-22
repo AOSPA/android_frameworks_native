@@ -33,7 +33,7 @@ using android::hardware::graphics::common::V1_1::BufferUsage;
 ::testing::Environment* const binderEnv =
         ::testing::AddGlobalTestEnvironment(new BinderEnvironment());
 
-class MultiDisplayLayerBoundsTest : public LayerTransactionTest {
+class MultiDisplayTest : public LayerTransactionTest {
 protected:
     virtual void SetUp() {
         LayerTransactionTest::SetUp();
@@ -105,7 +105,7 @@ protected:
     Color mExpectedColor = {63, 63, 195, 255};
 };
 
-TEST_F(MultiDisplayLayerBoundsTest, RenderLayerInVirtualDisplay) {
+TEST_F(MultiDisplayTest, RenderLayerInVirtualDisplay) {
     constexpr ui::LayerStack kLayerStack{1u};
     createDisplay(mMainDisplayState.layerStackSpaceRect, kLayerStack);
     createColorLayer(kLayerStack);
@@ -124,7 +124,7 @@ TEST_F(MultiDisplayLayerBoundsTest, RenderLayerInVirtualDisplay) {
     sc->expectColor(Rect(1, 1, 9, 9), {0, 0, 0, 255});
 }
 
-TEST_F(MultiDisplayLayerBoundsTest, RenderLayerInMirroredVirtualDisplay) {
+TEST_F(MultiDisplayTest, RenderLayerInMirroredVirtualDisplay) {
     // Create a display and set its layer stack to the main display's layer stack so
     // the contents of the main display are mirrored on to the virtual display.
 
@@ -150,7 +150,7 @@ TEST_F(MultiDisplayLayerBoundsTest, RenderLayerInMirroredVirtualDisplay) {
     sc->expectColor(Rect(0, 0, 9, 9), {0, 0, 0, 255});
 }
 
-TEST_F(MultiDisplayLayerBoundsTest, RenderLayerWithPromisedFenceInMirroredVirtualDisplay) {
+TEST_F(MultiDisplayTest, RenderLayerWithPromisedFenceInMirroredVirtualDisplay) {
     // Create a display and use a unique layerstack ID for mirrorDisplay() so
     // the contents of the main display are mirrored on to the virtual display.
 
@@ -181,6 +181,51 @@ TEST_F(MultiDisplayLayerBoundsTest, RenderLayerWithPromisedFenceInMirroredVirtua
     sc->expectColor(Rect(0, 0, 9, 9), {0, 0, 0, 255});
 }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+TEST_F(MultiDisplayTest, rejectDuplicateLayerStacks) {
+    if (!FlagManager::getInstance().reject_dupe_layerstacks()) return;
+
+    // Setup
+    sp<CpuConsumer> cpuConsumer1 = sp<CpuConsumer>::make(static_cast<size_t>(1));
+    cpuConsumer1->setName(String8("consumer 1"));
+    cpuConsumer1->setDefaultBufferSize(100, 100);
+    sp<IGraphicBufferProducer> cpuProducer1 =
+            cpuConsumer1->getSurface()->getIGraphicBufferProducer();
+    CpuConsumer::LockedBuffer buffer1;
+
+    sp<CpuConsumer> cpuConsumer2 = sp<CpuConsumer>::make(static_cast<size_t>(1));
+    cpuConsumer2->setName(String8("consumer 2"));
+    cpuConsumer2->setDefaultBufferSize(100, 100);
+    sp<IGraphicBufferProducer> cpuProducer2 =
+            cpuConsumer2->getSurface()->getIGraphicBufferProducer();
+    CpuConsumer::LockedBuffer buffer2;
+
+    SurfaceComposerClient::Transaction t;
+    constexpr ui::LayerStack layerStack = {123u};
+    createColorLayer(layerStack);
+
+    static const std::string kDisplayName1("VirtualDisplay1 - rejectDuplicateLayerStacks");
+    sp<IBinder> virtualDisplay1 =
+            SurfaceComposerClient::createVirtualDisplay(kDisplayName1, false /*isSecure*/);
+
+    t.setDisplaySurface(virtualDisplay1, cpuProducer1);
+    t.setDisplayLayerStack(virtualDisplay1, layerStack);
+    t.apply(true);
+
+    static const std::string kDisplayName2("VirtualDisplay2 - rejectDuplicateLayerStacks");
+    sp<IBinder> virtualDisplay2 =
+            SurfaceComposerClient::createVirtualDisplay(kDisplayName2, false /*isSecure*/);
+
+    t.setDisplaySurface(virtualDisplay2, cpuProducer2);
+    t.setDisplayLayerStack(virtualDisplay2, layerStack);
+    t.apply(true);
+
+    // The second consumer will not be able to lock a buffer because
+    // the duplicate layer stack should be rejected.
+    ASSERT_EQ(NO_ERROR, cpuConsumer1->lockNextBuffer(&buffer1));
+    ASSERT_NE(NO_ERROR, cpuConsumer2->lockNextBuffer(&buffer2));
+}
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
 } // namespace android
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues

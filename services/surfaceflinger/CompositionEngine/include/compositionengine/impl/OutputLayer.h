@@ -58,7 +58,7 @@ public:
                                 const std::optional<std::vector<std::optional<LutProperties>>>
                                         properties = std::nullopt) override;
     void writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t z, bool zIsOverridden,
-                         bool isPeekingThrough) override;
+                         bool isPeekingThrough, bool hasLutsProperties) override;
     void writeCursorPositionToHWC() const override;
 
     HWC2::Layer* getHwcLayer() const override;

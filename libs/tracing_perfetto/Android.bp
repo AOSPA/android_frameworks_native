@@ -43,7 +43,6 @@ cc_library_shared {
         "libbase",
         "libcutils",
         "libperfetto_c",
-        "android.os.flags-aconfig-cc-host",
     ],
 
     host_supported: true,

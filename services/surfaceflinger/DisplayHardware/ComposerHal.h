@@ -46,6 +46,7 @@
 #include <aidl/android/hardware/graphics/composer3/DisplayConfiguration.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayLuts.h>
 #include <aidl/android/hardware/graphics/composer3/IComposerCallback.h>
+#include <aidl/android/hardware/graphics/composer3/Luts.h>
 #include <aidl/android/hardware/graphics/composer3/OverlayProperties.h>
 
 #include <optional>
@@ -313,6 +314,8 @@ public:
     virtual Error getMaxLayerPictureProfiles(Display display, int32_t* outMaxProfiles) = 0;
     virtual Error setDisplayPictureProfileId(Display display, PictureProfileId id) = 0;
     virtual Error setLayerPictureProfileId(Display display, Layer layer, PictureProfileId id) = 0;
+    virtual Error getLuts(Display display, const std::vector<sp<GraphicBuffer>>&,
+                          std::vector<V3_0::Luts>*) = 0;
 };
 
 } // namespace Hwc2

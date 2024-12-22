@@ -1016,7 +1016,11 @@ public:
         return binder::Status::ok();
     }
 
-    binder::Status setActivePictureListener(const sp<gui::IActivePictureListener>&) {
+    binder::Status addActivePictureListener(const sp<gui::IActivePictureListener>&) {
+        return binder::Status::ok();
+    }
+
+    binder::Status removeActivePictureListener(const sp<gui::IActivePictureListener>&) {
         return binder::Status::ok();
     }
 

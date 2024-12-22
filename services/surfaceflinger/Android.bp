@@ -43,11 +43,11 @@ cc_defaults {
     name: "libsurfaceflinger_defaults",
     defaults: [
         "android.hardware.graphics.composer3-ndk_shared",
-        "android.hardware.power-ndk_shared",
         "librenderengine_deps",
         "libtimestats_deps",
         "libsurfaceflinger_common_deps",
         "surfaceflinger_defaults",
+        "poweradvisor_deps",
     ],
     cflags: [
         "-DLOG_TAG=\"SurfaceFlinger\"",
@@ -67,6 +67,7 @@ cc_defaults {
         "android.hardware.graphics.composer@2.2",
         "android.hardware.graphics.composer@2.3",
         "android.hardware.graphics.composer@2.4",
+        "android.os.flags-aconfig-cc-host",
         "libbase",
         "libbinder",
         "libbinder_ndk",
@@ -79,7 +80,6 @@ cc_defaults {
         "libhidlbase",
         "liblog",
         "libnativewindow",
-        "libpowermanager",
         "libprocessgroup",
         "libprotobuf-cpp-lite",
         "libstatslog_surfaceflinger",
@@ -200,7 +200,7 @@ filegroup {
     name: "libsurfaceflinger_sources",
     srcs: [
         ":libsurfaceflinger_backend_sources",
-        "ActivePictureUpdater.cpp",
+        "ActivePictureTracker.cpp",
         "BackgroundExecutor.cpp",
         "Client.cpp",
         "ClientCache.cpp",

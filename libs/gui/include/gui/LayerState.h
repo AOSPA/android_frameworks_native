@@ -429,7 +429,7 @@ struct layer_state_t {
     PictureProfileHandle pictureProfileHandle{PictureProfileHandle::NONE};
 
     // A value indicating the significance of the layer's content to the app's desired user
-    // experience. A lower priority will result in more likelihood of getting access to limited
+    // experience. A higher value will result in more likelihood of getting access to limited
     // resources, such as picture processing hardware.
     int32_t appContentPriority = 0;
 

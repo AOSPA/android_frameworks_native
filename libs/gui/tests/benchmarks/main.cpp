@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,5 @@
  * limitations under the License.
  */
 
-#ifndef _BINDER_MODULE_H_
-#define _BINDER_MODULE_H_
-
-/* obtain structures and constants from the kernel header */
-
-// TODO(b/31559095): bionic on host
-#ifndef __ANDROID__
-#define __packed __attribute__((__packed__))
-#endif
-
-// TODO(b/31559095): bionic on host
-#if defined(B_PACK_CHARS) && !defined(_UAPI_LINUX_BINDER_H)
-#undef B_PACK_CHARS
-#endif
-
-#include <linux/android/binder.h>
-#include <sys/ioctl.h>
-
-#endif // _BINDER_MODULE_H_
+#include <benchmark/benchmark.h>
+BENCHMARK_MAIN();

@@ -116,6 +116,10 @@ public:
     MOCK_METHOD(hal::Error, getMaxLayerPictureProfiles, (int32_t*), (override));
     MOCK_METHOD(hal::Error, setPictureProfileHandle, (const android::PictureProfileHandle&),
                 (override));
+    MOCK_METHOD(hal::Error, getLuts,
+                (const std::vector<android::sp<android::GraphicBuffer>>&,
+                 std::vector<aidl::android::hardware::graphics::composer3::Luts>*),
+                (override));
 };
 
 class Layer : public HWC2::Layer {
