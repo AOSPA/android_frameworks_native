@@ -20,6 +20,8 @@
 #include "Constants.h"
 #include "MockConsumer.h"
 
+#include <EGL/egl.h>
+
 #include <gui/BufferItem.h>
 #include <gui/BufferItemConsumer.h>
 #include <gui/BufferQueue.h>
@@ -44,7 +46,9 @@
 #include <gtest/gtest.h>
 
 #include <future>
+#include <optional>
 #include <thread>
+#include <unordered_map>
 
 #include <com_android_graphics_libgui_flags.h>
 
@@ -1612,4 +1616,221 @@ TEST_F(BufferQueueTest, PassesThroughPictureProfileHandle) {
     }
 }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+struct MockUnlimitedSlotConsumer : public MockConsumer {
+    virtual void onSlotCountChanged(int size) override { mSize = size; }
+
+    std::optional<int> mSize;
+};
+
+TEST_F(BufferQueueTest, UnlimitedSlots_FailsWhenNotAllowed) {
+    createBufferQueue();
+
+    sp<MockUnlimitedSlotConsumer> mc = sp<MockUnlimitedSlotConsumer>::make();
+    EXPECT_EQ(OK, mConsumer->consumerConnect(mc, false));
+
+    EXPECT_EQ(INVALID_OPERATION, mProducer->extendSlotCount(64));
+    EXPECT_EQ(INVALID_OPERATION, mProducer->extendSlotCount(32));
+    EXPECT_EQ(INVALID_OPERATION, mProducer->extendSlotCount(128));
+
+    EXPECT_EQ(std::nullopt, mc->mSize);
+}
+
+TEST_F(BufferQueueTest, UnlimitedSlots_OnlyAllowedForExtensions) {
+    createBufferQueue();
+
+    sp<MockUnlimitedSlotConsumer> consumerListener = sp<MockUnlimitedSlotConsumer>::make();
+    EXPECT_EQ(OK, mConsumer->consumerConnect(consumerListener, false));
+    EXPECT_EQ(OK, mConsumer->allowUnlimitedSlots(true));
+
+    EXPECT_EQ(BAD_VALUE, mProducer->extendSlotCount(32));
+    EXPECT_EQ(OK, mProducer->extendSlotCount(64));
+    EXPECT_EQ(OK, mProducer->extendSlotCount(128));
+    EXPECT_EQ(128, *consumerListener->mSize);
+
+    EXPECT_EQ(OK, mProducer->extendSlotCount(128));
+    EXPECT_EQ(BAD_VALUE, mProducer->extendSlotCount(127));
+}
+
+class BufferQueueUnlimitedTest : public BufferQueueTest {
+protected:
+    static constexpr auto kMaxBufferCount = 128;
+    static constexpr auto kAcquirableBufferCount = 2;
+    static constexpr auto kDequeableBufferCount = kMaxBufferCount - kAcquirableBufferCount;
+
+    virtual void SetUp() override {
+        BufferQueueTest::SetUp();
+
+        createBufferQueue();
+        setUpConsumer();
+        setUpProducer();
+    }
+
+    void setUpConsumer() {
+        EXPECT_EQ(OK, mConsumer->consumerConnect(mConsumerListener, false));
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        EXPECT_EQ(OK, mConsumer->allowUnlimitedSlots(true));
+#endif
+        EXPECT_EQ(OK, mConsumer->setConsumerUsageBits(GraphicBuffer::USAGE_SW_READ_OFTEN));
+        EXPECT_EQ(OK, mConsumer->setDefaultBufferSize(10, 10));
+        EXPECT_EQ(OK, mConsumer->setDefaultBufferFormat(PIXEL_FORMAT_RGBA_8888));
+        EXPECT_EQ(OK, mConsumer->setMaxAcquiredBufferCount(kAcquirableBufferCount));
+    }
+
+    void setUpProducer() {
+        EXPECT_EQ(OK, mProducer->extendSlotCount(kMaxBufferCount));
+
+        IGraphicBufferProducer::QueueBufferOutput output;
+        EXPECT_EQ(OK,
+                  mProducer->connect(mProducerListener, NATIVE_WINDOW_API_CPU,
+                                     /*producerControlledByApp*/ true, &output));
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        ASSERT_TRUE(output.isSlotExpansionAllowed);
+#endif
+        ASSERT_EQ(OK, mProducer->setMaxDequeuedBufferCount(kDequeableBufferCount));
+        ASSERT_EQ(OK, mProducer->allowAllocation(true));
+    }
+
+    std::unordered_map<int, sp<Fence>> dequeueAll() {
+        std::unordered_map<int, sp<Fence>> slotsToFences;
+
+        for (int i = 0; i < kDequeableBufferCount; ++i) {
+            int slot;
+            sp<Fence> fence;
+            sp<GraphicBuffer> buffer;
+
+            status_t ret =
+                    mProducer->dequeueBuffer(&slot, &fence, /*w*/ 0, /*h*/ 0, /*format*/ 0,
+                                             /*uint64_t*/ 0,
+                                             /*outBufferAge*/ nullptr, /*outTimestamps*/ nullptr);
+            if (ret & IGraphicBufferProducer::BUFFER_NEEDS_REALLOCATION) {
+                EXPECT_EQ(OK, mProducer->requestBuffer(slot, &buffer))
+                        << "Unable to request buffer for slot " << slot;
+            }
+            EXPECT_FALSE(slotsToFences.contains(slot));
+            slotsToFences.emplace(slot, fence);
+        }
+        EXPECT_EQ(kDequeableBufferCount, (int)slotsToFences.size());
+        return slotsToFences;
+    }
+
+    sp<MockUnlimitedSlotConsumer> mConsumerListener = sp<MockUnlimitedSlotConsumer>::make();
+    sp<StubProducerListener> mProducerListener = sp<StubProducerListener>::make();
+};
+
+TEST_F(BufferQueueUnlimitedTest, ExpandOverridesConsumerMaxBuffers) {
+    createBufferQueue();
+    setUpConsumer();
+    EXPECT_EQ(OK, mConsumer->setMaxBufferCount(10));
+
+    setUpProducer();
+
+    EXPECT_EQ(kDequeableBufferCount, (int)dequeueAll().size());
+}
+
+TEST_F(BufferQueueUnlimitedTest, CanDetachAll) {
+    auto slotsToFences = dequeueAll();
+    for (auto& [slot, fence] : slotsToFences) {
+        EXPECT_EQ(OK, mProducer->detachBuffer(slot));
+    }
+}
+
+TEST_F(BufferQueueUnlimitedTest, CanCancelAll) {
+    auto slotsToFences = dequeueAll();
+    for (auto& [slot, fence] : slotsToFences) {
+        EXPECT_EQ(OK, mProducer->cancelBuffer(slot, fence));
+    }
+}
+
+TEST_F(BufferQueueUnlimitedTest, CanAcquireAndReleaseAll) {
+    auto slotsToFences = dequeueAll();
+    for (auto& [slot, fence] : slotsToFences) {
+        IGraphicBufferProducer::QueueBufferInput input;
+        input.fence = fence;
+
+        IGraphicBufferProducer::QueueBufferOutput output;
+        EXPECT_EQ(OK, mProducer->queueBuffer(slot, input, &output));
+
+        BufferItem buffer;
+        EXPECT_EQ(OK, mConsumer->acquireBuffer(&buffer, 0));
+        EXPECT_EQ(OK,
+                  mConsumer->releaseBuffer(buffer.mSlot, buffer.mFrameNumber, EGL_NO_DISPLAY,
+                                           EGL_NO_SYNC, buffer.mFence));
+    }
+}
+
+TEST_F(BufferQueueUnlimitedTest, CanAcquireAndDetachAll) {
+    auto slotsToFences = dequeueAll();
+    for (auto& [slot, fence] : slotsToFences) {
+        IGraphicBufferProducer::QueueBufferInput input;
+        input.fence = fence;
+
+        IGraphicBufferProducer::QueueBufferOutput output;
+        EXPECT_EQ(OK, mProducer->queueBuffer(slot, input, &output));
+
+        BufferItem buffer;
+        EXPECT_EQ(OK, mConsumer->acquireBuffer(&buffer, 0));
+        EXPECT_EQ(OK, mConsumer->detachBuffer(buffer.mSlot));
+    }
+}
+
+TEST_F(BufferQueueUnlimitedTest, GetReleasedBuffersExtended) {
+    // First, acquire and release all the buffers so the consumer "knows" about
+    // them
+    auto slotsToFences = dequeueAll();
+
+    std::vector<bool> releasedSlots;
+    EXPECT_EQ(OK, mConsumer->getReleasedBuffersExtended(&releasedSlots));
+    for (auto& [slot, _] : slotsToFences) {
+        EXPECT_TRUE(releasedSlots[slot])
+                << "Slots that haven't been acquired will show up as released.";
+    }
+    for (auto& [slot, fence] : slotsToFences) {
+        IGraphicBufferProducer::QueueBufferInput input;
+        input.fence = fence;
+
+        IGraphicBufferProducer::QueueBufferOutput output;
+        EXPECT_EQ(OK, mProducer->queueBuffer(slot, input, &output));
+
+        BufferItem buffer;
+        EXPECT_EQ(OK, mConsumer->acquireBuffer(&buffer, 0));
+        EXPECT_EQ(OK,
+                  mConsumer->releaseBuffer(buffer.mSlot, buffer.mFrameNumber, EGL_NO_DISPLAY,
+                                           EGL_NO_SYNC_KHR, buffer.mFence));
+    }
+
+    EXPECT_EQ(OK, mConsumer->getReleasedBuffersExtended(&releasedSlots));
+    for (auto& [slot, _] : slotsToFences) {
+        EXPECT_FALSE(releasedSlots[slot])
+                << "Slots that have been acquired will show up as not released.";
+    }
+
+    // Then, alternatively cancel and detach (release) buffers. Only detached
+    // buffers should be returned by getReleasedBuffersExtended
+    slotsToFences = dequeueAll();
+    std::set<int> cancelledSlots;
+    std::set<int> detachedSlots;
+    bool cancel;
+    for (auto& [slot, fence] : slotsToFences) {
+        if (cancel) {
+            EXPECT_EQ(OK, mProducer->cancelBuffer(slot, fence));
+            cancelledSlots.insert(slot);
+        } else {
+            EXPECT_EQ(OK, mProducer->detachBuffer(slot));
+            detachedSlots.insert(slot);
+        }
+        cancel = !cancel;
+    }
+
+    EXPECT_EQ(OK, mConsumer->getReleasedBuffersExtended(&releasedSlots));
+    for (int slot : detachedSlots) {
+        EXPECT_TRUE(releasedSlots[slot]) << "Slots that are detached are released.";
+    }
+    for (int slot : cancelledSlots) {
+        EXPECT_FALSE(releasedSlots[slot])
+                << "Slots that are still held in the queue are not released.";
+    }
+}
+#endif //  COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
 } // namespace android

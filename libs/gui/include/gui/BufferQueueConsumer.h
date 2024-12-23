@@ -96,10 +96,25 @@ public:
     // This should be called from the onBuffersReleased() callback.
     virtual status_t getReleasedBuffers(uint64_t* outSlotMask);
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    // getReleasedBuffers sets the values pointed to by outSlotMask to the bits
+    // indicating which buffer slots have been released by the BufferQueue
+    // but have not yet been released by the consumer.
+    //
+    // This should be called from the onBuffersReleased() callback when
+    // allowUnlimitedSlots has been called.
+    virtual status_t getReleasedBuffersExtended(std::vector<bool>* outSlotMask) override;
+#endif
+
     // setDefaultBufferSize is used to set the size of buffers returned by
     // dequeueBuffer when a width and height of zero is requested.  Default
     // is 1x1.
     virtual status_t setDefaultBufferSize(uint32_t width, uint32_t height);
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    // see IGraphicBufferConsumer::allowUnlimitedSlots
+    virtual status_t allowUnlimitedSlots(bool allowUnlimitedSlots) override;
+#endif
 
     // see IGraphicBufferConsumer::setMaxBufferCount
     virtual status_t setMaxBufferCount(int bufferCount);

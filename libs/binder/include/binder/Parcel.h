@@ -649,6 +649,11 @@ public:
 
     LIBBINDER_EXPORTED void print(std::ostream& to, uint32_t flags = 0) const;
 
+    // This API is to quickly become a view of another Parcel, so that we can also
+    // test 'owner' paths quickly. It's extremely dangerous to use this API in
+    // practice, and you should never ever do it.
+    LIBBINDER_EXPORTED void makeDangerousViewOf(Parcel* p);
+
 private:
     // Close all file descriptors in the parcel at object positions >= newObjectsSize.
     void closeFileDescriptors(size_t newObjectsSize);
@@ -664,7 +669,7 @@ private:
     void ipcSetDataReference(const uint8_t* data, size_t dataSize, const binder_size_t* objects,
                              size_t objectsCount, release_func relFunc);
     // Takes ownership even when an error is returned.
-    status_t rpcSetDataReference(
+    [[nodiscard]] status_t rpcSetDataReference(
             const sp<RpcSession>& session, const uint8_t* data, size_t dataSize,
             const uint32_t* objectTable, size_t objectTableSize,
             std::vector<std::variant<binder::unique_fd, binder::borrowed_fd>>&& ancillaryFds,
@@ -672,7 +677,7 @@ private:
 
     status_t            finishWrite(size_t len);
     void                releaseObjects();
-    void                acquireObjects();
+    void reacquireObjects(size_t objectSize);
     status_t            growData(size_t len);
     // Clear the Parcel and set the capacity to `desired`.
     // Doesn't reset the RPC session association.

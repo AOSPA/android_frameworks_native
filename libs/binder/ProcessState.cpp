@@ -501,6 +501,21 @@ bool ProcessState::isThreadPoolStarted() const {
     return mThreadPoolStarted;
 }
 
+void ProcessState::checkExpectingThreadPoolStart() const {
+    if (mThreadPoolStarted) return;
+
+    // this is also racey, but you should setup the threadpool in the main thread. If that is an
+    // issue, we can check if we are the process leader, but haven't seen the issue in practice.
+    size_t requestedThreads = mMaxThreads.load();
+
+    // if it's manually set to the default, we do ignore it here...
+    if (requestedThreads == DEFAULT_MAX_BINDER_THREADS) return;
+    if (requestedThreads == 0) return;
+
+    ALOGW("Thread pool configuration of size %zu requested, but startThreadPool was not called.",
+          requestedThreads);
+}
+
 #define DRIVER_FEATURES_PATH "/dev/binderfs/features/"
 bool ProcessState::isDriverFeatureEnabled(const DriverFeature feature) {
     // Use static variable to cache the results.

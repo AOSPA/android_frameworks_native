@@ -22,7 +22,10 @@
 #include <gui/BufferItemConsumer.h>
 #include <gui/IProducerListener.h>
 #include <gui/Surface.h>
+#include <ui/BufferQueueDefs.h>
 #include <ui/GraphicBuffer.h>
+
+#include <unordered_set>
 
 namespace android {
 
@@ -57,6 +60,8 @@ class BufferItemConsumerTest : public ::testing::Test {
     };
 
     void SetUp() override {
+        mBuffers.resize(BufferQueueDefs::NUM_BUFFER_SLOTS);
+
         mBIC = new BufferItemConsumer(kUsage, kMaxLockedBuffers, true);
         String8 name("BufferItemConsumer_Under_Test");
         mBIC->setName(name);
@@ -137,6 +142,11 @@ class BufferItemConsumerTest : public ::testing::Test {
         ASSERT_EQ(NO_ERROR, ret);
     }
 
+    void DetachBuffer(int slot) {
+        ALOGD("detachBuffer: slot=%d", slot);
+        status_t ret = mBIC->detachBuffer(mBuffers[slot]);
+        ASSERT_EQ(NO_ERROR, ret);
+    }
 
     std::mutex mMutex;
     int mFreedBufferCount{0};
@@ -146,7 +156,7 @@ class BufferItemConsumerTest : public ::testing::Test {
     sp<BufferFreedListener> mBFL;
     sp<IGraphicBufferProducer> mProducer;
     sp<IGraphicBufferConsumer> mConsumer;
-    sp<GraphicBuffer> mBuffers[BufferQueueDefs::NUM_BUFFER_SLOTS];
+    std::vector<sp<GraphicBuffer>> mBuffers;
 };
 
 // Test that detaching buffer from consumer side triggers onBufferFreed.
@@ -238,5 +248,53 @@ TEST_F(BufferItemConsumerTest, DetachBufferWithBuffer) {
     EXPECT_THAT(mDetachedBufferSlots, testing::ElementsAre(slot));
 }
 #endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+TEST_F(BufferItemConsumerTest, UnlimitedSlots_AcquireReleaseAll) {
+    ASSERT_EQ(OK, mProducer->extendSlotCount(256));
+    mBuffers.resize(256);
+
+    ASSERT_EQ(OK, mProducer->setMaxDequeuedBufferCount(100));
+
+    std::unordered_set<int> slots;
+    for (int i = 0; i < 100; i++) {
+        int slot;
+        DequeueBuffer(&slot);
+        slots.insert(slot);
+    }
+    EXPECT_EQ(100u, slots.size());
+
+    for (int dequeuedSlot : slots) {
+        QueueBuffer(dequeuedSlot);
+
+        int slot;
+        AcquireBuffer(&slot);
+        ReleaseBuffer(slot);
+    }
+}
+
+TEST_F(BufferItemConsumerTest, UnlimitedSlots_AcquireDetachAll) {
+    ASSERT_EQ(OK, mProducer->extendSlotCount(256));
+    mBuffers.resize(256);
+
+    ASSERT_EQ(OK, mProducer->setMaxDequeuedBufferCount(100));
+
+    std::unordered_set<int> slots;
+    for (int i = 0; i < 100; i++) {
+        int slot;
+        DequeueBuffer(&slot);
+        slots.insert(slot);
+    }
+    EXPECT_EQ(100u, slots.size());
+
+    for (int dequeuedSlot : slots) {
+        QueueBuffer(dequeuedSlot);
+
+        int slot;
+        AcquireBuffer(&slot);
+        DetachBuffer(slot);
+    }
+}
+#endif
 
 }  // namespace android

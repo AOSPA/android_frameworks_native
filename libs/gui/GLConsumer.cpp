@@ -119,6 +119,9 @@ GLConsumer::GLConsumer(uint32_t tex, uint32_t texTarget, bool useFenceSync, bool
         mTexTarget(texTarget),
         mEglDisplay(EGL_NO_DISPLAY),
         mEglContext(EGL_NO_CONTEXT),
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        mEglSlots(BufferQueueDefs::NUM_BUFFER_SLOTS),
+#endif
         mCurrentTexture(BufferQueue::INVALID_BUFFER_SLOT),
         mAttached(true) {
     GLC_LOGV("GLConsumer");
@@ -129,27 +132,29 @@ GLConsumer::GLConsumer(uint32_t tex, uint32_t texTarget, bool useFenceSync, bool
 }
 #endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
 
-GLConsumer::GLConsumer(const sp<IGraphicBufferConsumer>& bq, uint32_t tex,
-        uint32_t texTarget, bool useFenceSync, bool isControlledByApp) :
-    ConsumerBase(bq, isControlledByApp),
-    mCurrentCrop(Rect::EMPTY_RECT),
-    mCurrentTransform(0),
-    mCurrentScalingMode(NATIVE_WINDOW_SCALING_MODE_FREEZE),
-    mCurrentFence(Fence::NO_FENCE),
-    mCurrentTimestamp(0),
-    mCurrentDataSpace(HAL_DATASPACE_UNKNOWN),
-    mCurrentFrameNumber(0),
-    mDefaultWidth(1),
-    mDefaultHeight(1),
-    mFilteringEnabled(true),
-    mTexName(tex),
-    mUseFenceSync(useFenceSync),
-    mTexTarget(texTarget),
-    mEglDisplay(EGL_NO_DISPLAY),
-    mEglContext(EGL_NO_CONTEXT),
-    mCurrentTexture(BufferQueue::INVALID_BUFFER_SLOT),
-    mAttached(true)
-{
+GLConsumer::GLConsumer(const sp<IGraphicBufferConsumer>& bq, uint32_t tex, uint32_t texTarget,
+                       bool useFenceSync, bool isControlledByApp)
+      : ConsumerBase(bq, isControlledByApp),
+        mCurrentCrop(Rect::EMPTY_RECT),
+        mCurrentTransform(0),
+        mCurrentScalingMode(NATIVE_WINDOW_SCALING_MODE_FREEZE),
+        mCurrentFence(Fence::NO_FENCE),
+        mCurrentTimestamp(0),
+        mCurrentDataSpace(HAL_DATASPACE_UNKNOWN),
+        mCurrentFrameNumber(0),
+        mDefaultWidth(1),
+        mDefaultHeight(1),
+        mFilteringEnabled(true),
+        mTexName(tex),
+        mUseFenceSync(useFenceSync),
+        mTexTarget(texTarget),
+        mEglDisplay(EGL_NO_DISPLAY),
+        mEglContext(EGL_NO_CONTEXT),
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        mEglSlots(BufferQueueDefs::NUM_BUFFER_SLOTS),
+#endif
+        mCurrentTexture(BufferQueue::INVALID_BUFFER_SLOT),
+        mAttached(true) {
     GLC_LOGV("GLConsumer");
 
     memcpy(mCurrentTransformMatrix, mtxIdentity.asArray(),
@@ -176,6 +181,9 @@ GLConsumer::GLConsumer(uint32_t texTarget, bool useFenceSync, bool isControlledB
         mTexTarget(texTarget),
         mEglDisplay(EGL_NO_DISPLAY),
         mEglContext(EGL_NO_CONTEXT),
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        mEglSlots(BufferQueueDefs::NUM_BUFFER_SLOTS),
+#endif
         mCurrentTexture(BufferQueue::INVALID_BUFFER_SLOT),
         mAttached(false) {
     GLC_LOGV("GLConsumer");
@@ -204,6 +212,9 @@ GLConsumer::GLConsumer(const sp<IGraphicBufferConsumer>& bq, uint32_t texTarget,
         mTexTarget(texTarget),
         mEglDisplay(EGL_NO_DISPLAY),
         mEglContext(EGL_NO_CONTEXT),
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        mEglSlots(BufferQueueDefs::NUM_BUFFER_SLOTS),
+#endif
         mCurrentTexture(BufferQueue::INVALID_BUFFER_SLOT),
         mAttached(false) {
     GLC_LOGV("GLConsumer");
@@ -394,6 +405,17 @@ status_t GLConsumer::acquireBufferLocked(BufferItem *item,
 
     return NO_ERROR;
 }
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+void GLConsumer::onSlotCountChanged(int slotCount) {
+    ConsumerBase::onSlotCountChanged(slotCount);
+
+    Mutex::Autolock lock(mMutex);
+    if (slotCount > (int)mEglSlots.size()) {
+        mEglSlots.resize(slotCount);
+    }
+}
+#endif
 
 status_t GLConsumer::releaseBufferLocked(int buf,
         sp<GraphicBuffer> graphicBuffer,
