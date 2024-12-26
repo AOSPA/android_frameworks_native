@@ -81,7 +81,6 @@ GestureConverter::GestureConverter(InputReaderContext& readerContext,
                                    const InputDeviceContext& deviceContext, int32_t deviceId)
       : mDeviceId(deviceId),
         mReaderContext(readerContext),
-        mEnableFlingStop(input_flags::enable_touchpad_fling_stop()),
         mEnableNoFocusChange(input_flags::enable_touchpad_no_focus_change()),
         // We can safely assume that ABS_MT_POSITION_X and _Y axes will be available, as EventHub
         // won't classify a device as a touchpad if they're not present.
@@ -406,7 +405,7 @@ std::list<NotifyArgs> GestureConverter::handleFling(nsecs_t when, nsecs_t readTi
             break;
         case GESTURES_FLING_TAP_DOWN:
             if (mCurrentClassification == MotionClassification::NONE) {
-                if (mEnableFlingStop && mFlingMayBeInProgress) {
+                if (mFlingMayBeInProgress) {
                     // The user has just touched the pad again after ending a two-finger scroll
                     // motion, which might have started a fling. We want to stop the fling, but
                     // unfortunately there's currently no API for doing so. Instead, send and

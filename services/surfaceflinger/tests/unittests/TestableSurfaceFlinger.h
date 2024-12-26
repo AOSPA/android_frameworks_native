@@ -514,7 +514,7 @@ public:
                                              mergedTransactionIds);
     }
 
-    auto setTransactionStateInternal(TransactionState& transaction) {
+    auto setTransactionStateInternal(QueuedTransactionState& transaction) {
         return FTL_FAKE_GUARD(kMainThreadContext,
                               mFlinger->mTransactionHandler.queueTransaction(
                                       std::move(transaction)));

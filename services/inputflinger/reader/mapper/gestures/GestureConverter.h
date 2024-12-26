@@ -104,7 +104,6 @@ private:
 
     const int32_t mDeviceId;
     InputReaderContext& mReaderContext;
-    const bool mEnableFlingStop;
     const bool mEnableNoFocusChange;
     bool mEnableSystemGestures{true};
 

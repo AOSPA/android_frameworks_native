@@ -50,7 +50,7 @@ static void updateClientStates(benchmark::State& state) {
     layers.emplace_back(LayerLifecycleManagerHelper::rootLayer(1));
     lifecycleManager.addLayers(std::move(layers));
     lifecycleManager.commitChanges();
-    std::vector<TransactionState> transactions;
+    std::vector<QueuedTransactionState> transactions;
     transactions.emplace_back();
     transactions.back().states.push_back({});
     auto& transactionState = transactions.back().states.front();
@@ -74,7 +74,7 @@ static void updateClientStatesNoChanges(benchmark::State& state) {
     std::vector<std::unique_ptr<RequestedLayerState>> layers;
     layers.emplace_back(LayerLifecycleManagerHelper::rootLayer(1));
     lifecycleManager.addLayers(std::move(layers));
-    std::vector<TransactionState> transactions;
+    std::vector<QueuedTransactionState> transactions;
     transactions.emplace_back();
     transactions.back().states.push_back({});
     auto& transactionState = transactions.back().states.front();

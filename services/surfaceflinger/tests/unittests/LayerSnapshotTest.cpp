@@ -329,7 +329,7 @@ TEST_F(LayerSnapshotTest, ReparentingUpdatesGameMode) {
 }
 
 TEST_F(LayerSnapshotTest, UpdateMetadata) {
-    std::vector<TransactionState> transactions;
+    std::vector<QueuedTransactionState> transactions;
     transactions.emplace_back();
     transactions.back().states.push_back({});
     transactions.back().states.front().state.what = layer_state_t::eMetadataChanged;
@@ -374,7 +374,7 @@ TEST_F(LayerSnapshotTest, UpdateMetadata) {
 TEST_F(LayerSnapshotTest, UpdateMetadataOfHiddenLayers) {
     hideLayer(1);
 
-    std::vector<TransactionState> transactions;
+    std::vector<QueuedTransactionState> transactions;
     transactions.emplace_back();
     transactions.back().states.push_back({});
     transactions.back().states.front().state.what = layer_state_t::eMetadataChanged;
@@ -1557,7 +1557,7 @@ TEST_F(LayerSnapshotTest, NonVisibleLayerWithInput) {
     setColor(3, {-1._hf, -1._hf, -1._hf});
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
 
-    std::vector<TransactionState> transactions;
+    std::vector<QueuedTransactionState> transactions;
     transactions.emplace_back();
     transactions.back().states.push_back({});
     transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
@@ -1586,7 +1586,7 @@ TEST_F(LayerSnapshotTest, NonVisibleLayerWithInputShouldNotBeIncluded) {
     setColor(3, {-1._hf, -1._hf, -1._hf});
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
 
-    std::vector<TransactionState> transactions;
+    std::vector<QueuedTransactionState> transactions;
     transactions.emplace_back();
     transactions.back().states.push_back({});
     transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
@@ -2021,7 +2021,7 @@ TEST_F(LayerSnapshotTest, contentDirtyWhenParentGeometryChanges) {
     EXPECT_FALSE(getSnapshot(1)->contentDirty);
 }
 TEST_F(LayerSnapshotTest, shouldUpdatePictureProfileHandle) {
-    std::vector<TransactionState> transactions;
+    std::vector<QueuedTransactionState> transactions;
     transactions.emplace_back();
     transactions.back().states.push_back({});
     transactions.back().states.back().layerId = 1;
@@ -2040,7 +2040,7 @@ TEST_F(LayerSnapshotTest, shouldUpdatePictureProfileHandle) {
 
 TEST_F(LayerSnapshotTest, shouldUpdatePictureProfilePriorityFromAppContentPriority) {
     {
-        std::vector<TransactionState> transactions;
+        std::vector<QueuedTransactionState> transactions;
         transactions.emplace_back();
         transactions.back().states.push_back({});
         transactions.back().states.back().layerId = 1;
@@ -2063,7 +2063,7 @@ TEST_F(LayerSnapshotTest, shouldUpdatePictureProfilePriorityFromAppContentPriori
                   2);
     }
     {
-        std::vector<TransactionState> transactions;
+        std::vector<QueuedTransactionState> transactions;
         transactions.emplace_back();
         transactions.back().states.push_back({});
         transactions.back().states.back().layerId = 1;

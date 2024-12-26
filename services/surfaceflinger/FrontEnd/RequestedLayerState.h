@@ -23,7 +23,7 @@
 #include "Scheduler/LayerInfo.h"
 
 #include "LayerCreationArgs.h"
-#include "TransactionState.h"
+#include "QueuedTransactionState.h"
 
 namespace android::surfaceflinger::frontend {
 using namespace ftl::flag_operators;

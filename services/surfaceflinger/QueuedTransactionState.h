@@ -16,9 +16,7 @@
 
 #pragma once
 
-#include <condition_variable>
 #include <memory>
-#include <mutex>
 #include <vector>
 #include "FrontEnd/LayerCreationArgs.h"
 #include "renderengine/ExternalTexture.h"
@@ -47,18 +45,20 @@ public:
     uint32_t touchCropId = UNASSIGNED_LAYER_ID;
 };
 
-struct TransactionState {
-    TransactionState() = default;
+struct QueuedTransactionState {
+    QueuedTransactionState() = default;
 
-    TransactionState(const FrameTimelineInfo& frameTimelineInfo,
-                     std::vector<ResolvedComposerState>& composerStates,
-                     const Vector<DisplayState>& displayStates, uint32_t transactionFlags,
-                     const sp<IBinder>& applyToken, const InputWindowCommands& inputWindowCommands,
-                     int64_t desiredPresentTime, bool isAutoTimestamp,
-                     std::vector<uint64_t> uncacheBufferIds, int64_t postTime,
-                     bool hasListenerCallbacks, std::vector<ListenerCallbacks> listenerCallbacks,
-                     int originPid, int originUid, uint64_t transactionId,
-                     std::vector<uint64_t> mergedTransactionIds)
+    QueuedTransactionState(const FrameTimelineInfo& frameTimelineInfo,
+                           std::vector<ResolvedComposerState>& composerStates,
+                           const Vector<DisplayState>& displayStates, uint32_t transactionFlags,
+                           const sp<IBinder>& applyToken,
+                           const InputWindowCommands& inputWindowCommands,
+                           int64_t desiredPresentTime, bool isAutoTimestamp,
+                           std::vector<uint64_t> uncacheBufferIds, int64_t postTime,
+                           bool hasListenerCallbacks,
+                           std::vector<ListenerCallbacks> listenerCallbacks, int originPid,
+                           int originUid, uint64_t transactionId,
+                           std::vector<uint64_t> mergedTransactionIds)
           : frameTimelineInfo(frameTimelineInfo),
             states(std::move(composerStates)),
             displays(displayStates),

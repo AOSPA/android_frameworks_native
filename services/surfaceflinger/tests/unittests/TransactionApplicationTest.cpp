@@ -33,8 +33,8 @@
 #include <vector>
 
 #include "FrontEnd/TransactionHandler.h"
+#include "QueuedTransactionState.h"
 #include "TestableSurfaceFlinger.h"
-#include "TransactionState.h"
 
 #include <com_android_graphics_surfaceflinger_flags.h>
 
@@ -84,7 +84,7 @@ public:
         static_assert(0xffffffffffffffff == static_cast<uint64_t>(-1));
     };
 
-    void checkEqual(TransactionInfo info, TransactionState state) {
+    void checkEqual(TransactionInfo info, QueuedTransactionState state) {
         EXPECT_EQ(0u, info.states.size());
         EXPECT_EQ(0u, state.states.size());
 
@@ -318,7 +318,7 @@ TEST_F(TransactionApplicationTest, ApplyTokensUseDifferentQueues) {
     auto applyToken2 = sp<BBinder>::make();
 
     // Transaction 1 has a buffer with an unfired fence. It should not be ready to be applied.
-    TransactionState transaction1;
+    QueuedTransactionState transaction1;
     transaction1.applyToken = applyToken1;
     transaction1.id = 42069;
     transaction1.states.emplace_back();
@@ -340,7 +340,7 @@ TEST_F(TransactionApplicationTest, ApplyTokensUseDifferentQueues) {
     transaction1.isAutoTimestamp = true;
 
     // Transaction 2 should be ready to be applied.
-    TransactionState transaction2;
+    QueuedTransactionState transaction2;
     transaction2.applyToken = applyToken2;
     transaction2.id = 2;
     transaction2.isAutoTimestamp = true;
@@ -446,15 +446,15 @@ public:
                 resolvedStates.emplace_back(resolvedState);
             }
 
-            TransactionState transactionState(transaction.frameTimelineInfo, resolvedStates,
-                                              transaction.displays, transaction.flags,
-                                              transaction.applyToken,
-                                              transaction.inputWindowCommands,
-                                              transaction.desiredPresentTime,
-                                              transaction.isAutoTimestamp, {}, systemTime(),
-                                              mHasListenerCallbacks, mCallbacks, getpid(),
-                                              static_cast<int>(getuid()), transaction.id,
-                                              transaction.mergedTransactionIds);
+            QueuedTransactionState transactionState(transaction.frameTimelineInfo, resolvedStates,
+                                                    transaction.displays, transaction.flags,
+                                                    transaction.applyToken,
+                                                    transaction.inputWindowCommands,
+                                                    transaction.desiredPresentTime,
+                                                    transaction.isAutoTimestamp, {}, systemTime(),
+                                                    mHasListenerCallbacks, mCallbacks, getpid(),
+                                                    static_cast<int>(getuid()), transaction.id,
+                                                    transaction.mergedTransactionIds);
             mFlinger.setTransactionStateInternal(transactionState);
         }
         mFlinger.flushTransactionQueues();
@@ -955,12 +955,12 @@ TEST_F(LatchUnsignaledDisabledTest, Flush_KeepInTheUnsignaledTheQueue) {
 
 TEST(TransactionHandlerTest, QueueTransaction) {
     TransactionHandler handler;
-    TransactionState transaction;
+    QueuedTransactionState transaction;
     transaction.applyToken = sp<BBinder>::make();
     transaction.id = 42;
     handler.queueTransaction(std::move(transaction));
     handler.collectTransactions();
-    std::vector<TransactionState> transactionsReadyToBeApplied = handler.flushTransactions();
+    std::vector<QueuedTransactionState> transactionsReadyToBeApplied = handler.flushTransactions();
 
     EXPECT_EQ(transactionsReadyToBeApplied.size(), 1u);
     EXPECT_EQ(transactionsReadyToBeApplied.front().id, 42u);
