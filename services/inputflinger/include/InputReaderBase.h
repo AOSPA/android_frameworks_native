@@ -279,7 +279,10 @@ struct InputReaderConfiguration {
                                              static_cast<float>(
                                                      android::os::IInputConstants::
                                                              DEFAULT_POINTER_ACCELERATION)),
-            wheelVelocityControlParameters(1.0f, 15.0f, 50.0f, 4.0f),
+            wheelVelocityControlParameters(1.0f, 15.0f, 50.0f,
+                                           static_cast<float>(
+                                                   android::os::IInputConstants::
+                                                           DEFAULT_MOUSE_WHEEL_ACCELERATION)),
             pointerGesturesEnabled(true),
             pointerGestureQuietInterval(100 * 1000000LL),            // 100 ms
             pointerGestureDragMinSwitchSpeed(50),                    // 50 pixels per second

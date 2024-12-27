@@ -638,7 +638,7 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
         auto layer = getLayerById(layerIds[i]);
         if (layer) {
             auto& layerLut = tmpLuts[i];
-            if (layerLut.luts.pfd.get() > 0 && layerLut.luts.offsets.has_value()) {
+            if (layerLut.luts.pfd.get() >= 0 && layerLut.luts.offsets.has_value()) {
                 const auto& offsets = layerLut.luts.offsets.value();
                 std::vector<std::pair<int32_t, LutProperties>> lutOffsetsAndProperties;
                 lutOffsetsAndProperties.reserve(offsets.size());

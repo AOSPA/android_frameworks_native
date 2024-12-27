@@ -76,6 +76,9 @@ interface IInputConstants
     /* The default pointer acceleration value. */
     const int DEFAULT_POINTER_ACCELERATION = 3;
 
+    /* The default mouse wheel acceleration value. */
+    const int DEFAULT_MOUSE_WHEEL_ACCELERATION = 4;
+
     /**
      * Use the default Velocity Tracker Strategy. Different axes may use different default
      * strategies.

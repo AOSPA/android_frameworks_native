@@ -1297,7 +1297,6 @@ TEST_F(GestureConverterTest, FlingTapDown) {
 
 TEST_F(GestureConverterTest, FlingTapDownAfterScrollStopsFling) {
     InputDeviceContext deviceContext(*mDevice, EVENTHUB_ID);
-    input_flags::enable_touchpad_fling_stop(true);
     GestureConverter converter(*mReader->getContext(), deviceContext, DEVICE_ID);
     converter.setDisplayId(ui::LogicalDisplayId::DEFAULT);
 

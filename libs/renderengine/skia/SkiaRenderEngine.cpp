@@ -544,9 +544,18 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
     }
 
     if (graphicBuffer && parameters.layer.luts) {
+        const bool dimInLinearSpace = parameters.display.dimmingStage !=
+                aidl::android::hardware::graphics::composer3::DimmingStage::GAMMA_OETF;
+        const ui::Dataspace runtimeEffectDataspace = !dimInLinearSpace
+                ? static_cast<ui::Dataspace>(
+                          (parameters.outputDataSpace & ui::Dataspace::STANDARD_MASK) |
+                          ui::Dataspace::TRANSFER_GAMMA2_2 |
+                          (parameters.outputDataSpace & ui::Dataspace::RANGE_MASK))
+                : parameters.outputDataSpace;
+
         shader = mLutShader.lutShader(shader, parameters.layer.luts,
                                       parameters.layer.sourceDataspace,
-                                      toSkColorSpace(parameters.outputDataSpace));
+                                      toSkColorSpace(runtimeEffectDataspace));
     }
 
     if (parameters.requiresLinearEffect) {

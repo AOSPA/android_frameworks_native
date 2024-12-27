@@ -26,7 +26,7 @@
 #include "QtiPowerAdvisorExtension.h"
 #include "QtiWorkDurationsExtension.h"
 #include "QtiDolphinWrapper.h"
-#include "TransactionState.h"
+#include "QueuedTransactionState.h"
 #include "layer_extn_intf.h"
 
 namespace composer {
