@@ -169,6 +169,12 @@ InputMessage createTimelineMessage(int32_t inputEventId, nsecs_t gpuCompletedTim
     msg.body.timeline.graphicsTimeline[GraphicsTimeline::PRESENT_TIME] = presentTime;
     return msg;
 }
+
+std::ostream& operator<<(std::ostream& out, const InputMessage& msg) {
+    out << ftl::enum_string(msg.header.type);
+    return out;
+}
+
 } // namespace
 
 // --- InputConsumerNoResampling ---
@@ -272,6 +278,15 @@ void InputConsumerNoResampling::processOutboundEvents() {
             return; // try again later
         }
 
+        if (result == DEAD_OBJECT) {
+            // If there's no one to receive events in the channel, there's no point in sending them.
+            // Drop all outbound events.
+            LOG(INFO) << "Channel " << mChannel->getName() << " died. Dropping outbound event "
+                      << outboundMsg;
+            mOutboundQueue.pop();
+            setFdEvents(0);
+            continue;
+        }
         // Some other error. Give up
         LOG(FATAL) << "Failed to send outbound event on channel '" << mChannel->getName()
                    << "'.  status=" << statusToString(result) << "(" << result << ")";

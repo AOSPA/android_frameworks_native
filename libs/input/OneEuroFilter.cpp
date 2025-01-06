@@ -25,16 +25,24 @@
 namespace android {
 namespace {
 
+using namespace std::literals::chrono_literals;
+
+const float kHertzPerGigahertz = 1E9f;
+const float kGigahertzPerHertz = 1E-9f;
+
+// filteredSpeed's units are position per nanosecond. beta's units are 1 / position.
 inline float cutoffFreq(float minCutoffFreq, float beta, float filteredSpeed) {
-    return minCutoffFreq + beta * std::abs(filteredSpeed);
+    return kHertzPerGigahertz *
+            ((minCutoffFreq * kGigahertzPerHertz) + beta * std::abs(filteredSpeed));
 }
 
-inline float smoothingFactor(std::chrono::duration<float> samplingPeriod, float cutoffFreq) {
-    return samplingPeriod.count() / (samplingPeriod.count() + (1.0 / (2.0 * M_PI * cutoffFreq)));
+inline float smoothingFactor(std::chrono::nanoseconds samplingPeriod, float cutoffFreq) {
+    const float constant = 2.0f * M_PI * samplingPeriod.count() * (cutoffFreq * kGigahertzPerHertz);
+    return constant / (constant + 1);
 }
 
-inline float lowPassFilter(float rawPosition, float prevFilteredPosition, float smoothingFactor) {
-    return smoothingFactor * rawPosition + (1 - smoothingFactor) * prevFilteredPosition;
+inline float lowPassFilter(float rawValue, float prevFilteredValue, float smoothingFactor) {
+    return smoothingFactor * rawValue + (1 - smoothingFactor) * prevFilteredValue;
 }
 
 } // namespace
@@ -42,17 +50,17 @@ inline float lowPassFilter(float rawPosition, float prevFilteredPosition, float 
 OneEuroFilter::OneEuroFilter(float minCutoffFreq, float beta, float speedCutoffFreq)
       : mMinCutoffFreq{minCutoffFreq}, mBeta{beta}, mSpeedCutoffFreq{speedCutoffFreq} {}
 
-float OneEuroFilter::filter(std::chrono::duration<float> timestamp, float rawPosition) {
-    LOG_IF(FATAL, mPrevFilteredPosition.has_value() && (timestamp <= *mPrevTimestamp))
-            << "Timestamp must be greater than mPrevTimestamp";
+float OneEuroFilter::filter(std::chrono::nanoseconds timestamp, float rawPosition) {
+    LOG_IF(FATAL, mPrevTimestamp.has_value() && (*mPrevTimestamp >= timestamp))
+            << "Timestamp must be greater than mPrevTimestamp. Timestamp: " << timestamp.count()
+            << "ns. mPrevTimestamp: " << mPrevTimestamp->count() << "ns";
 
-    const std::chrono::duration<float> samplingPeriod = (mPrevTimestamp.has_value())
-            ? (timestamp - *mPrevTimestamp)
-            : std::chrono::duration<float>{1.0};
+    const std::chrono::nanoseconds samplingPeriod =
+            (mPrevTimestamp.has_value()) ? (timestamp - *mPrevTimestamp) : 1s;
 
     const float rawVelocity = (mPrevFilteredPosition.has_value())
-            ? ((rawPosition - *mPrevFilteredPosition) / samplingPeriod.count())
-            : 0.0;
+            ? ((rawPosition - *mPrevFilteredPosition) / (samplingPeriod.count()))
+            : 0.0f;
 
     const float speedSmoothingFactor = smoothingFactor(samplingPeriod, mSpeedCutoffFreq);
 

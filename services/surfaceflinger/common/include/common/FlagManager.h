@@ -47,14 +47,16 @@ public:
     bool use_adpf_cpu_hint() const;
     bool use_skia_tracing() const;
 
-    /// Trunk stable server flags ///
+    /// Trunk stable server (R/W) flags ///
     bool refresh_rate_overlay_on_external_display() const;
     bool adpf_gpu_sf() const;
     bool adpf_use_fmq_channel() const;
     bool adpf_native_session_manager() const;
     bool adpf_use_fmq_channel_fixed() const;
+    bool graphite_renderengine_preview_rollout() const;
 
     /// Trunk stable readonly flags ///
+    bool arr_setframerate_gte_enum() const;
     bool adpf_fmq_sf() const;
     bool connected_display() const;
     bool frame_rate_category_mrr() const;
@@ -100,6 +102,8 @@ public:
     bool deprecate_frame_tracker() const;
     bool skip_invisible_windows_in_input() const;
     bool begone_bright_hlg() const;
+    bool luts_api() const;
+    bool window_blur_kawase2() const;
 
 protected:
     // overridden for unit tests

@@ -150,6 +150,12 @@ public:
         int pid;
     };
     virtual std::vector<ServiceDebugInfo> getServiceDebugInfo() = 0;
+
+    /**
+     * Directly enable or disable caching binder during addService calls.
+     * Only used for testing. This is enabled by default.
+     */
+    virtual void enableAddServiceCache(bool value) = 0;
 };
 
 LIBBINDER_EXPORTED sp<IServiceManager> defaultServiceManager();

@@ -151,6 +151,10 @@ status_t Surface::getUniqueId(uint64_t* out_id) const {
     }
     return OK;
 }
+
+bool Surface::isEmpty() const {
+    return graphicBufferProducer == nullptr;
+}
 #endif
 
 std::string Surface::toString() const {

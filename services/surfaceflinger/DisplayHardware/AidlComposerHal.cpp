@@ -44,10 +44,6 @@
 
 namespace android {
 
-using hardware::hidl_handle;
-using hardware::hidl_vec;
-using hardware::Return;
-
 using aidl::android::hardware::graphics::composer3::BnComposerCallback;
 using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::ClientTargetPropertyWithBrightness;
@@ -548,11 +544,15 @@ Error AidlComposer::getColorModes(Display display, std::vector<ColorMode>* outMo
 
 Error AidlComposer::getDisplayAttribute(Display display, Config config,
                                         IComposerClient::Attribute attribute, int32_t* outValue) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     const auto status =
             mAidlComposerClient->getDisplayAttribute(translate<int64_t>(display),
                                                      translate<int32_t>(config),
                                                      static_cast<AidlDisplayAttribute>(attribute),
                                                      outValue);
+#pragma clang diagnostic pop
+
     if (!status.isOk()) {
         ALOGE("getDisplayAttribute failed %s", status.getDescription().c_str());
         return static_cast<Error>(status.getServiceSpecificError());
@@ -562,8 +562,13 @@ Error AidlComposer::getDisplayAttribute(Display display, Config config,
 
 Error AidlComposer::getDisplayConfigs(Display display, std::vector<Config>* outConfigs) {
     std::vector<int32_t> configs;
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     const auto status =
             mAidlComposerClient->getDisplayConfigs(translate<int64_t>(display), &configs);
+#pragma clang diagnostic pop
+
     if (!status.isOk()) {
         ALOGE("getDisplayConfigs failed %s", status.getDescription().c_str());
         return static_cast<Error>(status.getServiceSpecificError());
@@ -1445,7 +1450,7 @@ V2_4::Error AidlComposer::getDisplayVsyncPeriod(Display display, VsyncPeriodNano
     return V2_4::Error::NONE;
 }
 
-V2_4::Error AidlComposer::setActiveConfigWithConstraints(
+Error AidlComposer::setActiveConfigWithConstraints(
         Display display, Config config,
         const IComposerClient::VsyncPeriodChangeConstraints& vsyncPeriodChangeConstraints,
         VsyncPeriodChangeTimeline* outTimeline) {
@@ -1459,10 +1464,10 @@ V2_4::Error AidlComposer::setActiveConfigWithConstraints(
                                                      &timeline);
     if (!status.isOk()) {
         ALOGE("setActiveConfigWithConstraints failed %s", status.getDescription().c_str());
-        return static_cast<V2_4::Error>(status.getServiceSpecificError());
+        return static_cast<Error>(status.getServiceSpecificError());
     }
     *outTimeline = translate<VsyncPeriodChangeTimeline>(timeline);
-    return V2_4::Error::NONE;
+    return Error::NONE;
 }
 
 V2_4::Error AidlComposer::setAutoLowLatencyMode(Display display, bool on) {

@@ -47,6 +47,7 @@ pub struct StickyKeysFilter {
     next: Box<dyn Filter + Send + Sync>,
     listener: ModifierStateListener,
     data: Data,
+    down_key_map: HashMap<i32, HashSet<i32>>,
 }
 
 #[derive(Default)]
@@ -69,15 +70,34 @@ impl StickyKeysFilter {
         next: Box<dyn Filter + Send + Sync>,
         listener: ModifierStateListener,
     ) -> StickyKeysFilter {
-        Self { next, listener, data: Default::default() }
+        Self { next, listener, data: Default::default(), down_key_map: HashMap::new() }
     }
 }
 
 impl Filter for StickyKeysFilter {
     fn notify_key(&mut self, event: &KeyEvent) {
+        let down = event.action == KeyEventAction::DOWN;
         let up = event.action == KeyEventAction::UP;
         let mut modifier_state = self.data.modifier_state;
         let mut locked_modifier_state = self.data.locked_modifier_state;
+        if down {
+            let down_keys = self.down_key_map.entry(event.deviceId).or_default();
+            down_keys.insert(event.keyCode);
+        } else {
+            if !self.down_key_map.contains_key(&event.deviceId) {
+                self.next.notify_key(event);
+                return;
+            }
+            let down_keys = self.down_key_map.get_mut(&event.deviceId).unwrap();
+            if !down_keys.contains(&event.keyCode) {
+                self.next.notify_key(event);
+                return;
+            }
+            down_keys.remove(&event.keyCode);
+            if down_keys.is_empty() {
+                self.down_key_map.remove(&event.deviceId);
+            }
+        }
         if !is_ephemeral_modifier_key(event.keyCode) {
             // If non-ephemeral modifier key (i.e. non-modifier keys + toggle modifier keys like
             // CAPS_LOCK, NUM_LOCK etc.), don't block key and pass in the sticky modifier state with
@@ -130,6 +150,7 @@ impl Filter for StickyKeysFilter {
             self.data.locked_modifier_state = ModifierState::None;
             self.listener.modifier_state_changed(ModifierState::None, ModifierState::None);
         }
+        self.down_key_map.retain(|key, _| device_infos.iter().any(|x| *key == x.deviceId));
         self.next.notify_devices_changed(device_infos);
     }
 
@@ -166,6 +187,7 @@ impl Filter for StickyKeysFilter {
         result += &format!("\tmodifier_state = {:?}\n", self.data.modifier_state);
         result += &format!("\tlocked_modifier_state = {:?}\n", self.data.locked_modifier_state);
         result += &format!("\tcontributing_devices = {:?}\n", self.data.contributing_devices);
+        result += &format!("\tdown_key_map = {:?}\n", self.down_key_map);
         self.next.dump(dump_str + &result)
     }
 }
@@ -322,6 +344,31 @@ mod tests {
     }
 
     #[test]
+    fn test_notify_key_passes_ephemeral_modifier_keys_if_only_key_up_occurs() {
+        let test_filter = TestFilter::new();
+        let test_callbacks = TestCallbacks::new();
+        let mut sticky_keys_filter = setup_filter(
+            Box::new(test_filter.clone()),
+            Arc::new(RwLock::new(Strong::new(Box::new(test_callbacks.clone())))),
+        );
+        let key_codes = &[
+            KEYCODE_ALT_LEFT,
+            KEYCODE_ALT_RIGHT,
+            KEYCODE_CTRL_LEFT,
+            KEYCODE_CTRL_RIGHT,
+            KEYCODE_SHIFT_LEFT,
+            KEYCODE_SHIFT_RIGHT,
+            KEYCODE_META_LEFT,
+            KEYCODE_META_RIGHT,
+        ];
+        for key_code in key_codes.iter() {
+            let event = KeyEvent { keyCode: *key_code, ..BASE_KEY_UP };
+            sticky_keys_filter.notify_key(&event);
+            assert_eq!(test_filter.last_event().unwrap(), event);
+        }
+    }
+
+    #[test]
     fn test_notify_key_passes_non_ephemeral_modifier_keys() {
         let test_filter = TestFilter::new();
         let test_callbacks = TestCallbacks::new();
@@ -433,6 +480,26 @@ mod tests {
         sticky_keys_filter.notify_key(&KeyEvent { keyCode: KEY_A, ..BASE_KEY_UP });
 
         assert_eq!(test_callbacks.get_last_modifier_state(), ModifierState::None);
+        assert_eq!(test_callbacks.get_last_locked_modifier_state(), ModifierState::None);
+    }
+
+    #[test]
+    fn test_modifier_state_unchanged_on_non_modifier_key_up_without_down() {
+        let test_filter = TestFilter::new();
+        let test_callbacks = TestCallbacks::new();
+        let mut sticky_keys_filter = setup_filter(
+            Box::new(test_filter.clone()),
+            Arc::new(RwLock::new(Strong::new(Box::new(test_callbacks.clone())))),
+        );
+        sticky_keys_filter.notify_key(&KeyEvent { keyCode: KEYCODE_CTRL_LEFT, ..BASE_KEY_DOWN });
+        sticky_keys_filter.notify_key(&KeyEvent { keyCode: KEYCODE_CTRL_LEFT, ..BASE_KEY_UP });
+
+        sticky_keys_filter.notify_key(&KeyEvent { keyCode: KEY_A, ..BASE_KEY_UP });
+
+        assert_eq!(
+            test_callbacks.get_last_modifier_state(),
+            ModifierState::CtrlLeftOn | ModifierState::CtrlOn
+        );
         assert_eq!(test_callbacks.get_last_locked_modifier_state(), ModifierState::None);
     }
 

@@ -188,7 +188,7 @@ public:
     MOCK_METHOD(std::shared_ptr<PointerControllerInterface>, createPointerController,
                 (PointerControllerInterface::ControllerType), (override));
     MOCK_METHOD(void, notifyPointerDisplayIdChanged,
-                (ui::LogicalDisplayId displayId, const FloatPoint& position), (override));
+                (ui::LogicalDisplayId displayId, const vec2& position), (override));
     MOCK_METHOD(bool, isInputMethodConnectionActive, (), (override));
     MOCK_METHOD(void, notifyMouseCursorFadedOnTyping, (), (override));
 };

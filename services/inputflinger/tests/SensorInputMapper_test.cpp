@@ -125,7 +125,7 @@ TEST_F(SensorInputMapperTest, ProcessAccelerometerSensor) {
     ASSERT_EQ(arg.source, AINPUT_SOURCE_SENSOR);
     ASSERT_EQ(arg.deviceId, DEVICE_ID);
     ASSERT_EQ(arg.sensorType, InputDeviceSensorType::ACCELEROMETER);
-    ASSERT_EQ(arg.accuracy, InputDeviceSensorAccuracy::ACCURACY_HIGH);
+    ASSERT_EQ(arg.accuracy, InputDeviceSensorAccuracy::HIGH);
     ASSERT_EQ(arg.hwTimestamp, ARBITRARY_TIME);
     ASSERT_EQ(arg.values, values);
     mMapper->flushSensor(InputDeviceSensorType::ACCELEROMETER);
@@ -170,7 +170,7 @@ TEST_F(SensorInputMapperTest, ProcessGyroscopeSensor) {
     ASSERT_EQ(arg.source, AINPUT_SOURCE_SENSOR);
     ASSERT_EQ(arg.deviceId, DEVICE_ID);
     ASSERT_EQ(arg.sensorType, InputDeviceSensorType::GYROSCOPE);
-    ASSERT_EQ(arg.accuracy, InputDeviceSensorAccuracy::ACCURACY_HIGH);
+    ASSERT_EQ(arg.accuracy, InputDeviceSensorAccuracy::HIGH);
     ASSERT_EQ(arg.hwTimestamp, ARBITRARY_TIME);
     ASSERT_EQ(arg.values, values);
     mMapper->flushSensor(InputDeviceSensorType::GYROSCOPE);

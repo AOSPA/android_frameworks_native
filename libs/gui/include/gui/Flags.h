@@ -17,8 +17,15 @@
 #pragma once
 
 #include <com_android_graphics_libgui_flags.h>
-#include <gui/IGraphicBufferProducer.h>
-#include <gui/Surface.h>
+#include <utils/StrongPointer.h>
+
+namespace android {
+
+class IGraphicBufferProducer;
+class Surface;
+namespace view {
+class Surface;
+}
 
 #define WB_CAMERA3_AND_PROCESSORS_WITH_DEPENDENCIES                  \
     (COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CAMERA3_AND_PROCESSORS) && \
@@ -31,6 +38,19 @@
 
 #if WB_LIBCAMERASERVICE_WITH_DEPENDENCIES
 typedef android::Surface SurfaceType;
+typedef android::view::Surface ParcelableSurfaceType;
 #else
 typedef android::IGraphicBufferProducer SurfaceType;
+typedef android::sp<android::IGraphicBufferProducer> ParcelableSurfaceType;
 #endif
+
+namespace flagtools {
+sp<SurfaceType> surfaceToSurfaceType(const sp<Surface>& surface);
+ParcelableSurfaceType toParcelableSurfaceType(const view::Surface& surface);
+sp<IGraphicBufferProducer> surfaceTypeToIGBP(const sp<SurfaceType>& surface);
+bool isSurfaceTypeValid(const sp<SurfaceType>& surface);
+ParcelableSurfaceType convertSurfaceTypeToParcelable(sp<SurfaceType> surface);
+sp<SurfaceType> convertParcelableSurfaceTypeToSurface(const ParcelableSurfaceType& surface);
+} // namespace flagtools
+
+} // namespace android

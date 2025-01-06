@@ -27,6 +27,6 @@ parcelable LutProperties {
 
     int size;
     @Backing(type="int")
-    enum SamplingKey { RGB, MAX_RGB }
+    enum SamplingKey { RGB, MAX_RGB, CIE_Y }
     SamplingKey[] samplingKeys;
 }

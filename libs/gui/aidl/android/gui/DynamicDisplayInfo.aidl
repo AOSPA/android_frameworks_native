@@ -50,4 +50,7 @@ parcelable DynamicDisplayInfo {
 
     // Represents frame rate for FrameRateCategory Normal and High.
     FrameRateCategoryRate frameRateCategoryRate;
+
+    // All the refresh rates supported for the default display mode.
+    float[] supportedRefreshRates;
 }

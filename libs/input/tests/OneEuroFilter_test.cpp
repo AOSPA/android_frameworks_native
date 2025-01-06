@@ -98,7 +98,10 @@ protected:
         std::vector<Sample> filteredSignal;
         for (const Sample& sample : signal) {
             filteredSignal.push_back(
-                    Sample{sample.timestamp, mFilter.filter(sample.timestamp, sample.value)});
+                    Sample{sample.timestamp,
+                           mFilter.filter(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                  sample.timestamp),
+                                          sample.value)});
         }
         return filteredSignal;
     }

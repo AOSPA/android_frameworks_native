@@ -30,8 +30,8 @@ use binder::{
     StatusCode,
 };
 use ffi::{
-    AHardwareBuffer, AHardwareBuffer_Desc, AHardwareBuffer_readFromParcel,
-    AHardwareBuffer_writeToParcel, ARect,
+    AHardwareBuffer, AHardwareBuffer_Desc, AHardwareBuffer_Plane, AHardwareBuffer_Planes,
+    AHardwareBuffer_readFromParcel, AHardwareBuffer_writeToParcel, ARect,
 };
 use std::ffi::c_void;
 use std::fmt::{self, Debug, Formatter};
@@ -313,6 +313,57 @@ impl HardwareBuffer {
         })
     }
 
+    /// Lock a potentially multi-planar hardware buffer for direct CPU access.
+    ///
+    /// # Safety
+    ///
+    /// - If `fence` is `None`, the caller must ensure that all writes to the buffer have completed
+    ///   before calling this function.
+    /// - If the buffer has `AHARDWAREBUFFER_FORMAT_BLOB`, multiple threads or process may lock the
+    ///   buffer simultaneously, but the caller must ensure that they don't access it simultaneously
+    ///   and break Rust's aliasing rules, like any other shared memory.
+    /// - Otherwise if `usage` includes `AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY` or
+    ///   `AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN`, the caller must ensure that no other threads or
+    ///   processes lock the buffer simultaneously for any usage.
+    /// - Otherwise, the caller must ensure that no other threads lock the buffer for writing
+    ///   simultaneously.
+    /// - If `rect` is not `None`, the caller must not modify the buffer outside of that rectangle.
+    pub unsafe fn lock_planes<'a>(
+        &'a self,
+        usage: AHardwareBuffer_UsageFlags,
+        fence: Option<BorrowedFd>,
+        rect: Option<&ARect>,
+    ) -> Result<Vec<PlaneGuard<'a>>, StatusCode> {
+        let fence = if let Some(fence) = fence { fence.as_raw_fd() } else { -1 };
+        let rect = rect.map(ptr::from_ref).unwrap_or(null());
+        let mut planes = AHardwareBuffer_Planes {
+            planeCount: 0,
+            planes: [const { AHardwareBuffer_Plane { data: null_mut(), pixelStride: 0, rowStride: 0 } };
+                4],
+        };
+
+        // SAFETY: The `AHardwareBuffer` pointer we wrap is always valid, and the various out
+        // pointers are valid because they come from references. Our caller promises that writes have
+        // completed and there will be no simultaneous read/write locks.
+        let status = unsafe {
+            ffi::AHardwareBuffer_lockPlanes(self.0.as_ptr(), usage.0, fence, rect, &mut planes)
+        };
+        status_result(status)?;
+        let plane_count = planes.planeCount.try_into().unwrap();
+        Ok(planes.planes[..plane_count]
+            .iter()
+            .map(|plane| PlaneGuard {
+                guard: HardwareBufferGuard {
+                    buffer: self,
+                    address: NonNull::new(plane.data)
+                        .expect("AHardwareBuffer_lockAndGetInfo set a null outVirtualAddress"),
+                },
+                pixel_stride: plane.pixelStride,
+                row_stride: plane.rowStride,
+            })
+            .collect())
+    }
+
     /// Locks the hardware buffer for direct CPU access, returning information about the bytes per
     /// pixel and stride as well.
     ///
@@ -508,6 +559,18 @@ pub struct LockedBufferInfo<'a> {
     pub bytes_per_pixel: u32,
     /// The stride in bytes between rows in the buffer.
     pub stride: u32,
+}
+
+/// A guard for a single plane of a locked `HardwareBuffer`, with additional information about the
+/// stride.
+#[derive(Debug)]
+pub struct PlaneGuard<'a> {
+    /// The locked buffer guard.
+    pub guard: HardwareBufferGuard<'a>,
+    /// The stride in bytes between the color channel for one pixel to the next pixel.
+    pub pixel_stride: u32,
+    /// The stride in bytes between rows in the buffer.
+    pub row_stride: u32,
 }
 
 #[cfg(test)]

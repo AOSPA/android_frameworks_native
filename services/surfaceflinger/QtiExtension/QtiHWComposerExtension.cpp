@@ -63,7 +63,7 @@ status_t QtiHWComposerExtension::qtiSetDisplayElapseTime(HalDisplayId displayId,
     const auto& displayData = mQtiHWComposer.mDisplayData[displayId];
     auto halHWDisplayId = displayData.hwcDisplay->getId();
     auto error = mQtiComposerHalExtn->qtiSetDisplayElapseTime(halHWDisplayId, timeStamp);
-    if (error != hal::Error::NONE) {
+    if (error != Error::NONE) {
         return BAD_VALUE;
     }
 
@@ -83,7 +83,7 @@ status_t QtiHWComposerExtension::qtiSetLayerType(HWC2::Layer* layer, uint32_t ty
     auto intError = mQtiComposerHalExtn->qtiSetLayerType(implLayer->qtiGetDisplayId(),
                                                          implLayer->getId(), type);
     Error error = static_cast<Error>(intError);
-    if (error != hal::Error::NONE) {
+    if (error != Error::NONE) {
         ALOGW("Failed to send SET_LAYER_TYPE command to HWC");
         return BAD_VALUE;
     }
@@ -91,8 +91,7 @@ status_t QtiHWComposerExtension::qtiSetLayerType(HWC2::Layer* layer, uint32_t ty
     return NO_ERROR;
 }
 
-status_t QtiHWComposerExtension::qtiSetLayerFlag(HWC2::Layer* layer,
-                                                 uint32_t flags) {
+status_t QtiHWComposerExtension::qtiSetLayerFlag(HWC2::Layer* layer, uint32_t flags) {
     if (!mQtiComposerHalExtn) {
         return NO_ERROR;
     }
@@ -104,7 +103,7 @@ status_t QtiHWComposerExtension::qtiSetLayerFlag(HWC2::Layer* layer,
     auto intError = mQtiComposerHalExtn->qtiSetLayerFlag(implLayer->qtiGetDisplayId(),
                                                          implLayer->getId(), flags);
     Error error = static_cast<Error>(intError);
-    if (error != hal::Error::NONE) {
+    if (error != Error::NONE) {
         return BAD_VALUE;
     }
 
@@ -133,14 +132,13 @@ status_t QtiHWComposerExtension::qtiSetClientTarget_3_1(HalDisplayId displayId, 
     int32_t fenceFd = acquireFence->dup();
     auto error =
             mQtiComposerHalExtn->qtiSetClientTarget_3_1(halHWDisplayId, slot, fenceFd, dataspace);
-    if (error != hal::Error::NONE) {
+    if (error != Error::NONE) {
         return BAD_VALUE;
     }
     return NO_ERROR;
 }
 
-status_t QtiHWComposerExtension::qtiTryDrawMethod(HalDisplayId displayId,
-                                                  uint32_t drawMethod) {
+status_t QtiHWComposerExtension::qtiTryDrawMethod(HalDisplayId displayId, uint32_t drawMethod) {
     if (!mQtiComposerHalExtn) {
         return NO_ERROR;
     }
@@ -158,7 +156,7 @@ status_t QtiHWComposerExtension::qtiTryDrawMethod(HalDisplayId displayId,
     const auto& displayData = mQtiHWComposer.mDisplayData[displayId];
     auto halHWDisplayId = displayData.hwcDisplay->getId();
     auto error = mQtiComposerHalExtn->qtiTryDrawMethod(halHWDisplayId, drawMethod);
-    if (error != hal::Error::NONE) {
+    if (error != Error::NONE) {
         return BAD_VALUE;
     }
 

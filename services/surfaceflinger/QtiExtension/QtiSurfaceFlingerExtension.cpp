@@ -1043,7 +1043,7 @@ void QtiSurfaceFlingerExtension::qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64
  * Methods for Virtual, WiFi, and Secure Displays
  */
 std::optional<VirtualDisplayId> QtiSurfaceFlingerExtension::qtiAcquireVirtualDisplay(
-        ui::Size resolution, ui::PixelFormat format, bool canAllocateHwcForVDS) {
+        ui::Size resolution, ui::PixelFormat format, const std::string& uniqueId, bool canAllocateHwcForVDS) {
     auto& generator = mQtiFlinger->mVirtualDisplayIdGenerators.hal;
     if (canAllocateHwcForVDS && generator) {
         if (const auto id = generator->generateId()) {

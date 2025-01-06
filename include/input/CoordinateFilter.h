@@ -44,7 +44,7 @@ public:
      * the previous call.
      * @param coords Coordinates to be overwritten by the corresponding filtered coordinates.
      */
-    void filter(std::chrono::duration<float> timestamp, PointerCoords& coords);
+    void filter(std::chrono::nanoseconds timestamp, PointerCoords& coords);
 
 private:
     OneEuroFilter mXFilter;

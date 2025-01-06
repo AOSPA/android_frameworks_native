@@ -15,11 +15,13 @@
  */
 #include "LutShader.h"
 
+#include <SkM44.h>
 #include <SkTileMode.h>
 #include <common/trace.h>
 #include <cutils/ashmem.h>
 #include <math/half.h>
 #include <sys/mman.h>
+#include <ui/ColorSpace.h>
 
 #include "include/core/SkColorSpace.h"
 #include "src/core/SkColorFilterPriv.h"
@@ -36,6 +38,8 @@ static const SkString kShader = SkString(R"(
     uniform int size;
     uniform int key;
     uniform int dimension;
+    uniform vec3 luminanceCoefficients; // for CIE_Y
+
     vec4 main(vec2 xy) {
         float4 rgba = image.eval(xy);
         float3 linear = toLinearSrgb(rgba.rgb);
@@ -51,10 +55,14 @@ static const SkString kShader = SkString(R"(
                 return float4(linear.r * gainR, linear.g * gainG, linear.b * gainB, rgba.a);
             // MAX_RGB
             } else if (key == 1) {
-                float4 rgba = image.eval(xy);
-                float3 linear = toLinearSrgb(rgba.rgb);
                 float maxRGB = max(linear.r, max(linear.g, linear.b));
                 float index = maxRGB * float(size - 1);
+                float gain = lut.eval(vec2(index, 0.0) + 0.5).r;
+                return float4(linear * gain, rgba.a);
+            // CIE_Y
+            } else if (key == 2) {
+                float y = dot(linear, luminanceCoefficients) / 3.0;
+                float index = y * float(size - 1);
                 float gain = lut.eval(vec2(index, 0.0) + 0.5).r;
                 return float4(linear * gain, rgba.a);
             }
@@ -110,11 +118,37 @@ static const SkString kShader = SkString(R"(
         return rgba;
     })");
 
+// same as shader::toColorSpace function
+// TODO: put this function in a general place
+static ColorSpace toColorSpace(ui::Dataspace dataspace) {
+    switch (dataspace & HAL_DATASPACE_STANDARD_MASK) {
+        case HAL_DATASPACE_STANDARD_BT709:
+            return ColorSpace::sRGB();
+        case HAL_DATASPACE_STANDARD_DCI_P3:
+            return ColorSpace::DisplayP3();
+        case HAL_DATASPACE_STANDARD_BT2020:
+        case HAL_DATASPACE_STANDARD_BT2020_CONSTANT_LUMINANCE:
+            return ColorSpace::BT2020();
+        case HAL_DATASPACE_STANDARD_ADOBE_RGB:
+            return ColorSpace::AdobeRGB();
+        case HAL_DATASPACE_STANDARD_BT601_625:
+        case HAL_DATASPACE_STANDARD_BT601_625_UNADJUSTED:
+        case HAL_DATASPACE_STANDARD_BT601_525:
+        case HAL_DATASPACE_STANDARD_BT601_525_UNADJUSTED:
+        case HAL_DATASPACE_STANDARD_BT470M:
+        case HAL_DATASPACE_STANDARD_FILM:
+        case HAL_DATASPACE_STANDARD_UNSPECIFIED:
+        default:
+            return ColorSpace::sRGB();
+    }
+}
+
 sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
                                              const std::vector<float>& buffers,
                                              const int32_t offset, const int32_t length,
                                              const int32_t dimension, const int32_t size,
-                                             const int32_t samplingKey) {
+                                             const int32_t samplingKey,
+                                             ui::Dataspace srcDataspace) {
     SFTRACE_NAME("lut shader");
     std::vector<half> buffer(length * 4); // 4 is for RGBA
     auto d = static_cast<LutProperties::Dimension>(dimension);
@@ -133,12 +167,16 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
         }
     }
     /**
-     * 1D Lut(rgba)
+     * 1D Lut RGB/MAX_RGB
      * (R0, 0, 0, 0)
      * (R1, 0, 0, 0)
+     *
+     * 1D Lut CIE_Y
+     * (Y0, 0, 0, 0)
+     * (Y1, 0, 0, 0)
      * ...
      *
-     * 3D Lut
+     * 3D Lut MAX_RGB
      * (R0, G0, B0, 0)
      * (R1, G1, B1, 0)
      * ...
@@ -162,6 +200,14 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
     const int uSize = static_cast<int>(size);
     const int uKey = static_cast<int>(samplingKey);
     const int uDimension = static_cast<int>(dimension);
+    if (static_cast<LutProperties::SamplingKey>(samplingKey) == LutProperties::SamplingKey::CIE_Y) {
+        // Use predefined colorspaces of input dataspace so that we can get D65 illuminant
+        mat3 toXYZMatrix(toColorSpace(srcDataspace).getRGBtoXYZ());
+        mBuilder->uniform("luminanceCoefficients") =
+                SkV3{toXYZMatrix[0][1], toXYZMatrix[1][1], toXYZMatrix[2][1]};
+    } else {
+        mBuilder->uniform("luminanceCoefficients") = SkV3{1.f, 1.f, 1.f};
+    }
     mBuilder->uniform("size") = uSize;
     mBuilder->uniform("key") = uKey;
     mBuilder->uniform("dimension") = uDimension;
@@ -170,6 +216,7 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
 
 sk_sp<SkShader> LutShader::lutShader(sk_sp<SkShader>& input,
                                      std::shared_ptr<gui::DisplayLuts> displayLuts,
+                                     ui::Dataspace srcDataspace,
                                      sk_sp<SkColorSpace> outColorSpace) {
     if (mBuilder == nullptr) {
         const static SkRuntimeEffect::Result instance = SkRuntimeEffect::MakeForShader(kShader);
@@ -218,7 +265,7 @@ sk_sp<SkShader> LutShader::lutShader(sk_sp<SkShader>& input,
             }
             input = generateLutShader(input, buffers, offsets[i], bufferSizePerLut,
                                       lutProperties[i].dimension, lutProperties[i].size,
-                                      lutProperties[i].samplingKey);
+                                      lutProperties[i].samplingKey, srcDataspace);
         }
 
         auto colorXformLutToDst =
