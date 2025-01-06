@@ -58,11 +58,19 @@ cc_test {
         "-Wno-unused-parameter",
     ],
     sanitize: {
+        address: true,
         hwaddress: true,
         undefined: true,
         all_undefined: true,
         diag: {
+            cfi: true,
+            integer_overflow: true,
+            memtag_heap: true,
             undefined: true,
+            misc_undefined: [
+                "bounds",
+                "all",
+            ],
         },
     },
     shared_libs: [
@@ -91,11 +99,6 @@ cc_test {
                 "libstatslog_libinput",
                 "libstatssocket_lazy",
             ],
-        },
-        host: {
-            sanitize: {
-                address: true,
-            },
         },
     },
     native_coverage: false,

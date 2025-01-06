@@ -327,8 +327,8 @@ std::unique_ptr<InputChannel> InputChannel::create(const std::string& name,
                                                    android::base::unique_fd fd, sp<IBinder> token) {
     const int result = fcntl(fd, F_SETFL, O_NONBLOCK);
     if (result != 0) {
-        LOG_ALWAYS_FATAL("channel '%s' ~ Could not make socket non-blocking: %s", name.c_str(),
-                         strerror(errno));
+        LOG_ALWAYS_FATAL("channel '%s' ~ Could not make socket (%d) non-blocking: %s", name.c_str(),
+                         fd.get(), strerror(errno));
         return nullptr;
     }
     // using 'new' to access a non-public constructor
