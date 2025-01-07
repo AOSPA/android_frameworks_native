@@ -40,6 +40,13 @@ void fillRandomParcel(Parcel* outputParcel, FuzzedDataProvider&& provider,
     const uint8_t fuzzerParcelOptions = provider.ConsumeIntegral<uint8_t>();
     const bool resultShouldBeView = fuzzerParcelOptions & 1;
     const bool resultShouldBeRpc = fuzzerParcelOptions & 2;
+    const bool resultShouldMarkSensitive = fuzzerParcelOptions & 4;
+
+    auto sensitivity_guard = binder::impl::make_scope_guard([&]() {
+        if (resultShouldMarkSensitive) {
+            outputParcel->markSensitive();
+        }
+    });
 
     Parcel* p;
     if (resultShouldBeView) {
@@ -49,6 +56,9 @@ void fillRandomParcel(Parcel* outputParcel, FuzzedDataProvider&& provider,
     } else {
         p = outputParcel; // directly fill out the output Parcel
     }
+
+    // must be last guard, so outputParcel gets setup as view before
+    // other guards
     auto viewify_guard = binder::impl::make_scope_guard([&]() {
         if (resultShouldBeView) {
             outputParcel->makeDangerousViewOf(p);

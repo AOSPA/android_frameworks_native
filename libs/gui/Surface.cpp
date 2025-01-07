@@ -1308,6 +1308,12 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd,
         fence = input.fence;
     }
     nsecs_t now = systemTime();
+    /* QTI_BEGIN */
+    if (mQtiSurfaceExtn) {
+        mQtiSurfaceExtn->qtiTrackTransaction(mNextFrameNumber, now);
+    }
+    /* QTI_END */
+
     // Drop the lock temporarily while we touch the underlying producer. In the case of a local
     // BufferQueue, the following should be allowable:
     //

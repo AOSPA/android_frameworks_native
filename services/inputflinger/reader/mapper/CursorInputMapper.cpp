@@ -481,15 +481,21 @@ void CursorInputMapper::configureOnChangePointerSpeed(const InputReaderConfigura
         mPointerVelocityControl.setAccelerationEnabled(false);
         mWheelXVelocityControl.setParameters(FLAT_VELOCITY_CONTROL_PARAMS);
         mWheelYVelocityControl.setParameters(FLAT_VELOCITY_CONTROL_PARAMS);
-    } else {
-        mPointerVelocityControl.setAccelerationEnabled(
-                config.displaysWithMousePointerAccelerationDisabled.count(
-                        mDisplayId.value_or(ui::LogicalDisplayId::INVALID)) == 0);
-        mPointerVelocityControl.setCurve(
-                createAccelerationCurveForPointerSensitivity(config.mousePointerSpeed));
-        mWheelXVelocityControl.setParameters(config.wheelVelocityControlParameters);
-        mWheelYVelocityControl.setParameters(config.wheelVelocityControlParameters);
+        return;
     }
+
+    bool disableAllScaling = config.displaysWithMousePointerAccelerationDisabled.count(
+                                     mDisplayId.value_or(ui::LogicalDisplayId::INVALID)) != 0;
+
+    mPointerVelocityControl.setAccelerationEnabled(!disableAllScaling);
+
+    mPointerVelocityControl.setCurve(
+            config.mousePointerAccelerationEnabled
+                    ? createAccelerationCurveForPointerSensitivity(config.mousePointerSpeed)
+                    : createFlatAccelerationCurve(config.mousePointerSpeed));
+
+    mWheelXVelocityControl.setParameters(config.wheelVelocityControlParameters);
+    mWheelYVelocityControl.setParameters(config.wheelVelocityControlParameters);
 }
 
 void CursorInputMapper::configureOnChangeDisplayInfo(const InputReaderConfiguration& config) {

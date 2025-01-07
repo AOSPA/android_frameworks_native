@@ -134,6 +134,7 @@ cc_binary {
         "main.cpp",
     ],
     required: [
+        "alloctop",
         "atrace",
         "bugreport_procdump",
         "default_screenshot",

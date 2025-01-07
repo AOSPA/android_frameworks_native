@@ -74,13 +74,6 @@ KawaseBlurDualFilter::KawaseBlurDualFilter() : BlurFilter() {
     mBlurEffect = std::move(blurEffect);
 }
 
-static sk_sp<SkSurface> makeSurface(SkiaGpuContext* context, const SkRect& origRect, int scale) {
-    SkImageInfo scaledInfo =
-            SkImageInfo::MakeN32Premul(ceil(static_cast<float>(origRect.width()) / scale),
-                                       ceil(static_cast<float>(origRect.height()) / scale));
-    return context->createRenderTarget(scaledInfo);
-}
-
 void KawaseBlurDualFilter::blurInto(const sk_sp<SkSurface>& drawSurface,
                                     const sk_sp<SkImage>& readImage, const float radius,
                                     const float alpha) const {
@@ -124,11 +117,17 @@ sk_sp<SkImage> KawaseBlurDualFilter::generate(SkiaGpuContext* context, const uin
     const float filterDepth = std::min(kMaxSurfaces - 1.0f, radius * kInputScale / 2.5f);
     const int filterPasses = std::min(kMaxSurfaces - 1, static_cast<int>(ceil(filterDepth)));
 
+    auto makeSurface = [&](float scale) -> sk_sp<SkSurface> {
+        const auto newW = static_cast<float>(blurRect.width() / scale);
+        const auto newH = static_cast<float>(blurRect.height() / scale);
+        return context->createRenderTarget(input->imageInfo().makeWH(newW, newH));
+    };
+
     // Render into surfaces downscaled by 1x, 2x, and 4x from the initial downscale.
     sk_sp<SkSurface> surfaces[kMaxSurfaces] =
-            {filterPasses >= 0 ? makeSurface(context, blurRect, 1 * kInverseInputScale) : nullptr,
-             filterPasses >= 1 ? makeSurface(context, blurRect, 2 * kInverseInputScale) : nullptr,
-             filterPasses >= 2 ? makeSurface(context, blurRect, 4 * kInverseInputScale) : nullptr};
+            {filterPasses >= 0 ? makeSurface(1 * kInverseInputScale) : nullptr,
+             filterPasses >= 1 ? makeSurface(2 * kInverseInputScale) : nullptr,
+             filterPasses >= 2 ? makeSurface(4 * kInverseInputScale) : nullptr};
 
     // These weights for scaling offsets per-pass are handpicked to look good at 1 <= radius <= 250.
     static const float kWeights[5] = {

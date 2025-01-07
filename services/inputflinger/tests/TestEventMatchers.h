@@ -32,6 +32,17 @@
 
 namespace android {
 
+namespace {
+
+template <typename T>
+static bool valuesMatch(T value1, T value2) {
+    if constexpr (std::is_floating_point_v<T>) {
+        return std::abs(value1 - value2) < EPSILON;
+    } else {
+        return value1 == value2;
+    }
+}
+
 struct PointF {
     float x;
     float y;
@@ -41,6 +52,8 @@ struct PointF {
 inline std::string pointFToString(const PointF& p) {
     return std::string("(") + std::to_string(p.x) + ", " + std::to_string(p.y) + ")";
 }
+
+} // namespace
 
 /// Source
 class WithSourceMatcher {
@@ -706,8 +719,8 @@ public:
         }
 
         const PointerCoords& coords = event.pointerCoords[mPointerIndex];
-        bool matches = mRelX == coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X) &&
-                mRelY == coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y);
+        bool matches = valuesMatch(mRelX, coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X)) &&
+                valuesMatch(mRelY, coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y));
         if (!matches) {
             *os << "expected relative motion (" << mRelX << ", " << mRelY << ") at pointer index "
                 << mPointerIndex << ", but got ("

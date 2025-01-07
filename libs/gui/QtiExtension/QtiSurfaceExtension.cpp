@@ -151,7 +151,7 @@ bool QtiSurfaceExtension::isGame(std::string layerName) {
     }
     String16 ifName = sPerfService->getInterfaceDescriptor();
     if (ifName.size() > 0) {
-        const std::regex re("(?:SurfaceView\\[)([^/]+).*");
+        const std::regex re("(?:\\w*\\s*SurfaceView\\[)([^/]+).*");
         std::smatch match;
         if (!std::regex_match(layerName, match, re)) {
             return false;

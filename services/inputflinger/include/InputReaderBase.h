@@ -139,8 +139,16 @@ struct InputReaderConfiguration {
     // The mouse pointer speed, as a number from -7 (slowest) to 7 (fastest).
     int32_t mousePointerSpeed;
 
-    // Displays on which an acceleration curve shouldn't be applied for pointer movements from mice.
+    // Displays on which all pointer scaling, including linear scaling based on the
+    // user's pointer speed setting, should be disabled for mice. This differs from
+    // disabling acceleration via the 'mousePointerAccelerationEnabled' setting, where
+    // the pointer speed setting still influences the scaling factor.
     std::set<ui::LogicalDisplayId> displaysWithMousePointerAccelerationDisabled;
+
+    // True if the connected mouse should exhibit pointer acceleration. If false,
+    // a flat acceleration curve (linear scaling) is used, but the user's pointer
+    // speed setting still affects the scaling factor.
+    bool mousePointerAccelerationEnabled;
 
     // Velocity control parameters for touchpad pointer movements on the old touchpad stack (based
     // on TouchInputMapper).
@@ -275,6 +283,7 @@ struct InputReaderConfiguration {
             defaultPointerDisplayId(ui::LogicalDisplayId::DEFAULT),
             mousePointerSpeed(0),
             displaysWithMousePointerAccelerationDisabled(),
+            mousePointerAccelerationEnabled(true),
             pointerVelocityControlParameters(1.0f, 500.0f, 3000.0f,
                                              static_cast<float>(
                                                      android::os::IInputConstants::
