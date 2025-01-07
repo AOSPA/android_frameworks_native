@@ -1739,6 +1739,29 @@ Error AidlComposer::setLayerPictureProfileId(Display display, Layer layer, Pictu
     return error;
 }
 
+Error AidlComposer::getLuts(Display display, const std::vector<sp<GraphicBuffer>>& buffers,
+                            std::vector<aidl::android::hardware::graphics::composer3::Luts>* luts) {
+    std::vector<aidl::android::hardware::graphics::composer3::Buffer> aidlBuffers;
+    aidlBuffers.reserve(buffers.size());
+
+    for (auto& buffer : buffers) {
+        if (buffer.get()) {
+            aidl::android::hardware::graphics::composer3::Buffer aidlBuffer;
+            aidlBuffer.handle.emplace(::android::dupToAidl(buffer->getNativeBuffer()->handle));
+            aidlBuffers.emplace_back(std::move(aidlBuffer));
+        }
+    }
+
+    const auto status =
+            mAidlComposerClient->getLuts(translate<int64_t>(display), aidlBuffers, luts);
+    if (!status.isOk()) {
+        ALOGE("getLuts failed %s", status.getDescription().c_str());
+        return static_cast<Error>(status.getServiceSpecificError());
+    }
+
+    return Error::NONE;
+}
+
 ftl::Optional<std::reference_wrapper<QtiAidlCommandWriter>> AidlComposer::getWriter(
         Display display) REQUIRES_SHARED(mMutex) {
     return mWriters.get(display);

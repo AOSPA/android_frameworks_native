@@ -47,7 +47,6 @@
 #include <atomic>
 #include <mutex>
 
-#include <android_os.h>
 #include <android-base/properties.h>
 #include <cutils/trace.h>
 #include <inttypes.h>
@@ -160,10 +159,6 @@ struct PerfettoTeCategory* toCategory(uint64_t inCategory) {
 
 }  // namespace
 
-bool isPerfettoSdkTracingEnabled() {
-  return android::os::perfetto_sdk_tracing();
-}
-
 bool isPerfettoCategoryEnabled(PerfettoTeCategory* category) {
   return category != nullptr;
 }
@@ -221,10 +216,6 @@ bool shouldPreferAtrace(PerfettoTeCategory *perfettoCategory, uint64_t atraceCat
 }
 
 struct PerfettoTeCategory* toPerfettoCategory(uint64_t category) {
-  if (!isPerfettoSdkTracingEnabled()) {
-    return nullptr;
-  }
-
   struct PerfettoTeCategory* perfettoCategory = toCategory(category);
   if (perfettoCategory == nullptr) {
     return nullptr;
@@ -236,9 +227,6 @@ struct PerfettoTeCategory* toPerfettoCategory(uint64_t category) {
 }
 
 void registerWithPerfetto(bool test) {
-  if (!isPerfettoSdkTracingEnabled()) {
-    return;
-  }
   static std::once_flag registration;
   std::call_once(registration, [test]() {
     struct PerfettoProducerInitArgs args = PERFETTO_PRODUCER_INIT_ARGS_INIT();

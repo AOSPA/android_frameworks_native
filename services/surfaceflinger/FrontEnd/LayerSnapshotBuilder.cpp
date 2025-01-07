@@ -262,7 +262,10 @@ void updateVisibility(LayerSnapshot& snapshot, bool visible) {
     snapshot.isVisible = visible;
 
     if (FlagManager::getInstance().skip_invisible_windows_in_input()) {
-        snapshot.inputInfo.setInputConfig(gui::WindowInfo::InputConfig::NOT_VISIBLE, !visible);
+        const bool visibleForInput =
+                snapshot.isVisible || (snapshot.hasInputInfo() && !snapshot.isHiddenByPolicy());
+        snapshot.inputInfo.setInputConfig(gui::WindowInfo::InputConfig::NOT_VISIBLE,
+                                          !visibleForInput);
     } else {
         // TODO(b/238781169) we are ignoring this compat for now, since we will have
         // to remove any optimization based on visibility.

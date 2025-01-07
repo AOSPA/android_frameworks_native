@@ -1076,6 +1076,16 @@ status_t HWComposer::setDisplayPictureProfileHandle(PhysicalDisplayId displayId,
     return NO_ERROR;
 }
 
+status_t HWComposer::getLuts(
+        PhysicalDisplayId displayId, const std::vector<sp<GraphicBuffer>>& buffers,
+        std::vector<aidl::android::hardware::graphics::composer3::Luts>* luts) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    auto& hwcDisplay = mDisplayData[displayId].hwcDisplay;
+    auto error = hwcDisplay->getLuts(buffers, luts);
+    RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
+    return NO_ERROR;
+}
+
 const std::unordered_map<std::string, bool>& HWComposer::getSupportedLayerGenericMetadata() const {
     return mSupportedLayerGenericMetadata;
 }
@@ -1210,6 +1220,7 @@ std::optional<DisplayIdentificationInfo> HWComposer::onHotplugConnect(
             return DisplayIdentificationInfo{.id = PhysicalDisplayId::fromPort(port),
                                              .name = isPrimary ? "Primary display"
                                                                : "Secondary display",
+                                             .port = port,
                                              .deviceProductInfo = std::nullopt};
         }();
 

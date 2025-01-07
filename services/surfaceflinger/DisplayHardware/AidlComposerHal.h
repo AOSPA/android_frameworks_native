@@ -258,6 +258,8 @@ public:
     Error getMaxLayerPictureProfiles(Display, int32_t* outMaxProfiles) override;
     Error setDisplayPictureProfileId(Display, PictureProfileId id) override;
     Error setLayerPictureProfileId(Display, Layer, PictureProfileId id) override;
+    Error getLuts(Display, const std::vector<sp<GraphicBuffer>>&,
+                  std::vector<aidl::android::hardware::graphics::composer3::Luts>*) override;
 
 private:
     /* QTI_BEGIN */

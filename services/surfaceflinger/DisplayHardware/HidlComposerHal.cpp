@@ -1530,6 +1530,11 @@ Error HidlComposer::getMaxLayerPictureProfiles(Display, int32_t*) {
     return Error::UNSUPPORTED;
 }
 
+Error HidlComposer::getLuts(Display, const std::vector<sp<GraphicBuffer>>&,
+                            std::vector<aidl::android::hardware::graphics::composer3::Luts>*) {
+    return Error::UNSUPPORTED;
+}
+
 Error HidlComposer::setDisplayPictureProfileId(Display, PictureProfileId) {
     return Error::UNSUPPORTED;
 }

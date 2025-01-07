@@ -76,7 +76,8 @@ constexpr hal::HWDisplayId HWC_DISPLAY = FakeHwcDisplayInjector::DEFAULT_HWC_DIS
 constexpr hal::HWLayerId HWC_LAYER = 5000;
 constexpr Transform DEFAULT_TRANSFORM = static_cast<Transform>(0);
 
-constexpr PhysicalDisplayId DEFAULT_DISPLAY_ID = PhysicalDisplayId::fromPort(42u);
+constexpr uint8_t DEFAULT_DISPLAY_PORT = 42u;
+constexpr PhysicalDisplayId DEFAULT_DISPLAY_ID = PhysicalDisplayId::fromPort(DEFAULT_DISPLAY_PORT);
 constexpr int DEFAULT_DISPLAY_WIDTH = 1920;
 constexpr int DEFAULT_DISPLAY_HEIGHT = 1024;
 
@@ -276,7 +277,8 @@ struct BaseDisplayVariant {
 
         test->mDisplay =
                 FakeDisplayDeviceInjector(test->mFlinger, compositionDisplay,
-                                          kDisplayConnectionType, HWC_DISPLAY, kIsPrimary)
+                                          kDisplayConnectionType, DEFAULT_DISPLAY_PORT, HWC_DISPLAY,
+                                          kIsPrimary)
                         .setDisplaySurface(test->mDisplaySurface)
                         .setNativeWindow(test->mNativeWindow)
                         .setSecure(Derived::IS_SECURE)

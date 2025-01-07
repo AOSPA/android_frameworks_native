@@ -3317,10 +3317,17 @@ status_t SurfaceComposerClient::removeHdrLayerInfoListener(
     return statusTFromBinderStatus(status);
 }
 
-status_t SurfaceComposerClient::setActivePictureListener(
+status_t SurfaceComposerClient::addActivePictureListener(
         const sp<gui::IActivePictureListener>& listener) {
     binder::Status status =
-            ComposerServiceAIDL::getComposerService()->setActivePictureListener(listener);
+            ComposerServiceAIDL::getComposerService()->addActivePictureListener(listener);
+    return statusTFromBinderStatus(status);
+}
+
+status_t SurfaceComposerClient::removeActivePictureListener(
+        const sp<gui::IActivePictureListener>& listener) {
+    binder::Status status =
+            ComposerServiceAIDL::getComposerService()->removeActivePictureListener(listener);
     return statusTFromBinderStatus(status);
 }
 

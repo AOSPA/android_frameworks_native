@@ -417,6 +417,7 @@ std::optional<DisplayIdentificationInfo> parseDisplayIdentificationData(
     return DisplayIdentificationInfo{
             .id = displayId,
             .name = std::string(edid->displayName),
+            .port = port,
             .deviceProductInfo = buildDeviceProductInfo(*edid),
             .preferredDetailedTimingDescriptor = edid->preferredDetailedTimingDescriptor,
     };

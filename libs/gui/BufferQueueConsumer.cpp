@@ -341,9 +341,9 @@ status_t BufferQueueConsumer::detachBuffer(int slot) {
             return BAD_VALUE;
         }
 
-        if (slot < 0 || slot >= BufferQueueDefs::NUM_BUFFER_SLOTS) {
-            BQ_LOGE("detachBuffer: slot index %d out of range [0, %d)",
-                    slot, BufferQueueDefs::NUM_BUFFER_SLOTS);
+        const int totalSlotCount = mCore->getTotalSlotCountLocked();
+        if (slot < 0 || slot >= totalSlotCount) {
+            BQ_LOGE("detachBuffer: slot index %d out of range [0, %d)", slot, totalSlotCount);
             return BAD_VALUE;
         } else if (!mSlots[slot].mBufferState.isAcquired()) {
             BQ_LOGE("detachBuffer: slot %d is not owned by the consumer "
@@ -483,10 +483,13 @@ status_t BufferQueueConsumer::releaseBuffer(int slot, uint64_t frameNumber,
     ATRACE_CALL();
     ATRACE_BUFFER_INDEX(slot);
 
-    if (slot < 0 || slot >= BufferQueueDefs::NUM_BUFFER_SLOTS ||
-            releaseFence == nullptr) {
-        BQ_LOGE("releaseBuffer: slot %d out of range or fence %p NULL", slot,
-                releaseFence.get());
+    const int totalSlotCount = mCore->getTotalSlotCountLocked();
+    if (slot < 0 || slot >= totalSlotCount) {
+        BQ_LOGE("releaseBuffer: slot index %d out of range [0, %d)", slot, totalSlotCount);
+        return BAD_VALUE;
+    }
+    if (releaseFence == nullptr) {
+        BQ_LOGE("releaseBuffer: slot %d fence %p NULL", slot, releaseFence.get());
         return BAD_VALUE;
     }
 
@@ -514,6 +517,13 @@ status_t BufferQueueConsumer::releaseBuffer(int slot, uint64_t frameNumber,
     sp<IProducerListener> listener;
     { // Autolock scope
         std::lock_guard<std::mutex> lock(mCore->mMutex);
+
+        const int totalSlotCount = mCore->getTotalSlotCountLocked();
+        if (slot < 0 || slot >= totalSlotCount || releaseFence == nullptr) {
+            BQ_LOGE("releaseBuffer: slot %d out of range [0, %d) or fence %p NULL", slot,
+                    totalSlotCount, releaseFence.get());
+            return BAD_VALUE;
+        }
 
         // If the frame number has changed because the buffer has been reallocated,
         // we can ignore this releaseBuffer for the old buffer.
@@ -661,6 +671,43 @@ status_t BufferQueueConsumer::getReleasedBuffers(uint64_t *outSlotMask) {
     return NO_ERROR;
 }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+status_t BufferQueueConsumer::getReleasedBuffersExtended(std::vector<bool>* outSlotMask) {
+    ATRACE_CALL();
+
+    if (outSlotMask == nullptr) {
+        BQ_LOGE("getReleasedBuffersExtended: outSlotMask may not be NULL");
+        return BAD_VALUE;
+    }
+
+    std::lock_guard<std::mutex> lock(mCore->mMutex);
+
+    if (mCore->mIsAbandoned) {
+        BQ_LOGE("getReleasedBuffersExtended: BufferQueue has been abandoned");
+        return NO_INIT;
+    }
+
+    const int totalSlotCount = mCore->getTotalSlotCountLocked();
+    outSlotMask->resize(totalSlotCount);
+    for (int s = 0; s < totalSlotCount; ++s) {
+        (*outSlotMask)[s] = !mSlots[s].mAcquireCalled;
+    }
+
+    // Remove from the mask queued buffers for which acquire has been called,
+    // since the consumer will not receive their buffer addresses and so must
+    // retain their cached information
+    BufferQueueCore::Fifo::iterator current(mCore->mQueue.begin());
+    while (current != mCore->mQueue.end()) {
+        if (current->mAcquireCalled) {
+            (*outSlotMask)[current->mSlot] = false;
+        }
+        ++current;
+    }
+
+    return NO_ERROR;
+}
+#endif
+
 status_t BufferQueueConsumer::setDefaultBufferSize(uint32_t width,
         uint32_t height) {
     ATRACE_CALL();
@@ -678,6 +725,28 @@ status_t BufferQueueConsumer::setDefaultBufferSize(uint32_t width,
     mCore->mDefaultHeight = height;
     return NO_ERROR;
 }
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+status_t BufferQueueConsumer::allowUnlimitedSlots(bool allowUnlimitedSlots) {
+    ATRACE_CALL();
+    BQ_LOGV("allowUnlimitedSlots: %d", allowUnlimitedSlots);
+    std::lock_guard<std::mutex> lock(mCore->mMutex);
+
+    if (mCore->mIsAbandoned) {
+        BQ_LOGE("allowUnlimitedSlots: BufferQueue has been abandoned");
+        return NO_INIT;
+    }
+
+    if (mCore->mConnectedApi != BufferQueueCore::NO_CONNECTED_API) {
+        BQ_LOGE("allowUnlimitedSlots: BufferQueue already connected");
+        return INVALID_OPERATION;
+    }
+
+    mCore->mAllowExtendedSlotCount = allowUnlimitedSlots;
+
+    return OK;
+}
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
 
 status_t BufferQueueConsumer::setMaxBufferCount(int bufferCount) {
     ATRACE_CALL();
@@ -718,16 +787,23 @@ status_t BufferQueueConsumer::setMaxAcquiredBufferCount(
         int maxAcquiredBuffers) {
     ATRACE_FORMAT("%s(%d)", __func__, maxAcquiredBuffers);
 
-    if (maxAcquiredBuffers < 1 ||
-            maxAcquiredBuffers > BufferQueueCore::MAX_MAX_ACQUIRED_BUFFERS) {
-        BQ_LOGE("setMaxAcquiredBufferCount: invalid count %d",
-                maxAcquiredBuffers);
-        return BAD_VALUE;
-    }
-
     sp<IConsumerListener> listener;
     { // Autolock scope
         std::unique_lock<std::mutex> lock(mCore->mMutex);
+
+        // We reserve two slots in order to guarantee that the producer and
+        // consumer can run asynchronously.
+        int maxMaxAcquiredBuffers =
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+                mCore->getTotalSlotCountLocked() - 2;
+#else
+                BufferQueueCore::MAX_MAX_ACQUIRED_BUFFERS;
+#endif
+        if (maxAcquiredBuffers < 1 || maxAcquiredBuffers > maxMaxAcquiredBuffers) {
+            BQ_LOGE("setMaxAcquiredBufferCount: invalid count %d", maxAcquiredBuffers);
+            return BAD_VALUE;
+        }
+
         mCore->waitWhileAllocatingLocked(lock);
 
         if (mCore->mIsAbandoned) {

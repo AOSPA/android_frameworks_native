@@ -42,6 +42,8 @@
 #include <ui/DisplayIdentification.h>
 #include "../Scheduler/OneShotTimer.h"
 
+#include "SessionManager.h"
+
 /* QTI_BEGIN */
 #include "../QtiExtension/QtiPowerAdvisorExtension.h"
 /* QTI_END */
@@ -62,6 +64,8 @@ class PowerHintSessionWrapper;
 } // namespace power
 
 namespace adpf {
+
+namespace hal = aidl::android::hardware::power;
 
 class PowerAdvisor {
 public:
@@ -118,12 +122,18 @@ public:
     virtual void setDisplays(std::vector<DisplayId>& displayIds) = 0;
     // Sets the target duration for the entire pipeline including the gpu
     virtual void setTotalFrameTargetWorkDuration(Duration targetDuration) = 0;
+    // Get the session manager, if it exists
+    virtual std::shared_ptr<SessionManager> getSessionManager() = 0;
 
     // --- The following methods may run on threads besides SF main ---
     // Send a hint about an upcoming increase in the CPU workload
     virtual void notifyCpuLoadUp() = 0;
     // Send a hint about the imminent start of a new CPU workload
     virtual void notifyDisplayUpdateImminentAndCpuReset() = 0;
+
+    // --- The following methods specifically run on binder threads ---
+    // Retrieve  a SessionManager for HintManagerService to call
+    virtual sp<IBinder> getOrCreateSessionManagerForBinder(uid_t uid) = 0;
 };
 
 namespace impl {
@@ -162,10 +172,14 @@ public:
     void setCompositeEnd(TimePoint compositeEndTime) override;
     void setDisplays(std::vector<DisplayId>& displayIds) override;
     void setTotalFrameTargetWorkDuration(Duration targetDuration) override;
+    std::shared_ptr<SessionManager> getSessionManager() override;
 
     // --- The following methods may run on threads besides SF main ---
     void notifyCpuLoadUp() override;
     void notifyDisplayUpdateImminentAndCpuReset() override;
+
+    // --- The following methods specifically run on binder threads ---
+    sp<IBinder> getOrCreateSessionManagerForBinder(uid_t uid) override;
 
 private:
     friend class PowerAdvisorTest;
@@ -343,6 +357,8 @@ private:
     template <aidl::android::hardware::power::ChannelMessage::ChannelMessageContents::Tag T,
               class In>
     bool writeHintSessionMessage(In* elements, size_t count) REQUIRES(mHintSessionMutex);
+
+    std::shared_ptr<SessionManager> mSessionManager;
 };
 
 } // namespace impl

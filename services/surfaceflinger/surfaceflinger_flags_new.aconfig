@@ -217,6 +217,17 @@ flag {
 } # no_vsyncs_on_screen_off
 
 flag {
+  name: "reject_dupe_layerstacks"
+  namespace: "window_surfaces"
+  description: "Reject duplicate layerstacks for displays"
+  bug: "370358572"
+  is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+ } # reject_dupe_layerstacks
+
+flag {
   name: "single_hop_screenshot"
   namespace: "window_surfaces"
   description: "Only access SF main thread once during a screenshot"

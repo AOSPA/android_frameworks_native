@@ -126,8 +126,9 @@ public:
 
     static constexpr HWDisplayId kInnerDisplayHwcId = PrimaryDisplayVariant::HWC_DISPLAY_ID;
     static constexpr HWDisplayId kOuterDisplayHwcId = kInnerDisplayHwcId + 1;
-
-    static constexpr PhysicalDisplayId kOuterDisplayId = PhysicalDisplayId::fromPort(254u);
+    static constexpr uint8_t kOuterDisplayPort = 254u;
+    static constexpr PhysicalDisplayId kOuterDisplayId =
+            PhysicalDisplayId::fromPort(kOuterDisplayPort);
 
     auto injectOuterDisplay() {
         // For the inner display, this is handled by setupHwcHotplugCallExpectations.
@@ -149,6 +150,7 @@ public:
                                              kModeId120);
                 },
                 {.displayId = kOuterDisplayId,
+                 .port = kOuterDisplayPort,
                  .hwcDisplayId = kOuterDisplayHwcId,
                  .isPrimary = kIsPrimary});
 

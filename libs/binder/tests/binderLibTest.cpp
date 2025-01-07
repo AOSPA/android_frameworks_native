@@ -344,7 +344,12 @@ class BinderLibTest : public ::testing::Test {
         }
 
         bool checkFreezeSupport() {
-            std::ifstream freezer_file("/sys/fs/cgroup/uid_0/cgroup.freeze");
+            std::string path;
+            if (!CgroupGetAttributePathForTask("FreezerState", getpid(), &path)) {
+                return false;
+            }
+
+            std::ifstream freezer_file(path);
             // Pass test on devices where the cgroup v2 freezer is not supported
             if (freezer_file.fail()) {
                 return false;
