@@ -416,6 +416,8 @@ public:
     void qtiSetSmomoLayerStackId(uint32_t id);
     uint32_t qtiGetSmomoLayerStackId();
     uint32_t qtiGetLayerClass() { return mQtiLayerClass; };
+    bool qtiIsSecureDisplay() { return mQtiIsSecureDisplay; };
+    bool qtiIsSecureCamera() { return mQtiIsSecureCamera; };
     /* QTI_END */
 
 protected:
@@ -456,6 +458,8 @@ protected:
 
     /* QTI_BEGIN */
     uint32_t mQtiLayerClass{0};
+    bool mQtiIsSecureDisplay = false;
+    bool mQtiIsSecureCamera = false;
     /* QTI_END */
 
     // main thread
