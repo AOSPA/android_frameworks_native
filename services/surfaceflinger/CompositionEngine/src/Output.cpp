@@ -1603,7 +1603,9 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                                        .clearContent = !clientComposition,
                                        .blurSetting = blurSetting,
                                        .whitePointNits = layerState.whitePointNits,
-                                       .treat170mAsSrgb = outputState.treat170mAsSrgb};
+                                       .treat170mAsSrgb = outputState.treat170mAsSrgb,
+                                       .luts = layer->getState().hwc ? layer->getState().hwc->luts
+                                                                     : nullptr};
                 if (auto clientCompositionSettings =
                             layerFE.prepareClientComposition(targetSettings)) {
                     clientCompositionLayers.push_back(std::move(*clientCompositionSettings));

@@ -106,8 +106,6 @@ private:
 class BLASTBufferQueue : public ConsumerBase::FrameAvailableListener {
 public:
     BLASTBufferQueue(const std::string& name, bool updateDestinationFrame = true);
-    BLASTBufferQueue(const std::string& name, const sp<SurfaceControl>& surface, int width,
-                     int height, int32_t format);
 
     sp<IGraphicBufferProducer> getIGraphicBufferProducer() const {
         return mProducer;

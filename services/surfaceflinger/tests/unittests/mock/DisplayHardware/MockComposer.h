@@ -193,6 +193,8 @@ public:
     MOCK_METHOD(Error, getLuts,
                 (Display, const std::vector<sp<GraphicBuffer>>&,
                  std::vector<aidl::android::hardware::graphics::composer3::Luts>*));
+    MOCK_METHOD4(getLayerPresentFences,
+                 Error(Display, std::vector<Layer>*, std::vector<int>*, std::vector<int64_t>*));
 };
 
 } // namespace Hwc2::mock

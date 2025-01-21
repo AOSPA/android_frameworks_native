@@ -157,6 +157,10 @@ public:
     virtual Error getReleaseFences(Display display, std::vector<Layer>* outLayers,
                                    std::vector<int>* outReleaseFences) = 0;
 
+    virtual Error getLayerPresentFences(Display display, std::vector<Layer>* outLayers,
+                                        std::vector<int>* outFences,
+                                        std::vector<int64_t>* outLatenciesNanos) = 0;
+
     virtual Error presentDisplay(Display display, int* outPresentFence) = 0;
 
     virtual Error setActiveConfig(Display display, Config config) = 0;

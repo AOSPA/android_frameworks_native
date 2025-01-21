@@ -467,10 +467,7 @@ public:
         std::vector<uint64_t> mMergedTransactionIds;
 
         uint64_t mId;
-
-        bool mAnimation = false;
-        bool mEarlyWakeupStart = false;
-        bool mEarlyWakeupEnd = false;
+        uint32_t mFlags = 0;
 
         // Indicates that the Transaction may contain buffers that should be cached. The reason this
         // is only a guess is that buffers can be removed before cache is called. This is only a

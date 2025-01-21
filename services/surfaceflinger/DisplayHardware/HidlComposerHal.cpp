@@ -661,6 +661,11 @@ Error HidlComposer::getReleaseFences(Display display, std::vector<Layer>* outLay
     return Error::NONE;
 }
 
+Error HidlComposer::getLayerPresentFences(Display, std::vector<Layer>*, std::vector<int>*,
+                                          std::vector<int64_t>*) {
+    return Error::UNSUPPORTED;
+}
+
 Error HidlComposer::presentDisplay(Display display, int* outPresentFence) {
     SFTRACE_NAME("HwcPresentDisplay");
     mWriter.selectDisplay(display);

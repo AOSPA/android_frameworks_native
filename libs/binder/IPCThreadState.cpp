@@ -626,12 +626,22 @@ void IPCThreadState::flushCommands()
 {
     if (mProcess->mDriverFD < 0)
         return;
-    talkWithDriver(false);
+
+    if (status_t res = talkWithDriver(false); res != OK) {
+        // TODO: we may want to abort for some of these cases
+        ALOGW("1st call to talkWithDriver returned error in flushCommands: %s",
+              statusToString(res).c_str());
+    }
+
     // The flush could have caused post-write refcount decrements to have
     // been executed, which in turn could result in BC_RELEASE/BC_DECREFS
     // being queued in mOut. So flush again, if we need to.
     if (mOut.dataSize() > 0) {
-        talkWithDriver(false);
+        if (status_t res = talkWithDriver(false); res != OK) {
+            // TODO: we may want to abort for some of these cases
+            ALOGW("2nd call to talkWithDriver returned error in flushCommands: %s",
+                  statusToString(res).c_str());
+        }
     }
     if (mOut.dataSize() > 0) {
         ALOGW("mOut.dataSize() > 0 after flushCommands()");
@@ -803,7 +813,11 @@ void IPCThreadState::joinThreadPool(bool isMain)
 
     mOut.writeInt32(BC_EXIT_LOOPER);
     mIsLooper = false;
-    talkWithDriver(false);
+    if (status_t res = talkWithDriver(false); res != OK) {
+        // TODO: we may want to abort for some of these cases
+        ALOGW("call to talkWithDriver in joinThreadPool returned error: %s, FD: %d",
+              statusToString(res).c_str(), mProcess->mDriverFD);
+    }
     size_t oldCount = mProcess->mCurrentThreads.fetch_sub(1);
     LOG_ALWAYS_FATAL_IF(oldCount == 0,
                         "Threadpool thread count underflowed. Thread cannot exist and exit in "
@@ -839,12 +853,8 @@ status_t IPCThreadState::handlePolledCommands()
 
 void IPCThreadState::stopProcess(bool /*immediate*/)
 {
-    //ALOGI("**** STOPPING PROCESS");
-    flushCommands();
-    int fd = mProcess->mDriverFD;
-    mProcess->mDriverFD = -1;
-    close(fd);
-    //kill(getpid(), SIGKILL);
+    ALOGI("IPCThreadState::stopProcess() (deprecated) called. Exiting process.");
+    exit(0);
 }
 
 status_t IPCThreadState::transact(int32_t handle,
@@ -1494,7 +1504,14 @@ status_t IPCThreadState::executeCommand(int32_t cmd)
                 buffer.setDataSize(0);
 
                 constexpr uint32_t kForwardReplyFlags = TF_CLEAR_BUF;
-                sendReply(reply, (tr.flags & kForwardReplyFlags));
+
+                // TODO: we may want to abort if there is an error here, or return as 'error'
+                // from this function, but the impact needs to be measured
+                status_t error2 = sendReply(reply, (tr.flags & kForwardReplyFlags));
+                if (error2 != OK) {
+                    ALOGE("error in sendReply for synchronous call: %s",
+                          statusToString(error2).c_str());
+                }
             } else {
                 if (error != OK) {
                     std::ostringstream logStream;

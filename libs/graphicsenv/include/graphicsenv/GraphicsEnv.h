@@ -17,6 +17,7 @@
 #ifndef ANDROID_UI_GRAPHICS_ENV_H
 #define ANDROID_UI_GRAPHICS_ENV_H 1
 
+#include <graphicsenv/FeatureOverrides.h>
 #include <graphicsenv/GpuStatsInfo.h>
 
 #include <mutex>
@@ -120,6 +121,8 @@ public:
     // Get the app package name.
     std::string& getPackageName();
     const std::vector<std::string>& getAngleEglFeatures();
+    void getAngleFeatureOverrides(std::vector<const char*>& enabled,
+                                  std::vector<const char*>& disabled);
     // Set the persist.graphics.egl system property value.
     void nativeToggleAngleAsSystemDriver(bool enabled);
     bool shouldUseSystemAngle();
@@ -177,6 +180,7 @@ private:
     std::string mPackageName;
     // ANGLE EGL features;
     std::vector<std::string> mAngleEglFeatures;
+    FeatureOverrides mFeatureOverrides;
     // Whether ANGLE should be used.
     bool mShouldUseAngle = false;
     // Whether loader should load system ANGLE.

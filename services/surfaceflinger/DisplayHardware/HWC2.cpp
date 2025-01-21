@@ -649,7 +649,15 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
                 lutFileDescriptorMapper.emplace_or_replace(layer.get(),
                                                            ndk::ScopedFileDescriptor(
                                                                    layerLut.luts.pfd.release()));
+            } else {
+                ALOGE("getRequestedLuts: invalid luts on layer %" PRIu64 " found"
+                      " on display %" PRIu64 ". pfd.get()=%d, offsets.has_value()=%d",
+                      layerIds[i], mId, layerLut.luts.pfd.get(), layerLut.luts.offsets.has_value());
             }
+        } else {
+            ALOGE("getRequestedLuts: invalid layer %" PRIu64 " found"
+                  " on display %" PRIu64,
+                  layerIds[i], mId);
         }
     }
 

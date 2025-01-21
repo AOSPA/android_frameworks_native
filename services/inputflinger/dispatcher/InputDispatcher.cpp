@@ -2411,7 +2411,7 @@ InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime, const Motio
         tempTouchState = *oldState;
     }
 
-    bool isSplit = shouldSplitTouch(entry.source);
+    const bool isSplit = shouldSplitTouch(entry.source);
 
     const bool isHoverAction = (maskedAction == AMOTION_EVENT_ACTION_HOVER_MOVE ||
                                 maskedAction == AMOTION_EVENT_ACTION_HOVER_ENTER ||
@@ -2424,11 +2424,6 @@ InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime, const Motio
     const bool newGesture = isDown || maskedAction == AMOTION_EVENT_ACTION_SCROLL ||
             maskedAction == AMOTION_EVENT_ACTION_HOVER_ENTER ||
             maskedAction == AMOTION_EVENT_ACTION_HOVER_MOVE;
-    const bool isFromMouse = isFromSource(entry.source, AINPUT_SOURCE_MOUSE);
-
-    if (newGesture) {
-        isSplit = false;
-    }
 
     if (isDown && tempTouchState.hasHoveringPointers(entry.deviceId)) {
         // Compatibility behaviour: ACTION_DOWN causes HOVER_EXIT to get generated.
@@ -2470,8 +2465,6 @@ InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime, const Motio
             ALOGW("Dropping injected touch event: %s", (*err).c_str());
             return injectionError(InputEventInjectionResult::TARGET_MISMATCH);
         }
-
-        isSplit = !isFromMouse;
 
         std::vector<sp<WindowInfoHandle>> newTouchedWindows =
                 mWindowInfos.findTouchedSpyWindowsAt(displayId, x, y, isStylus, entry.deviceId,
@@ -2646,7 +2639,6 @@ InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime, const Motio
                                              targets);
 
                 // Make a slippery entrance into the new window.
-                isSplit = !isFromMouse;
 
                 ftl::Flags<InputTarget::Flags> targetFlags;
                 if (canReceiveForegroundTouches(*newTouchedWindowHandle->getInfo())) {

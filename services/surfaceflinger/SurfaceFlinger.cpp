@@ -3428,12 +3428,12 @@ void SurfaceFlinger::onCompositionPresented(PhysicalDisplayId pacesetterId,
 
     const auto schedule = mScheduler->getVsyncSchedule();
     const TimePoint vsyncDeadline = schedule->vsyncDeadlineAfter(presentTime);
-    const Period vsyncPeriod = schedule->period();
+    const Fps renderRate = pacesetterDisplay->refreshRateSelector().getActiveMode().fps;
     const nsecs_t vsyncPhase =
             mScheduler->getVsyncConfiguration().getCurrentConfigs().late.sfOffset;
 
-    const CompositorTiming compositorTiming(vsyncDeadline.ns(), vsyncPeriod.ns(), vsyncPhase,
-                                            presentLatency.ns());
+    const CompositorTiming compositorTiming(vsyncDeadline.ns(), renderRate.getPeriodNsecs(),
+                                            vsyncPhase, presentLatency.ns());
 
     ui::DisplayMap<ui::LayerStack, const DisplayDevice*> layerStackToDisplay;
     {
@@ -8091,7 +8091,7 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
 
     if (hdrBuffer && gainmapBuffer) {
         ftl::SharedFuture<FenceResult> hdrRenderFuture =
-                renderScreenImpl(renderArea.get(), hdrBuffer, regionSampling, grayscale,
+                renderScreenImpl(std::move(renderArea), hdrBuffer, regionSampling, grayscale,
                                  isProtected, captureResults, displayState, layers);
         captureResults.buffer = buffer->getBuffer();
         captureResults.optionalGainMap = gainmapBuffer->getBuffer();
@@ -8115,7 +8115,7 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
                         })
                         .share();
     } else {
-        renderFuture = renderScreenImpl(renderArea.get(), buffer, regionSampling, grayscale,
+        renderFuture = renderScreenImpl(std::move(renderArea), buffer, regionSampling, grayscale,
                                         isProtected, captureResults, displayState, layers);
     }
 
@@ -8136,7 +8136,8 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::captureScreenshot(
 }
 
 ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
-        const RenderArea* renderArea, const std::shared_ptr<renderengine::ExternalTexture>& buffer,
+        std::unique_ptr<const RenderArea> renderArea,
+        const std::shared_ptr<renderengine::ExternalTexture>& buffer,
         bool regionSampling, bool grayscale, bool isProtected, ScreenCaptureResults& captureResults,
         const std::optional<OutputCompositionState>& displayState,
         const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) {
