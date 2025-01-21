@@ -118,9 +118,12 @@ sk_sp<SkImage> KawaseBlurDualFilter::generate(SkiaGpuContext* context, const uin
     const int filterPasses = std::min(kMaxSurfaces - 1, static_cast<int>(ceil(filterDepth)));
 
     auto makeSurface = [&](float scale) -> sk_sp<SkSurface> {
-        const auto newW = static_cast<float>(blurRect.width() / scale);
-        const auto newH = static_cast<float>(blurRect.height() / scale);
-        return context->createRenderTarget(input->imageInfo().makeWH(newW, newH));
+        const auto newW = ceil(static_cast<float>(blurRect.width() / scale));
+        const auto newH = ceil(static_cast<float>(blurRect.height() / scale));
+        sk_sp<SkSurface> surface =
+                context->createRenderTarget(input->imageInfo().makeWH(newW, newH));
+        LOG_ALWAYS_FATAL_IF(!surface, "%s: Failed to create surface for blurring!", __func__);
+        return surface;
     };
 
     // Render into surfaces downscaled by 1x, 2x, and 4x from the initial downscale.

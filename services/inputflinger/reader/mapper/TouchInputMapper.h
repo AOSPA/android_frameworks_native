@@ -215,7 +215,7 @@ protected:
         DISABLED,   // input is disabled
         DIRECT,     // direct mapping (touchscreen)
         NAVIGATION, // unscaled mapping with assist gesture (touch navigation)
-        POINTER,    // pointer mapping (e.g. uncaptured touchpad, drawing tablet)
+        POINTER,    // pointer mapping (e.g. absolute mouse, drawing tablet)
 
         ftl_last = POINTER
     };
@@ -234,6 +234,9 @@ protected:
             ftl_last = POINTER
         };
 
+        // TouchInputMapper will configure devices with INPUT_PROP_DIRECT as
+        // DeviceType::TOUCH_SCREEN, and will otherwise use DeviceType::POINTER by default.
+        // This can be overridden by IDC files, using the `touch.deviceType` config.
         DeviceType deviceType;
         bool hasAssociatedDisplay;
         bool associatedDisplayIsExternal;

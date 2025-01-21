@@ -288,7 +288,7 @@ public:
     // for below objects
     RpcMutex mLock;
     std::set<sp<RpcServerLink>> mRpcServerLinks;
-    BpBinder::ObjectManager mObjects;
+    BpBinder::ObjectManager mObjectMgr;
 
     unique_fd mRecordingFd;
 };
@@ -468,7 +468,7 @@ void* BBinder::attachObject(const void* objectID, void* object, void* cleanupCoo
     LOG_ALWAYS_FATAL_IF(!e, "no memory");
 
     RpcMutexUniqueLock _l(e->mLock);
-    return e->mObjects.attach(objectID, object, cleanupCookie, func);
+    return e->mObjectMgr.attach(objectID, object, cleanupCookie, func);
 }
 
 void* BBinder::findObject(const void* objectID) const
@@ -477,7 +477,7 @@ void* BBinder::findObject(const void* objectID) const
     if (!e) return nullptr;
 
     RpcMutexUniqueLock _l(e->mLock);
-    return e->mObjects.find(objectID);
+    return e->mObjectMgr.find(objectID);
 }
 
 void* BBinder::detachObject(const void* objectID) {
@@ -485,7 +485,7 @@ void* BBinder::detachObject(const void* objectID) {
     if (!e) return nullptr;
 
     RpcMutexUniqueLock _l(e->mLock);
-    return e->mObjects.detach(objectID);
+    return e->mObjectMgr.detach(objectID);
 }
 
 void BBinder::withLock(const std::function<void()>& doWithLock) {
@@ -501,7 +501,7 @@ sp<IBinder> BBinder::lookupOrCreateWeak(const void* objectID, object_make_func m
     Extras* e = getOrCreateExtras();
     LOG_ALWAYS_FATAL_IF(!e, "no memory");
     RpcMutexUniqueLock _l(e->mLock);
-    return e->mObjects.lookupOrCreateWeak(objectID, make, makeArgs);
+    return e->mObjectMgr.lookupOrCreateWeak(objectID, make, makeArgs);
 }
 
 BBinder* BBinder::localBinder()

@@ -1293,10 +1293,6 @@ status_t Parcel::writeUniqueFileDescriptorVector(const std::vector<unique_fd>& v
 status_t Parcel::writeUniqueFileDescriptorVector(const std::optional<std::vector<unique_fd>>& val) {
     return writeData(val);
 }
-status_t Parcel::writeUniqueFileDescriptorVector(
-        const std::unique_ptr<std::vector<unique_fd>>& val) {
-    return writeData(val);
-}
 
 status_t Parcel::writeStrongBinderVector(const std::vector<sp<IBinder>>& val) { return writeData(val); }
 status_t Parcel::writeStrongBinderVector(const std::optional<std::vector<sp<IBinder>>>& val) { return writeData(val); }
@@ -1350,10 +1346,6 @@ status_t Parcel::readUtf8VectorFromUtf16Vector(
 status_t Parcel::readUtf8VectorFromUtf16Vector(std::vector<std::string>* val) const { return readData(val); }
 
 status_t Parcel::readUniqueFileDescriptorVector(std::optional<std::vector<unique_fd>>* val) const {
-    return readData(val);
-}
-status_t Parcel::readUniqueFileDescriptorVector(
-        std::unique_ptr<std::vector<unique_fd>>* val) const {
     return readData(val);
 }
 status_t Parcel::readUniqueFileDescriptorVector(std::vector<unique_fd>* val) const {
@@ -3397,14 +3389,6 @@ void Parcel::scanForFds() const {
 }
 
 #ifdef BINDER_WITH_KERNEL_IPC
-size_t Parcel::getBlobAshmemSize() const
-{
-    // This used to return the size of all blobs that were written to ashmem, now we're returning
-    // the ashmem currently referenced by this Parcel, which should be equivalent.
-    // TODO(b/202029388): Remove method once ABI can be changed.
-    return getOpenAshmemSize();
-}
-
 size_t Parcel::getOpenAshmemSize() const
 {
     auto* kernelFields = maybeKernelFields();

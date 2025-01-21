@@ -61,7 +61,7 @@ TEST_F(CompositionEngineTest, canInstantiateCompositionEngine) {
 
 TEST_F(CompositionEngineTest, canSetHWComposer) {
     android::mock::HWComposer* hwc = new StrictMock<android::mock::HWComposer>();
-    mEngine.setHwComposer(std::unique_ptr<android::HWComposer>(hwc));
+    mEngine.setHwComposer(static_cast<android::HWComposer*>(hwc));
 
     EXPECT_EQ(hwc, &mEngine.getHwComposer());
 }

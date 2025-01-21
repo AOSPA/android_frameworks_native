@@ -20,6 +20,7 @@
 #include <compositionengine/RenderSurface.h>
 #include <compositionengine/impl/Output.h>
 #include <ui/Rect.h>
+#include <unordered_map>
 
 #include "RenderArea.h"
 
@@ -65,6 +66,7 @@ protected:
             const std::shared_ptr<renderengine::ExternalTexture>& buffer) const override;
 
 private:
+    std::unordered_map<int32_t, aidl::android::hardware::graphics::composer3::Luts> generateLuts();
     const RenderArea& mRenderArea;
     const compositionengine::Output::ColorProfile& mColorProfile;
     const bool mRegionSampling;

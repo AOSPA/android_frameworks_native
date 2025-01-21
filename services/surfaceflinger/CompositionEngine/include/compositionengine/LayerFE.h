@@ -36,6 +36,10 @@
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
 
+namespace aidl::android::hardware::graphics::composer3 {
+enum class Composition;
+}
+
 namespace android {
 
 class Fence;
@@ -131,6 +135,9 @@ public:
 
         // Currently latched frame number, 0 if invalid.
         uint64_t frameNumber = 0;
+
+        // layer serial number, -1 if invalid.
+        int32_t sequence = -1;
     };
 
     // Describes the states of the release fence. Checking the states allows checks
@@ -173,6 +180,11 @@ public:
     // Whether the layer should be rendered with rounded corners.
     virtual bool hasRoundedCorners() const = 0;
     virtual void setWasClientComposed(const sp<Fence>&) {}
+    virtual void setHwcCompositionType(
+            aidl::android::hardware::graphics::composer3::Composition) = 0;
+    virtual aidl::android::hardware::graphics::composer3::Composition getHwcCompositionType()
+            const = 0;
+
     virtual const gui::LayerMetadata* getMetadata() const = 0;
     virtual const gui::LayerMetadata* getRelativeMetadata() const = 0;
 

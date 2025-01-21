@@ -567,6 +567,15 @@ public:
         Transaction& setCrop(const sp<SurfaceControl>& sc, const Rect& crop);
         Transaction& setCrop(const sp<SurfaceControl>& sc, const FloatRect& crop);
         Transaction& setCornerRadius(const sp<SurfaceControl>& sc, float cornerRadius);
+        // Sets the client drawn corner radius for the layer. If both a corner radius and a client
+        // radius are sent to SF, the client radius will be used. This indicates that the corner
+        // radius is drawn by the client and not SurfaceFlinger.
+        Transaction& setClientDrawnCornerRadius(const sp<SurfaceControl>& sc,
+                                                float clientDrawnCornerRadius);
+        // Sets the client drawn shadow radius for the layer. This indicates that the shadows
+        // are drawn by the client and not SurfaceFlinger.
+        Transaction& setClientDrawnShadowRadius(const sp<SurfaceControl>& sc,
+                                                float clientDrawnShadowRadius);
         Transaction& setBackgroundBlurRadius(const sp<SurfaceControl>& sc,
                                              int backgroundBlurRadius);
         Transaction& setBlurRegions(const sp<SurfaceControl>& sc,

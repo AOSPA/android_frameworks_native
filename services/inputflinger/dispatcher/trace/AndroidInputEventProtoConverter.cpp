@@ -115,13 +115,17 @@ void AndroidInputEventProtoConverter::toProtoWindowDispatchEvent(
         for (size_t i = 0; i < motion->pointerProperties.size(); i++) {
             auto* pointerProto = outProto.add_dispatched_pointer();
             pointerProto->set_pointer_id(motion->pointerProperties[i].id);
+            const auto& coords = motion->pointerCoords[i];
             const auto rawXY =
                     MotionEvent::calculateTransformedXY(motion->source, args.rawTransform,
-                                                        motion->pointerCoords[i].getXYValue());
-            pointerProto->set_x_in_display(rawXY.x);
-            pointerProto->set_y_in_display(rawXY.y);
+                                                        coords.getXYValue());
+            if (coords.getXYValue() != rawXY) {
+                // These values are only traced if they were modified by the raw transform
+                // to save space. Trace consumers should be aware of this optimization.
+                pointerProto->set_x_in_display(rawXY.x);
+                pointerProto->set_y_in_display(rawXY.y);
+            }
 
-            const auto& coords = motion->pointerCoords[i];
             const auto coordsInWindow =
                     MotionEvent::calculateTransformedCoords(motion->source, motion->flags,
                                                             args.transform, coords);
@@ -129,6 +133,7 @@ void AndroidInputEventProtoConverter::toProtoWindowDispatchEvent(
             for (int32_t axisIndex = 0; !bits.isEmpty(); axisIndex++) {
                 const uint32_t axis = bits.clearFirstMarkedBit();
                 const float axisValueInWindow = coordsInWindow.values[axisIndex];
+                // Only values that are modified by the window transform are traced.
                 if (coords.values[axisIndex] != axisValueInWindow) {
                     auto* axisEntry = pointerProto->add_axis_value_in_window();
                     axisEntry->set_axis(axis);

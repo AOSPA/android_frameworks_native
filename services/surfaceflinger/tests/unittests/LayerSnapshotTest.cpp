@@ -28,6 +28,7 @@
 #include "ui/GraphicTypes.h"
 
 #include <com_android_graphics_libgui_flags.h>
+#include <cmath>
 
 #define UPDATE_AND_VERIFY(BUILDER, ...)                                    \
     ({                                                                     \
@@ -1423,6 +1424,93 @@ TEST_F(LayerSnapshotTest, setBufferCrop) {
     setBufferCrop(1, Rect());
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
     EXPECT_EQ(getSnapshot(1)->geomContentCrop, Rect(0, 0, 100, 100));
+}
+
+TEST_F(LayerSnapshotTest, setCornerRadius) {
+    static constexpr float RADIUS = 123.f;
+    setRoundedCorners(1, RADIUS);
+    setCrop(1, Rect{1000, 1000});
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot({.id = 1})->roundedCorner.radius.x, RADIUS);
+}
+
+TEST_F(LayerSnapshotTest, ignoreCornerRadius) {
+    static constexpr float RADIUS = 123.f;
+    setClientDrawnCornerRadius(1, RADIUS);
+    setRoundedCorners(1, RADIUS);
+    setCrop(1, Rect{1000, 1000});
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_TRUE(getSnapshot({.id = 1})->roundedCorner.hasClientDrawnRadius());
+    EXPECT_EQ(getSnapshot({.id = 1})->roundedCorner.radius.x, 0.f);
+}
+
+TEST_F(LayerSnapshotTest, childInheritsParentScaledSettings) {
+    // ROOT
+    // ├── 1 (crop rect set to contain child layer)
+    // │   ├── 11
+    static constexpr float RADIUS = 123.f;
+
+    setRoundedCorners(1, RADIUS);
+    FloatRect parentCropRect(1, 1, 999, 999);
+    setCrop(1, parentCropRect);
+    // Rotate surface by 90
+    setMatrix(11, 0.f, -1.f, 1.f, 0.f);
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+
+    ui::Transform t = getSnapshot({.id = 11})->localTransform.inverse();
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot({.id = 11})->roundedCorner.cropRect, t.transform(parentCropRect));
+    EXPECT_EQ(getSnapshot({.id = 11})->roundedCorner.radius.x, RADIUS * t.getScaleX());
+    EXPECT_EQ(getSnapshot({.id = 11})->roundedCorner.radius.y, RADIUS * t.getScaleY());
+    EXPECT_EQ(getSnapshot({.id = 11})->roundedCorner.requestedRadius.x, RADIUS * t.getScaleX());
+    EXPECT_EQ(getSnapshot({.id = 11})->roundedCorner.requestedRadius.y, RADIUS * t.getScaleY());
+}
+
+TEST_F(LayerSnapshotTest, childInheritsParentClientDrawnCornerRadius) {
+    // ROOT
+    // ├── 1 (crop rect set to contain child layers )
+    // │   ├── 11
+    // │   │   └── 111
+
+    static constexpr float RADIUS = 123.f;
+
+    setClientDrawnCornerRadius(1, RADIUS);
+    setRoundedCorners(1, RADIUS);
+    setCrop(1, Rect(1, 1, 999, 999));
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_TRUE(getSnapshot({.id = 1})->roundedCorner.hasClientDrawnRadius());
+    EXPECT_TRUE(getSnapshot({.id = 11})->roundedCorner.hasRoundedCorners());
+    EXPECT_EQ(getSnapshot({.id = 11})->roundedCorner.radius.x, RADIUS);
+}
+
+TEST_F(LayerSnapshotTest, childIgnoreCornerRadiusOverridesParent) {
+    // ROOT
+    // ├── 1 (crop rect set to contain child layers )
+    // │   ├── 11
+    // │   │   └── 111
+
+    static constexpr float RADIUS = 123.f;
+
+    setRoundedCorners(1, RADIUS);
+    setCrop(1, Rect(1, 1, 999, 999));
+
+    setClientDrawnCornerRadius(11, RADIUS);
+
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot({.id = 1})->roundedCorner.radius.x, RADIUS);
+    EXPECT_EQ(getSnapshot({.id = 11})->roundedCorner.radius.x, 0.f);
+    EXPECT_EQ(getSnapshot({.id = 111})->roundedCorner.radius.x, RADIUS);
+}
+
+TEST_F(LayerSnapshotTest, ignoreShadows) {
+    static constexpr float SHADOW_RADIUS = 123.f;
+    setClientDrawnShadowRadius(1, SHADOW_RADIUS);
+    setShadowRadius(1, SHADOW_RADIUS);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot({.id = 1})->shadowSettings.length, 0.f);
 }
 
 TEST_F(LayerSnapshotTest, setShadowRadius) {

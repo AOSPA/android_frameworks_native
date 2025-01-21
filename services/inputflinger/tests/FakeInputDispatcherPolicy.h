@@ -28,11 +28,13 @@
 #include <optional>
 #include <queue>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <android-base/logging.h>
 #include <android-base/thread_annotations.h>
 #include <binder/IBinder.h>
+#include <dispatcher/Entry.h>
 #include <gui/PidUid.h>
 #include <gui/WindowInfo.h>
 #include <input/BlockingQueue.h>
@@ -189,7 +191,8 @@ private:
     void interceptKeyBeforeQueueing(const KeyEvent& inputEvent, uint32_t&) override;
     void interceptMotionBeforeQueueing(ui::LogicalDisplayId, uint32_t, int32_t, nsecs_t,
                                        uint32_t&) override;
-    nsecs_t interceptKeyBeforeDispatching(const sp<IBinder>&, const KeyEvent&, uint32_t) override;
+    std::variant<nsecs_t, inputdispatcher::KeyEntry::InterceptKeyResult>
+    interceptKeyBeforeDispatching(const sp<IBinder>&, const KeyEvent&, uint32_t) override;
     std::optional<KeyEvent> dispatchUnhandledKey(const sp<IBinder>&, const KeyEvent& event,
                                                  uint32_t) override;
     void notifySwitch(nsecs_t when, uint32_t switchValues, uint32_t switchMask,

@@ -23,6 +23,7 @@
 
 #include "InputMapperTest.h"
 #include "InterfaceMocks.h"
+#include "ScopedFlagOverride.h"
 #include "TestEventMatchers.h"
 
 #define TAG "MultiTouchpadInputMapperUnit_test"
@@ -30,6 +31,7 @@
 namespace android {
 
 using testing::_;
+using testing::AllOf;
 using testing::IsEmpty;
 using testing::Return;
 using testing::SetArgPointee;
@@ -264,6 +266,96 @@ TEST_F(MultiTouchInputMapperUnitTest, MultiFingerGestureWithUnexpectedReset) {
     ASSERT_THAT(args,
                 ElementsAre(
                         VariantWith<NotifyMotionArgs>(WithMotionAction(AMOTION_EVENT_ACTION_UP))));
+}
+
+class MultiTouchInputMapperPointerModeUnitTest : public MultiTouchInputMapperUnitTest {
+protected:
+    void SetUp() override {
+        MultiTouchInputMapperUnitTest::SetUp();
+
+        // TouchInputMapper goes into POINTER mode whenever INPUT_PROP_DIRECT is not set.
+        EXPECT_CALL(mMockEventHub, hasInputProperty(EVENTHUB_ID, INPUT_PROP_DIRECT))
+                .WillRepeatedly(Return(false));
+
+        mMapper = createInputMapper<MultiTouchInputMapper>(*mDeviceContext,
+                                                           mFakePolicy->getReaderConfiguration());
+    }
+};
+
+TEST_F(MultiTouchInputMapperPointerModeUnitTest, MouseToolOnlyDownWhenMouseButtonsAreDown) {
+    SCOPED_FLAG_OVERRIDE(disable_touch_input_mapper_pointer_usage, true);
+
+    std::list<NotifyArgs> args;
+
+    // Set the tool type to mouse.
+    args += processKey(BTN_TOOL_MOUSE, 1);
+
+    args += processPosition(100, 100);
+    args += processId(1);
+    ASSERT_THAT(args, IsEmpty());
+
+    args = processSync();
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_ENTER),
+                                          WithToolType(ToolType::MOUSE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
+                                          WithToolType(ToolType::MOUSE)))));
+
+    // Setting BTN_TOUCH does not make a mouse pointer go down.
+    args = processKey(BTN_TOUCH, 1);
+    args += processSync();
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                        WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE))));
+
+    // The mouse button is pressed, so the mouse goes down.
+    args = processKey(BTN_MOUSE, 1);
+    args += processSync();
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_EXIT),
+                                          WithToolType(ToolType::MOUSE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                                          WithToolType(ToolType::MOUSE),
+                                          WithButtonState(AMOTION_EVENT_BUTTON_PRIMARY))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS),
+                                          WithToolType(ToolType::MOUSE),
+                                          WithButtonState(AMOTION_EVENT_BUTTON_PRIMARY),
+                                          WithActionButton(AMOTION_EVENT_BUTTON_PRIMARY)))));
+
+    // The mouse button is released, so the mouse starts hovering.
+    args = processKey(BTN_MOUSE, 0);
+    args += processSync();
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_RELEASE),
+                                          WithButtonState(0), WithToolType(ToolType::MOUSE),
+                                          WithActionButton(AMOTION_EVENT_BUTTON_PRIMARY))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_UP),
+                                          WithToolType(ToolType::MOUSE), WithButtonState(0))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_ENTER),
+                                          WithToolType(ToolType::MOUSE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_MOVE),
+                                          WithToolType(ToolType::MOUSE)))));
+
+    // Change the tool type so that it is no longer a mouse.
+    // The default tool type is finger, and the finger is already down.
+    args = processKey(BTN_TOOL_MOUSE, 0);
+    args += processSync();
+    ASSERT_THAT(args,
+                ElementsAre(VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_HOVER_EXIT),
+                                          WithToolType(ToolType::MOUSE))),
+                            VariantWith<NotifyMotionArgs>(
+                                    AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN),
+                                          WithToolType(ToolType::FINGER)))));
 }
 
 } // namespace android

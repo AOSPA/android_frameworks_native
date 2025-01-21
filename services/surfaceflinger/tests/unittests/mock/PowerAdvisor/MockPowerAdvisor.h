@@ -65,6 +65,10 @@ public:
     MOCK_METHOD(void, setTotalFrameTargetWorkDuration, (Duration targetDuration), (override));
     MOCK_METHOD(std::shared_ptr<SessionManager>, getSessionManager, (), (override));
     MOCK_METHOD(sp<IBinder>, getOrCreateSessionManagerForBinder, (uid_t uid), (override));
+    MOCK_METHOD(void, setQueuedWorkload, (ftl::Flags<Workload> workload), (override));
+    MOCK_METHOD(void, setScreenshotWorkload, (), (override));
+    MOCK_METHOD(void, setCommittedWorkload, (ftl::Flags<Workload> workload), (override));
+    MOCK_METHOD(void, setCompositedWorkload, (ftl::Flags<Workload> workload), (override));
 };
 
 } // namespace android::adpf::mock

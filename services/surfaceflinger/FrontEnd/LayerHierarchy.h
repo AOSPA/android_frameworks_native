@@ -102,6 +102,8 @@ public:
         // Returns true if the node is a clone.
         bool isClone() const { return !mirrorRootIds.empty(); }
 
+        TraversalPath getClonedFrom() const { return {.id = id, .variant = variant}; }
+
         bool operator==(const TraversalPath& other) const {
             return id == other.id && mirrorRootIds == other.mirrorRootIds;
         }

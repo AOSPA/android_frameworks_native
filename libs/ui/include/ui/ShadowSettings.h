@@ -46,6 +46,9 @@ struct ShadowSettings {
     // Length of the cast shadow. If length is <= 0.f no shadows will be drawn.
     float length = 0.f;
 
+    // Length of the cast shadow that is drawn by the client.
+    float clientDrawnLength = 0.f;
+
     // If true fill in the casting layer is translucent and the shadow needs to fill the bounds.
     // Otherwise the shadow will only be drawn around the edges of the casting layer.
     bool casterIsTranslucent = false;
@@ -55,6 +58,7 @@ static inline bool operator==(const ShadowSettings& lhs, const ShadowSettings& r
     return lhs.boundaries == rhs.boundaries && lhs.ambientColor == rhs.ambientColor &&
             lhs.spotColor == rhs.spotColor && lhs.lightPos == rhs.lightPos &&
             lhs.lightRadius == rhs.lightRadius && lhs.length == rhs.length &&
+            lhs.clientDrawnLength == rhs.clientDrawnLength &&
             lhs.casterIsTranslucent == rhs.casterIsTranslucent;
 }
 

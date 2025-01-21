@@ -138,4 +138,7 @@ flag {
   description: "Remove BufferQueueProducer::dequeue's wait on this fence (or the fence entirely) to prevent deadlocks"
   bug: "339705065"
   is_fixed_read_only: true
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
 } # bq_gl_fence_cleanup

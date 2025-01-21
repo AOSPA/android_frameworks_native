@@ -235,6 +235,8 @@ struct layer_state_t {
         eBufferReleaseChannelChanged = 0x40000'00000000,
         ePictureProfileHandleChanged = 0x80000'00000000,
         eAppContentPriorityChanged = 0x100000'00000000,
+        eClientDrawnCornerRadiusChanged = 0x200000'00000000,
+        eClientDrawnShadowsChanged = 0x400000'00000000,
     };
 
     layer_state_t();
@@ -255,9 +257,9 @@ struct layer_state_t {
     // Geometry updates.
     static constexpr uint64_t GEOMETRY_CHANGES = layer_state_t::eBufferCropChanged |
             layer_state_t::eBufferTransformChanged | layer_state_t::eCornerRadiusChanged |
-            layer_state_t::eCropChanged | layer_state_t::eDestinationFrameChanged |
-            layer_state_t::eMatrixChanged | layer_state_t::ePositionChanged |
-            layer_state_t::eTransformToDisplayInverseChanged |
+            layer_state_t::eClientDrawnCornerRadiusChanged | layer_state_t::eCropChanged |
+            layer_state_t::eDestinationFrameChanged | layer_state_t::eMatrixChanged |
+            layer_state_t::ePositionChanged | layer_state_t::eTransformToDisplayInverseChanged |
             layer_state_t::eTransparentRegionChanged | layer_state_t::eEdgeExtensionChanged;
 
     // Buffer and related updates.
@@ -278,8 +280,8 @@ struct layer_state_t {
             layer_state_t::eColorSpaceAgnosticChanged | layer_state_t::eColorTransformChanged |
             layer_state_t::eCornerRadiusChanged | layer_state_t::eDimmingEnabledChanged |
             layer_state_t::eHdrMetadataChanged | layer_state_t::eShadowRadiusChanged |
-            layer_state_t::eStretchChanged | layer_state_t::ePictureProfileHandleChanged |
-            layer_state_t::eAppContentPriorityChanged;
+            layer_state_t::eClientDrawnShadowsChanged | layer_state_t::eStretchChanged |
+            layer_state_t::ePictureProfileHandleChanged | layer_state_t::eAppContentPriorityChanged;
 
     // Changes which invalidates the layer's visible region in CE.
     static constexpr uint64_t CONTENT_DIRTY = layer_state_t::CONTENT_CHANGES |
@@ -303,6 +305,11 @@ struct layer_state_t {
     // Changes that affect the visible region on a display.
     static constexpr uint64_t VISIBLE_REGION_CHANGES = layer_state_t::GEOMETRY_CHANGES |
             layer_state_t::HIERARCHY_CHANGES | layer_state_t::eAlphaChanged;
+
+    // Changes that force GPU composition.
+    static constexpr uint64_t COMPOSITION_EFFECTS = layer_state_t::eBackgroundBlurRadiusChanged |
+            layer_state_t::eBlurRegionsChanged | layer_state_t::eCornerRadiusChanged |
+            layer_state_t::eShadowRadiusChanged | layer_state_t::eStretchChanged;
 
     bool hasValidBuffer() const;
     void sanitize(int32_t permissions);
@@ -332,6 +339,8 @@ struct layer_state_t {
     uint8_t reserved;
     matrix22_t matrix;
     float cornerRadius;
+    float clientDrawnCornerRadius;
+    float clientDrawnShadowRadius;
     uint32_t backgroundBlurRadius;
 
     sp<SurfaceControl> relativeLayerSurfaceControl;

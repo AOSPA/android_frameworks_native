@@ -21,6 +21,7 @@ cc_test {
         "enum_test.cpp",
         "expected_test.cpp",
         "fake_guard_test.cpp",
+        "finalizer_test.cpp",
         "flags_test.cpp",
         "function_test.cpp",
         "future_test.cpp",

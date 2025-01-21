@@ -484,7 +484,7 @@ void CursorInputMapper::configureOnChangePointerSpeed(const InputReaderConfigura
         return;
     }
 
-    bool disableAllScaling = config.displaysWithMousePointerAccelerationDisabled.count(
+    bool disableAllScaling = config.displaysWithMouseScalingDisabled.count(
                                      mDisplayId.value_or(ui::LogicalDisplayId::INVALID)) != 0;
 
     mPointerVelocityControl.setAccelerationEnabled(!disableAllScaling);

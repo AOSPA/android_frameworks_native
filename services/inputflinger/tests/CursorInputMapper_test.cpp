@@ -1078,7 +1078,7 @@ TEST_F(CursorInputMapperUnitTest, ConfigureAccelerationWithAssociatedViewport) {
     ASSERT_GT(coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y), 20.f);
 
     // Disable acceleration for the display, and verify that acceleration is no longer applied.
-    mReaderConfiguration.displaysWithMousePointerAccelerationDisabled.emplace(DISPLAY_ID);
+    mReaderConfiguration.displaysWithMouseScalingDisabled.emplace(DISPLAY_ID);
     args += mMapper->reconfigure(ARBITRARY_TIME, mReaderConfiguration,
                                  InputReaderConfiguration::Change::POINTER_SPEED);
     args.clear();
@@ -1097,7 +1097,7 @@ TEST_F(CursorInputMapperUnitTest, ConfigureAccelerationOnDisplayChange) {
     DisplayViewport primaryViewport = createPrimaryViewport(ui::Rotation::Rotation0);
     mReaderConfiguration.setDisplayViewports({primaryViewport});
     // Disable acceleration for the display.
-    mReaderConfiguration.displaysWithMousePointerAccelerationDisabled.emplace(DISPLAY_ID);
+    mReaderConfiguration.displaysWithMouseScalingDisabled.emplace(DISPLAY_ID);
 
     // Don't associate the device with the display yet.
     EXPECT_CALL((*mDevice), getAssociatedViewport).WillRepeatedly(Return(std::nullopt));

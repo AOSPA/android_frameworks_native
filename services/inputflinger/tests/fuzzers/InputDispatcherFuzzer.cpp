@@ -76,7 +76,6 @@ void scrambleWindow(FuzzedDataProvider& fdp, FakeWindowHandle& window) {
     window.setDupTouchToWallpaper(fdp.ConsumeBool());
     window.setIsWallpaper(fdp.ConsumeBool());
     window.setVisible(fdp.ConsumeBool());
-    window.setPreventSplitting(fdp.ConsumeBool());
     const bool isTrustedOverlay = fdp.ConsumeBool();
     window.setTrustedOverlay(isTrustedOverlay);
     if (isTrustedOverlay) {

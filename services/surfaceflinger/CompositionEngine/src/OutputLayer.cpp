@@ -883,6 +883,7 @@ void OutputLayer::writeCompositionTypeToHWC(HWC2::Layer* hwcLayer,
     if (outputDependentState.hwc->hwcCompositionType != requestedCompositionType ||
         (outputDependentState.hwc->layerSkipped && !skipLayer)) {
         outputDependentState.hwc->hwcCompositionType = requestedCompositionType;
+        getLayerFE().setHwcCompositionType(requestedCompositionType);
 
         if (auto error = hwcLayer->setCompositionType(requestedCompositionType);
             error != hal::Error::NONE) {
@@ -980,6 +981,7 @@ void OutputLayer::applyDeviceCompositionTypeChange(Composition compositionType) 
     }
 
     hwcState.hwcCompositionType = compositionType;
+    getLayerFE().setHwcCompositionType(compositionType);
 }
 
 void OutputLayer::prepareForDeviceLayerRequests() {

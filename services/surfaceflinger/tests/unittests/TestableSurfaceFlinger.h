@@ -184,8 +184,8 @@ public:
     }
 
     void setupComposer(std::unique_ptr<Hwc2::Composer> composer) {
-        mFlinger->mCompositionEngine->setHwComposer(
-                std::make_unique<impl::HWComposer>(std::move(composer)));
+        mFlinger->mHWComposer = std::make_unique<impl::HWComposer>(std::move(composer));
+        mFlinger->mCompositionEngine->setHwComposer(mFlinger->mHWComposer.get());
         mFlinger->mDisplayModeController.setHwComposer(
                 &mFlinger->mCompositionEngine->getHwComposer());
     }
@@ -771,7 +771,8 @@ public:
         mutableCurrentState().displays.clear();
         mutableDrawingState().displays.clear();
         mFlinger->mScheduler.reset();
-        mFlinger->mCompositionEngine->setHwComposer(std::unique_ptr<HWComposer>());
+        mFlinger->mHWComposer = std::unique_ptr<HWComposer>();
+        mFlinger->mCompositionEngine->setHwComposer(mFlinger->mHWComposer.get());
         mFlinger->mRenderEngine = std::unique_ptr<renderengine::RenderEngine>();
         mFlinger->mCompositionEngine->setRenderEngine(mFlinger->mRenderEngine.get());
         mFlinger->mTransactionTracing.reset();
