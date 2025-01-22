@@ -30,6 +30,7 @@
 
 #include <android-base/stringprintf.h>
 #include <android/input.h>
+#include <com_android_input_flags.h>
 #include <ftl/enum.h>
 #include <input/PrintTools.h>
 #include <input/PropertyMap.h>
@@ -46,6 +47,8 @@
 #include "ui/Rotation.h"
 
 namespace android {
+
+namespace input_flags = com::android::input::flags;
 
 // --- Constants ---
 
@@ -1575,7 +1578,8 @@ std::list<NotifyArgs> TouchInputMapper::cookAndDispatch(nsecs_t when, nsecs_t re
                                 mLastCookedState.buttonState, mCurrentCookedState.buttonState);
 
     // Dispatch the touches either directly or by translation through a pointer on screen.
-    if (mDeviceMode == DeviceMode::POINTER) {
+    if (!input_flags::disable_touch_input_mapper_pointer_usage() &&
+        mDeviceMode == DeviceMode::POINTER) {
         for (BitSet32 idBits(mCurrentRawState.rawPointerData.touchingIdBits); !idBits.isEmpty();) {
             uint32_t id = idBits.clearFirstMarkedBit();
             const RawPointerData::Pointer& pointer =
@@ -1613,7 +1617,9 @@ std::list<NotifyArgs> TouchInputMapper::cookAndDispatch(nsecs_t when, nsecs_t re
         }
 
         out += dispatchPointerUsage(when, readTime, policyFlags, pointerUsage);
-    } else {
+    }
+    if (input_flags::disable_touch_input_mapper_pointer_usage() ||
+        mDeviceMode != DeviceMode::POINTER) {
         if (!mCurrentMotionAborted) {
             out += dispatchButtonRelease(when, readTime, policyFlags);
             out += dispatchHoverExit(when, readTime, policyFlags);
@@ -2251,6 +2257,23 @@ void TouchInputMapper::cookPointerData() {
     for (uint32_t i = 0; i < currentPointerCount; i++) {
         const RawPointerData::Pointer& in = mCurrentRawState.rawPointerData.pointers[i];
 
+        bool isHovering = in.isHovering;
+
+        // A tool MOUSE pointer is only down/touching when a mouse button is pressed.
+        if (input_flags::disable_touch_input_mapper_pointer_usage() &&
+            in.toolType == ToolType::MOUSE &&
+            !mCurrentRawState.rawPointerData.canceledIdBits.hasBit(in.id)) {
+            if (isPointerDown(mCurrentRawState.buttonState)) {
+                isHovering = false;
+                mCurrentCookedState.cookedPointerData.touchingIdBits.markBit(in.id);
+                mCurrentCookedState.cookedPointerData.hoveringIdBits.clearBit(in.id);
+            } else {
+                isHovering = true;
+                mCurrentCookedState.cookedPointerData.touchingIdBits.clearBit(in.id);
+                mCurrentCookedState.cookedPointerData.hoveringIdBits.markBit(in.id);
+            }
+        }
+
         // Size
         float touchMajor, touchMinor, toolMajor, toolMinor, size;
         switch (mCalibration.sizeCalibration) {
@@ -2340,7 +2363,7 @@ void TouchInputMapper::cookPointerData() {
                 pressure = in.pressure * mPressureScale;
                 break;
             default:
-                pressure = in.isHovering ? 0 : 1;
+                pressure = isHovering ? 0 : 1;
                 break;
         }
 
@@ -3476,7 +3499,7 @@ std::list<NotifyArgs> TouchInputMapper::dispatchPointerMouse(nsecs_t when, nsecs
     }
 
     return dispatchPointerSimple(when, readTime, policyFlags, down, hovering,
-                                 ui::LogicalDisplayId::INVALID);
+                                 getAssociatedDisplayId().value_or(ui::LogicalDisplayId::INVALID));
 }
 
 std::list<NotifyArgs> TouchInputMapper::abortPointerMouse(nsecs_t when, nsecs_t readTime,
@@ -3697,7 +3720,10 @@ NotifyMotionArgs TouchInputMapper::dispatchMotion(
     float xCursorPosition = AMOTION_EVENT_INVALID_CURSOR_POSITION;
     float yCursorPosition = AMOTION_EVENT_INVALID_CURSOR_POSITION;
     if (mDeviceMode == DeviceMode::POINTER) {
-        xCursorPosition = yCursorPosition = 0.f;
+        ALOGW_IF(pointerCount != 1,
+                 "Only single pointer events are fully supported in POINTER mode");
+        xCursorPosition = pointerCoords[0].getX();
+        yCursorPosition = pointerCoords[0].getY();
     }
     const DeviceId deviceId = getDeviceId();
     std::vector<TouchVideoFrame> frames = getDeviceContext().getVideoFrames();
@@ -3967,14 +3993,8 @@ bool TouchInputMapper::markSupportedKeyCodes(uint32_t sourceMask,
 }
 
 std::optional<ui::LogicalDisplayId> TouchInputMapper::getAssociatedDisplayId() {
-    if (mParameters.hasAssociatedDisplay) {
-        if (mDeviceMode == DeviceMode::POINTER) {
-            return ui::LogicalDisplayId::INVALID;
-        } else {
-            return std::make_optional(mViewport.displayId);
-        }
-    }
-    return std::nullopt;
+    return mParameters.hasAssociatedDisplay ? std::make_optional(mViewport.displayId)
+                                            : std::nullopt;
 }
 
 } // namespace android

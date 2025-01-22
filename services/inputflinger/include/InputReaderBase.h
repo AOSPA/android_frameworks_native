@@ -143,7 +143,7 @@ struct InputReaderConfiguration {
     // user's pointer speed setting, should be disabled for mice. This differs from
     // disabling acceleration via the 'mousePointerAccelerationEnabled' setting, where
     // the pointer speed setting still influences the scaling factor.
-    std::set<ui::LogicalDisplayId> displaysWithMousePointerAccelerationDisabled;
+    std::set<ui::LogicalDisplayId> displaysWithMouseScalingDisabled;
 
     // True if the connected mouse should exhibit pointer acceleration. If false,
     // a flat acceleration curve (linear scaling) is used, but the user's pointer
@@ -282,7 +282,7 @@ struct InputReaderConfiguration {
           : virtualKeyQuietTime(0),
             defaultPointerDisplayId(ui::LogicalDisplayId::DEFAULT),
             mousePointerSpeed(0),
-            displaysWithMousePointerAccelerationDisabled(),
+            displaysWithMouseScalingDisabled(),
             mousePointerAccelerationEnabled(true),
             pointerVelocityControlParameters(1.0f, 500.0f, 3000.0f,
                                              static_cast<float>(

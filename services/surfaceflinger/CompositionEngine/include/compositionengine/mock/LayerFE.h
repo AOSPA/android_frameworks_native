@@ -59,6 +59,10 @@ public:
     MOCK_CONST_METHOD0(getMetadata, gui::LayerMetadata*());
     MOCK_CONST_METHOD0(getRelativeMetadata, gui::LayerMetadata*());
     MOCK_METHOD0(onPictureProfileCommitted, void());
+    MOCK_METHOD(void, setHwcCompositionType,
+                (aidl::android::hardware::graphics::composer3::Composition), (override));
+    MOCK_METHOD(aidl::android::hardware::graphics::composer3::Composition, getHwcCompositionType,
+                (), (const, override));
 
     /* QTI_BEGIN */
     MOCK_CONST_METHOD0(getLayerId, int32_t());

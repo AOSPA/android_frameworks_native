@@ -37,9 +37,9 @@ flag {
 }
 
 flag {
-  name: "split_all_touches"
+  name: "deprecate_split_touch_apis"
   namespace: "input"
-  description: "Set FLAG_SPLIT_TOUCHES to true for all windows, regardless of what they specify. This is essentially deprecating this flag by forcefully enabling the split functionality"
+  description: "Deprecate all public APIs related to split touch because now all windows behave as if split touch is permanently enabled and there's no way for a window to disable split touch."
   bug: "239934827"
 }
 
@@ -188,6 +188,16 @@ flag {
 }
 
 flag {
+  name: "disable_touch_input_mapper_pointer_usage"
+  namespace: "input"
+  description: "Disable the PointerUsage concept in TouchInputMapper since the old touchpad stack is no longer used."
+  bug: "281840344"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
   name: "keyboard_repeat_keys"
   namespace: "input"
   description: "Allow user to enable key repeats or configure timeout before key repeat and key repeat delay rates."
@@ -223,4 +233,14 @@ flag {
   namespace: "lse_desktop_experience"
   description: "Allow cursor to transition across multiple connected displays"
   bug: "362719483"
+}
+
+flag {
+  name: "use_cloned_screen_coordinates_as_raw"
+  namespace: "input"
+  description: "Use the cloned window's layer stack (screen) space as the raw coordinate space for input going to clones"
+  bug: "377846505"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
 }

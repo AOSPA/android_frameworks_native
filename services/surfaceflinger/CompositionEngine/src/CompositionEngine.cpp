@@ -58,11 +58,11 @@ CompositionEngine::createLayerFECompositionState() {
 }
 
 HWComposer& CompositionEngine::getHwComposer() const {
-    return *mHwComposer.get();
+    return *mHwComposer;
 }
 
-void CompositionEngine::setHwComposer(std::unique_ptr<HWComposer> hwComposer) {
-    mHwComposer = std::move(hwComposer);
+void CompositionEngine::setHwComposer(HWComposer* hwComposer) {
+    mHwComposer = hwComposer;
 }
 
 renderengine::RenderEngine& CompositionEngine::getRenderEngine() const {

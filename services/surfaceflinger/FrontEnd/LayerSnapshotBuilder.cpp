@@ -16,6 +16,8 @@
 
 // #define LOG_NDEBUG 0
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
+#include "FrontEnd/LayerSnapshot.h"
+#include "ui/Transform.h"
 #undef LOG_TAG
 #define LOG_TAG "SurfaceFlinger"
 
@@ -25,6 +27,7 @@
 #include <common/FlagManager.h>
 #include <common/trace.h>
 #include <ftl/small_map.h>
+#include <math/vec2.h>
 #include <ui/DisplayMap.h>
 #include <ui/FloatRect.h>
 
@@ -932,7 +935,8 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
 
     if (forceUpdate || snapshot.clientChanges & layer_state_t::eCornerRadiusChanged ||
         snapshot.changes.any(RequestedLayerState::Changes::Geometry |
-                             RequestedLayerState::Changes::BufferUsageFlags)) {
+                             RequestedLayerState::Changes::BufferUsageFlags) ||
+        snapshot.clientChanges & layer_state_t::eClientDrawnCornerRadiusChanged) {
         updateRoundedCorner(snapshot, requested, parentSnapshot, args);
     }
 
@@ -972,19 +976,27 @@ void LayerSnapshotBuilder::updateRoundedCorner(LayerSnapshot& snapshot,
     }
     snapshot.roundedCorner = RoundedCornerState();
     RoundedCornerState parentRoundedCorner;
-    if (parentSnapshot.roundedCorner.hasRoundedCorners()) {
+    if (parentSnapshot.roundedCorner.hasRequestedRadius()) {
         parentRoundedCorner = parentSnapshot.roundedCorner;
         ui::Transform t = snapshot.localTransform.inverse();
         parentRoundedCorner.cropRect = t.transform(parentRoundedCorner.cropRect);
         parentRoundedCorner.radius.x *= t.getScaleX();
         parentRoundedCorner.radius.y *= t.getScaleY();
+        parentRoundedCorner.requestedRadius.x *= t.getScaleX();
+        parentRoundedCorner.requestedRadius.y *= t.getScaleY();
     }
 
     FloatRect layerCropRect = snapshot.croppedBufferSize;
-    const vec2 radius(requested.cornerRadius, requested.cornerRadius);
-    RoundedCornerState layerSettings(layerCropRect, radius);
-    const bool layerSettingsValid = layerSettings.hasRoundedCorners() && !layerCropRect.isEmpty();
-    const bool parentRoundedCornerValid = parentRoundedCorner.hasRoundedCorners();
+    const vec2 requestedRadius(requested.cornerRadius, requested.cornerRadius);
+    const vec2 clientDrawnRadius(requested.clientDrawnCornerRadius,
+                                 requested.clientDrawnCornerRadius);
+    RoundedCornerState layerSettings;
+    layerSettings.cropRect = layerCropRect;
+    layerSettings.requestedRadius = requestedRadius;
+    layerSettings.clientDrawnRadius = clientDrawnRadius;
+
+    const bool layerSettingsValid = layerSettings.hasRequestedRadius() && !layerCropRect.isEmpty();
+    const bool parentRoundedCornerValid = parentRoundedCorner.hasRequestedRadius();
     if (layerSettingsValid && parentRoundedCornerValid) {
         // If the parent and the layer have rounded corner settings, use the parent settings if
         // the parent crop is entirely inside the layer crop. This has limitations and cause
@@ -1001,6 +1013,14 @@ void LayerSnapshotBuilder::updateRoundedCorner(LayerSnapshot& snapshot,
         snapshot.roundedCorner = layerSettings;
     } else if (parentRoundedCornerValid) {
         snapshot.roundedCorner = parentRoundedCorner;
+    }
+
+    if (snapshot.roundedCorner.requestedRadius.x == requested.clientDrawnCornerRadius) {
+        // If the client drawn radius matches the requested radius, then surfaceflinger
+        // does not need to draw rounded corners for this layer
+        snapshot.roundedCorner.radius = vec2(0.f, 0.f);
+    } else {
+        snapshot.roundedCorner.radius = snapshot.roundedCorner.requestedRadius;
     }
 }
 
@@ -1205,13 +1225,27 @@ void LayerSnapshotBuilder::updateInput(LayerSnapshot& snapshot,
     snapshot.inputInfo.contentSize = {snapshot.croppedBufferSize.getHeight(),
                                       snapshot.croppedBufferSize.getWidth()};
 
-    // If the layer is a clone, we need to crop the input region to cloned root to prevent
-    // touches from going outside the cloned area.
+    snapshot.inputInfo.cloneLayerStackTransform.reset();
+
     if (path.isClone()) {
         snapshot.inputInfo.inputConfig |= InputConfig::CLONE;
         // Cloned layers shouldn't handle watch outside since their z order is not determined by
         // WM or the client.
         snapshot.inputInfo.inputConfig.clear(InputConfig::WATCH_OUTSIDE_TOUCH);
+
+        // Compute the transform that maps the clone's display to the layer stack space of the
+        // cloned window.
+        const LayerSnapshot* clonedSnapshot = getSnapshot(path.getClonedFrom());
+        if (clonedSnapshot != nullptr) {
+            const auto& [clonedInputBounds, s] =
+                    getInputBounds(*clonedSnapshot, /*fillParentBounds=*/false);
+            ui::Transform inputToLayer;
+            inputToLayer.set(clonedInputBounds.left, clonedInputBounds.top);
+            const ui::Transform& layerToLayerStack = getInputTransform(*clonedSnapshot);
+            const auto& displayToInput = snapshot.inputInfo.transform;
+            snapshot.inputInfo.cloneLayerStackTransform =
+                    layerToLayerStack * inputToLayer * displayToInput;
+        }
     }
 }
 

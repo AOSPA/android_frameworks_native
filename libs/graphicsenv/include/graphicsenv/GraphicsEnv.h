@@ -114,7 +114,7 @@ public:
     // If shouldUseNativeDriver is true, it means native GLES drivers must be used for the process.
     // If path is set to nonempty and shouldUseNativeDriver is true, ANGLE will be used regardless.
     void setAngleInfo(const std::string& path, const bool shouldUseNativeDriver,
-                      const std::string& packageName, const std::vector<std::string> eglFeatures);
+                      const std::string& packageName, const std::vector<std::string>& eglFeatures);
     // Get the ANGLE driver namespace.
     android_namespace_t* getAngleNamespace();
     // Get the app package name.

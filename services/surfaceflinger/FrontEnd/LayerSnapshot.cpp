@@ -18,12 +18,17 @@
 #undef LOG_TAG
 #define LOG_TAG "SurfaceFlinger"
 
-#include "LayerSnapshot.h"
+#include <PowerAdvisor/Workload.h>
+#include <aidl/android/hardware/graphics/composer3/Composition.h>
+#include <gui/LayerState.h>
+
 #include "Layer.h"
+#include "LayerSnapshot.h"
 
 namespace android::surfaceflinger::frontend {
 
 using namespace ftl::flag_operators;
+using namespace aidl::android::hardware::graphics::composer3;
 
 namespace {
 
@@ -398,9 +403,13 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
     if (forceUpdate || requested.what & layer_state_t::eSidebandStreamChanged) {
         sidebandStream = requested.sidebandStream;
     }
-    if (forceUpdate || requested.what & layer_state_t::eShadowRadiusChanged) {
-        shadowSettings.length = requested.shadowRadius;
+    if (forceUpdate || requested.what & layer_state_t::eShadowRadiusChanged ||
+        requested.what & layer_state_t::eClientDrawnShadowsChanged) {
+        shadowSettings.length =
+                requested.clientDrawnShadowRadius > 0 ? 0.f : requested.shadowRadius;
+        shadowSettings.clientDrawnLength = requested.clientDrawnShadowRadius;
     }
+
     if (forceUpdate || requested.what & layer_state_t::eFrameRateSelectionPriority) {
         frameRateSelectionPriority = requested.frameRateSelectionPriority;
     }
@@ -525,6 +534,51 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
 
     if (forceUpdate || requested.what & layer_state_t::eLutsChanged) {
         luts = requested.luts;
+    }
+}
+
+char LayerSnapshot::classifyCompositionForDebug(Composition compositionType) const {
+    if (!isVisible) {
+        return '.';
+    }
+
+    switch (compositionType) {
+        case Composition::INVALID:
+            return 'i';
+        case Composition::SOLID_COLOR:
+            return 'c';
+        case Composition::CURSOR:
+            return 'u';
+        case Composition::SIDEBAND:
+            return 'd';
+        case Composition::DISPLAY_DECORATION:
+            return 'a';
+        case Composition::REFRESH_RATE_INDICATOR:
+            return 'r';
+        case Composition::CLIENT:
+        case Composition::DEVICE:
+            break;
+    }
+
+    char code = '.'; // Default to invisible
+    if (hasBufferOrSidebandStream()) {
+        code = 'b';
+    } else if (fillsColor()) {
+        code = 'c'; // Solid color
+    } else if (hasBlur()) {
+        code = 'l'; // Blur
+    } else if (hasProtectedContent) {
+        code = 'p'; // Protected content
+    } else if (drawShadows()) {
+        code = 's'; // Shadow
+    } else if (roundedCorner.hasRoundedCorners()) {
+        code = 'r'; // Rounded corners
+    }
+
+    if (compositionType == Composition::CLIENT) {
+        return static_cast<char>(std::toupper(code));
+    } else {
+        return code;
     }
 }
 

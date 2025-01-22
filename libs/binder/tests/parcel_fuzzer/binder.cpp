@@ -317,8 +317,6 @@ std::vector<ParcelRead<::android::Parcel>> BINDER_PARCEL_READ_FUNCTIONS {
     PARCEL_READ_NO_STATUS(int, readParcelFileDescriptor),
     PARCEL_READ_WITH_STATUS(unique_fd, readUniqueFileDescriptor),
 
-    PARCEL_READ_WITH_STATUS(std::unique_ptr<std::vector<unique_fd>>,
-            readUniqueFileDescriptorVector),
     PARCEL_READ_WITH_STATUS(std::optional<std::vector<unique_fd>>, readUniqueFileDescriptorVector),
     PARCEL_READ_WITH_STATUS(std::vector<unique_fd>, readUniqueFileDescriptorVector),
 

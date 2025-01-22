@@ -536,11 +536,6 @@ private:
 
     bool mGetHandleCalled = false;
 
-    // The inherited shadow radius after taking into account the layer hierarchy. This is the
-    // final shadow radius for this layer. If a shadow is specified for a layer, then effective
-    // shadow radius is the set shadow radius, otherwise its the parent's shadow radius.
-    float mEffectiveShadowRadius = 0.f;
-
     // Game mode for the layer. Set by WindowManagerShell and recorded by SurfaceFlingerStats.
     gui::GameMode mGameMode = gui::GameMode::Unsupported;
 
