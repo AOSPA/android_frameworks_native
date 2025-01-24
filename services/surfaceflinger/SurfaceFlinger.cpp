@@ -2686,7 +2686,9 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
         mLayersWithQueuedFrames.emplace(it->second, gameMode);
 
         /* QTI_BEGIN */
-        snapshot->qtiLayerClass = it->second->qtiGetLayerClass();
+        if (snapshot) {
+            snapshot->qtiLayerClass = it->second->qtiGetLayerClass();
+        }
         /* QTI_END */
     }
 
