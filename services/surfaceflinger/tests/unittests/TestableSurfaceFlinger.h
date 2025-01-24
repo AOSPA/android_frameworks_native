@@ -473,7 +473,7 @@ public:
         auto displayState = std::optional{display->getCompositionDisplay()->getState()};
         auto layers = getLayerSnapshotsFn();
 
-        return mFlinger->renderScreenImpl(renderArea.get(), buffer, regionSampling,
+        return mFlinger->renderScreenImpl(std::move(renderArea), buffer, regionSampling,
                                           false /* grayscale */, false /* isProtected */,
                                           captureResults, displayState, layers);
     }

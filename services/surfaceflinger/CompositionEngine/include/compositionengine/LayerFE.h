@@ -125,6 +125,8 @@ public:
 
         // True if layers with 170M dataspace should be overridden to sRGB.
         const bool treat170mAsSrgb;
+
+        std::shared_ptr<gui::DisplayLuts> luts;
     };
 
     // A superset of LayerSettings required by RenderEngine to compose a layer

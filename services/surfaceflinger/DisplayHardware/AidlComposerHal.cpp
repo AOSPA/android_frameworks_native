@@ -710,6 +710,36 @@ Error AidlComposer::getReleaseFences(Display display, std::vector<Layer>* outLay
     return error;
 }
 
+Error AidlComposer::getLayerPresentFences(Display display, std::vector<Layer>* outLayers,
+                                          std::vector<int>* outFences,
+                                          std::vector<int64_t>* outLatenciesNanos) {
+    Error error = Error::NONE;
+    std::vector<PresentFence::LayerPresentFence> fences;
+    {
+        mMutex.lock_shared();
+        if (auto reader = getReader(display)) {
+            fences = reader->get().takeLayerPresentFences(translate<int64_t>(display));
+        } else {
+            error = Error::BAD_DISPLAY;
+        }
+        mMutex.unlock_shared();
+    }
+
+    outLayers->reserve(fences.size());
+    outFences->reserve(fences.size());
+    outLatenciesNanos->reserve(fences.size());
+
+    for (auto& fence : fences) {
+        outLayers->emplace_back(translate<Layer>(fence.layer));
+        // take ownership
+        const int fenceOwner = fence.bufferFence.get();
+        *fence.bufferFence.getR() = -1;
+        outFences->emplace_back(fenceOwner);
+        outLatenciesNanos->emplace_back(fence.bufferLatencyNanos);
+    }
+    return error;
+}
+
 Error AidlComposer::presentDisplay(Display display, int* outPresentFence) {
     const auto displayId = translate<int64_t>(display);
     SFTRACE_FORMAT("HwcPresentDisplay %" PRId64, displayId);

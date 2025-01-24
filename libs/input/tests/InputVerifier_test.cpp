@@ -14,9 +14,13 @@
  * limitations under the License.
  */
 
+#include <android/input.h>
+#include <android-base/result.h>
 #include <gtest/gtest.h>
+#include <input/Input.h>
 #include <input/InputVerifier.h>
 #include <string>
+#include <vector>
 
 namespace android {
 
@@ -48,7 +52,7 @@ TEST(InputVerifierTest, ProcessSourceClassPointer) {
                                      AMOTION_EVENT_ACTION_DOWN,
                                      /*pointerCount=*/properties.size(), properties.data(),
                                      coords.data(), /*flags=*/0);
-    ASSERT_TRUE(result.ok());
+    ASSERT_RESULT_OK(result);
 }
 
 } // namespace android

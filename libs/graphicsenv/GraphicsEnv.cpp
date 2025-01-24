@@ -29,6 +29,7 @@
 #include <android-base/strings.h>
 #include <android/dlext.h>
 #include <binder/IServiceManager.h>
+#include <com_android_graphics_graphicsenv_flags.h>
 #include <graphicsenv/IGpuService.h>
 #include <log/log.h>
 #include <nativeloader/dlext_namespaces.h>
@@ -69,6 +70,8 @@ static bool isVndkEnabled() {
     return false;
 }
 } // namespace
+
+namespace graphicsenv_flags = com::android::graphics::graphicsenv::flags;
 
 namespace android {
 
@@ -624,8 +627,34 @@ std::string& GraphicsEnv::getPackageName() {
     return mPackageName;
 }
 
+// List of ANGLE features to enable, specified in the Global.Settings value "angle_egl_features".
 const std::vector<std::string>& GraphicsEnv::getAngleEglFeatures() {
     return mAngleEglFeatures;
+}
+
+void GraphicsEnv::getAngleFeatureOverrides(std::vector<const char*>& enabled,
+                                           std::vector<const char*>& disabled) {
+    if (!graphicsenv_flags::feature_overrides()) {
+        return;
+    }
+
+    for (const FeatureConfig& feature : mFeatureOverrides.mGlobalFeatures) {
+        if (feature.mEnabled) {
+            enabled.push_back(feature.mFeatureName.c_str());
+        } else {
+            disabled.push_back(feature.mFeatureName.c_str());
+        }
+    }
+
+    if (mFeatureOverrides.mPackageFeatures.count(mPackageName)) {
+        for (const FeatureConfig& feature : mFeatureOverrides.mPackageFeatures[mPackageName]) {
+            if (feature.mEnabled) {
+                enabled.push_back(feature.mFeatureName.c_str());
+            } else {
+                disabled.push_back(feature.mFeatureName.c_str());
+            }
+        }
+    }
 }
 
 android_namespace_t* GraphicsEnv::getAngleNamespace() {

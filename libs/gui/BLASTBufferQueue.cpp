@@ -256,17 +256,6 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, bool updateDestinati
     /* QTI_END */
 }
 
-BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceControl>& surface,
-                                   int width, int height, int32_t format)
-      : BLASTBufferQueue(name) {
-    /* QTI_BEGIN */
-    if (!mQtiBBQExtn) {
-        mQtiBBQExtn = new libguiextension::QtiBLASTBufferQueueExtension(this, name);
-    }
-    /* QTI_END */
-    update(surface, width, height, format);
-}
-
 BLASTBufferQueue::~BLASTBufferQueue() {
     /* QTI_BEGIN */
     if (mQtiBBQExtn) {

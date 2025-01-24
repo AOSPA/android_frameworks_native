@@ -81,7 +81,9 @@ class TestBLASTBufferQueue : public BLASTBufferQueue {
 public:
     TestBLASTBufferQueue(const std::string& name, const sp<SurfaceControl>& surface, int width,
                          int height, int32_t format)
-          : BLASTBufferQueue(name, surface, width, height, format) {}
+          : BLASTBufferQueue(name) {
+        update(surface, width, height, format);
+    }
 
     void transactionCallback(nsecs_t latchTime, const sp<Fence>& presentFence,
                              const std::vector<SurfaceControlStats>& stats) override {
