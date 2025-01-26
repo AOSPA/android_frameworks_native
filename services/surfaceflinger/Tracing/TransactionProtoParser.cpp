@@ -20,8 +20,8 @@
 
 #include "FrontEnd/LayerCreationArgs.h"
 #include "LayerProtoHelper.h"
+#include "QueuedTransactionState.h"
 #include "TransactionProtoParser.h"
-#include "TransactionState.h"
 #include "gui/LayerState.h"
 
 namespace android::surfaceflinger {
@@ -51,7 +51,8 @@ public:
     ~FakeExternalTexture() = default;
 };
 
-perfetto::protos::TransactionState TransactionProtoParser::toProto(const TransactionState& t) {
+perfetto::protos::TransactionState TransactionProtoParser::toProto(
+        const QueuedTransactionState& t) {
     perfetto::protos::TransactionState proto;
     proto.set_pid(t.originPid);
     proto.set_uid(t.originUid);
@@ -300,9 +301,9 @@ perfetto::protos::LayerCreationArgs TransactionProtoParser::toProto(const LayerC
     return proto;
 }
 
-TransactionState TransactionProtoParser::fromProto(
+QueuedTransactionState TransactionProtoParser::fromProto(
         const perfetto::protos::TransactionState& proto) {
-    TransactionState t;
+    QueuedTransactionState t;
     t.originPid = proto.pid();
     t.originUid = proto.uid();
     t.frameTimelineInfo.vsyncId = proto.vsync_id();

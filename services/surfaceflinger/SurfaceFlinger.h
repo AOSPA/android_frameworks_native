@@ -93,6 +93,7 @@
 #include "LayerVector.h"
 #include "MutexUtils.h"
 #include "PowerAdvisor/PowerAdvisor.h"
+#include "QueuedTransactionState.h"
 #include "Scheduler/ISchedulerCallback.h"
 #include "Scheduler/RefreshRateSelector.h"
 #include "Scheduler/Scheduler.h"
@@ -101,7 +102,6 @@
 #include "Tracing/LayerTracing.h"
 #include "Tracing/TransactionTracing.h"
 #include "TransactionCallbackInvoker.h"
-#include "TransactionState.h"
 #include "Utils/OnceFuture.h"
 
 #include <algorithm>
@@ -829,8 +829,9 @@ private:
     // For test only
     bool flushTransactionQueues() REQUIRES(kMainThreadContext);
 
-    bool applyTransactions(std::vector<TransactionState>&) REQUIRES(kMainThreadContext);
-    bool applyAndCommitDisplayTransactionStatesLocked(std::vector<TransactionState>& transactions)
+    bool applyTransactions(std::vector<QueuedTransactionState>&) REQUIRES(kMainThreadContext);
+    bool applyAndCommitDisplayTransactionStatesLocked(
+            std::vector<QueuedTransactionState>& transactions)
             REQUIRES(kMainThreadContext, mStateLock);
 
     // Returns true if there is at least one transaction that needs to be flushed
@@ -859,7 +860,7 @@ private:
 
     static LatchUnsignaledConfig getLatchUnsignaledConfig();
     bool shouldLatchUnsignaled(const layer_state_t&, size_t numStates, bool firstTransaction) const;
-    bool applyTransactionsLocked(std::vector<TransactionState>& transactions)
+    bool applyTransactionsLocked(std::vector<QueuedTransactionState>& transactions)
             REQUIRES(mStateLock, kMainThreadContext);
     uint32_t setDisplayStateLocked(const DisplayState& s) REQUIRES(mStateLock);
     uint32_t addInputWindowCommands(const InputWindowCommands& inputWindowCommands)

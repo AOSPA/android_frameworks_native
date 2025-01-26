@@ -5071,16 +5071,16 @@ void SurfaceFlinger::addTransactionReadyFilters() {
 // For tests only
 bool SurfaceFlinger::flushTransactionQueues() {
     mTransactionHandler.collectTransactions();
-    std::vector<TransactionState> transactions = mTransactionHandler.flushTransactions();
+    std::vector<QueuedTransactionState> transactions = mTransactionHandler.flushTransactions();
     return applyTransactions(transactions);
 }
 
-bool SurfaceFlinger::applyTransactions(std::vector<TransactionState>& transactions) {
+bool SurfaceFlinger::applyTransactions(std::vector<QueuedTransactionState>& transactions) {
     Mutex::Autolock lock(mStateLock);
     return applyTransactionsLocked(transactions);
 }
 
-bool SurfaceFlinger::applyTransactionsLocked(std::vector<TransactionState>& transactions) {
+bool SurfaceFlinger::applyTransactionsLocked(std::vector<QueuedTransactionState>& transactions) {
     bool needsTraversal = false;
     // Now apply all transactions.
     for (auto& transaction : transactions) {
@@ -5272,22 +5272,22 @@ status_t SurfaceFlinger::setTransactionState(
         }
     }
 
-    TransactionState state{frameTimelineInfo,
-                           resolvedStates,
-                           displays,
-                           flags,
-                           applyToken,
-                           std::move(inputWindowCommands),
-                           desiredPresentTime,
-                           isAutoTimestamp,
-                           std::move(uncacheBufferIds),
-                           postTime,
-                           hasListenerCallbacks,
-                           listenerCallbacks,
-                           originPid,
-                           originUid,
-                           transactionId,
-                           mergedTransactionIds};
+    QueuedTransactionState state{frameTimelineInfo,
+                                 resolvedStates,
+                                 displays,
+                                 flags,
+                                 applyToken,
+                                 std::move(inputWindowCommands),
+                                 desiredPresentTime,
+                                 isAutoTimestamp,
+                                 std::move(uncacheBufferIds),
+                                 postTime,
+                                 hasListenerCallbacks,
+                                 listenerCallbacks,
+                                 originPid,
+                                 originUid,
+                                 transactionId,
+                                 mergedTransactionIds};
 
     if (mTransactionTracing) {
         mTransactionTracing->addQueuedTransaction(state);
@@ -5372,7 +5372,7 @@ bool SurfaceFlinger::applyTransactionState(const FrameTimelineInfo& frameTimelin
 }
 
 bool SurfaceFlinger::applyAndCommitDisplayTransactionStatesLocked(
-        std::vector<TransactionState>& transactions) {
+        std::vector<QueuedTransactionState>& transactions) {
     bool needsTraversal = false;
     uint32_t transactionFlags = 0;
     for (auto& transaction : transactions) {
@@ -5773,7 +5773,7 @@ void SurfaceFlinger::onHandleDestroyed(sp<Layer>& layer, uint32_t layerId) {
 }
 
 void SurfaceFlinger::initializeDisplays() {
-    TransactionState state;
+    QueuedTransactionState state;
     state.inputWindowCommands = mInputWindowCommands;
     const nsecs_t now = systemTime();
     state.desiredPresentTime = now;
@@ -5788,7 +5788,7 @@ void SurfaceFlinger::initializeDisplays() {
         state.displays.push(DisplayState(display.token(), ui::LayerStack::fromValue(layerStack++)));
     }
 
-    std::vector<TransactionState> transactions;
+    std::vector<QueuedTransactionState> transactions;
     transactions.emplace_back(state);
 
     {
@@ -8780,6 +8780,10 @@ std::vector<std::pair<Layer*, LayerFE*>> SurfaceFlinger::moveSnapshotsToComposit
                 auto& legacyLayer = it->second;
                 sp<LayerFE> layerFE = legacyLayer->getCompositionEngineLayerFE(snapshot->path);
                 snapshot->fps = getLayerFramerate(currentTime, snapshot->sequence);
+                /* QTI_BEGIN */
+                snapshot->qtiIsSecureDisplay =  legacyLayer->qtiIsSecureDisplay();
+                snapshot->qtiIsSecureCamera = legacyLayer->qtiIsSecureCamera();
+                /* QTI_END */
                 layerFE->mSnapshot = std::move(snapshot);
                 refreshArgs.layers.push_back(layerFE);
                 layers.emplace_back(legacyLayer.get(), layerFE.get());
