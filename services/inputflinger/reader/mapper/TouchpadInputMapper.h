@@ -70,6 +70,8 @@ public:
 
     std::optional<HardwareProperties> getTouchpadHardwareProperties() override;
 
+    std::optional<GesturesProp> getGesturePropertyForTesting(const std::string& name);
+
 private:
     void resetGestureInterpreter(nsecs_t when);
     explicit TouchpadInputMapper(InputDeviceContext& deviceContext,

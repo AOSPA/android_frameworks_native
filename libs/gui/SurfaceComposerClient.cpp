@@ -23,6 +23,7 @@
 #include <semaphore.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <algorithm>
 
 #include <android/gui/BnWindowInfosReportedListener.h>
 #include <android/gui/DisplayState.h>
@@ -852,7 +853,7 @@ SurfaceComposerClient::Transaction::Transaction(const Transaction& other)
 
 void SurfaceComposerClient::Transaction::sanitize(int pid, int uid) {
     uint32_t permissions = LayerStatePermissions::getTransactionPermissions(pid, uid);
-    for (auto & [handle, composerState] : mComposerStates) {
+    for (auto& composerState : mComposerStates) {
         composerState.state.sanitize(permissions);
     }
     if (!mInputWindowCommands.empty() &&
@@ -887,7 +888,7 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
     if (count > parcel->dataSize()) {
         return BAD_VALUE;
     }
-    SortedVector<DisplayState> displayStates;
+    Vector<DisplayState> displayStates;
     displayStates.setCapacity(count);
     for (size_t i = 0; i < count; i++) {
         DisplayState displayState;
@@ -930,17 +931,14 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
     if (count > parcel->dataSize()) {
         return BAD_VALUE;
     }
-    std::unordered_map<sp<IBinder>, ComposerState, IBinderHash> composerStates;
-    composerStates.reserve(count);
+    Vector<ComposerState> composerStates;
+    composerStates.setCapacity(count);
     for (size_t i = 0; i < count; i++) {
-        sp<IBinder> surfaceControlHandle;
-        SAFE_PARCEL(parcel->readStrongBinder, &surfaceControlHandle);
-
         ComposerState composerState;
         if (composerState.read(*parcel) == BAD_VALUE) {
             return BAD_VALUE;
         }
-        composerStates[surfaceControlHandle] = composerState;
+        composerStates.add(composerState);
     }
 
     InputWindowCommands inputWindowCommands;
@@ -973,9 +971,9 @@ status_t SurfaceComposerClient::Transaction::readFromParcel(const Parcel* parcel
     mDesiredPresentTime = desiredPresentTime;
     mIsAutoTimestamp = isAutoTimestamp;
     mFrameTimelineInfo = frameTimelineInfo;
-    mDisplayStates = displayStates;
+    mDisplayStates = std::move(displayStates);
     mListenerCallbacks = listenerCallbacks;
-    mComposerStates = composerStates;
+    mComposerStates = std::move(composerStates);
     mInputWindowCommands = inputWindowCommands;
     mApplyToken = applyToken;
     mUncacheBuffers = std::move(uncacheBuffers);
@@ -1023,8 +1021,7 @@ status_t SurfaceComposerClient::Transaction::writeToParcel(Parcel* parcel) const
     }
 
     parcel->writeUint32(static_cast<uint32_t>(mComposerStates.size()));
-    for (auto const& [handle, composerState] : mComposerStates) {
-        SAFE_PARCEL(parcel->writeStrongBinder, handle);
+    for (auto const& composerState : mComposerStates) {
         composerState.write(*parcel);
     }
 
@@ -1081,23 +1078,31 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::merge(Tr
     }
     mMergedTransactionIds.insert(mMergedTransactionIds.begin(), other.mId);
 
-    for (auto const& [handle, composerState] : other.mComposerStates) {
-        if (mComposerStates.count(handle) == 0) {
-            mComposerStates[handle] = composerState;
-        } else {
-            if (composerState.state.what & layer_state_t::eBufferChanged) {
-                releaseBufferIfOverwriting(mComposerStates[handle].state);
+    for (auto const& otherState : other.mComposerStates) {
+        if (auto it = std::find_if(mComposerStates.begin(), mComposerStates.end(),
+                                   [&otherState](const auto& composerState) {
+                                       return composerState.state.surface ==
+                                               otherState.state.surface;
+                                   });
+            it != mComposerStates.end()) {
+            if (otherState.state.what & layer_state_t::eBufferChanged) {
+                releaseBufferIfOverwriting(it->state);
             }
-            mComposerStates[handle].state.merge(composerState.state);
+            it->state.merge(otherState.state);
+        } else {
+            mComposerStates.add(otherState);
         }
     }
 
     for (auto const& state : other.mDisplayStates) {
-        ssize_t index = mDisplayStates.indexOf(state);
-        if (index < 0) {
-            mDisplayStates.add(state);
+        if (auto it = std::find_if(mDisplayStates.begin(), mDisplayStates.end(),
+                                   [&state](const auto& displayState) {
+                                       return displayState.token == state.token;
+                                   });
+            it != mDisplayStates.end()) {
+            it->merge(state);
         } else {
-            mDisplayStates.editItemAt(static_cast<size_t>(index)).merge(state);
+            mDisplayStates.add(state);
         }
     }
 
@@ -1194,8 +1199,8 @@ void SurfaceComposerClient::Transaction::cacheBuffers() {
     }
 
     size_t count = 0;
-    for (auto& [handle, cs] : mComposerStates) {
-        layer_state_t* s = &(mComposerStates[handle].state);
+    for (auto& cs : mComposerStates) {
+        layer_state_t* s = &cs.state;
         if (!(s->what & layer_state_t::eBufferChanged)) {
             continue;
         } else if (s->bufferData &&
@@ -1320,15 +1325,6 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
 
     cacheBuffers();
 
-    Vector<ComposerState> composerStates;
-    Vector<DisplayState> displayStates;
-
-    for (auto const& kv : mComposerStates) {
-        composerStates.add(kv.second);
-    }
-
-    displayStates = std::move(mDisplayStates);
-
     if (oneWay) {
         if (synchronous) {
             ALOGE("Transaction attempted to set synchronous and one way at the same time"
@@ -1360,7 +1356,7 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
     }
     /* QTI_END */
     status_t binderStatus =
-            sf->setTransactionState(mFrameTimelineInfo, composerStates, displayStates, mFlags,
+            sf->setTransactionState(mFrameTimelineInfo, mComposerStates, mDisplayStates, mFlags,
                                     applyToken, mInputWindowCommands, mDesiredPresentTime,
                                     mIsAutoTimestamp, mUncacheBuffers, hasListenerCallbacks,
                                     listenerCallbacks, mId, mMergedTransactionIds);
@@ -1481,18 +1477,21 @@ void SurfaceComposerClient::Transaction::setEarlyWakeupEnd() {
 
 layer_state_t* SurfaceComposerClient::Transaction::getLayerState(const sp<SurfaceControl>& sc) {
     auto handle = sc->getLayerStateHandle();
-
-    if (mComposerStates.count(handle) == 0) {
-        // we don't have it, add an initialized layer_state to our list
-        ComposerState s;
-
-        s.state.surface = handle;
-        s.state.layerId = sc->getLayerId();
-
-        mComposerStates[handle] = s;
+    if (auto it = std::find_if(mComposerStates.begin(), mComposerStates.end(),
+                               [&handle](const auto& composerState) {
+                                   return composerState.state.surface == handle;
+                               });
+        it != mComposerStates.end()) {
+        return &it->state;
     }
 
-    return &(mComposerStates[handle].state);
+    // we don't have it, add an initialized layer_state to our list
+    ComposerState s;
+    s.state.surface = handle;
+    s.state.layerId = sc->getLayerId();
+    mComposerStates.add(s);
+
+    return &mComposerStates.editItemAt(mComposerStates.size() - 1).state;
 }
 
 void SurfaceComposerClient::Transaction::registerSurfaceControlForCallback(
@@ -2517,15 +2516,17 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setConte
 // ---------------------------------------------------------------------------
 
 DisplayState& SurfaceComposerClient::Transaction::getDisplayState(const sp<IBinder>& token) {
+    if (auto it = std::find_if(mDisplayStates.begin(), mDisplayStates.end(),
+                               [token](const auto& display) { return display.token == token; });
+        it != mDisplayStates.end()) {
+        return *it;
+    }
+
+    // If display state doesn't exist, add a new one.
     DisplayState s;
     s.token = token;
-    ssize_t index = mDisplayStates.indexOf(s);
-    if (index < 0) {
-        // we don't have it, add an initialized layer_state to our list
-        s.what = 0;
-        index = mDisplayStates.add(s);
-    }
-    return mDisplayStates.editItemAt(static_cast<size_t>(index));
+    mDisplayStates.add(s);
+    return mDisplayStates.editItemAt(mDisplayStates.size() - 1);
 }
 
 status_t SurfaceComposerClient::Transaction::setDisplaySurface(const sp<IBinder>& token,

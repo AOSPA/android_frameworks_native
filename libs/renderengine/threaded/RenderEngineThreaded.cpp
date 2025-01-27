@@ -23,6 +23,7 @@
 #include <future>
 
 #include <android-base/stringprintf.h>
+#include <common/FlagManager.h>
 #include <common/trace.h>
 #include <private/gui/SyncFeatures.h>
 #include <processgroup/processgroup.h>
@@ -60,7 +61,7 @@ status_t RenderEngineThreaded::setSchedFifo(bool enabled) {
 
     struct sched_param param = {0};
     int sched_policy;
-    if (enabled) {
+    if (enabled && !FlagManager::getInstance().disable_sched_fifo_re()) {
         sched_policy = SCHED_FIFO;
         param.sched_priority = kFifoPriority;
     } else {

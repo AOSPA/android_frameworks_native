@@ -197,7 +197,6 @@ void add_mountinfo();
 #define CGROUPFS_DIR "/sys/fs/cgroup"
 #define SDK_EXT_INFO "/apex/com.android.sdkext/bin/derive_sdk"
 #define DROPBOX_DIR "/data/system/dropbox"
-#define PRINT_FLAGS "/system/bin/printflags"
 #define UWB_LOG_DIR "/data/misc/apexdata/com.android.uwb/log"
 
 // TODO(narayan): Since this information has to be kept in sync
@@ -1833,11 +1832,7 @@ Dumpstate::RunStatus Dumpstate::dumpstate() {
     DumpFile("PRODUCT BUILD-TIME RELEASE FLAGS", "/product/etc/build_flags.json");
     DumpFile("VENDOR BUILD-TIME RELEASE FLAGS", "/vendor/etc/build_flags.json");
 
-    RunCommand("ACONFIG FLAGS", {PRINT_FLAGS},
-               CommandOptions::WithTimeout(10).Always().DropRoot().Build());
     RunCommand("ACONFIG FLAGS DUMP", {AFLAGS, "list"},
-               CommandOptions::WithTimeout(10).Always().AsRootIfAvailable().Build());
-    RunCommand("WHICH ACONFIG FLAG STORAGE", {AFLAGS, "which-backing"},
                CommandOptions::WithTimeout(10).Always().AsRootIfAvailable().Build());
 
     RunCommand("STORAGED IO INFO", {"storaged", "-u", "-p"});

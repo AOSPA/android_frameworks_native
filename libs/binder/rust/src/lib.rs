@@ -99,6 +99,8 @@ mod binder_async;
 mod error;
 mod native;
 mod parcel;
+#[cfg(not(trusty))]
+mod persistable_bundle;
 mod proxy;
 #[cfg(not(any(trusty, android_ndk)))]
 mod service;
@@ -113,6 +115,8 @@ pub use crate::binder_async::{BinderAsyncPool, BoxFuture};
 pub use binder::{BinderFeatures, FromIBinder, IBinder, Interface, Strong, Weak};
 pub use error::{ExceptionCode, IntoBinderResult, Status, StatusCode};
 pub use parcel::{ParcelFileDescriptor, Parcelable, ParcelableHolder};
+#[cfg(not(trusty))]
+pub use persistable_bundle::PersistableBundle;
 pub use proxy::{DeathRecipient, SpIBinder, WpIBinder};
 #[cfg(not(any(trusty, android_ndk)))]
 pub use service::{

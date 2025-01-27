@@ -244,3 +244,11 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 }
+
+flag {
+  name: "deprecate_uiautomation_input_injection"
+  namespace: "input"
+  description: "Deprecate UiAutomation#injectInputEvent and UiAutomation#injectInputEventToInputFilter test/hidden APIs"
+  bug: "277261245"
+}
+

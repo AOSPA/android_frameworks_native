@@ -150,6 +150,11 @@ struct InputReaderConfiguration {
     // speed setting still affects the scaling factor.
     bool mousePointerAccelerationEnabled;
 
+    // True if the touchpad should exhibit pointer acceleration. If false,
+    // a flat acceleration curve (linear scaling) is used, but the user's pointer
+    // speed setting still affects the scaling factor.
+    bool touchpadAccelerationEnabled;
+
     // Velocity control parameters for touchpad pointer movements on the old touchpad stack (based
     // on TouchInputMapper).
     //
@@ -284,6 +289,7 @@ struct InputReaderConfiguration {
             mousePointerSpeed(0),
             displaysWithMouseScalingDisabled(),
             mousePointerAccelerationEnabled(true),
+            touchpadAccelerationEnabled(true),
             pointerVelocityControlParameters(1.0f, 500.0f, 3000.0f,
                                              static_cast<float>(
                                                      android::os::IInputConstants::

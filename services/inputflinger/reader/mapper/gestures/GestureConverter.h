@@ -107,7 +107,7 @@ private:
     const bool mEnableNoFocusChange;
     bool mEnableSystemGestures{true};
 
-    bool mThreeFingerTapShortcutEnabled;
+    bool mThreeFingerTapShortcutEnabled{false};
 
     std::optional<ui::LogicalDisplayId> mDisplayId;
     FloatRect mBoundsInLogicalDisplay{};

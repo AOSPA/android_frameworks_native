@@ -264,28 +264,21 @@ void updateVisibility(LayerSnapshot& snapshot, bool visible) {
     }
     snapshot.isVisible = visible;
 
-    if (FlagManager::getInstance().skip_invisible_windows_in_input()) {
-        const bool visibleForInput =
-                snapshot.isVisible || (snapshot.hasInputInfo() && !snapshot.isHiddenByPolicy());
-        snapshot.inputInfo.setInputConfig(gui::WindowInfo::InputConfig::NOT_VISIBLE,
-                                          !visibleForInput);
-    } else {
-        // TODO(b/238781169) we are ignoring this compat for now, since we will have
-        // to remove any optimization based on visibility.
+    // TODO(b/238781169) we are ignoring this compat for now, since we will have
+    // to remove any optimization based on visibility.
 
-        // For compatibility reasons we let layers which can receive input
-        // receive input before they have actually submitted a buffer. Because
-        // of this we use canReceiveInput instead of isVisible to check the
-        // policy-visibility, ignoring the buffer state. However for layers with
-        // hasInputInfo()==false we can use the real visibility state.
-        // We are just using these layers for occlusion detection in
-        // InputDispatcher, and obviously if they aren't visible they can't occlude
-        // anything.
-        const bool visibleForInput =
-                snapshot.hasInputInfo() ? snapshot.canReceiveInput() : snapshot.isVisible;
-        snapshot.inputInfo.setInputConfig(gui::WindowInfo::InputConfig::NOT_VISIBLE,
-                                          !visibleForInput);
-    }
+    // For compatibility reasons we let layers which can receive input
+    // receive input before they have actually submitted a buffer. Because
+    // of this we use canReceiveInput instead of isVisible to check the
+    // policy-visibility, ignoring the buffer state. However for layers with
+    // hasInputInfo()==false we can use the real visibility state.
+    // We are just using these layers for occlusion detection in
+    // InputDispatcher, and obviously if they aren't visible they can't occlude
+    // anything.
+    const bool visibleForInput =
+            snapshot.hasInputInfo() ? snapshot.canReceiveInput() : snapshot.isVisible;
+    snapshot.inputInfo.setInputConfig(gui::WindowInfo::InputConfig::NOT_VISIBLE, !visibleForInput);
+
     LLOGV(snapshot.sequence, "updating visibility %s %s", visible ? "true" : "false",
           snapshot.getDebugString().c_str());
 }
