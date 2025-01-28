@@ -42,6 +42,14 @@ public:
 
     void setUnitTestMode();
 
+    /// Debug sysprop flags ///
+    bool disable_sched_fifo_sf() const;
+    bool disable_sched_fifo_sf_binder() const;
+    bool disable_sched_fifo_sf_sched() const;
+    bool disable_sched_fifo_re() const;
+    bool disable_sched_fifo_composer() const;
+    bool disable_sched_fifo_composer_callback() const;
+
     /// Legacy server flags ///
     bool test_flag() const;
     bool use_adpf_cpu_hint() const;

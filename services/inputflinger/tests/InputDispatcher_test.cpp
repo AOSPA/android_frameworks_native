@@ -14914,4 +14914,195 @@ TEST_F(InputDispatcherObscuredFlagTest, StylusHoverObscuredTest) {
     mWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_HOVER_EXIT), WithFlags(0)));
 }
 
+class TransferOrDontTransferFixture : public InputDispatcherTest,
+                                      public ::testing::WithParamInterface<bool> {
+public:
+    void SetUp() override {
+        InputDispatcherTest::SetUp();
+
+        std::shared_ptr<FakeApplicationHandle> app = std::make_shared<FakeApplicationHandle>();
+        mFromWindow =
+                sp<FakeWindowHandle>::make(app, mDispatcher, "From", ui::LogicalDisplayId::DEFAULT);
+        mToWindow =
+                sp<FakeWindowHandle>::make(app, mDispatcher, "To", ui::LogicalDisplayId::DEFAULT);
+
+        mDispatcher->onWindowInfosChanged(
+                {{*mFromWindow->getInfo(), *mToWindow->getInfo()}, {}, 0, 0});
+    }
+
+protected:
+    sp<FakeWindowHandle> mFromWindow;
+    sp<FakeWindowHandle> mToWindow;
+};
+
+// Start a touch gesture and then continue hovering the mouse at the same time.
+// After the mouse is hovering, invoke transferTouch API. Check the events that
+// are received by each of the windows.
+TEST_P(TransferOrDontTransferFixture, TouchDownAndMouseHover) {
+    SCOPED_FLAG_OVERRIDE(enable_multi_device_same_window_stream, false);
+
+    const nsecs_t baseTime = systemTime(SYSTEM_TIME_MONOTONIC);
+    const int32_t mouseDeviceId = 6;
+    const int32_t touchDeviceId = 4;
+
+    // Send touch down to the first window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .deviceId(touchDeviceId)
+                                      .downTime(baseTime + 10)
+                                      .eventTime(baseTime + 10)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(100).y(100))
+                                      .build());
+    mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // Send touch move to the first window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .deviceId(touchDeviceId)
+                                      .downTime(baseTime + 10)
+                                      .eventTime(baseTime + 20)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(110).y(100))
+                                      .build());
+    mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_MOVE));
+
+    // Start mouse hover on the first window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_MOVE, AINPUT_SOURCE_MOUSE)
+                                      .deviceId(mouseDeviceId)
+                                      .downTime(baseTime + 30)
+                                      .eventTime(baseTime + 30)
+                                      .pointer(PointerBuilder(0, ToolType::MOUSE).x(200).y(200))
+                                      .build());
+
+    mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_CANCEL));
+    mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+
+    if (GetParam()) {
+        // Call transferTouchGesture
+        const bool transferred =
+                mDispatcher->transferTouchGesture(mFromWindow->getToken(), mToWindow->getToken());
+        ASSERT_TRUE(transferred);
+
+        mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_HOVER_EXIT));
+        // b/382473355: For some reason, mToWindow also receives HOVER_EXIT first
+        mToWindow->consumeMotionEvent(WithMotionAction(ACTION_HOVER_EXIT));
+        mToWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+        // Further touch events should be delivered to mTowindow (?)
+        mDispatcher->notifyMotion(
+                MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                        .deviceId(touchDeviceId)
+                        .downTime(baseTime + 10)
+                        .eventTime(baseTime + 40)
+                        .pointer(PointerBuilder(0, ToolType::FINGER).x(120).y(100))
+                        .build());
+        mDispatcher->notifyMotion(
+                MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                        .deviceId(touchDeviceId)
+                        .downTime(baseTime + 10)
+                        .eventTime(baseTime + 50)
+                        .pointer(PointerBuilder(0, ToolType::FINGER).x(120).y(100))
+                        .build());
+        // b/382473355: Even though the window got ACTION_DOWN, it's no longer receiving the
+        // remainder of the touch gesture.
+
+        mFromWindow->assertNoEvents();
+        mToWindow->assertNoEvents();
+    } else {
+        // Don't call transferTouchGesture
+
+        // Further touch events should be dropped
+        mDispatcher->notifyMotion(
+                MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                        .deviceId(touchDeviceId)
+                        .downTime(baseTime + 10)
+                        .eventTime(baseTime + 40)
+                        .pointer(PointerBuilder(0, ToolType::FINGER).x(120).y(100))
+                        .build());
+        mFromWindow->assertNoEvents();
+        mToWindow->assertNoEvents();
+    }
+}
+
+TEST_P(TransferOrDontTransferFixture, MouseAndTouchTransferSimultaneousMultiDevice) {
+    SCOPED_FLAG_OVERRIDE(enable_multi_device_same_window_stream, true);
+
+    const nsecs_t baseTime = systemTime(SYSTEM_TIME_MONOTONIC);
+    const int32_t mouseDeviceId = 6;
+    const int32_t touchDeviceId = 4;
+
+    // Send touch down to the 'From' window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .deviceId(touchDeviceId)
+                                      .downTime(baseTime + 10)
+                                      .eventTime(baseTime + 10)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(100).y(100))
+                                      .build());
+    mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // Send touch move to the 'From' window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .deviceId(touchDeviceId)
+                                      .downTime(baseTime + 10)
+                                      .eventTime(baseTime + 20)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(110).y(100))
+                                      .build());
+    mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_MOVE));
+
+    // Start mouse hover on the 'From' window
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_HOVER_MOVE, AINPUT_SOURCE_MOUSE)
+                                      .deviceId(mouseDeviceId)
+                                      .downTime(baseTime + 30)
+                                      .eventTime(baseTime + 30)
+                                      .pointer(PointerBuilder(0, ToolType::MOUSE).x(200).y(200))
+                                      .build());
+
+    mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+
+    if (GetParam()) {
+        // Call transferTouchGesture
+        const bool transferred =
+                mDispatcher->transferTouchGesture(mFromWindow->getToken(), mToWindow->getToken());
+        ASSERT_TRUE(transferred);
+        mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_CANCEL));
+        mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_HOVER_EXIT));
+        mToWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+        // Further touch events should be delivered to mToWindow
+        mDispatcher->notifyMotion(
+                MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                        .deviceId(touchDeviceId)
+                        .downTime(baseTime + 10)
+                        .eventTime(baseTime + 40)
+                        .pointer(PointerBuilder(0, ToolType::FINGER).x(120).y(100))
+                        .build());
+        mDispatcher->notifyMotion(
+                MotionArgsBuilder(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN)
+                        .deviceId(touchDeviceId)
+                        .downTime(baseTime + 10)
+                        .eventTime(baseTime + 50)
+                        .pointer(PointerBuilder(0, ToolType::FINGER).x(120).y(100))
+                        .build());
+        // b/382473355: Even though the window got ACTION_DOWN, it's receiving another DOWN!
+        mToWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+        mToWindow->consumeMotionEvent(WithMotionAction(ACTION_MOVE));
+        mToWindow->consumeMotionEvent(WithMotionAction(ACTION_UP));
+
+        mFromWindow->assertNoEvents();
+        mToWindow->assertNoEvents();
+    } else {
+        // Don't call transferTouchGesture
+
+        mDispatcher->notifyMotion(
+                MotionArgsBuilder(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN)
+                        .deviceId(touchDeviceId)
+                        .downTime(baseTime + 10)
+                        .eventTime(baseTime + 40)
+                        .pointer(PointerBuilder(0, ToolType::FINGER).x(120).y(100))
+                        .build());
+        mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_MOVE));
+        mFromWindow->assertNoEvents();
+        mToWindow->assertNoEvents();
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(WithAndWithoutTransfer, TransferOrDontTransferFixture, testing::Bool());
+
 } // namespace android::inputdispatcher

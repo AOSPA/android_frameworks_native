@@ -142,3 +142,11 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 } # bq_gl_fence_cleanup
+
+flag {
+  name: "wb_media_migration"
+  namespace: "core_graphics"
+  description: "Main flag for the warren buffers media migration."
+  bug: "340934031"
+  is_fixed_read_only: true
+} # wb_media_migration

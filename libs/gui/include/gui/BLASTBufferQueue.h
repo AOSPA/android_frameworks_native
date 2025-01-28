@@ -169,9 +169,9 @@ public:
     void setTransactionHangCallback(std::function<void(const std::string&)> callback);
     void setApplyToken(sp<IBinder>);
 
-    void setWaitForBufferReleaseCallback(std::function<void()> callback)
+    void setWaitForBufferReleaseCallback(std::function<void(const nsecs_t)> callback)
             EXCLUDES(mWaitForBufferReleaseMutex);
-    std::function<void()> getWaitForBufferReleaseCallback() const
+    std::function<void(const nsecs_t)> getWaitForBufferReleaseCallback() const
             EXCLUDES(mWaitForBufferReleaseMutex);
 
     virtual ~BLASTBufferQueue();
@@ -363,7 +363,8 @@ private:
 
     std::unordered_set<uint64_t> mSyncedFrameNumbers GUARDED_BY(mMutex);
 
-    std::function<void()> mWaitForBufferReleaseCallback GUARDED_BY(mWaitForBufferReleaseMutex);
+    std::function<void(const nsecs_t)> mWaitForBufferReleaseCallback
+            GUARDED_BY(mWaitForBufferReleaseMutex);
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
     // BufferReleaseChannel is used to communicate buffer releases from SurfaceFlinger to the
     // client.

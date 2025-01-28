@@ -26,6 +26,7 @@
 #include <android/binder_manager.h>
 #include <common/FlagManager.h>
 #include <common/trace.h>
+#include <fmt/core.h>
 #include <log/log.h>
 
 #include <aidl/android/hardware/graphics/composer3/BnComposerCallback.h>
@@ -39,6 +40,8 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <string>
+#include <string_view>
 
 #include "HWC2.h"
 
@@ -236,25 +239,32 @@ private:
     HWC2::ComposerCallback& mCallback;
 };
 
-std::string AidlComposer::instance(const std::string& serviceName) {
-    return std::string(AidlIComposer::descriptor) + "/" + serviceName;
+std::string AidlComposer::ensureFullyQualifiedName(std::string_view serviceName) {
+    if (!serviceName.starts_with(AidlIComposer::descriptor)) {
+        return fmt::format("{}/{}", AidlIComposer::descriptor, serviceName);
+    } else {
+        return std::string{serviceName};
+    }
 }
 
-bool AidlComposer::isDeclared(const std::string& serviceName) {
-    return AServiceManager_isDeclared(instance(serviceName).c_str());
+bool AidlComposer::namesAnAidlComposerService(std::string_view serviceName) {
+    if (!serviceName.starts_with(AidlIComposer::descriptor)) {
+        return AServiceManager_isDeclared(ensureFullyQualifiedName(serviceName).c_str());
+    }
+    return true;
 }
 
 AidlComposer::AidlComposer(const std::string& serviceName) {
     // This only waits if the service is actually declared
-    mAidlComposer = AidlIComposer::fromBinder(
-            ndk::SpAIBinder(AServiceManager_waitForService(instance(serviceName).c_str())));
+    mAidlComposer = AidlIComposer::fromBinder(ndk::SpAIBinder(
+            AServiceManager_waitForService(ensureFullyQualifiedName(serviceName).c_str())));
     if (!mAidlComposer) {
         LOG_ALWAYS_FATAL("Failed to get AIDL composer service");
         return;
     }
 
     if (!mAidlComposer->createClient(&mAidlComposerClient).isOk()) {
-        LOG_ALWAYS_FATAL("Can't create AidlComposerClient, fallback to HIDL");
+        LOG_ALWAYS_FATAL("Can't create AidlComposerClient");
         return;
     }
 
@@ -289,7 +299,7 @@ AidlComposer::AidlComposer(const std::string& serviceName) {
 #ifdef QTI_COMPOSER3_EXTENSIONS
     ndk::SpAIBinder qtiComposer3ClientBinder;
     AIBinder_getExtension(ndk::SpAIBinder(
-                                  AServiceManager_waitForService(instance(serviceName).c_str()))
+                                  AServiceManager_waitForService(ensureFullyQualifiedName(serviceName).c_str()))
                                   .get(),
                           qtiComposer3ClientBinder.getR());
     if (qtiComposer3ClientBinder.get() != nullptr) {
@@ -371,7 +381,9 @@ void AidlComposer::registerCallback(HWC2::ComposerCallback& callback) {
     mAidlComposerCallback = ndk::SharedRefBase::make<AidlIComposerCallbackWrapper>(callback);
 
     ndk::SpAIBinder binder = mAidlComposerCallback->asBinder();
-    AIBinder_setMinSchedulerPolicy(binder.get(), SCHED_FIFO, 2);
+    if (!FlagManager::getInstance().disable_sched_fifo_composer_callback()) {
+        AIBinder_setMinSchedulerPolicy(binder.get(), SCHED_FIFO, 2);
+    }
 
     const auto status = mAidlComposerClient->registerCallback(mAidlComposerCallback);
     if (!status.isOk()) {

@@ -345,7 +345,8 @@ sp<EventThreadConnection> EventThread::createEventConnection(
     auto connection = sp<EventThreadConnection>::make(const_cast<EventThread*>(this),
                                                       IPCThreadState::self()->getCallingUid(),
                                                       eventRegistration);
-    if (FlagManager::getInstance().misc1()) {
+    if (FlagManager::getInstance().misc1() &&
+        !FlagManager::getInstance().disable_sched_fifo_sf_sched()) {
         const int policy = SCHED_FIFO;
         connection->setMinSchedulerPolicy(policy, sched_get_priority_min(policy));
     }

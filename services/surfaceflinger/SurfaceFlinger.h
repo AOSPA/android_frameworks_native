@@ -76,7 +76,6 @@
 
 #include <common/FlagManager.h>
 #include "ActivePictureTracker.h"
-#include "BackgroundExecutor.h"
 #include "Display/DisplayModeController.h"
 #include "Display/PhysicalDisplay.h"
 #include "Display/VirtualDisplaySnapshot.h"
@@ -108,12 +107,9 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <queue>
-#include <set>
 #include <string>
 #include <thread>
 #include <type_traits>

@@ -616,6 +616,7 @@ status_t Parcel::appendFrom(const Parcel* parcel, size_t offset, size_t len) {
         }
 #else
         LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        (void)kernelFields;
         return INVALID_OPERATION;
 #endif // BINDER_WITH_KERNEL_IPC
     } else {
@@ -797,6 +798,7 @@ std::vector<int> Parcel::debugReadAllFileDescriptors() const {
         setDataPosition(initPosition);
 #else
         LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        (void)kernelFields;
 #endif
     } else if (const auto* rpcFields = maybeRpcFields(); rpcFields && rpcFields->mFds) {
         for (const auto& fd : *rpcFields->mFds) {
@@ -839,9 +841,10 @@ status_t Parcel::hasBindersInRange(size_t offset, size_t len, bool* result) cons
         }
 #else
         LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        (void)kernelFields;
         return INVALID_OPERATION;
 #endif // BINDER_WITH_KERNEL_IPC
-    } else if (const auto* rpcFields = maybeRpcFields()) {
+    } else if (maybeRpcFields()) {
         return INVALID_OPERATION;
     }
     return NO_ERROR;
@@ -879,6 +882,7 @@ status_t Parcel::hasFileDescriptorsInRange(size_t offset, size_t len, bool* resu
         }
 #else
         LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        (void)kernelFields;
         return INVALID_OPERATION;
 #endif // BINDER_WITH_KERNEL_IPC
     } else if (const auto* rpcFields = maybeRpcFields()) {
@@ -971,6 +975,7 @@ status_t Parcel::writeInterfaceToken(const char16_t* str, size_t len) {
         writeInt32(kHeader);
 #else  // BINDER_WITH_KERNEL_IPC
         LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        (void)kernelFields;
         return INVALID_OPERATION;
 #endif // BINDER_WITH_KERNEL_IPC
     }
@@ -1061,6 +1066,7 @@ bool Parcel::enforceInterface(const char16_t* interface,
 #else  // BINDER_WITH_KERNEL_IPC
         LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
         (void)threadState;
+        (void)kernelFields;
         return false;
 #endif // BINDER_WITH_KERNEL_IPC
     }
@@ -2688,6 +2694,7 @@ void Parcel::closeFileDescriptors(size_t newObjectsSize) {
 #else  // BINDER_WITH_KERNEL_IPC
         (void)newObjectsSize;
         LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        (void)kernelFields;
 #endif // BINDER_WITH_KERNEL_IPC
     } else if (auto* rpcFields = maybeRpcFields()) {
         rpcFields->mFds.reset();

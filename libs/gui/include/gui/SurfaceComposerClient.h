@@ -455,8 +455,8 @@ public:
         bool mLogCallPoints = false;
 
     protected:
-        std::unordered_map<sp<IBinder>, ComposerState, IBinderHash> mComposerStates;
-        SortedVector<DisplayState> mDisplayStates;
+        Vector<ComposerState> mComposerStates;
+        Vector<DisplayState> mDisplayStates;
         std::unordered_map<sp<ITransactionCompletedListener>, CallbackInfo, TCLHash>
                 mListenerCallbacks;
         std::vector<client_cache_t> mUncacheBuffers;

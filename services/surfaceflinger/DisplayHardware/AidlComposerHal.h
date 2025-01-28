@@ -24,7 +24,7 @@
 #include <functional>
 #include <optional>
 #include <string>
-#include <utility>
+#include <string_view>
 #include <vector>
 
 #include <android/hardware/graphics/composer/2.4/IComposer.h>
@@ -66,7 +66,8 @@ class AidlIComposerCallbackWrapper;
 // Composer is a wrapper to IComposer, a proxy to server-side composer.
 class AidlComposer final : public Hwc2::Composer {
 public:
-    static bool isDeclared(const std::string& serviceName);
+    // Returns true if serviceName appears to be something that is meant to be used by AidlComposer.
+    static bool namesAnAidlComposerService(std::string_view serviceName);
 
     explicit AidlComposer(const std::string& serviceName);
     ~AidlComposer() override;
@@ -275,8 +276,8 @@ private:
     // this function to execute the command queue.
     Error execute(Display) REQUIRES_SHARED(mMutex);
 
-    // returns the default instance name for the given service
-    static std::string instance(const std::string& serviceName);
+    // Ensures serviceName is fully qualified.
+    static std::string ensureFullyQualifiedName(std::string_view serviceName);
 
     ftl::Optional<std::reference_wrapper</* QTI_BEGIN */ QtiAidlCommandWriter /* QTI_END */>>
             getWriter(Display) REQUIRES_SHARED(mMutex);

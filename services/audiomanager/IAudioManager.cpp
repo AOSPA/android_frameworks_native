@@ -35,11 +35,11 @@ public:
     {
     }
 
-    // This should never fail
     virtual sp<media::IAudioManagerNative> getNativeInterface() {
         Parcel data, reply;
         data.writeInterfaceToken(IAudioManager::getInterfaceDescriptor());
         const status_t res = remote()->transact(GET_NATIVE_INTERFACE, data, &reply, 0);
+        if (res == DEAD_OBJECT) return nullptr;
         LOG_ALWAYS_FATAL_IF(res != OK, "%s failed with result %d", __func__, res);
         const int ex = reply.readExceptionCode();
         LOG_ALWAYS_FATAL_IF(ex != binder::Status::EX_NONE, "%s failed with exception %d",
@@ -48,7 +48,7 @@ public:
         sp<IBinder> binder;
         const status_t err = reply.readNullableStrongBinder(&binder);
         LOG_ALWAYS_FATAL_IF(binder == nullptr, "%s failed unexpected nullptr %d", __func__, err);
-        const auto iface = checked_interface_cast<media::IAudioManagerNative>(std::move(binder));
+        const auto iface = checked_interface_cast<media::IAudioManagerNative>(binder);
         LOG_ALWAYS_FATAL_IF(iface == nullptr, "%s failed unexpected interface", __func__);
         return iface;
     }
