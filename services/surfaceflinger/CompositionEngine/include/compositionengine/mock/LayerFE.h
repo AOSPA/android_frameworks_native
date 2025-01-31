@@ -63,10 +63,10 @@ public:
                 (aidl::android::hardware::graphics::composer3::Composition), (override));
     MOCK_METHOD(aidl::android::hardware::graphics::composer3::Composition, getHwcCompositionType,
                 (), (const, override));
+// QTI_BEGIN: 2024-07-26: Display: sf: use layer id instead of unique sequence
 
-    /* QTI_BEGIN */
     MOCK_CONST_METHOD0(getLayerId, int32_t());
-    /* QTI_END */
+// QTI_END: 2024-07-26: Display: sf: use layer id instead of unique sequence
 };
 
 } // namespace android::compositionengine::mock

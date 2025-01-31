@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 #ifndef ANDROID_GUI_SURFACE_H
 #define ANDROID_GUI_SURFACE_H
 
@@ -40,20 +42,22 @@
 #include <shared_mutex>
 #include <unordered_set>
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 #include "../../QtiExtension/QtiSurfaceExtension.h"
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 #include "../../QtiExtension/QtiSurfaceExtensionGPP.h"
-/* QTI_END */
-
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 namespace android {
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 namespace libguiextension {
 class QtiSurfaceExtension;
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 class QtiSurfaceExtensionGPP;
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 }
-/* QTI_END */
-
 class GraphicBuffer;
 
 namespace gui {
@@ -557,11 +561,11 @@ protected:
         Region dirtyRegion;
     };
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     friend class libguiextension::QtiSurfaceExtension;
     libguiextension::QtiSurfaceExtension* mQtiSurfaceExtn = nullptr;
-    /* QTI_END */
 
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     // mSurfaceTexture is the interface to the surface texture server. All
     // operations on the surface texture client ultimately translate into
     // interactions with the server using this interface.
@@ -773,10 +777,10 @@ protected:
 
     // Buffers that are successfully dequeued/attached and handed to clients
     std::unordered_set<int> mDequeuedSlots;
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
-    /* QTI_BEGIN */
     std::shared_ptr<libguiextension::QtiSurfaceExtensionGPP> mQtiSurfaceGPPExtn = nullptr;
-    /* QTI_END */
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 };
 
 } // namespace android

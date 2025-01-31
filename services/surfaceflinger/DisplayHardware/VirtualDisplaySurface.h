@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 #pragma once
 
 #include <optional>
@@ -33,19 +35,23 @@
 
 #include <ui/DisplayIdentification.h>
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
 #include "../QtiExtension/QtiDisplaySurfaceExtensionIntf.h"
-/* QTI_END */
 
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 namespace android {
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
 namespace surfaceflingerextension {
 class QtiDisplaySurfaceExtensionIntf;
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 class QtiVirtualDisplaySurfaceExtension;
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
 } // namespace surfaceflingerextension
-/* QTI_END */
 
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 class HWComposer;
 class IProducerListener;
 
@@ -94,8 +100,10 @@ class VirtualDisplaySurface : public compositionengine::DisplaySurface,
 public:
     VirtualDisplaySurface(HWComposer&, VirtualDisplayId, const sp<IGraphicBufferProducer>& sink,
                           const sp<IGraphicBufferProducer>& bqProducer,
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
                           const sp<IGraphicBufferConsumer>& bqConsumer, const std::string& name,
                           bool qtiSecure = false);
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 
     //
     // DisplaySurface interface
@@ -111,13 +119,13 @@ public:
     // any client composition prediction.
     virtual bool supportsCompositionStrategyPrediction() const override { return false; };
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
     virtual android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf*
     qtiGetDisplaySurfaceExtn() {
         return mQtiDSExtnIntf;
     }
-    /* QTI_END */
 
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 private:
     enum Source : size_t {
         SOURCE_SINK = 0,
@@ -290,11 +298,15 @@ private:
     bool mMustRecompose = false;
 
     bool mForceHwcCopy;
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
 
-    /* QTI_BEGIN */
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     friend class android::surfaceflingerextension::QtiVirtualDisplaySurfaceExtension;
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
     android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
-    /* QTI_END */
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 };
 
 } // namespace android

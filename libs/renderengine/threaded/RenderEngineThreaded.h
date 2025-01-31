@@ -66,10 +66,10 @@ public:
     std::optional<pid_t> getRenderEngineTid() const override;
     void setEnableTracing(bool tracingEnabled) override;
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
     void setViewportAndProjection(Rect viewPort, Rect sourceCrop) override;
-    /* QTI_END */
 
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
 protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;
     void unmapExternalTextureBuffer(sp<GraphicBuffer>&& buffer) override;

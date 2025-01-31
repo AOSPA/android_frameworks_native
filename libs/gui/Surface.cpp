@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 #define LOG_TAG "Surface"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
@@ -60,10 +62,10 @@
 
 #include <com_android_graphics_libgui_flags.h>
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 #include <cutils/properties.h>
-/* QTI_END */
 
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 namespace android {
 
 using namespace com::android::graphics::libgui;
@@ -161,34 +163,52 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
     mSwapIntervalZero = false;
     mMaxBufferCount = NUM_BUFFER_SLOTS;
     mSurfaceControlHandle = surfaceControlHandle;
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 
-    /* QTI_BEGIN */
     char value[PROPERTY_VALUE_MAX];
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     int intValue = 0;
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
     property_get("vendor.display.enable_optimal_refresh_rate", value, "0");
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     intValue = atoi(value);
     bool enableOptimalRefreshRate = (intValue == 1) ? true : false;
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
 
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     if (!mQtiSurfaceExtn && enableOptimalRefreshRate) {
         mQtiSurfaceExtn = new libguiextension::QtiSurfaceExtension(this);
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
     }
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
     property_get("vendor.gpp.create_frc_extension", value, "0");
     intValue = atoi(value);
     if (!mQtiSurfaceGPPExtn && intValue == 1) {
         mQtiSurfaceGPPExtn = std::make_shared<libguiextension::QtiSurfaceExtensionGPP>(IGraphicBufferProducer::asBinder(bufferProducer), &mGraphicBufferProducer);
     }
-    /* QTI_END */
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 }
 
 Surface::~Surface() {
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     if (mQtiSurfaceExtn) {
         delete mQtiSurfaceExtn;
     }
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
     mQtiSurfaceGPPExtn = nullptr;
-    /* QTI_END */
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
 
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     if (mConnectedToCpu) {
         Surface::disconnect(NATIVE_WINDOW_API_CPU);
     }
@@ -218,12 +238,12 @@ sp<IGraphicBufferProducer> Surface::getIGraphicBufferProducer() const {
 
 void Surface::setSidebandStream(const sp<NativeHandle>& stream) {
     mGraphicBufferProducer->setSidebandStream(stream);
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
-    /* QTI_BEGIN */
     if (mQtiSurfaceGPPExtn) {
         mQtiSurfaceGPPExtn->setSidebandStream(stream);
     }
-    /* QTI_END */
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 }
 
 void Surface::allocateBuffers() {
@@ -664,13 +684,13 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
     ATRACE_FORMAT("dequeueBuffer - %s", getDebugName());
     ALOGV("Surface::dequeueBuffer");
 
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
-    /* QTI_BEGIN */
     if (mQtiSurfaceGPPExtn) {
         mQtiSurfaceGPPExtn->DynamicEnable(&mGraphicBufferProducer);
     }
-    /* QTI_END */
 
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
     IGraphicBufferProducer::DequeueBufferInput dqInput;
     {
         Mutex::Autolock lock(mMutex);
@@ -840,12 +860,12 @@ int Surface::dequeueBuffers(std::vector<BatchBuffer>* buffers) {
     ATRACE_CALL();
     ALOGV("Surface::dequeueBuffers");
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
     if (mQtiSurfaceGPPExtn) {
         mQtiSurfaceGPPExtn->DynamicEnable(&mGraphicBufferProducer);
     }
-    /* QTI_END */
 
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
     if (buffers->size() == 0) {
         ALOGE("%s: must dequeue at least 1 buffer!", __FUNCTION__);
         return BAD_VALUE;
@@ -1210,13 +1230,17 @@ void Surface::applyGrallocMetadataLocked(
         android_native_buffer_t* buffer,
         const IGraphicBufferProducer::QueueBufferInput& queueBufferInput) {
     ATRACE_CALL();
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 
-    /* QTI_BEGIN */
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     if (mQtiSurfaceExtn) {
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
         mQtiSurfaceExtn->qtiSetBufferDequeueDuration(getDebugName(), buffer, mLastDequeueDuration);
     }
-    /* QTI_END */
 
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
     auto& mapper = GraphicBufferMapper::get();
     mapper.setDataspace(buffer->handle, static_cast<ui::Dataspace>(queueBufferInput.dataSpace));
     if (mHdrMetadataIsSet & HdrMetadata::SMPTE2086)
@@ -1308,12 +1332,12 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd,
         fence = input.fence;
     }
     nsecs_t now = systemTime();
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-12-16: Performance: gui: Update game gfx tid detection on Android-W
     if (mQtiSurfaceExtn) {
         mQtiSurfaceExtn->qtiTrackTransaction(mNextFrameNumber, now);
     }
-    /* QTI_END */
 
+// QTI_END: 2024-12-16: Performance: gui: Update game gfx tid detection on Android-W
     // Drop the lock temporarily while we touch the underlying producer. In the case of a local
     // BufferQueue, the following should be allowable:
     //
@@ -1441,11 +1465,11 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     sp<Fence> fence = input.fence;
 
     nsecs_t now = systemTime();
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-10-04: Performance: gui: Send game gfx tid to perf service in Surface
     if (mQtiSurfaceExtn) {
         mQtiSurfaceExtn->qtiTrackTransaction(mNextFrameNumber, now);
     }
-    /* QTI_END */
+// QTI_END: 2024-10-04: Performance: gui: Send game gfx tid to perf service in Surface
 
     status_t err = mGraphicBufferProducer->queueBuffer(i, input, &output);
     mLastQueueDuration = systemTime() - now;
@@ -1624,12 +1648,12 @@ int Surface::query(int what, int* value) const {
             }
         }
     }
+// QTI_BEGIN: 2024-08-01: Video: libgui: gpp extension latency optimization.
 
-    /* QTI_BEGIN */
     if (mQtiSurfaceGPPExtn && mQtiSurfaceGPPExtn->IsGPPEnabled()) {
         return mQtiSurfaceGPPExtn->query(what, value);
     }
-    /* QTI_END */
+// QTI_END: 2024-08-01: Video: libgui: gpp extension latency optimization.
     return mGraphicBufferProducer->query(what, value);
 }
 
@@ -2180,13 +2204,13 @@ int Surface::connect(int api, const sp<SurfaceListener>& listener, bool reportBu
     Mutex::Autolock lock(mMutex);
     IGraphicBufferProducer::QueueBufferOutput output;
     mReportRemovedBuffers = reportBufferRemoval;
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
-    /* QTI_BEGIN */
     if (mQtiSurfaceGPPExtn) {
         mQtiSurfaceGPPExtn->Connect(api, &mGraphicBufferProducer);
     }
-    /* QTI_END */
 
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
     if (listener != nullptr) {
         mListenerProxy = new ProducerListenerProxy(this, listener);
     }
@@ -2210,12 +2234,14 @@ int Surface::connect(int api, const sp<SurfaceListener>& listener, bool reportBu
         }
 
         mConsumerRunningBehind = (output.numPendingBuffers >= 2);
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
-        /* QTI_BEGIN */
         if (mQtiSurfaceGPPExtn) {
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
             mQtiSurfaceGPPExtn->StoreConnect(api, mListenerProxy, reportBufferRemoval);
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
         }
-        /* QTI_END */
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
         if (listener && listener->needsDeathNotify()) {
@@ -2263,13 +2289,13 @@ int Surface::disconnect(int api, IGraphicBufferProducer::DisconnectMode mode) {
             mConnectedToCpu = false;
         }
     }
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
-    /* QTI_BEGIN */
     if (mQtiSurfaceGPPExtn) {
         mQtiSurfaceGPPExtn->Disconnect(api, &mGraphicBufferProducer);
     }
-    /* QTI_END */
 
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
     if (mSurfaceDeathListener != nullptr) {

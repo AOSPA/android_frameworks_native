@@ -79,10 +79,10 @@ public:
     }
     void ensureContextsCreated();
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
     void setViewportAndProjection(Rect /*viewPort*/, Rect /*sourceCrop*/) override {}
-    /* QTI_END */
 
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
 protected:
     // This is so backends can stop the generic rendering state first before cleaning up
     // backend-specific state. SkiaGpuContexts are invalid after invocation.

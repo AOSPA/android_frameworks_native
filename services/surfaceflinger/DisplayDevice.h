@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 #pragma once
 
 #include <memory>
@@ -76,7 +78,7 @@ namespace display {
 class DisplaySnapshot;
 } // namespace display
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 namespace surfaceflingerextension {
 class QtiDisplaySurfaceExtensionIntf;
 } // namespace surfaceflingerextension
@@ -84,8 +86,8 @@ class QtiDisplaySurfaceExtensionIntf;
 namespace compositionengineextension {
 class QtiDisplayExtension;
 } // namespace compositionengineextension
-/* QTI_END */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 class DisplayDevice : public RefBase {
 public:
     constexpr static float sDefaultMinLumiance = 0.0;
@@ -230,22 +232,22 @@ public:
 
     void dump(utils::Dumper&) const;
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
     void qtiResetVsyncPeriod();
     void qtiSetPowerModeOverrideConfig(bool supported);
     bool qtiGetPowerModeOverrideConfig() const;
-    /* QTI_END */
 
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 private:
     const sp<SurfaceFlinger> mFlinger;
     HWComposer& mHwComposer;
     const wp<IBinder> mDisplayToken;
     const int32_t mSequenceId;
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-07-03: Display: sf: Align Display roi with fb scale
     bool mUseFbScaling = false;
-    /* QTI_END */
 
+// QTI_END: 2024-07-03: Display: sf: Align Display roi with fb scale
     const std::shared_ptr<compositionengine::Display> mCompositionDisplay;
 
     std::string mDisplayName;
@@ -281,12 +283,12 @@ private:
     // This parameter is only used for hdr/sdr ratio overlay
     float mHdrSdrRatio = 1.0f;
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
     mutable std::mutex mQtiModeLock;
     mutable bool mQtiVsyncPeriodUpdated = true;
     mutable nsecs_t mQtiVsyncPeriod = 0;
     bool mQtiIsPowerModeOverride = false;
-    /* QTI_END */
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 };
 
 struct DisplayDeviceState {
@@ -350,9 +352,11 @@ struct DisplayDeviceCreationArgs {
     hardware::graphics::composer::hal::PowerMode initialPowerMode{
             hardware::graphics::composer::hal::PowerMode::OFF};
     bool isPrimary{false};
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     // QTI_BEGIN
     android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
     // QTI_END
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
     Fps requestedRefreshRate;
 };

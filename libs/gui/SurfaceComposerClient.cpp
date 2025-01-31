@@ -12,10 +12,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+// QTI_BEGIN: 2024-06-19: Performance: native: smart touch FR LOST markings modification.
  *
  * Changes from Qualcomm Innovation Center are provided under the following license:
  * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
+// QTI_END: 2024-06-19: Performance: native: smart touch FR LOST markings modification.
  */
 
 #define LOG_TAG "SurfaceComposerClient"
@@ -69,10 +71,10 @@
 #include <private/gui/ComposerService.h>
 #include <private/gui/ComposerServiceAIDL.h>
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
 #include "QtiExtension/QtiDolphinWrapper.h"
-/* QTI_END */
 
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
 // This server size should always be smaller than the server cache size
 #define BUFFER_CACHE_MAX_SIZE 4096
 
@@ -1340,31 +1342,33 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
     if ((mFlags & wakeupFlags) == wakeupFlags) {
         mFlags &= ~(wakeupFlags);
     }
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
     QtiDolphinWrapper* qtiDolphinWrapper = QtiDolphinWrapper::qtiGetDolphinWrapper();
     if (qtiDolphinWrapper && qtiDolphinWrapper->qtiDolphinFilterBuffer) {
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
         qtiDolphinWrapper->qtiDolphinFilterBuffer(mIsAutoTimestamp, mDesiredPresentTime, mFlags);
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
     }
-    /* QTI_END */
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
 
     sp<IBinder> applyToken = mApplyToken ? mApplyToken : getDefaultApplyToken();
 
     sp<ISurfaceComposer> sf(ComposerService::getComposerService());
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
     if (qtiDolphinWrapper && qtiDolphinWrapper->qtiDolphinQueueBuffer) {
         qtiDolphinWrapper->qtiDolphinQueueBuffer(true);
     }
-    /* QTI_END */
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
     status_t binderStatus =
             sf->setTransactionState(mFrameTimelineInfo, mComposerStates, mDisplayStates, mFlags,
                                     applyToken, mInputWindowCommands, mDesiredPresentTime,
                                     mIsAutoTimestamp, mUncacheBuffers, hasListenerCallbacks,
                                     listenerCallbacks, mId, mMergedTransactionIds);
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
     if (qtiDolphinWrapper && qtiDolphinWrapper->qtiDolphinQueueBuffer) {
         qtiDolphinWrapper->qtiDolphinQueueBuffer(false);
     }
-    /* QTI_END */
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
     mId = generateId();
 
     // Clear the current states and flags

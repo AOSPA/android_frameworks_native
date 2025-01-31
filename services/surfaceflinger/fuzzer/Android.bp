@@ -29,8 +29,12 @@ cc_defaults {
     name: "surfaceflinger_fuzz_defaults",
     static_libs: [
         "libsurfaceflinger_common",
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
         "libqtisurfaceflingerextension",
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
         "libqticompositionengineextension",
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
     ],
     srcs: [
         ":libsurfaceflinger_backend_mock_sources",
@@ -39,7 +43,9 @@ cc_defaults {
     ],
     defaults: [
         "libsurfaceflinger_defaults",
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
         "libqtisurfaceflingerextension_defaults",
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     ],
     header_libs: [
         "libsurfaceflinger_backend_mock_headers",

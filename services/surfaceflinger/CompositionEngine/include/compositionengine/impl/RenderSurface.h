@@ -30,12 +30,11 @@ struct ANativeWindow;
 
 namespace android {
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 namespace compositionengineextension {
 class QtiRenderSurfaceExtension;
 } // namespace compositionengineextension
-/* QTI_END */
-
+// QTI_END: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 namespace compositionengine {
 
 class CompositionEngine;
@@ -78,17 +77,19 @@ public:
     std::shared_ptr<renderengine::ExternalTexture>& mutableTextureForTest();
     base::unique_fd& mutableBufferReadyForTest();
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf*
     qtiGetDisplaySurfaceExtension() {
         return mQtiDSExtnIntf;
     }
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 
     std::shared_ptr<android::compositionengineextension::QtiRenderSurfaceExtension>
     qtiGetRenderSurfaceExtension() {
         return mQtiRSExtnIntf;
     }
-    /* QTI_END */
+// QTI_END: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 
 private:
     const compositionengine::CompositionEngine& mCompositionEngine;
@@ -105,12 +106,16 @@ private:
     const size_t mMaxTextureCacheSize;
     bool mProtected{false};
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
     friend class android::compositionengineextension::QtiRenderSurfaceExtension;
+// QTI_END: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
     std::shared_ptr<android::compositionengineextension::QtiRenderSurfaceExtension> mQtiRSExtnIntf =
             nullptr;
-    /* QTI_END */
+// QTI_END: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 };
 
 std::unique_ptr<compositionengine::RenderSurface> createRenderSurface(

@@ -560,15 +560,15 @@ Error Display::presentOrValidate(nsecs_t expectedPresentTime, int32_t frameInter
         *outNumTypes = numTypes;
         *outNumRequests = numRequests;
     }
+// QTI_BEGIN: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
 
-    // QTI_BEGIN
     // Validate and present display succeeded with comp changes.
     if (*state == 2) {
         *outNumTypes = numTypes;
         *outNumRequests = numRequests;
         *outPresentFence = sp<Fence>::make(presentFenceFd);
     }
-    // QTI_END
+// QTI_END: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
     return error;
 }
 
@@ -968,18 +968,18 @@ Error Layer::setPerFrameMetadata(const int32_t supportedPerFrameMetadata,
 
         perFrameMetadataBlobs.push_back(
                 {Hwc2::PerFrameMetadataKey::HDR10_PLUS_SEI, mHdrMetadata.hdr10plus});
-        // QTI_BEGIN
+// QTI_BEGIN: 2023-04-19: Display: sf: Don't send empty metadata blobs to hwc
         const Error error = static_cast<Error>(
            mComposer.setLayerPerFrameMetadataBlobs(mDisplay->getId(), mId, perFrameMetadataBlobs));
         if (error != Error::NONE) {
             return error;
         }
-        // QTI_END
+// QTI_END: 2023-04-19: Display: sf: Don't send empty metadata blobs to hwc
 
+// QTI_BEGIN: 2023-04-19: Display: sf: Don't send empty metadata blobs to hwc
     }
-    // QTI_BEGIN
     return Error::NONE;
-    // QTI_END
+// QTI_END: 2023-04-19: Display: sf: Don't send empty metadata blobs to hwc
 }
 
 Error Layer::setDisplayFrame(const Rect& frame)

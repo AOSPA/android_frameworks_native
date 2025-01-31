@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <binder/IPCThreadState.h>
@@ -52,14 +54,14 @@ void MessageQueue::Handler::handleMessage(const Message&) {
     mQueue.onFrameSignal(mQueue.mCompositor, mVsyncId, mExpectedVsyncTime);
 }
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 void MessageQueue::Handler::qtiDispatchFrameImmed() {
     if (!mFramePending.exchange(true)) {
         mQueue.mLooper->sendMessage(sp<MessageHandler>::fromExisting(this), Message());
     }
 }
-/* QTI_END */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 MessageQueue::MessageQueue(ICompositor& compositor)
       : MessageQueue(compositor, sp<Handler>::make(*this)) {}
 
@@ -224,11 +226,13 @@ std::optional<scheduler::ScheduleResult> MessageQueue::getScheduledFrameResult()
     return std::nullopt;
 }
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 void MessageQueue::qtiScheduleFrameImmed() {
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     SFTRACE_CALL();
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     mHandler->qtiDispatchFrameImmed();
 }
-/* QTI_END */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 } // namespace android::impl
