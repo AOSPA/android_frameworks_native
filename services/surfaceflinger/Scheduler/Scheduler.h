@@ -14,12 +14,18 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
  * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #pragma once
 
 #include <atomic>
@@ -129,10 +135,10 @@ public:
     using Impl::scheduleConfigure;
     using Impl::scheduleFrame;
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     using Impl::qtiScheduleFrameImmed;
-    /* QTI_END */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     // Schedule an asynchronous or synchronous task on the main thread.
     template <typename F, typename T = std::invoke_result_t<F>>
     [[nodiscard]] std::future<T> schedule(F&& f) {
@@ -336,10 +342,12 @@ public:
         return mLayerHistory.getLayerFramerate(now, id);
     }
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
     void qtiUpdateThermalFps(float fps);
+// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
     void qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes);
-    /* QTI_END */
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
 
     void updateFrameRateOverrides(GlobalSignals, Fps displayRefreshRate) EXCLUDES(mPolicyLock);
 
@@ -628,10 +636,10 @@ private:
 
     std::atomic<std::optional<TimePoint>> mDebugPresentDelay;
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
     // Cache thermal Fps, and limit to the given level
     float mQtiThermalFps = 90.0f;
-    /* QTI_END */
+// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
 };
 
 } // namespace scheduler

@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
 #undef LOG_TAG
 #define LOG_TAG "LayerHistory"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
@@ -217,14 +219,14 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
                 continue;
             }
 
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
             if (refresh_rate_votes_.find(key) != refresh_rate_votes_.end() &&
                 refresh_rate_votes_[key] != -1) {
               vote.fps = Fps::fromValue(refresh_rate_votes_[key]);
               vote.type = LayerHistory::LayerVoteType::ExplicitExact;
             }
-            /* QTI_END */
 
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
             // Compute the layer's position on the screen
             const Rect bounds = Rect(info->getBounds());
             const ui::Transform transform = info->getTransform();
@@ -238,11 +240,11 @@ auto LayerHistory::summarize(const RefreshRateSelector& selector, nsecs_t now) -
                     : base::StringPrintf("category=%s", ftl::enum_string(vote.category).c_str());
             SFTRACE_FORMAT_INSTANT("%s %s %s (%.2f)", ftl::enum_string(vote.type).c_str(),
                                    to_string(vote.fps).c_str(), categoryString.c_str(), weight);
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-17: Thermal: sf: Add support for thermal fps
             if (mQtiThermalFps > 0 && (int32_t)vote.fps.getValue() > (int32_t)mQtiThermalFps) {
                 vote.fps = Fps::fromValue(mQtiThermalFps);
             }
-            /* QTI_END */
+// QTI_END: 2023-04-17: Thermal: sf: Add support for thermal fps
             summary.push_back({info->getName(), info->getOwnerUid(), vote.type, vote.fps,
                                vote.seamlessness, vote.category, vote.categorySmoothSwitchOnly,
                                weight, layerFocused});

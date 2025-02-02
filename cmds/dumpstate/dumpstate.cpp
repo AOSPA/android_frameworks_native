@@ -138,9 +138,11 @@ static const int TRACE_DUMP_TIMEOUT_MS = 10000; // 10 seconds
 /* Most simple commands have 10 as timeout, so 5 is a good estimate */
 static const int32_t WEIGHT_FILE = 5;
 
+// QTI_BEGIN: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
 //CRITICAL_CPU_INFO_DISABLE used to disable writing critical CPU information into bugreport.
 bool CRITICAL_CPU_INFO_DISABLE = false;
 
+// QTI_END: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
 // TODO: temporary variables and functions used during C++ refactoring
 static Dumpstate& ds = Dumpstate::GetInstance();
 static int RunCommand(const std::string& title, const std::vector<std::string>& full_command,
@@ -1293,10 +1295,12 @@ static Dumpstate::RunStatus RunDumpsysTextByPriority(const std::string& title, i
         RETURN_IF_USER_DENIED_CONSENT();
         std::string path(title);
         path.append(" - ").append(String8(service).c_str());
+// QTI_BEGIN: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
         if (CRITICAL_CPU_INFO_DISABLE && service.contains(u"cpu_monitor")) {
             MYLOGI("%s service information is disabled from bugreport",path.c_str());
             continue;
         }
+// QTI_END: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
         size_t bytes_written = 0;
         if (PropertiesHelper::IsDryRun()) {
              dumpsys.writeDumpHeader(STDOUT_FILENO, service, priority);
@@ -1738,11 +1742,13 @@ Dumpstate::RunStatus Dumpstate::dumpstate() {
     DumpFile("PAGETYPEINFO", "/proc/pagetypeinfo");
     DumpFile("BUDDYINFO", "/proc/buddyinfo");
     DumpExternalFragmentationInfo();
+// QTI_BEGIN: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
     if (!CRITICAL_CPU_INFO_DISABLE) {
         DumpFile("KERNEL CPUFREQ", "/sys/devices/system/cpu/cpu0/cpufreq/stats/time_in_state");
     } else {
         MYLOGI("KERNEL CPUFREQ information is disabled from bugreport");
     }
+// QTI_END: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
 
     RunCommand("PROCESSES AND THREADS",
                {"ps", "-A", "-T", "-Z", "-O", "pri,nice,rtprio,sched,pcy,time"});
@@ -3117,9 +3123,11 @@ void Dumpstate::SetOptions(std::unique_ptr<DumpOptions> options) {
 void Dumpstate::Initialize() {
     /* gets the sequential id */
     uint32_t last_id = android::base::GetIntProperty(PROPERTY_LAST_ID, 0);
+// QTI_BEGIN: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
     if (android::base::GetProperty("vendor.sys.bugreport.cpuinfo.disable", "") == "1"){
         CRITICAL_CPU_INFO_DISABLE = true;
     }
+// QTI_END: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
     id_ = ++last_id;
     android::base::SetProperty(PROPERTY_LAST_ID, std::to_string(last_id));
 }

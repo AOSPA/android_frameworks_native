@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #include <android-base/stringprintf.h>
 #include <common/trace.h>
 #include <compositionengine/CompositionEngine.h>
@@ -32,7 +34,9 @@
 #include <compositionengine/impl/DumpHelpers.h>
 #include <compositionengine/impl/OutputLayer.h>
 #include <compositionengine/impl/RenderSurface.h>
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #include <string>
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
@@ -45,29 +49,34 @@
 
 #include "PowerAdvisor/PowerAdvisor.h"
 
-// QTI_BEGIN
+// QTI_BEGIN: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 #include <composer_extn_intf.h>
+// QTI_END: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #include "../../QtiExtension/QtiDisplaySurfaceExtensionIntf.h"
 #include "../../QtiExtension/QtiExtensionContext.h"
 #include "../QtiExtension/QtiOutputExtension.h"
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 #include "../QtiExtension/QtiRenderSurfaceExtension.h"
-// QTI_END
-
+// QTI_END: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 using aidl::android::hardware::graphics::composer3::Capability;
 using aidl::android::hardware::graphics::composer3::DisplayCapability;
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 namespace composer {
 struct FBTLayerInfo;
 }
 
-// QTI_BEGIN
 namespace android::surfaceflingerextension {
 class QtiDisplaySurfaceExtensionIntf;
 }
 
 using android::compositionengineextension::QtiOutputExtension;
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 using android::compositionengineextension::QtiRenderSurfaceExtension;
-//QTI_END
+// QTI_END: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 
 namespace android::compositionengine::impl {
 
@@ -153,7 +162,7 @@ void Display::setColorProfile(const ColorProfile& colorProfile) {
 
     Output::setColorProfile(colorProfile);
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     if (colorProfile.mode != mQtiColorProfile.mode ||
         colorProfile.dataspace != mQtiColorProfile.dataspace ||
         colorProfile.renderIntent != mQtiColorProfile.renderIntent) {
@@ -163,8 +172,8 @@ void Display::setColorProfile(const ColorProfile& colorProfile) {
     mQtiColorProfile.mode = colorProfile.mode;
     mQtiColorProfile.dataspace = colorProfile.dataspace;
     mQtiColorProfile.renderIntent = colorProfile.renderIntent;
-    /* QTI_END */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     const auto physicalId = PhysicalDisplayId::tryCast(mId);
     LOG_FATAL_IF(!physicalId);
     getCompositionEngine().getHwComposer().setActiveColorMode(*physicalId, colorProfile.mode,
@@ -204,12 +213,12 @@ std::unique_ptr<compositionengine::OutputLayer> Display::createOutputLayer(
         ALOGE_IF(!hwcLayer, "Failed to create a HWC layer for a HWC supported display %s",
                  getName().c_str());
         outputLayer->setHwcLayer(std::move(hwcLayer));
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 
-        /* QTI_BEGIN */
         if (layerFE->getCompositionState()->outputFilter.toInternalDisplay) {
             QtiOutputExtension::qtiSetLayerAsMask(mId, outputLayer->getHwcLayer()->getId());
         }
-        /* QTI_END */
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     }
     return outputLayer;
 }
@@ -295,10 +304,10 @@ bool Display::chooseCompositionStrategy(
         return false;
     }
 
-    // QTI_BEGIN
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     qtiBeginDraw();
-    // QTI_END
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     // Get any composition changes requested by the HWC device, and apply them.
     auto& hwc = getCompositionEngine().getHwComposer();
     const bool requiresClientComposition = anyLayersRequireClientComposition();
@@ -449,10 +458,9 @@ compositionengine::Output::FrameFences Display::presentFrame() {
         return fences;
     }
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     qtiEndDraw();
-    /* QTI_END */
-
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     auto& hwc = getCompositionEngine().getHwComposer();
 
     const TimePoint startTime = TimePoint::now();
@@ -540,19 +548,25 @@ void Display::finishFrame(GpuCompositionResult&& result) {
     impl::Output::finishFrame(std::move(result));
 }
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 void Display::qtiBeginDraw() {
 #ifdef QTI_DISPLAY_EXTENSION
     auto displayext = surfaceflingerextension::QtiExtensionContext::instance().getDisplayExtension();
     auto hwcextn = surfaceflingerextension::QtiExtensionContext::instance().getQtiHWComposerExtension();
     if (displayext && hwcextn) {
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
         SFTRACE_CALL();
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
         const auto physicalDisplayId = PhysicalDisplayId::tryCast(mId);
         if (!physicalDisplayId.has_value() || isVirtual()) {
             if (!physicalDisplayId.has_value())
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
                 SFTRACE_NAME("Specfence_noPhysicalDisplayId");
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
             else
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
                 SFTRACE_NAME("Specfence_isVirtual");
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
             return;
         }
         composer::FBTLayerInfo fbtLayerInfo;
@@ -576,6 +590,8 @@ void Display::qtiBeginDraw() {
         fbtLayerInfo.height = getState().orientedDisplaySpace.getBounds().height;
         auto renderSurface = getRenderSurface();
         fbtLayerInfo.secure = renderSurface->isProtected();
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
 
         if (renderSurface->qtiGetDisplaySurfaceExtension()) {
             fbtLayerInfo.dataspace = static_cast<int>(renderSurface->qtiGetDisplaySurfaceExtension()
@@ -590,6 +606,8 @@ void Display::qtiBeginDraw() {
         } else {
             ALOGV("%s: RenderSurfaceExtension is null", __func__);
         }
+// QTI_END: 2023-05-30: Display: sf: Consider render surface format for cache reset in unified draw
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 
         // Reset cache if there is a color mode change
         if (mQtiIsColorModeChanged) {
@@ -601,13 +619,19 @@ void Display::qtiBeginDraw() {
         dataspace =
                 renderSurface->qtiGetDisplaySurfaceExtension()->getClientTargetCurrentDataspace();
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
         if (SFTRACE_ENABLED()) {
+// QTI_BEGIN: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
             std::string temp =
                     "Specfence_QtiBeginDraw_currentIndex_" + std::to_string(current.index);
+// QTI_END: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
             SFTRACE_NAME(temp.c_str());
+// QTI_BEGIN: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
         }
 
         if (current.index < 0) {
+// QTI_END: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
             return;
         }
 
@@ -622,7 +646,9 @@ void Display::qtiBeginDraw() {
         }
     }
 #else
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     SFTRACE_NAME("Specfence_macroisundefined");
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #endif
 }
 
@@ -630,7 +656,9 @@ void Display::qtiEndDraw() {
 #ifdef QTI_DISPLAY_EXTENSION
     auto displayext = surfaceflingerextension::QtiExtensionContext::instance().getDisplayExtension();
     if (displayext) {
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
         SFTRACE_CALL();
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
         auto& outputState = editState();
         if (!outputState.usesClientComposition || isVirtual()) {
             return;
@@ -662,8 +690,8 @@ void Display::qtiEndDraw() {
     }
 #endif
 }
-/* QTI_END */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 bool Display::supportsOffloadPresent() const {
     if (auto halDisplayId = HalDisplayId::tryCast(mId)) {
         auto& hwc = getCompositionEngine().getHwComposer();

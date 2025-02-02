@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -46,10 +48,10 @@
 #include <log/log.h>
 #include <system/window.h>
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2024-07-03: Display: sf: Align Display roi with fb scale
 #include <cutils/properties.h>
-/* QTI_END */
 
+// QTI_END: 2024-07-03: Display: sf: Align Display roi with fb scale
 #include "DisplayDevice.h"
 #include "FrontEnd/DisplayInfo.h"
 #include "HdrSdrRatioOverlay.h"
@@ -90,7 +92,9 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
                     .setDisplaySurface(std::move(args.displaySurface))
                     .setMaxTextureCacheSize(
                             static_cast<size_t>(SurfaceFlinger::maxFrameBufferAcquiredBuffers))
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
                     .qtiSetDisplaySurfaceExtension(args.mQtiDSExtnIntf)
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
                     .build());
 
     if (!mFlinger->mDisableClientCompositionCache &&
@@ -119,12 +123,12 @@ DisplayDevice::DisplayDevice(DisplayDeviceCreationArgs& args)
 
     // initialize the display orientation transform.
     setProjection(ui::ROTATION_0, Rect::INVALID_RECT, Rect::INVALID_RECT);
+// QTI_BEGIN: 2024-07-03: Display: sf: Align Display roi with fb scale
 
-    /* QTI_BEGIN */
     char value[PROPERTY_VALUE_MAX];
     property_get("vendor.display.enable_fb_scaling", value, "0");
     mUseFbScaling = atoi(value);
-    /* QTI_END */
+// QTI_END: 2024-07-03: Display: sf: Align Display roi with fb scale
 }
 
 DisplayDevice::~DisplayDevice() = default;
@@ -168,29 +172,33 @@ auto DisplayDevice::getFrontEndInfo() const -> frontend::DisplayInfo {
                                                         inversePhysicalOrientation),
                                                 width, height);
     const auto& displayTransform = undoPhysicalOrientation * getTransform();
+// QTI_BEGIN: 2024-07-03: Display: sf: Align Display roi with fb scale
 
-    /* QTI_BEGIN */
     ui::Transform scale;
     ui::Transform rotationTransform = getTransform();
     scale.set(1, 0, 0, 1);
     if(mUseFbScaling && isPrimary()){ //use fb_scaling
+// QTI_END: 2024-07-03: Display: sf: Align Display roi with fb scale
+// QTI_BEGIN: 2024-07-03: Display: sf: Avoid fetching current active mode for virtual displays
         auto currMode = refreshRateSelector().getActiveMode();
         rotationTransform.set(getTransform().getOrientation(), currMode.modePtr->getWidth(),
                               currMode.modePtr->getHeight());
+// QTI_END: 2024-07-03: Display: sf: Avoid fetching current active mode for virtual displays
+// QTI_BEGIN: 2024-07-03: Display: sf: Align Display roi with fb scale
         const float scaleX = static_cast<float>(currMode.modePtr->getWidth()) / getWidth();
         const float scaleY = static_cast<float>(currMode.modePtr->getHeight()) / getHeight();
         scale.set(scaleX, 0, 0, scaleY);
     }
     const auto& displayTransform_s = undoPhysicalOrientation * rotationTransform * scale;
-    /* QTI_END */
 
+// QTI_END: 2024-07-03: Display: sf: Align Display roi with fb scale
     // Send the inverse display transform to input so it can convert display coordinates to
     // logical display.
 
     info.logicalWidth = getLayerStackSpaceRect().width();
     info.logicalHeight = getLayerStackSpaceRect().height();
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-07-03: Display: sf: Align Display roi with fb scale
     if (mUseFbScaling && isPrimary()) {
         info.transform = displayTransform_s.inverse();
         return {.info = info,
@@ -202,10 +210,10 @@ auto DisplayDevice::getFrontEndInfo() const -> frontend::DisplayInfo {
                 .rotationFlags = ui::Transform::toRotationFlags(mOrientation),
                 .transformHint = getTransformHint()};
     }
-    /* QTI_END */
     else {
         info.transform = displayTransform.inverse();
         return {.info = info,
+// QTI_END: 2024-07-03: Display: sf: Align Display roi with fb scale
             .transform = displayTransform,
             .receivesInput = receivesInput(),
             .isSecure = isSecure(),
@@ -213,7 +221,9 @@ auto DisplayDevice::getFrontEndInfo() const -> frontend::DisplayInfo {
             .isVirtual = isVirtual(),
             .rotationFlags = ui::Transform::toRotationFlags(mOrientation),
             .transformHint = getTransformHint()};
+// QTI_BEGIN: 2024-07-03: Display: sf: Align Display roi with fb scale
     }
+// QTI_END: 2024-07-03: Display: sf: Align Display roi with fb scale
 }
 
 void DisplayDevice::setPowerMode(hal::PowerMode mode) {
@@ -554,7 +564,7 @@ void DisplayDevice::adjustRefreshRate(Fps pacesetterDisplayRefreshRate) {
     mAdjustedRefreshRate = pacesetterDisplayRefreshRate / divisor;
 }
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 void DisplayDevice::qtiResetVsyncPeriod() {
     std::scoped_lock<std::mutex> lock(mQtiModeLock);
     mQtiVsyncPeriodUpdated = true;
@@ -568,8 +578,8 @@ void DisplayDevice::qtiSetPowerModeOverrideConfig(bool supported) {
 bool DisplayDevice::qtiGetPowerModeOverrideConfig() const {
     return mQtiIsPowerModeOverride;
 }
-/* QTI_END */
 
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 std::atomic<int32_t> DisplayDeviceState::sNextSequenceId(1);
 
 }  // namespace android

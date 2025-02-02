@@ -14,12 +14,18 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
  * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -162,11 +168,17 @@
 #include "LayerVector.h"
 #include "MutexUtils.h"
 #include "NativeWindowSurface.h"
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
 #include "QtiExtension/QtiSurfaceFlingerExtensionIntf.h"
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 #include "QtiExtension/QtiSurfaceFlingerExtensionFactory.h"
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #include "QtiExtension/QtiExtensionContext.h"
-/* QTI_END */
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
 #include "PowerAdvisor/PowerAdvisor.h"
 #include "PowerAdvisor/Workload.h"
 #include "RegionSamplingThread.h"
@@ -553,12 +565,17 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
         mLayerTracing.setTransactionTracing(*mTransactionTracing);
     }
 
-    /* QTI_BEGIN */
+
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
     mQtiSFExtnIntf = surfaceflingerextension::qtiCreateSurfaceFlingerExtension(this);
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     surfaceflingerextension::QtiExtensionContext::instance().setQtiSurfaceFlingerExtn(mQtiSFExtnIntf);
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     mQtiSFExtnIntf->qtiInit(this);
     ALOGI("Created SF Extension %p", mQtiSFExtnIntf);
-    /* QTI_END */
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
 
     mIgnoreHdrCameraLayers = ignore_hdr_camera_layers(false);
 
@@ -829,9 +846,9 @@ void SurfaceFlinger::bootFinished() {
             ftl::FakeGuard guard(mStateLock);
             enableRefreshRateOverlay(true);
         }
-        /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
         mQtiSFExtnIntf->qtiFbScalingOnBoot();
-        /* QTI_END */
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
     }));
 }
 
@@ -1079,21 +1096,27 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
     });
 
     initTransactionTraceWriter();
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     mQtiSFExtnIntf =
             mQtiSFExtnIntf->qtiPostInit(static_cast<android::impl::HWComposer&>(
                                                 mCompositionEngine->getHwComposer()),
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
                                         static_cast<adpf::impl::PowerAdvisor*>(mPowerAdvisor.get()),
                                         mScheduler->getVsyncConfiguration_ptr(), getHwComposer().getComposer());
+// QTI_BEGIN: 2023-04-20: Display: sf: setCompositionEngine to qti extension at init.
    surfaceflingerextension::QtiExtensionContext::instance().setCompositionEngine(
             &getCompositionEngine());
+// QTI_END: 2023-04-20: Display: sf: setCompositionEngine to qti extension at init.
+// QTI_BEGIN: 2024-02-28: Display: sf: query virtual display count after DisplayConfig initialization
 
     if (base::GetBoolProperty("debug.sf.enable_hwc_vds"s, false)) {
         enableHalVirtualDisplays(true);
     }
 
+// QTI_END: 2024-02-28: Display: sf: query virtual display count after DisplayConfig initialization
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     mQtiSFExtnIntf->qtiStartUnifiedDraw();
-    /* QTI_END */
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 
     ALOGV("Done initializing");
 }
@@ -1390,22 +1413,22 @@ void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode) {
 
     SFTRACE_NAME(ftl::Concat(__func__, ' ', displayId.value).c_str());
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-24: Display: sf: Disallow SF from setting the mode for external displays
     if (getHwComposer().getDisplayConnectionType(displayId) ==
         ui::DisplayConnectionType::External) {
         ALOGW("%s: Attempted to set desired mode for external display %" PRIu64, __func__,
               displayId.value);
         return;
     }
-    /* QTI_END */
 
+// QTI_END: 2024-04-24: Display: sf: Disallow SF from setting the mode for external displays
     const bool emitEvent = desiredMode.emitEvent;
 
-    /* QTI_BEGIN */
     if (mQtiSFExtnIntf->qtiIsFpsDeferNeeded(mode.fps.getValue())) {
+// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
         return;
     }
-    /* QTI_END */
+// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
     using DesiredModeAction = display::DisplayModeController::DesiredModeAction;
 
     switch (mDisplayModeController.setDesiredMode(displayId, std::move(desiredMode))) {
@@ -1446,11 +1469,10 @@ void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode) {
         case DesiredModeAction::None:
             break;
     }
-
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-24: Display: sf: Introduce QTI Extensions in AOSP
     mQtiSFExtnIntf->qtiSetContentFps(mode.fps.getValue());
     mQtiSFExtnIntf->qtiDolphinSetVsyncPeriod(mode.fps.getPeriodNsecs());
-    /* QTI_END */
+// QTI_END: 2023-01-24: Display: sf: Introduce QTI Extensions in AOSP
 }
 
 status_t SurfaceFlinger::setActiveModeFromBackdoor(const sp<display::DisplayToken>& displayToken,
@@ -2244,12 +2266,12 @@ status_t SurfaceFlinger::removeHdrLayerInfoListener(
 }
 
 status_t SurfaceFlinger::notifyPowerBoost(int32_t boostId) {
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
     if (boostId == DOLPHIN_TOUCH_ID) {
         mQtiSFExtnIntf->qtiDolphinUnblockPendingBuffer();
         return NO_ERROR;
     }
-    /* QTI_END */
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
     using aidl::android::hardware::power::Boost;
     Boost powerBoost = static_cast<Boost>(boostId);
 
@@ -2300,9 +2322,9 @@ void SurfaceFlinger::scheduleCommit(FrameHint hint, Duration workDurationSlack) 
     if (hint == FrameHint::kActive) {
         mScheduler->resetIdleTimer();
     }
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     mQtiSFExtnIntf->qtiNotifyDisplayUpdateImminent();
-    /* QTI_END */
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     mScheduler->scheduleFrame(workDurationSlack);
 }
 
@@ -2403,9 +2425,9 @@ void SurfaceFlinger::onComposerHalSeamlessPossible(hal::HWDisplayId) {
 
 void SurfaceFlinger::onComposerHalRefresh(hal::HWDisplayId) {
     Mutex::Autolock lock(mStateLock);
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-26: Display: sfext: add support for idle content fps hint
     mQtiSFExtnIntf->qtiOnComposerHalRefresh();
-    /* QTI_END */
+// QTI_END: 2024-02-26: Display: sfext: add support for idle content fps hint
     scheduleComposite(FrameHint::kNone);
 }
 
@@ -2676,20 +2698,24 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
         }
         it->second->latchBufferImpl(unused, latchTime, bgColorOnly);
         newDataLatched = true;
-        /* QTI_BEGIN */
+// QTI_BEGIN: 2024-06-10: Performance: sf: correct dolphin hook due to improper keystone update
         mQtiSFExtnIntf->qtiDolphinTrackBufferDecrement(it->second->getDebugName(),
                 *it->second->getPendingBufferCounter());
-        /* QTI_END */
+// QTI_END: 2024-06-10: Performance: sf: correct dolphin hook due to improper keystone update
 
         frontend::LayerSnapshot* snapshot = mLayerSnapshotBuilder.getSnapshot(it->second->sequence);
         gui::GameMode gameMode = (snapshot) ? snapshot->gameMode : gui::GameMode::Unsupported;
         mLayersWithQueuedFrames.emplace(it->second, gameMode);
+// QTI_BEGIN: 2024-12-17: Display: sf: set layer class in snapshot
 
-        /* QTI_BEGIN */
+// QTI_END: 2024-12-17: Display: sf: set layer class in snapshot
+// QTI_BEGIN: 2025-01-22: Display: sf: Add null check for snapshot
         if (snapshot) {
             snapshot->qtiLayerClass = it->second->qtiGetLayerClass();
         }
-        /* QTI_END */
+// QTI_END: 2025-01-22: Display: sf: Add null check for snapshot
+// QTI_BEGIN: 2024-12-17: Display: sf: set layer class in snapshot
+// QTI_END: 2024-12-17: Display: sf: set layer class in snapshot
     }
 
     updateLayerHistory(latchTime);
@@ -2704,10 +2730,10 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
         }
     });
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-06-04: Display: sf: Upgrade legacy support to notify animation hint
     mQtiSFExtnIntf->qtiSetDisplayAnimating();
-    /* QTI_END */
 
+// QTI_END: 2024-06-04: Display: sf: Upgrade legacy support to notify animation hint
     for (auto& destroyedLayer : mLayerLifecycleManager.getDestroyedLayers()) {
         mLegacyLayers.erase(destroyedLayer->id);
     }
@@ -2733,10 +2759,9 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
 
 bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
                             const scheduler::FrameTargets& frameTargets) {
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-11-08: Display: sf: Enable QtiExtensions in V
     mQtiSFExtnIntf->qtiDolphinTrackVsyncSignal();
-    /* QTI_END */
-
+// QTI_END: 2023-11-08: Display: sf: Enable QtiExtensions in V
     // The expectedVsyncTime, which was predicted when this frame was scheduled, is normally in the
     // future relative to frameTime, but may not be for delayed frames. Adjust mExpectedPresentTime
     // accordingly, but not mScheduledPresentTime.
@@ -2746,15 +2771,19 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     const VsyncId vsyncId = pacesetterFrameTarget.vsyncId();
     SFTRACE_NAME(ftl::Concat(__func__, ' ', ftl::to_underlying(vsyncId)).c_str());
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-06-10: Display: sf: reduce scope of mSmomoMutex
     {
         std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
         if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive()) {
           lck.lock();
         }
+// QTI_END: 2024-06-10: Display: sf: reduce scope of mSmomoMutex
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
     }
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2024-01-25: Display: sf: enable Smomo in Android V
     mQtiSFExtnIntf->qtiOnVsync(0);
-    /* QTI_END */
+// QTI_END: 2024-01-25: Display: sf: enable Smomo in Android V
 
     // mScheduledPresentTime = expectedVsyncTime;
 
@@ -2767,12 +2796,16 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
     //               ticks<std::milli, float>(mExpectedPresentTime - TimePoint::now()),
     //               mExpectedPresentTime == expectedVsyncTime ? "" : " (adjusted)");
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-11-08: Display: sf: Enable QtiExtensions in V
     mQtiSFExtnIntf->qtiUpdateFrameScheduler();
     mQtiSFExtnIntf->qtiSyncToDisplayHardware();
+// QTI_END: 2023-11-08: Display: sf: Enable QtiExtensions in V
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     // TODO(rmedel): Handle locking for early wake up
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
+// QTI_BEGIN: 2024-03-04: Display: sfext: Avoid redundant calls to content fps hint
     mQtiSFExtnIntf->qtiResetSFExtn();
-    /* QTI_END */
+// QTI_END: 2024-03-04: Display: sfext: Avoid redundant calls to content fps hint
 
     // const Period vsyncPeriod = mScheduler->getVsyncSchedule()->period();
     // const FenceTimePtr& previousPresentFence = getPreviousPresentFence(frameTime, vsyncPeriod);
@@ -2950,10 +2983,10 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
 
     persistDisplayBrightness(mustComposite);
 
-    /* QTI_BEGIN */
-    mQtiSFExtnIntf->qtiSendCompositorTid();
-    /* QTI_END */
 
+// QTI_BEGIN: 2023-11-08: Display: sf: Enable QtiExtensions in V
+    mQtiSFExtnIntf->qtiSendCompositorTid();
+// QTI_END: 2023-11-08: Display: sf: Enable QtiExtensions in V
     return mustComposite && CC_LIKELY(mBootStage != BootStage::BOOTLOADER);
 }
 
@@ -3070,9 +3103,7 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
     // the scheduler.
     const auto presentTime = systemTime();
 
-    /* QTI_BEGIN */
     //mQtiSFExtnIntf->qtiSetDisplayElapseTime(refreshArgs.earliestPrsesentTime);
-    /* QTI_END */
 
     constexpr bool kCursorOnly = false;
     const auto layers = moveSnapshotsToCompositionArgs(refreshArgs, kCursorOnly);
@@ -3604,9 +3635,9 @@ void SurfaceFlinger::onCompositionPresented(PhysicalDisplayId pacesetterId,
         }
     }
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     mQtiSFExtnIntf->qtiUpdateSmomoState();
-    /* QTI_END */
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     if (hasPacesetterDisplay && !pacesetterDisplay->isPoweredOn()) {
         getRenderEngine().cleanupPostRender();
         return;
@@ -3634,10 +3665,10 @@ void SurfaceFlinger::onCompositionPresented(PhysicalDisplayId pacesetterId,
         });
     }
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     mQtiSFExtnIntf->qtiUpdateLayerState(mNumLayers);
-    /* QTI_END */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     // Even though SFTRACE_INT64 already checks if tracing is enabled, it doesn't prevent the
     // side-effect of getTotalSize(), so we check that again here
     if (SFTRACE_ENABLED()) {
@@ -3645,10 +3676,10 @@ void SurfaceFlinger::onCompositionPresented(PhysicalDisplayId pacesetterId,
         SFTRACE_INT64("Total Buffer Size", GraphicBufferAllocator::get().getTotalSize());
     }
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     mQtiSFExtnIntf->qtiSendInitialFps(
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
             pacesetterDisplay->refreshRateSelector().getActiveMode().fps.getValue());
-    /* QTI_END */
 }
 
 void SurfaceFlinger::commitTransactions() {
@@ -3831,10 +3862,10 @@ bool SurfaceFlinger::configureLocked() {
 
     for (const auto [hwcDisplayId, connection] : events) {
         if (auto info = getHwComposer().onHotplug(hwcDisplayId, connection)) {
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2023-02-10: Display: QSSIRefactor: Disconnect displays during the configure stage
             mQtiSFExtnIntf->qtiUpdateOnComposerHalHotplug(hwcDisplayId, connection, info);
-            /* QTI_END */
 
+// QTI_END: 2023-02-10: Display: QSSIRefactor: Disconnect displays during the configure stage
             const auto displayId = info->id;
             const ftl::Concat displayString("display ", displayId.value, "(HAL ID ", hwcDisplayId,
                                             ')');
@@ -3874,11 +3905,11 @@ bool SurfaceFlinger::configureLocked() {
 
                 processHotplugDisconnect(displayId, displayString.c_str());
             }
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
 
-            /* QTI_BEGIN */
             mQtiSFExtnIntf->qtiUpdateOnProcessDisplayHotplug(static_cast<uint32_t>(hwcDisplayId),
                                                              connection, displayId);
-            /* QTI_END */
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
         }
     }
 
@@ -3936,12 +3967,14 @@ std::optional<DisplayModeId> SurfaceFlinger::processHotplugConnect(PhysicalDispl
     state.physical = {.id = displayId,
                       .hwcDisplayId = hwcDisplayId,
                       .activeMode = std::move(activeMode)};
+// QTI_BEGIN: 2024-07-26: Display: sf: Consider all physical displays as secure
     if (mIsHdcpViaNegVsync) {
         state.isSecure = connectionType == ui::DisplayConnectionType::Internal;
     } else {
         // TODO(b/349703362): Remove this when HDCP aidl API becomes ready
         state.isSecure = true; // All physical displays are currently considered secure.
     }
+// QTI_END: 2024-07-26: Display: sf: Consider all physical displays as secure
     state.isProtected = true;
     state.displayName = std::move(info.name);
     state.maxLayerPictureProfiles = getHwComposer().getMaxLayerPictureProfiles(displayId);
@@ -3972,8 +4005,10 @@ sp<DisplayDevice> SurfaceFlinger::setupNewDisplayDeviceInternal(
         std::shared_ptr<compositionengine::Display> compositionDisplay,
         const DisplayDeviceState& state,
         const sp<compositionengine::DisplaySurface>& displaySurface,
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
         const sp<IGraphicBufferProducer>& producer,
         surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf) {
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     DisplayDeviceCreationArgs creationArgs(sp<SurfaceFlinger>::fromExisting(this), getHwComposer(),
                                            displayToken, compositionDisplay);
     creationArgs.sequenceId = state.sequenceId;
@@ -3982,7 +4017,9 @@ sp<DisplayDevice> SurfaceFlinger::setupNewDisplayDeviceInternal(
     creationArgs.displaySurface = displaySurface;
     creationArgs.hasWideColorGamut = false;
     creationArgs.supportedPerFrameMetadata = 0;
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     creationArgs.mQtiDSExtnIntf = mQtiDSExtnIntf;
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 
     if (const auto physicalIdOpt = PhysicalDisplayId::tryCast(compositionDisplay->getId())) {
         const auto physicalId = *physicalIdOpt;
@@ -4080,10 +4117,10 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
                                          const DisplayDeviceState& state) {
     ui::Size resolution(0, 0);
     ui::PixelFormat pixelFormat = static_cast<ui::PixelFormat>(PIXEL_FORMAT_UNKNOWN);
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
     bool qtiCanAllocateHwcForVDS = false;
-    /* QTI_END */
 
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
     if (state.physical) {
         resolution = state.physical->activeMode->getResolution();
         pixelFormat = static_cast<ui::PixelFormat>(PIXEL_FORMAT_RGBA_8888);
@@ -4096,9 +4133,9 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         status = state.surface->query(NATIVE_WINDOW_FORMAT, &format);
         ALOGE_IF(status != NO_ERROR, "Unable to query format (%d)", status);
         pixelFormat = static_cast<ui::PixelFormat>(format);
-        /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
         qtiCanAllocateHwcForVDS = mQtiSFExtnIntf->qtiCanAllocateHwcDisplayIdForVDS(state);
-        /* QTI_END */
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
     } else {
         // Virtual displays without a surface are dormant:
         // they have external state (layer stack, projection,
@@ -4110,16 +4147,18 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     if (const auto& physical = state.physical) {
         builder.setId(physical->id);
     } else {
-        /* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-12: Display: QtiExtension: Downgrade fatal logs to non-fatal
         auto qtiVirtualDisplayId =
+// QTI_END: 2023-04-12: Display: QtiExtension: Downgrade fatal logs to non-fatal
                 mQtiSFExtnIntf->qtiAcquireVirtualDisplay(resolution, pixelFormat, state.uniqueId,
+// QTI_BEGIN: 2023-04-12: Display: QtiExtension: Downgrade fatal logs to non-fatal
                                                          qtiCanAllocateHwcForVDS);
         if (!qtiVirtualDisplayId.has_value()) {
             ALOGE("%s: Failed to retrieve virtual display id, returning.", __func__);
             return;
         }
         builder.setId(*qtiVirtualDisplayId);
-        /* QTI_END */
+// QTI_END: 2023-04-12: Display: QtiExtension: Downgrade fatal logs to non-fatal
     }
 
     builder.setPixels(resolution);
@@ -4138,16 +4177,18 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     sp<IGraphicBufferConsumer> bqConsumer;
     getFactory().createBufferQueue(&bqProducer, &bqConsumer, /*consumerIsSurfaceFlinger =*/false);
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* qtiDSExtnIntf = nullptr;
-    /* QTI_END */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     if (state.isVirtual()) {
         const auto displayId = VirtualDisplayId::tryCast(compositionDisplay->getId());
         LOG_FATAL_IF(!displayId);
         auto surface = sp<VirtualDisplaySurface>::make(getHwComposer(), *displayId, state.surface,
                                                        bqProducer, bqConsumer, state.displayName,
-                                                /* QTI_BEGIN */ state.isSecure /* QTI_END */);
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+                                                state.isSecure);
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
         displaySurface = surface;
         producer = std::move(surface);
     } else {
@@ -4174,35 +4215,47 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     }
 
     LOG_FATAL_IF(!displaySurface);
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #ifdef QTI_DISPLAY_EXTENSION
     qtiDSExtnIntf = displaySurface->qtiGetDisplaySurfaceExtn();
 #endif
-    /* QTI_END */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     auto display = setupNewDisplayDeviceInternal(displayToken, std::move(compositionDisplay), state,
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
                                                  displaySurface, producer, qtiDSExtnIntf);
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
     mQtiSFExtnIntf->qtiSetPowerModeOverrideConfig(display);
-    /* QTI_END */
 
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
+// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
     if (!display->isVirtual()) {
-        /* QTI_BEGIN */
+// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
         mQtiSFExtnIntf->qtiSetPowerModeOverrideConfig(display);
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
         mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ true);
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
         mQtiSFExtnIntf->qtiTryDrawMethod(display);
-        /* QTI_END */
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 
+// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
         if (mScheduler) {
                 // TODO(b/241285876): Annotate `processDisplayAdded` instead.
                 ftl::FakeGuard guard(kMainThreadContext);
 
                 // For hotplug reconnect, renew the registration since display modes have been
                 // reloaded.
+// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
                 mScheduler->registerDisplay(display->getPhysicalId(), display->holdRefreshRateSelector(), mActiveDisplayId);
+// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
         }
     }
+// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
 
     if (display->isVirtual()) {
         display->adjustRefreshRate(mScheduler->getPacesetterRefreshRate());
@@ -4213,9 +4266,9 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     }
 
     mDisplays.try_emplace(displayToken, std::move(display));
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     mQtiSFExtnIntf->qtiCreateSmomoInstance(state);
-    /* QTI_END */
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 
     // For an external display, loadDisplayModes already attempted to select the same mode
     // as DM, but SF still needs to be updated to match.
@@ -4242,11 +4295,13 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
 void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
     auto display = getDisplayDeviceLocked(displayToken);
     if (display) {
-        /* QTI_BEGIN */
+// QTI_BEGIN: 2024-05-07: Display: sfext: Update sfextenstion's displays list upon removal
         mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ false);
+// QTI_END: 2024-05-07: Display: sfext: Update sfextenstion's displays list upon removal
+// QTI_BEGIN: 2024-06-06: Display: sf: destroy smomo instance before display disconnect
         //Destroy smomo instance need to be call before display disconnect
         mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
-        /* QTI_END */
+// QTI_END: 2024-06-06: Display: sf: destroy smomo instance before display disconnect
         display->disconnect();
 
         if (display->isVirtual()) {
@@ -4288,11 +4343,13 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
     // Recreate the DisplayDevice if the surface or sequence ID changed.
     if (currentBinder != drawingBinder || currentState.sequenceId != drawingState.sequenceId) {
         if (const auto display = getDisplayDeviceLocked(displayToken)) {
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
             mQtiSFExtnIntf->qtiUpdateDisplaysList(display, /*addDisplay*/ false);
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
+// QTI_BEGIN: 2024-06-06: Display: sf: destroy smomo instance before display disconnect
             //Destroy smomo instance need to be call before display disconnect
             mQtiSFExtnIntf->qtiDestroySmomoInstance(display);
-            /* QTI_END */
+// QTI_END: 2024-06-06: Display: sf: destroy smomo instance before display disconnect
 
             display->disconnect();
             if (display->isVirtual()) {
@@ -4327,18 +4384,18 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
     }
 
     if (const auto display = getDisplayDeviceLocked(displayToken)) {
-        /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
         bool qtiDisplaySizeChanged = false;
-        /* QTI_END */
 
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
         if (currentState.layerStack != drawingState.layerStack) {
             display->setLayerFilter(
                     makeLayerFilterForDisplay(display->getId(), currentState.layerStack));
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
             mQtiSFExtnIntf->qtiUpdateSmomoLayerStackId(currentState.physical->hwcDisplayId,
                                                        currentState.layerStack.id,
                                                        drawingState.layerStack.id);
-            /* QTI_END */
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
         }
         if (currentState.flags != drawingState.flags) {
             display->setFlags(currentState.flags);
@@ -4346,17 +4403,15 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         if ((currentState.orientation != drawingState.orientation) ||
             (currentState.layerStackSpaceRect != drawingState.layerStackSpaceRect) ||
             (currentState.orientedDisplaySpaceRect != drawingState.orientedDisplaySpaceRect)) {
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
             if (mQtiSFExtnIntf->qtiFbScalingOnDisplayChange(displayToken, display, drawingState)) {
                 qtiDisplaySizeChanged = true;
             } else {
-                /* QTI_END */
                 display->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
                                        currentState.orientedDisplaySpaceRect);
-                /* QTI_BEGIN */
             }
-            /* QTI_END */
 
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
             if (display->getId() == mActiveDisplayId) {
                 mActiveDisplayTransformHint = display->getTransformHint();
                 sActiveDisplayRotationFlags =
@@ -4365,25 +4420,25 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         }
         if (currentState.width != drawingState.width ||
             currentState.height != drawingState.height) {
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
             if (!qtiDisplaySizeChanged) {
-                /* QTI_END */
                 display->setDisplaySize(currentState.width, currentState.height);
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
 
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
                 if (display->getId() == mActiveDisplayId) {
                     onActiveDisplaySizeChanged(*display);
                 }
-                /* QTI_BEGIN */
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
             }
-            /* QTI_END */
         }
     }
 }
 
 void SurfaceFlinger::resetPhaseConfiguration(Fps refreshRate) {
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     mQtiSFExtnIntf->qtiUpdateVsyncConfiguration();
-    /* QTI_END */
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
 }
 
 void SurfaceFlinger::processDisplayChangesLocked() {
@@ -4605,14 +4660,16 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
     // Scheduler::chooseRefreshRateForContent
 
     ConditionalLock lock(mStateLock, std::this_thread::get_id() != mMainThreadId);
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check to acquire mStateLock in qtiCheckVirtualDisplayHint
     // Setting mRequestDisplayModeFlag as true and storing thread Id to avoid acquiring the same
     // mutex again in a single thread
+// QTI_END: 2024-02-28: Display: sf: Add check to acquire mStateLock in qtiCheckVirtualDisplayHint
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check to update flags in requestDisplayModes
     if (std::this_thread::get_id() != mMainThreadId) {
         mRequestDisplayModeFlag = true;
         mFlagThread = std::this_thread::get_id();
     }
-    /* QTI_END */
+// QTI_END: 2024-02-28: Display: sf: Add check to update flags in requestDisplayModes
 
     for (auto& request : modeRequests) {
         const auto& modePtr = request.mode.modePtr;
@@ -4625,25 +4682,27 @@ void SurfaceFlinger::requestDisplayModes(std::vector<display::DisplayModeRequest
         if (!selectorPtr) continue;
 
         if (display->refreshRateSelector().isModeAllowed(request.mode)) {
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
             uint32_t qtiHwcDisplayId;
             if (mQtiSFExtnIntf->qtiGetHwcDisplayId(display, &qtiHwcDisplayId)) {
                 mQtiSFExtnIntf->qtiSetDisplayExtnActiveConfig(qtiHwcDisplayId,
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
 				ftl::to_underlying(modePtr->getId()));
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
             }
-            /* QTI_END */
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
             setDesiredMode(std::move(request));
         } else {
             ALOGV("%s: Mode %d is disallowed for display %s", __func__,
                   ftl::to_underlying(modePtr->getId()), to_string(displayId).c_str());
         }
     }
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check to update flags in requestDisplayModes
     if (std::this_thread::get_id() != mMainThreadId) {
         mRequestDisplayModeFlag = false;
         mFlagThread = mMainThreadId;
     }
-    /* QTI_END */
+// QTI_END: 2024-02-28: Display: sf: Add check to update flags in requestDisplayModes
 }
 
 void SurfaceFlinger::notifyCpuLoadUp() {
@@ -5078,7 +5137,6 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
                 const bool fenceSignaled = !acquireFenceAvailable ||
                         s.bufferData->acquireFence->getStatus() != Fence::Status::Unsignaled;
 
-                /* QTI_BEGIN */
                 sp<Layer> layerHandle = LayerHandle::getLayer(s.surface);
                 TimePoint desiredPresentTime = TimePoint::fromNs(transaction.desiredPresentTime);
                 if (mQtiSFExtnIntf->qtiIsFrameEarly(layerHandle->qtiGetSmomoLayerStackId(),
@@ -5086,7 +5144,6 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
                     ready = TransactionReadiness::NotReady;
                     return TraverseBuffersReturnValues::STOP_TRAVERSAL;
                 }
-                /* QTI_END */
 
                 if (!fenceSignaled) {
                     // check fence status
@@ -5226,13 +5283,17 @@ status_t SurfaceFlinger::setTransactionState(
         const std::vector<ListenerCallbacks>& listenerCallbacks, uint64_t transactionId,
         const std::vector<uint64_t>& mergedTransactionIds) {
     SFTRACE_CALL();
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
     std::unique_lock<std::mutex> lck (mSmomoMutex, std::defer_lock);
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2024-07-24: Display: sf: do not acquire mSmomoMutex in setTransactionState on main thread
     if (mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive() &&
         std::this_thread::get_id() != mMainThreadId) {
       lck.try_lock();
+// QTI_END: 2024-07-24: Display: sf: do not acquire mSmomoMutex in setTransactionState on main thread
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
     }
-    /* QTI_END */
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
 
     IPCThreadState* ipc = IPCThreadState::self();
     const int originPid = ipc->getCallingPid();
@@ -5276,12 +5337,11 @@ status_t SurfaceFlinger::setTransactionState(
 
     const int64_t postTime = systemTime();
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-27: Display: sf: do not check virtual display hint on main thread
     if (std::this_thread::get_id() != mMainThreadId) {
        mQtiSFExtnIntf->qtiCheckVirtualDisplayHint(displays);
     }
-    /* QTI_END */
-
+// QTI_END: 2024-02-27: Display: sf: do not check virtual display hint on main thread
     std::vector<uint64_t> uncacheBufferIds;
     uncacheBufferIds.reserve(uncacheBuffers.size());
     for (const auto& uncacheBuffer : uncacheBuffers) {
@@ -5309,22 +5369,32 @@ status_t SurfaceFlinger::setTransactionState(
                 resolvedState.state.bufferData->buffer = resolvedState.externalTexture->getBuffer();
             }
 
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2024-06-10: Display: sf: reduce scope of mSmomoMutex
             if (*layer->getPendingBufferCounter() > 0 &&
                 mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive() &&
                 lck.owns_lock()) {
                 lck.unlock();
             }
 
+// QTI_END: 2024-06-10: Display: sf: reduce scope of mSmomoMutex
+// QTI_BEGIN: 2024-02-28: Performance: sf: Only invoke dolphin hooks for sync binder
             if (!(flags & eOneWay)) {
+// QTI_END: 2024-02-28: Performance: sf: Only invoke dolphin hooks for sync binder
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
                 mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str(), isAutoTimestamp,
                                                                desiredPresentTime);
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
+// QTI_BEGIN: 2024-02-28: Performance: sf: Only invoke dolphin hooks for sync binder
             }
+// QTI_END: 2024-02-28: Performance: sf: Only invoke dolphin hooks for sync binder
+// QTI_BEGIN: 2023-05-05: Display: sf: extensions: fix Smomo issue
 
             mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(layer, desiredPresentTime, isAutoTimestamp,
+// QTI_END: 2023-05-05: Display: sf: extensions: fix Smomo issue
+// QTI_BEGIN: 2023-06-07: Display: sfext: Fix compilation error for FRC Frame Pacing Feature
                                                     resolvedState.externalTexture,
                                                     *resolvedState.state.bufferData);
-            /* QTI_END */
+// QTI_END: 2023-06-07: Display: sfext: Fix compilation error for FRC Frame Pacing Feature
 
             mBufferCountTracker.increment(resolvedState.layerId);
         }
@@ -5828,13 +5898,13 @@ void SurfaceFlinger::onHandleDestroyed(sp<Layer>& layer, uint32_t layerId) {
     }
     JankTracker::flushJankData(layerId);
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
     if (!layer) {
         ALOGW("Attempted to destroy an invalid layer");
         return;
     }
-    /* QTI_END */
 
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
     std::scoped_lock<std::mutex> lock(mCreatedLayersLock);
     mDestroyedHandles.emplace_back(layerId, layer->getDebugName());
 
@@ -6038,21 +6108,20 @@ void SurfaceFlinger::setPowerModeInternal(const sp<DisplayDevice>& display, hal:
         getHwComposer().setPowerMode(displayId, mode);
     }
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
     if (display->isPrimary()) {
         mQtiSFExtnIntf->qtiFbScalingOnPowerChange(display);
     }
-    /* QTI_END */
 
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
     if (displayId == mActiveDisplayId) {
         mTimeStats->setPowerMode(mode);
         mScheduler->setActiveDisplayPowerModeForRefreshRateStats(mode);
     }
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-27: Display: sf: extensions: Avoid calling qtiIsInternalDisplay
     mQtiSFExtnIntf->qtiSetEarlyWakeUpConfig(display, mode, isInternalDisplay);
-    /* QTI_END */
-
+// QTI_END: 2024-02-27: Display: sf: extensions: Avoid calling qtiIsInternalDisplay
     mScheduler->setDisplayPowerMode(displayId, mode);
 
     ALOGD("Finished setting power mode %d on display %s", mode, to_string(displayId).c_str());
@@ -6426,10 +6495,8 @@ void SurfaceFlinger::dumpVisibleFrontEnd(std::string& result) {
 }
 
 perfetto::protos::LayersProto SurfaceFlinger::dumpDrawingStateProto(uint32_t traceFlags) const {
-    /* QTI_BEGIN */
     // KEYSTONE(I3af6705f8860c519181271e74800d832cf5e1b49,b/362289034)
     // Mutex::Autolock _l(mStateLock);
-    /* QTI_END */
     std::unordered_set<uint64_t> stackIdsToSkip;
 
     // Determine if virtual layers display should be skipped
@@ -6526,9 +6593,9 @@ void SurfaceFlinger::dumpAll(const DumpArgs& args, const std::string& compositio
     if (!lock.locked()) {
         StringAppendF(&result, "Dumping without lock after timeout: %s (%d)\n",
                       strerror(-lock.status), lock.status);
-        /* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-28: Display: sf: Don't collect dumpsys without lock
         return;
-        /* QTI_END */
+// QTI_END: 2024-02-28: Display: sf: Don't collect dumpsys without lock
     }
 
     const bool colorize = !args.empty() && args[0] == String16("--color");
@@ -6813,8 +6880,10 @@ status_t SurfaceFlinger::CheckTransactCodeCredentials(uint32_t code) {
     }
     // Numbers from 1000 to 1045 and 20000 to 20002 are currently used for backdoors. The code
     // in onTransact verifies that the user is root, and has access to use SF.
-    if ((code >= 1000 && code <= 1046) /* QTI_BEGIN */ ||
-        (code >= 20000 && code <= 20002) /* QTI_END */) {
+    if ((code >= 1000 && code <= 1046) ||
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
+        (code >= 20000 && code <= 20002)) {
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
         ALOGV("Accessing SurfaceFlinger through backdoor code: %u", code);
         return OK;
     }
@@ -7089,12 +7158,12 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                     return nullptr;
                 }();
 
-                /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
                 if (mQtiSFExtnIntf->qtiIsSupportedConfigSwitch(display, modeId) != NO_ERROR) {
                     return BAD_VALUE;
                 }
-                /* QTI_END */
 
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
                 const auto getFps = [&] {
                     float value;
                     if (data.readFloat(&value) == NO_ERROR) {
@@ -7110,13 +7179,15 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 mDebugDisplayModeSetByBackdoor = false;
                 const status_t result =
                         setActiveModeFromBackdoor(display, DisplayModeId{modeId}, minFps, maxFps);
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
                 if (result == NO_ERROR) {
                     mDebugDisplayModeSetByBackdoor = true;
-                    /* QTI_BEGIN */
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
                     SFTRACE_NAME(std::string("ModeSwitch " + std::to_string(modeId)).c_str());
-                    /* QTI_END */
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
                 }
 
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
                 mDebugDisplayModeSetByBackdoor = result == NO_ERROR;
                 return result;
             }
@@ -7260,7 +7331,7 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 future.wait();
                 return NO_ERROR;
             }
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
             case 20000: {
                 uint64_t disp = 0;
                 hal::PowerMode power_mode = hal::PowerMode::ON;
@@ -7324,7 +7395,7 @@ status_t SurfaceFlinger::onTransact(uint32_t code, const Parcel& data, Parcel* r
                 }
                 return mQtiSFExtnIntf->qtiBinderSetWideModePreference(disp, pref);
             }
-                /* QTI_END */
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 
             case 1044: { // Enable/Disable mirroring from one display to another
                 /*
@@ -7879,15 +7950,16 @@ bool SurfaceFlinger::layersHasProtectedLayer(
         const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers) const {
     bool protectedLayerFound = false;
     for (auto& [_, layerFE] : layers) {
-        /* QTI_BEGIN */
+// QTI_BEGIN: 2024-07-09: Display: sf: Avoid Secure layers in Screen shot
         bool qtiSecCamera = layerFE->getCompositionState()->qtiIsSecureCamera;
         bool qtiSecDisplay = layerFE->getCompositionState()->qtiIsSecureDisplay;
-        /* QTI_END */
+// QTI_END: 2024-07-09: Display: sf: Avoid Secure layers in Screen shot
 
         protectedLayerFound |= (layerFE->mSnapshot->isVisible &&
                                 layerFE->mSnapshot->hasProtectedContent
-                                /* QTI_BEGIN */
-                                && !qtiSecCamera && !qtiSecDisplay /* QTI_END */);
+// QTI_BEGIN: 2024-07-30: Display: sf: Update LayerFE's composition state before composition
+                                && !qtiSecCamera && !qtiSecDisplay);
+// QTI_END: 2024-07-30: Display: sf: Update LayerFE's composition state before composition
         if (protectedLayerFound) {
             break;
         }
@@ -7951,9 +8023,7 @@ void SurfaceFlinger::captureScreenCommon(RenderAreaBuilderVariant renderAreaBuil
         hasProtectedLayer = layersHasProtectedLayer(layers);
     }
 
-    /* QTI_BEGIN */
         mQtiSFExtnIntf->qtiHasProtectedLayer(&hasProtectedLayer);
-    /* QTI_END */
 
     const bool isProtected = hasProtectedLayer && allowProtected && supportsProtected;
     const uint32_t usage = GRALLOC_USAGE_HW_COMPOSER | GRALLOC_USAGE_HW_RENDER |
@@ -8375,18 +8445,20 @@ status_t SurfaceFlinger::applyRefreshRateSelectorPolicy(
         return INVALID_OPERATION;
     }
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     auto qtiHwcDisplayId = getHwComposer().fromPhysicalDisplayId(displayId);
     if (qtiHwcDisplayId) {
         mQtiSFExtnIntf->qtiSetDisplayExtnActiveConfig(*qtiHwcDisplayId,
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
 			ftl::to_underlying(preferredModeId));
+// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     }
-    /* QTI_END */
+// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     setDesiredMode({std::move(preferredMode), .emitEvent = true});
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     mQtiSFExtnIntf->qtiSetRefreshRates(displayId);
-    /* QTI_END */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     // Update the frameRateOverride list as the display render rate might have changed
     mScheduler->updateFrameRateOverrides(scheduler::GlobalSignals{}, preferredFps);
     return NO_ERROR;
@@ -8856,10 +8928,10 @@ std::vector<std::pair<Layer*, LayerFE*>> SurfaceFlinger::moveSnapshotsToComposit
                 auto& legacyLayer = it->second;
                 sp<LayerFE> layerFE = legacyLayer->getCompositionEngineLayerFE(snapshot->path);
                 snapshot->fps = getLayerFramerate(currentTime, snapshot->sequence);
-                /* QTI_BEGIN */
+// QTI_BEGIN: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
                 snapshot->qtiIsSecureDisplay =  legacyLayer->qtiIsSecureDisplay();
                 snapshot->qtiIsSecureCamera = legacyLayer->qtiIsSecureCamera();
-                /* QTI_END */
+// QTI_END: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
                 layerFE->mSnapshot = std::move(snapshot);
                 refreshArgs.layers.push_back(layerFE);
                 layers.emplace_back(legacyLayer.get(), layerFE.get());
@@ -9158,9 +9230,9 @@ binder::Status SurfaceComposerAIDL::setPowerMode(const sp<IBinder>& display, int
     if (status != OK) {
         return binderStatusFromStatusT(status);
     }
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
     mFlinger->mQtiSFExtnIntf->qtiSetPowerMode(display, mode);
-    /* QTI_END */
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
     return binder::Status::ok();
 }
 
@@ -9743,12 +9815,12 @@ binder::Status SurfaceComposerAIDL::removeActivePictureListener(
 }
 
 binder::Status SurfaceComposerAIDL::notifyPowerBoost(int boostId) {
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
     if (boostId == DOLPHIN_TOUCH_ID) {
         mFlinger->notifyPowerBoost(boostId);
         return binderStatusFromStatusT(OK);
     }
-    /* QTI_END */
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
     status_t status = checkAccessPermission();
     if (status == OK) {
         status = mFlinger->notifyPowerBoost(boostId);

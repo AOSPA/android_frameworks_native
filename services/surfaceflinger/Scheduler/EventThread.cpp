@@ -210,8 +210,10 @@ EventThreadConnection::EventThreadConnection(EventThread* eventThread, uid_t cal
       : mOwnerUid(callingUid),
         mEventRegistration(eventRegistration),
         mEventThread(eventThread),
-        mChannel(/* QTI_BEGIN */ gui::BitTube(
-                8 * 1024 /* default size is 4KB, double it */) /* QTI_END */) {}
+// QTI_BEGIN: 2023-04-19: Display: SF: Add retry to EventThread postEvent
+        mChannel(gui::BitTube(
+                8 * 1024 /* default size is 4KB, double it */)) {}
+// QTI_END: 2023-04-19: Display: SF: Add retry to EventThread postEvent
 
 EventThreadConnection::~EventThreadConnection() {
     // do nothing here -- clean-up will happen automatically
@@ -753,9 +755,9 @@ void EventThread::generateFrameTimeline(VsyncEventData& outVsyncEventData, nsecs
 
 void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
                                 const DisplayEventConsumers& consumers) {
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-19: Display: SF: Add retry to EventThread postEvent
     const uint8_t num_attempts = 3;
-    /* QTI_END */
+// QTI_END: 2023-04-19: Display: SF: Add retry to EventThread postEvent
 
     // List of Uids that have been sent vsync data with queued buffer count.
     // Used to keep track of which Uids can be removed from the map of
@@ -777,30 +779,31 @@ void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
         } else {
             copy.vsync.vsyncData.numberQueuedBuffers = 0;
         }
-        /* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-19: Display: SF: Add retry to EventThread postEvent
         bool qtiNeedsRetry = true;
         for (uint8_t attempt = 0; qtiNeedsRetry && (attempt < num_attempts); attempt++) {
-            /* QTI_END */
             switch (consumer->postEvent(copy)) {
                 case NO_ERROR:
-                    /* QTI_BEGIN */ qtiNeedsRetry = false; /* QTI_END */
+                    qtiNeedsRetry = false;
                     break;
 
                 case -EAGAIN:
                     // TODO: Try again if pipe is full.
                     ALOGW("Failed dispatching %s for %s", toString(event).c_str(),
                           toString(*consumer).c_str());
-                    /* QTI_BEGIN */ qtiNeedsRetry = true; /* QTI_END */
+                    qtiNeedsRetry = true;
                     break;
 
                 default:
                     // Treat EPIPE and other errors as fatal.
                     removeDisplayEventConnectionLocked(consumer);
-                    /* QTI_BEGIN */ qtiNeedsRetry = false; /* QTI_END */
+                    qtiNeedsRetry = false;
             }
-            /* QTI_BEGIN */
+// QTI_END: 2023-04-19: Display: SF: Add retry to EventThread postEvent
         }
-        /* QTI_END */
+// QTI_BEGIN: 2023-04-19: Display: SF: Add retry to EventThread postEvent
+
+// QTI_END: 2023-04-19: Display: SF: Add retry to EventThread postEvent
     }
     // The clients that have already received the queued buffer count
     // can be removed from the buffer stuffed Uid list to avoid

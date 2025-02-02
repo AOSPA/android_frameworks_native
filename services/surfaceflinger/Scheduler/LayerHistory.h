@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
 #pragma once
 
 #include <android-base/thread_annotations.h>
@@ -97,13 +99,17 @@ public:
 
     bool isSmallDirtyArea(uint32_t dirtyArea, float threshold) const;
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
     void qtiUpdateThermalFps(float fps) { mQtiThermalFps = fps; }
+// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
     void qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes) {
       refresh_rate_votes_ = refresh_rate_votes;
     }
-    /* QTI_END */
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
 
+// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
     // Updates the frame rate override set by game mode intervention
     void updateGameModeFrameRateOverride(FrameRateOverride frameRateOverride) EXCLUDES(mLock);
 
@@ -166,12 +172,15 @@ private:
 
     // Whether a mode change is in progress or not
     std::atomic<bool> mModeChangePending = false;
+// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
 
-    /* QTI_BEGIN */
     // If Thermal mitigation enabled, limit to thermal Fps
     float mQtiThermalFps = 0.0f;
+// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
     std::map<int, int> refresh_rate_votes_;
-    /* QTI_END */
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+
 
     // A list to look up the game frame rate overrides
     // Each entry includes:

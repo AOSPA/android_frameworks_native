@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Center
  */
 
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #ifndef ANDROID_GUI_BUFFERQUEUEPRODUCER_H
 #define ANDROID_GUI_BUFFERQUEUEPRODUCER_H
 
@@ -30,14 +32,14 @@
 
 namespace android {
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #ifdef QTI_DISPLAY_EXTENSION
 namespace libguiextension {
 class QtiBufferQueueProducerExtension;
 };
 #endif
-/* QTI_END */
 
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 class IBinder;
 struct BufferSlot;
 
@@ -50,13 +52,13 @@ class BufferQueueProducer : public BnGraphicBufferProducer {
 public:
     friend class BufferQueue; // Needed to access binderDied
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #ifdef QTI_DISPLAY_EXTENSION
     friend class libguiextension::QtiBufferQueueProducerExtension;
     sp<libguiextension::QtiBufferQueueProducerExtension> mQtiBQPExtn;
 #endif
-/* QTI_END */
 
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
     explicit BufferQueueProducer(const sp<BufferQueueCore>& core,
                                  bool consumerIsSurfaceFlinger = false);
     ~BufferQueueProducer() override;

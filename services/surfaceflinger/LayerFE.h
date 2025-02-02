@@ -63,10 +63,10 @@ public:
     aidl::android::hardware::graphics::composer3::Composition getHwcCompositionType()
             const override;
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-07-26: Display: sf: use layer id instead of unique sequence
     int32_t getLayerId() const override;
-    /* QTI_END */
 
+// QTI_END: 2024-07-26: Display: sf: use layer id instead of unique sequence
     std::unique_ptr<surfaceflinger::frontend::LayerSnapshot> mSnapshot;
 
 private:
