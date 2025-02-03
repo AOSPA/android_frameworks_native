@@ -163,7 +163,7 @@ void DisplayTransactionCommitTest::processesHotplugConnectCommon() {
     setupCommonPreconditions<Case>();
 
     // A hotplug connect event is enqueued for a display
-    Case::Display::injectPendingHotplugEvent(this, Connection::CONNECTED);
+    Case::Display::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
     // --------------------------------------------------------------------
     // Call Expectations
@@ -197,7 +197,7 @@ void DisplayTransactionCommitTest::ignoresHotplugConnectCommon() {
     setupCommonPreconditions<Case>();
 
     // A hotplug connect event is enqueued for a display
-    Case::Display::injectPendingHotplugEvent(this, Connection::CONNECTED);
+    Case::Display::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
     // --------------------------------------------------------------------
     // Invocation
@@ -219,7 +219,7 @@ void DisplayTransactionCommitTest::processesHotplugDisconnectCommon() {
     setupCommonPreconditions<Case>();
 
     // A hotplug disconnect event is enqueued for a display
-    Case::Display::injectPendingHotplugEvent(this, Connection::DISCONNECTED);
+    Case::Display::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Disconnected);
 
     // The display is already completely set up.
     Case::Display::injectHwcDisplay(this);
@@ -327,9 +327,10 @@ TEST_F(DisplayTransactionCommitTest, processesHotplugConnectThenDisconnectPrimar
                 setupCommonPreconditions<Case>();
 
                 // A hotplug connect event is enqueued for a display
-                Case::Display::injectPendingHotplugEvent(this, Connection::CONNECTED);
+                Case::Display::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
                 // A hotplug disconnect event is also enqueued for the same display
-                Case::Display::injectPendingHotplugEvent(this, Connection::DISCONNECTED);
+                Case::Display::injectPendingHotplugEvent(this,
+                                                         HWComposer::HotplugEvent::Disconnected);
 
                 // --------------------------------------------------------------------
                 // Call Expectations
@@ -378,9 +379,10 @@ TEST_F(DisplayTransactionCommitTest, processesHotplugDisconnectThenConnectPrimar
                 existing.inject();
 
                 // A hotplug disconnect event is enqueued for a display
-                Case::Display::injectPendingHotplugEvent(this, Connection::DISCONNECTED);
+                Case::Display::injectPendingHotplugEvent(this,
+                                                         HWComposer::HotplugEvent::Disconnected);
                 // A hotplug connect event is also enqueued for the same display
-                Case::Display::injectPendingHotplugEvent(this, Connection::CONNECTED);
+                Case::Display::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
                 // --------------------------------------------------------------------
                 // Call Expectations

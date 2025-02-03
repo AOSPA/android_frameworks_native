@@ -840,8 +840,7 @@ void SkiaRenderEngine::drawLayersInternal(
             LOG_ALWAYS_FATAL_IF(activeSurface == dstSurface);
             LOG_ALWAYS_FATAL_IF(canvas == dstCanvas);
 
-            // save a snapshot of the activeSurface to use as input to the blur shaders
-            blurInput = activeSurface->makeImageSnapshot();
+            blurInput = activeSurface->makeTemporaryImage();
 
             // blit the offscreen framebuffer into the destination AHB. This ensures that
             // even if the blurred image does not cover the screen (for example, during
@@ -855,12 +854,9 @@ void SkiaRenderEngine::drawLayersInternal(
                     dstCanvas->drawAnnotation(SkRect::Make(dstCanvas->imageInfo().dimensions()),
                                               String8::format("SurfaceID|%" PRId64, id).c_str(),
                                               nullptr);
-                    dstCanvas->drawImage(blurInput, 0, 0, SkSamplingOptions(), &paint);
-                } else {
-                    activeSurface->draw(dstCanvas, 0, 0, SkSamplingOptions(), &paint);
                 }
+                dstCanvas->drawImage(blurInput, 0, 0, SkSamplingOptions(), &paint);
             }
-
             // assign dstCanvas to canvas and ensure that the canvas state is up to date
             canvas = dstCanvas;
             surfaceAutoSaveRestore.replace(canvas);
@@ -894,12 +890,6 @@ void SkiaRenderEngine::drawLayersInternal(
         if (mBlurFilter && layerHasBlur(layer, ctModifiesAlpha) && !mInProtectedContext) {
             std::unordered_map<uint32_t, sk_sp<SkImage>> cachedBlurs;
 
-            // if multiple layers have blur, then we need to take a snapshot now because
-            // only the lowest layer will have blurImage populated earlier
-            if (!blurInput) {
-                blurInput = activeSurface->makeImageSnapshot();
-            }
-
             // rect to be blurred in the coordinate space of blurInput
             SkRect blurRect = canvas->getTotalMatrix().mapRect(bounds.rect());
 
@@ -923,6 +913,29 @@ void SkiaRenderEngine::drawLayersInternal(
 
             // TODO(b/182216890): Filter out empty layers earlier
             if (blurRect.width() > 0 && blurRect.height() > 0) {
+                // if multiple layers have blur, then we need to take a snapshot now because
+                // only the lowest layer will have blurImage populated earlier
+                if (!blurInput) {
+                    bool requiresCrossFadeWithBlurInput = false;
+                    if (layer.backgroundBlurRadius > 0 &&
+                        layer.backgroundBlurRadius < mBlurFilter->getMaxCrossFadeRadius()) {
+                        requiresCrossFadeWithBlurInput = true;
+                    }
+                    for (auto region : layer.blurRegions) {
+                        if (region.blurRadius < mBlurFilter->getMaxCrossFadeRadius()) {
+                            requiresCrossFadeWithBlurInput = true;
+                        }
+                    }
+                    if (requiresCrossFadeWithBlurInput) {
+                        // If we require cross fading with the blur input, we need to make sure we
+                        // make a copy of the surface to the image since we will be writing to the
+                        // surface while sampling the blurInput.
+                        blurInput = activeSurface->makeImageSnapshot();
+                    } else {
+                        blurInput = activeSurface->makeTemporaryImage();
+                    }
+                }
+
                 if (layer.backgroundBlurRadius > 0) {
                     SFTRACE_NAME("BackgroundBlur");
                     auto blurredImage = mBlurFilter->generate(context, layer.backgroundBlurRadius,

@@ -81,7 +81,7 @@ public:
                 (PhysicalDisplayId, float, float, const Hwc2::Composer::DisplayBrightnessOptions&),
                 (override));
     MOCK_METHOD(std::optional<DisplayIdentificationInfo>, onHotplug,
-                (hal::HWDisplayId, hal::Connection), (override));
+                (hal::HWDisplayId, HWComposer::HotplugEvent), (override));
     MOCK_METHOD(bool, updatesDeviceProductInfoOnHotplugReconnect, (), (const, override));
     MOCK_METHOD(std::optional<PhysicalDisplayId>, onVsync, (hal::HWDisplayId, int64_t));
     MOCK_METHOD(void, setVsyncEnabled, (PhysicalDisplayId, hal::Vsync), (override));

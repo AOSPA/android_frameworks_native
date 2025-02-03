@@ -39,10 +39,10 @@ void QtiNullExtension::qtiUpdateDisplayExtension(uint32_t displayId, uint32_t co
                                                  bool connected) {}
 void QtiNullExtension::qtiUpdateDisplaysList(sp<DisplayDevice> display, bool addDisplay) {}
 void QtiNullExtension::qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDisplayId,
-                                                        hal::Connection connection,
+                                                        HWComposer::HotplugEvent hotplugEvent,
                                                         PhysicalDisplayId id) {}
 void QtiNullExtension::qtiUpdateOnComposerHalHotplug(
-        hal::HWDisplayId hwcDisplayId, hal::Connection connection,
+        hal::HWDisplayId hwcDisplayId, HWComposer::HotplugEvent hotplugEvent,
         std::optional<DisplayIdentificationInfo> info) {}
 void QtiNullExtension::qtiUpdateInternalDisplaysPresentationMode() {}
 

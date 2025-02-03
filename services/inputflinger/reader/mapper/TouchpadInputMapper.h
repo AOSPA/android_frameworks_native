@@ -66,7 +66,7 @@ public:
     using MetricsIdentifier = std::tuple<uint16_t /*busId*/, uint16_t /*vendorId*/,
                                          uint16_t /*productId*/, uint16_t /*version*/>;
 
-    std::optional<ui::LogicalDisplayId> getAssociatedDisplayId() override;
+    std::optional<ui::LogicalDisplayId> getAssociatedDisplayId() const override;
 
     std::optional<HardwareProperties> getTouchpadHardwareProperties() override;
 

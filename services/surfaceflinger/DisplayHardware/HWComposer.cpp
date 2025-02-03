@@ -138,13 +138,13 @@ bool HWComposer::hasDisplayCapability(HalDisplayId displayId, DisplayCapability 
 }
 
 std::optional<DisplayIdentificationInfo> HWComposer::onHotplug(hal::HWDisplayId hwcDisplayId,
-                                                               hal::Connection connection) {
-    switch (connection) {
-        case hal::Connection::CONNECTED:
+                                                               HotplugEvent event) {
+    switch (event) {
+        case HotplugEvent::Connected:
             return onHotplugConnect(hwcDisplayId);
-        case hal::Connection::DISCONNECTED:
+        case HotplugEvent::Disconnected:
             return onHotplugDisconnect(hwcDisplayId);
-        case hal::Connection::INVALID:
+        case HotplugEvent::LinkUnstable:
             return {};
     }
 }

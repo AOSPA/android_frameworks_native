@@ -1085,7 +1085,7 @@ EventHubInterface* InputReader::ContextImpl::getEventHub() {
     return mReader->mEventHub.get();
 }
 
-int32_t InputReader::ContextImpl::getNextId() {
+int32_t InputReader::ContextImpl::getNextId() const {
     return mIdGenerator.nextId();
 }
 

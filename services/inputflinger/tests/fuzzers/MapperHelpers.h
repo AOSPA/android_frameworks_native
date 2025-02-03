@@ -346,7 +346,7 @@ public:
     }
     InputReaderPolicyInterface* getPolicy() override { return mPolicy.get(); }
     EventHubInterface* getEventHub() override { return mEventHub.get(); }
-    int32_t getNextId() override { return mFdp->ConsumeIntegral<int32_t>(); }
+    int32_t getNextId() const override { return mFdp->ConsumeIntegral<int32_t>(); }
 
     void updateLedMetaState(int32_t metaState) override{};
     int32_t getLedMetaState() override { return mFdp->ConsumeIntegral<int32_t>(); };

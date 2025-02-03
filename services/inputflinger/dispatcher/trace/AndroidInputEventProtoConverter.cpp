@@ -16,9 +16,7 @@
 
 #include "AndroidInputEventProtoConverter.h"
 
-#include <android/input.h>
 #include <android-base/logging.h>
-#include <input/Input.h>
 #include <perfetto/trace/android/android_input_event.pbzero.h>
 
 namespace android::inputdispatcher::trace {
@@ -73,12 +71,6 @@ void AndroidInputEventProtoConverter::toProtoMotionEvent(const TracedMotionEvent
 
         const auto& coords = event.pointerCoords[i];
         auto bits = BitSet64(coords.bits);
-        if (isFromSource(event.source, AINPUT_SOURCE_CLASS_POINTER)) {
-            // Always include the X and Y axes for pointer events, since the
-            // bits will not be marked if the value is 0.
-            bits.markBit(AMOTION_EVENT_AXIS_X);
-            bits.markBit(AMOTION_EVENT_AXIS_Y);
-        }
         for (int32_t axisIndex = 0; !bits.isEmpty(); axisIndex++) {
             const auto axis = bits.clearFirstMarkedBit();
             auto axisEntry = pointer->add_axis_value();

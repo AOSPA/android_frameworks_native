@@ -67,7 +67,8 @@ public:
                     setVsyncEnabled(kHwcDisplayId, hal::IComposerClient::Vsync::DISABLE));
         EXPECT_CALL(*mComposerHal, onHotplugConnect(kHwcDisplayId));
 
-        const auto infoOpt = mComposer->onHotplug(kHwcDisplayId, hal::Connection::CONNECTED);
+        const auto infoOpt =
+                mComposer->onHotplug(kHwcDisplayId, HWComposer::HotplugEvent::Connected);
         ASSERT_TRUE(infoOpt);
 
         mDisplayId = infoOpt->id;

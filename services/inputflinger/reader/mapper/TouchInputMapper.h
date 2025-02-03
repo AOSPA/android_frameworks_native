@@ -185,7 +185,7 @@ public:
     [[nodiscard]] std::list<NotifyArgs> timeoutExpired(nsecs_t when) override;
     [[nodiscard]] std::list<NotifyArgs> updateExternalStylusState(
             const StylusState& state) override;
-    std::optional<ui::LogicalDisplayId> getAssociatedDisplayId() override;
+    std::optional<ui::LogicalDisplayId> getAssociatedDisplayId() const override;
 
 protected:
     CursorButtonAccumulator mCursorButtonAccumulator;
@@ -840,7 +840,7 @@ private:
             int32_t actionButton, int32_t flags, int32_t metaState, int32_t buttonState,
             int32_t edgeFlags, const PropertiesArray& properties, const CoordsArray& coords,
             const IdToIndexArray& idToIndex, BitSet32 idBits, int32_t changedId, float xPrecision,
-            float yPrecision, nsecs_t downTime, MotionClassification classification);
+            float yPrecision, nsecs_t downTime, MotionClassification classification) const;
 
     // Returns if this touch device is a touch screen with an associated display.
     bool isTouchScreen();

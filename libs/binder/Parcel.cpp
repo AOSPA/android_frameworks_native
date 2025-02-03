@@ -299,8 +299,13 @@ status_t Parcel::flattenBinder(const sp<IBinder>& binder) {
             obj.handle = handle;
             obj.cookie = 0;
         } else {
+#if __linux__
             int policy = local->getMinSchedulerPolicy();
             int priority = local->getMinSchedulerPriority();
+#else
+            int policy = 0;
+            int priority = 0;
+#endif
 
             if (policy != 0 || priority != 0) {
                 // override value, since it is set explicitly

@@ -3666,7 +3666,7 @@ NotifyMotionArgs TouchInputMapper::dispatchMotion(
         int32_t actionButton, int32_t flags, int32_t metaState, int32_t buttonState,
         int32_t edgeFlags, const PropertiesArray& properties, const CoordsArray& coords,
         const IdToIndexArray& idToIndex, BitSet32 idBits, int32_t changedId, float xPrecision,
-        float yPrecision, nsecs_t downTime, MotionClassification classification) {
+        float yPrecision, nsecs_t downTime, MotionClassification classification) const {
     std::vector<PointerCoords> pointerCoords;
     std::vector<PointerProperties> pointerProperties;
     uint32_t pointerCount = 0;
@@ -3992,7 +3992,7 @@ bool TouchInputMapper::markSupportedKeyCodes(uint32_t sourceMask,
     return true;
 }
 
-std::optional<ui::LogicalDisplayId> TouchInputMapper::getAssociatedDisplayId() {
+std::optional<ui::LogicalDisplayId> TouchInputMapper::getAssociatedDisplayId() const {
     return mParameters.hasAssociatedDisplay ? std::make_optional(mViewport.displayId)
                                             : std::nullopt;
 }
