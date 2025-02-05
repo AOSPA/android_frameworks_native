@@ -53,8 +53,9 @@ static constexpr int32_t ACTION_POINTER_1_DOWN =
  */
 class MultiTouchInputMapperUnitTest : public InputMapperUnitTest {
 protected:
-    void SetUp() override {
-        InputMapperUnitTest::SetUp();
+    void SetUp() override { SetUp(/*bus=*/0, /*isExternal=*/false); }
+    void SetUp(int bus, bool isExternal) override {
+        InputMapperUnitTest::SetUp(bus, isExternal);
 
         // Present scan codes
         expectScanCodes(/*present=*/true,

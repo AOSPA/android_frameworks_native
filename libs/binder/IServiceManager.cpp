@@ -43,7 +43,11 @@
 #include <binder/IPermissionController.h>
 #endif
 
-#ifdef __ANDROID__
+#if !(defined(__ANDROID__) || defined(__FUCHSIA))
+#define BINDER_SERVICEMANAGEMENT_DELEGATION_SUPPORT
+#endif
+
+#if !defined(BINDER_SERVICEMANAGEMENT_DELEGATION_SUPPORT)
 #include <cutils/properties.h>
 #else
 #include "ServiceManagerHost.h"
@@ -902,7 +906,7 @@ std::vector<IServiceManager::ServiceDebugInfo> CppBackendShim::getServiceDebugIn
     return ret;
 }
 
-#ifndef __ANDROID__
+#if defined(BINDER_SERVICEMANAGEMENT_DELEGATION_SUPPORT)
 // CppBackendShim for host. Implements the old libbinder android::IServiceManager API.
 // The internal implementation of the AIDL interface android::os::IServiceManager calls into
 // on-device service manager.

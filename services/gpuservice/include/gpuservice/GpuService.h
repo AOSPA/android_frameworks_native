@@ -19,6 +19,7 @@
 
 #include <binder/IInterface.h>
 #include <cutils/compiler.h>
+#include <feature_override/FeatureOverrideParser.h>
 #include <graphicsenv/GpuStatsInfo.h>
 #include <graphicsenv/IGpuService.h>
 #include <serviceutils/PriorityDumper.h>
@@ -96,6 +97,7 @@ private:
     std::string mDeveloperDriverPath;
     std::unique_ptr<std::thread> mGpuMemAsyncInitThread;
     std::unique_ptr<std::thread> mGpuWorkAsyncInitThread;
+    FeatureOverrideParser mFeatureOverrideParser;
 };
 
 } // namespace android

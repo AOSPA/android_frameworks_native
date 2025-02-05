@@ -7364,35 +7364,39 @@ TEST_F(MultiTouchInputMapperTest, Process_WhenBtnTouchPresent_HoversIfItsValueIs
             toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
 
     // down when BTN_TOUCH is pressed, pressure defaults to 1
+    processPosition(mapper, 151, 251);
     processKey(mapper, BTN_TOUCH, 1);
     processSync(mapper);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_EXIT, motionArgs.action);
+    // HOVER_EXIT should have the same coordinates as the previous HOVER_MOVE
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
             toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
-
+    // down at the new position
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
-            toDisplayX(150), toDisplayY(250), 1, 0, 0, 0, 0, 0, 0, 0));
+            toDisplayX(151), toDisplayY(251), 1, 0, 0, 0, 0, 0, 0, 0));
 
     // up when BTN_TOUCH is released, hover restored
+    processPosition(mapper, 152, 252);
     processKey(mapper, BTN_TOUCH, 0);
     processSync(mapper);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_UP, motionArgs.action);
+    // UP should have the same coordinates as the previous event
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
-            toDisplayX(150), toDisplayY(250), 1, 0, 0, 0, 0, 0, 0, 0));
-
+            toDisplayX(151), toDisplayY(251), 1, 0, 0, 0, 0, 0, 0, 0));
+    // HOVER_ENTER at the new position
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_ENTER, motionArgs.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
-            toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
+            toDisplayX(152), toDisplayY(252), 0, 0, 0, 0, 0, 0, 0, 0));
 
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_MOVE, motionArgs.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
-            toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
+            toDisplayX(152), toDisplayY(252), 0, 0, 0, 0, 0, 0, 0, 0));
 
     // exit hover when pointer goes away
     processId(mapper, -1);
@@ -7400,7 +7404,7 @@ TEST_F(MultiTouchInputMapperTest, Process_WhenBtnTouchPresent_HoversIfItsValueIs
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_EXIT, motionArgs.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
-            toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
+            toDisplayX(152), toDisplayY(252), 0, 0, 0, 0, 0, 0, 0, 0));
 }
 
 TEST_F(MultiTouchInputMapperTest, Process_WhenAbsMTPressureIsPresent_HoversIfItsValueIsZero) {
@@ -7435,35 +7439,39 @@ TEST_F(MultiTouchInputMapperTest, Process_WhenAbsMTPressureIsPresent_HoversIfIts
             toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
 
     // down when pressure becomes non-zero
+    processPosition(mapper, 151, 251);
     processPressure(mapper, RAW_PRESSURE_MAX);
     processSync(mapper);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_EXIT, motionArgs.action);
+    // HOVER_EXIT should have the same coordinates as the previous HOVER_MOVE
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
             toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
-
+    // down at the new position
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
-            toDisplayX(150), toDisplayY(250), 1, 0, 0, 0, 0, 0, 0, 0));
+            toDisplayX(151), toDisplayY(251), 1, 0, 0, 0, 0, 0, 0, 0));
 
     // up when pressure becomes 0, hover restored
+    processPosition(mapper, 152, 252);
     processPressure(mapper, 0);
     processSync(mapper);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_UP, motionArgs.action);
+    // UP should have the same coordinates as the previous event
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
-            toDisplayX(150), toDisplayY(250), 1, 0, 0, 0, 0, 0, 0, 0));
-
+            toDisplayX(151), toDisplayY(251), 1, 0, 0, 0, 0, 0, 0, 0));
+    // HOVER_ENTER at the new position
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_ENTER, motionArgs.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
-            toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
+            toDisplayX(152), toDisplayY(252), 0, 0, 0, 0, 0, 0, 0, 0));
 
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_MOVE, motionArgs.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
-            toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
+            toDisplayX(152), toDisplayY(252), 0, 0, 0, 0, 0, 0, 0, 0));
 
     // exit hover when pointer goes away
     processId(mapper, -1);
@@ -7471,7 +7479,7 @@ TEST_F(MultiTouchInputMapperTest, Process_WhenAbsMTPressureIsPresent_HoversIfIts
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_EXIT, motionArgs.action);
     ASSERT_NO_FATAL_FAILURE(assertPointerCoords(motionArgs.pointerCoords[0],
-            toDisplayX(150), toDisplayY(250), 0, 0, 0, 0, 0, 0, 0, 0));
+            toDisplayX(152), toDisplayY(252), 0, 0, 0, 0, 0, 0, 0, 0));
 }
 
 /**

@@ -1085,10 +1085,9 @@ TEST_F(KeyboardInputMapperTest, UsesSharedKeyboardSource) {
 class KeyboardInputMapperTest_ExternalAlphabeticDevice : public KeyboardInputMapperUnitTest {
 protected:
     void SetUp() override {
-        InputMapperUnitTest::SetUp();
+        InputMapperUnitTest::SetUp(/*bus=*/0, /*isExternal=*/true);
         ON_CALL((*mDevice), getSources).WillByDefault(Return(AINPUT_SOURCE_KEYBOARD));
         ON_CALL((*mDevice), getKeyboardType).WillByDefault(Return(KeyboardType::ALPHABETIC));
-        ON_CALL((*mDevice), isExternal).WillByDefault(Return(true));
         EXPECT_CALL(mMockEventHub, getDeviceClasses(EVENTHUB_ID))
                 .WillRepeatedly(Return(InputDeviceClass::KEYBOARD | InputDeviceClass::ALPHAKEY |
                                        InputDeviceClass::EXTERNAL));
@@ -1102,10 +1101,9 @@ protected:
 class KeyboardInputMapperTest_ExternalNonAlphabeticDevice : public KeyboardInputMapperUnitTest {
 protected:
     void SetUp() override {
-        InputMapperUnitTest::SetUp();
+        InputMapperUnitTest::SetUp(/*bus=*/0, /*isExternal=*/true);
         ON_CALL((*mDevice), getSources).WillByDefault(Return(AINPUT_SOURCE_KEYBOARD));
         ON_CALL((*mDevice), getKeyboardType).WillByDefault(Return(KeyboardType::NON_ALPHABETIC));
-        ON_CALL((*mDevice), isExternal).WillByDefault(Return(true));
         EXPECT_CALL(mMockEventHub, getDeviceClasses(EVENTHUB_ID))
                 .WillRepeatedly(Return(InputDeviceClass::KEYBOARD | InputDeviceClass::EXTERNAL));
         mMapper = createInputMapper<KeyboardInputMapper>(*mDeviceContext, mReaderConfiguration,

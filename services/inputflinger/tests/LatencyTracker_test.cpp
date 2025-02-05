@@ -57,6 +57,7 @@ void setDefaultInputDeviceInfo(LatencyTracker& tracker) {
 }
 
 const auto FIRST_TOUCH_POINTER = PointerBuilder(/*id=*/0, ToolType::FINGER).x(100).y(200);
+const auto FIRST_MOUSE_POINTER = PointerBuilder(/*id=*/1, ToolType::MOUSE);
 
 /**
  * This is a convenience method for comparing timelines that also prints the difference between
@@ -491,8 +492,13 @@ TEST_F(LatencyTrackerTest, TrackListenerCheck_InputEventActionTypeFieldInputEven
             /*vendorId*/ 0, /*productId*/ 0, {InputDeviceUsageSource::BUTTONS},
             InputEventActionType::KEY);
 
-    InputEventTimeline unknownTimeline(
+    InputEventTimeline motionScrollTimeline(
             /*eventTime*/ 12, /*readTime*/ 13,
+            /*vendorId*/ 0, /*productId*/ 0, {InputDeviceUsageSource::MOUSE},
+            InputEventActionType::MOTION_ACTION_SCROLL);
+
+    InputEventTimeline unknownTimeline(
+            /*eventTime*/ 14, /*readTime*/ 15,
             /*vendorId*/ 0, /*productId*/ 0, {InputDeviceUsageSource::TOUCHSCREEN},
             InputEventActionType::UNKNOWN_INPUT_EVENT);
 
@@ -529,8 +535,15 @@ TEST_F(LatencyTrackerTest, TrackListenerCheck_InputEventActionTypeFieldInputEven
                     .readTime(keyUpTimeline.readTime)
                     .deviceId(DEVICE_ID)
                     .build());
+    mTracker->trackListener(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_SCROLL, AINPUT_SOURCE_MOUSE, inputEventId + 5)
+                    .eventTime(motionScrollTimeline.eventTime)
+                    .readTime(motionScrollTimeline.readTime)
+                    .deviceId(DEVICE_ID)
+                    .pointer(FIRST_MOUSE_POINTER)
+                    .build());
     mTracker->trackListener(MotionArgsBuilder(AMOTION_EVENT_ACTION_POINTER_DOWN,
-                                              AINPUT_SOURCE_TOUCHSCREEN, inputEventId + 5)
+                                              AINPUT_SOURCE_TOUCHSCREEN, inputEventId + 6)
                                     .eventTime(unknownTimeline.eventTime)
                                     .readTime(unknownTimeline.readTime)
                                     .deviceId(DEVICE_ID)
@@ -541,7 +554,8 @@ TEST_F(LatencyTrackerTest, TrackListenerCheck_InputEventActionTypeFieldInputEven
 
     std::vector<InputEventTimeline> expectedTimelines = {motionDownTimeline, motionMoveTimeline,
                                                          motionUpTimeline,   keyDownTimeline,
-                                                         keyUpTimeline,      unknownTimeline};
+                                                         keyUpTimeline,      motionScrollTimeline,
+                                                         unknownTimeline};
     assertReceivedTimelines(expectedTimelines);
 }
 

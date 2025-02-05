@@ -419,7 +419,7 @@ int32_t CursorInputMapper::getScanCodeState(uint32_t sourceMask, int32_t scanCod
     }
 }
 
-std::optional<ui::LogicalDisplayId> CursorInputMapper::getAssociatedDisplayId() {
+std::optional<ui::LogicalDisplayId> CursorInputMapper::getAssociatedDisplayId() const {
     return mDisplayId;
 }
 

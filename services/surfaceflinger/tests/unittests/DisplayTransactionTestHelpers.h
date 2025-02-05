@@ -360,9 +360,10 @@ struct HwcDisplayVariant {
     // The HWC active configuration id
     static constexpr hal::HWConfigId HWC_ACTIVE_CONFIG_ID = 2001;
 
-    static void injectPendingHotplugEvent(DisplayTransactionTest* test, Connection connection) {
+    static void injectPendingHotplugEvent(DisplayTransactionTest* test,
+                                          HWComposer::HotplugEvent event) {
         test->mFlinger.mutablePendingHotplugEvents().emplace_back(
-                TestableSurfaceFlinger::HotplugEvent{HWC_DISPLAY_ID, connection});
+                TestableSurfaceFlinger::HotplugEvent{HWC_DISPLAY_ID, event});
     }
 
     // Called by tests to inject a HWC display setup

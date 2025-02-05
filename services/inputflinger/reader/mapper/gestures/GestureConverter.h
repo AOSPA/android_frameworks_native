@@ -92,6 +92,8 @@ private:
     [[nodiscard]] std::list<NotifyArgs> enterHover(nsecs_t when, nsecs_t readTime);
     [[nodiscard]] std::list<NotifyArgs> exitHover(nsecs_t when, nsecs_t readTime);
 
+    [[nodiscard]] std::list<NotifyArgs> prepareForFakeFingerGesture(nsecs_t when, nsecs_t readTime);
+
     NotifyMotionArgs makeHoverEvent(nsecs_t when, nsecs_t readTime, int32_t action);
 
     NotifyMotionArgs makeMotionArgs(nsecs_t when, nsecs_t readTime, int32_t action,

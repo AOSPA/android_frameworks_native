@@ -141,9 +141,9 @@ namespace vd_flags = android::companion::virtualdevice::flags;
  */
 class CursorInputMapperUnitTestBase : public InputMapperUnitTest {
 protected:
-    void SetUp() override { SetUpWithBus(BUS_USB); }
-    void SetUpWithBus(int bus) override {
-        InputMapperUnitTest::SetUpWithBus(bus);
+    void SetUp() override { SetUp(BUS_USB, /*isExternal=*/false); }
+    void SetUp(int bus, bool isExternal) override {
+        InputMapperUnitTest::SetUp(bus, isExternal);
 
         // Current scan code state - all keys are UP by default
         setScanCodeState(KeyState::UP,
@@ -1142,7 +1142,9 @@ constexpr nsecs_t MAX_BLUETOOTH_SMOOTHING_DELTA = ms2ns(32);
 
 class BluetoothCursorInputMapperUnitTest : public CursorInputMapperUnitTestBase {
 protected:
-    void SetUp() override { SetUpWithBus(BUS_BLUETOOTH); }
+    void SetUp() override {
+        CursorInputMapperUnitTestBase::SetUp(BUS_BLUETOOTH, /*isExternal=*/true);
+    }
 };
 
 TEST_F(BluetoothCursorInputMapperUnitTest, TimestampSmoothening) {

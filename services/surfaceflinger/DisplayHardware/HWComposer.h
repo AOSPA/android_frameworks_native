@@ -245,11 +245,12 @@ public:
 
     // Events handling ---------------------------------------------------------
 
-    // Returns stable display ID (and display name on connection of new or previously disconnected
-    // display), or std::nullopt if hotplug event was ignored.
+    enum class HotplugEvent { Connected, Disconnected, LinkUnstable };
+
+    // Returns the stable display ID of the display for which the hotplug event was received, or
+    // std::nullopt if hotplug event was ignored.
     // This function is called from SurfaceFlinger.
-    virtual std::optional<DisplayIdentificationInfo> onHotplug(hal::HWDisplayId,
-                                                               hal::Connection) = 0;
+    virtual std::optional<DisplayIdentificationInfo> onHotplug(hal::HWDisplayId, HotplugEvent) = 0;
 
     // If true we'll update the DeviceProductInfo on subsequent hotplug connected events.
     // TODO(b/157555476): Remove when the framework has proper support for headless mode
@@ -449,9 +450,7 @@ public:
 
     // Events handling ---------------------------------------------------------
 
-    // Returns PhysicalDisplayId (and display name on connection of new or previously disconnected
-    // display), or std::nullopt if hotplug event was ignored.
-    std::optional<DisplayIdentificationInfo> onHotplug(hal::HWDisplayId, hal::Connection) override;
+    std::optional<DisplayIdentificationInfo> onHotplug(hal::HWDisplayId, HotplugEvent) override;
 
     bool updatesDeviceProductInfoOnHotplugReconnect() const override;
 

@@ -30,7 +30,7 @@ using testing::NiceMock;
 using testing::Return;
 using testing::ReturnRef;
 
-void InputMapperUnitTest::SetUpWithBus(int bus) {
+void InputMapperUnitTest::SetUp(int bus, bool isExternal) {
     mFakePolicy = sp<FakeInputReaderPolicy>::make();
 
     EXPECT_CALL(mMockInputReaderContext, getPolicy()).WillRepeatedly(Return(mFakePolicy.get()));
@@ -46,8 +46,9 @@ void InputMapperUnitTest::SetUpWithBus(int bus) {
         return mPropertyMap;
     });
 
-    mDevice = std::make_unique<NiceMock<MockInputDevice>>(&mMockInputReaderContext, DEVICE_ID,
-                                                          /*generation=*/2, mIdentifier);
+    mDevice =
+            std::make_unique<NiceMock<MockInputDevice>>(&mMockInputReaderContext, DEVICE_ID,
+                                                        /*generation=*/2, mIdentifier, isExternal);
     ON_CALL((*mDevice), getConfiguration).WillByDefault(ReturnRef(mPropertyMap));
     mDeviceContext = std::make_unique<InputDeviceContext>(*mDevice, EVENTHUB_ID);
 }

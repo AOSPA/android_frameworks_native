@@ -190,6 +190,13 @@ flag {
 } # graphite_renderengine_preview_rollout
 
 flag {
+  name: "increase_missed_frame_jank_threshold"
+  namespace: "core_graphics"
+  description: "Increase the jank threshold to 4 milliseconds"
+  bug: "342265411"
+} # increase_missed_frame_jank_threshold
+
+flag {
   name: "latch_unsignaled_with_auto_refresh_changed"
   namespace: "core_graphics"
   description: "Ignore eAutoRefreshChanged with latch unsignaled"
