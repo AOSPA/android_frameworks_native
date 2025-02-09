@@ -5307,7 +5307,7 @@ status_t SurfaceFlinger::setTransactionState(
             }
 
             /* QTI_BEGIN */
-            if (*layer->getPendingBufferCounter() > 0 &&
+            if ((layer != nullptr) && (*layer->getPendingBufferCounter() > 0) &&
                 mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive() &&
                 lck.owns_lock()) {
                 lck.unlock();
