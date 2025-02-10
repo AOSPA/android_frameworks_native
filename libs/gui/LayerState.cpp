@@ -66,6 +66,8 @@ layer_state_t::layer_state_t()
         mask(0),
         reserved(0),
         cornerRadius(0.0f),
+        clientDrawnCornerRadius(0.0f),
+        clientDrawnShadowRadius(0.0f),
         backgroundBlurRadius(0),
         color(0),
         bufferTransform(0),
@@ -140,6 +142,8 @@ status_t layer_state_t::write(Parcel& output) const
 
     SAFE_PARCEL(output.write, colorTransform.asArray(), 16 * sizeof(float));
     SAFE_PARCEL(output.writeFloat, cornerRadius);
+    SAFE_PARCEL(output.writeFloat, clientDrawnCornerRadius);
+    SAFE_PARCEL(output.writeFloat, clientDrawnShadowRadius);
     SAFE_PARCEL(output.writeUint32, backgroundBlurRadius);
     SAFE_PARCEL(output.writeParcelable, metadata);
     SAFE_PARCEL(output.writeFloat, bgColor.r);
@@ -274,6 +278,8 @@ status_t layer_state_t::read(const Parcel& input)
 
     SAFE_PARCEL(input.read, &colorTransform, 16 * sizeof(float));
     SAFE_PARCEL(input.readFloat, &cornerRadius);
+    SAFE_PARCEL(input.readFloat, &clientDrawnCornerRadius);
+    SAFE_PARCEL(input.readFloat, &clientDrawnShadowRadius);
     SAFE_PARCEL(input.readUint32, &backgroundBlurRadius);
     SAFE_PARCEL(input.readParcelable, &metadata);
 
@@ -596,6 +602,14 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eCornerRadiusChanged;
         cornerRadius = other.cornerRadius;
     }
+    if (other.what & eClientDrawnCornerRadiusChanged) {
+        what |= eClientDrawnCornerRadiusChanged;
+        clientDrawnCornerRadius = other.clientDrawnCornerRadius;
+    }
+    if (other.what & eClientDrawnShadowsChanged) {
+        what |= eClientDrawnShadowsChanged;
+        clientDrawnShadowRadius = other.clientDrawnShadowRadius;
+    }
     if (other.what & eBackgroundBlurRadiusChanged) {
         what |= eBackgroundBlurRadiusChanged;
         backgroundBlurRadius = other.backgroundBlurRadius;
@@ -809,6 +823,8 @@ uint64_t layer_state_t::diff(const layer_state_t& other) const {
     }
     CHECK_DIFF(diff, eLayerStackChanged, other, layerStack);
     CHECK_DIFF(diff, eCornerRadiusChanged, other, cornerRadius);
+    CHECK_DIFF(diff, eClientDrawnCornerRadiusChanged, other, clientDrawnCornerRadius);
+    CHECK_DIFF(diff, eClientDrawnShadowsChanged, other, clientDrawnShadowRadius);
     CHECK_DIFF(diff, eBackgroundBlurRadiusChanged, other, backgroundBlurRadius);
     if (other.what & eBlurRegionsChanged) diff |= eBlurRegionsChanged;
     if (other.what & eRelativeLayerChanged) {

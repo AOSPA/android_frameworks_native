@@ -12,10 +12,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+// QTI_BEGIN: 2024-06-19: Performance: native: smart touch FR LOST markings modification.
  *
  * Changes from Qualcomm Innovation Center are provided under the following license:
  * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
+// QTI_END: 2024-06-19: Performance: native: smart touch FR LOST markings modification.
  */
 
 #include <cstdint>
@@ -45,10 +47,10 @@
 #include <input/PrintTools.h>
 #include <input/TraceTools.h>
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
 #include "QtiExtension/QtiInputDolphinWrapper.h"
-/* QTI_END */
 
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
 namespace input_flags = com::android::input::flags;
 
 namespace android {
@@ -227,12 +229,12 @@ bool InputConsumer::isTouchResamplingEnabled() {
 
 status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consumeBatches,
                                 nsecs_t frameTime, uint32_t* outSeq, InputEvent** outEvent) {
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
     QtiInputDolphinWrapper* qtiDolphinWrapper = QtiInputDolphinWrapper::qtiGetDolphinWrapper();
     if (qtiDolphinWrapper && qtiDolphinWrapper->qtiDolphinConsumeInputNow) {
         qtiDolphinWrapper->qtiDolphinConsumeInputNow(consumeBatches);
     }
-    /* QTI_END */
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
     ALOGD_IF(DEBUG_TRANSPORT_CONSUMER,
              "channel '%s' consumer ~ consume: consumeBatches=%s, frameTime=%" PRId64,
              mChannel->getName().c_str(), toString(consumeBatches), frameTime);
@@ -290,14 +292,14 @@ status_t InputConsumer::consume(InputEventFactoryInterface* factory, bool consum
             }
 
             case InputMessage::Type::MOTION: {
-                /* QTI_BEGIN */
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
                 if (qtiDolphinWrapper == nullptr) {
                     qtiDolphinWrapper = QtiInputDolphinWrapper::qtiGetInstance();
                 }
                 if (qtiDolphinWrapper && qtiDolphinWrapper->qtiDolphinSetTouchEvent) {
                     qtiDolphinWrapper->qtiDolphinSetTouchEvent(mMsg.body.motion.action);
                 }
-                /* QTI_END */
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
                 ssize_t batchIndex = findBatch(mMsg.body.motion.deviceId, mMsg.body.motion.source);
                 if (batchIndex >= 0) {
                     Batch& batch = mBatches[batchIndex];

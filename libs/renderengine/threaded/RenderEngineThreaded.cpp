@@ -23,6 +23,7 @@
 #include <future>
 
 #include <android-base/stringprintf.h>
+#include <common/FlagManager.h>
 #include <common/trace.h>
 #include <private/gui/SyncFeatures.h>
 #include <processgroup/processgroup.h>
@@ -60,7 +61,7 @@ status_t RenderEngineThreaded::setSchedFifo(bool enabled) {
 
     struct sched_param param = {0};
     int sched_policy;
-    if (enabled) {
+    if (enabled && !FlagManager::getInstance().disable_sched_fifo_re()) {
         sched_policy = SCHED_FIFO;
         param.sched_priority = kFifoPriority;
     } else {
@@ -363,8 +364,8 @@ void RenderEngineThreaded::setEnableTracing(bool tracingEnabled) {
     }
     mCondition.notify_one();
 }
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
 
-/* QTI_BEGIN */
 // This is originally owned by AOSP, however it was removed on Android U. Adding this back for FB
 // Scaling.
 void RenderEngineThreaded::setViewportAndProjection(Rect viewPort, Rect sourceCrop) {
@@ -374,7 +375,9 @@ void RenderEngineThreaded::setViewportAndProjection(Rect viewPort, Rect sourceCr
         std::lock_guard lock(mThreadMutex);
         mFunctionCalls.push(
                 [&resultPromise, viewPort, sourceCrop](renderengine::RenderEngine& instance) {
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
                     SFTRACE_NAME("REThreaded::setViewportAndProjection");
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
                     instance.setViewportAndProjection(viewPort, sourceCrop);
                     resultPromise.set_value();
                 });
@@ -382,8 +385,8 @@ void RenderEngineThreaded::setViewportAndProjection(Rect viewPort, Rect sourceCr
     mCondition.notify_one();
     resultFuture.wait();
 }
-/* QTI_END */
 
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
 } // namespace threaded
 } // namespace renderengine
 } // namespace android

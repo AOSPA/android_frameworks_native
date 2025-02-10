@@ -423,8 +423,8 @@ public:
     virtual HalResult<void> performPwleEffect(const std::vector<PrimitivePwle>& primitives,
                                               const std::function<void()>& completionCallback);
 
-    virtual HalResult<void> composePwleV2(const CompositePwleV2& composite,
-                                          const std::function<void()>& completionCallback);
+    virtual HalResult<std::chrono::milliseconds> composePwleV2(
+            const CompositePwleV2& composite, const std::function<void()>& completionCallback);
 
 protected:
     // Shared pointer to allow CallbackScheduler to outlive this wrapper.
@@ -511,8 +511,9 @@ public:
             const std::vector<PrimitivePwle>& primitives,
             const std::function<void()>& completionCallback) override final;
 
-    HalResult<void> composePwleV2(const CompositePwleV2& composite,
-                                  const std::function<void()>& completionCallback) override final;
+    HalResult<std::chrono::milliseconds> composePwleV2(
+            const CompositePwleV2& composite,
+            const std::function<void()>& completionCallback) override final;
 
 protected:
     HalResult<Capabilities> getCapabilitiesInternal() override final;

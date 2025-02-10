@@ -38,9 +38,12 @@
 #include <fmq/AidlMessageQueue.h>
 #pragma clang diagnostic pop
 
+#include <common/trace.h>
+#include <ftl/flags.h>
 #include <scheduler/Time.h>
 #include <ui/DisplayIdentification.h>
 #include "../Scheduler/OneShotTimer.h"
+#include "Workload.h"
 
 #include "SessionManager.h"
 
@@ -125,6 +128,26 @@ public:
     // Get the session manager, if it exists
     virtual std::shared_ptr<SessionManager> getSessionManager() = 0;
 
+    // --- Track per frame workloads to use for load up hint heuristics
+    // Track queued workload from transactions as they are queued from the binder thread.
+    // The workload is accumulated and reset on frame commit. The queued workload may be
+    // relevant for the next frame so can be used as an early load up hint. Note this is
+    // only a hint because the transaction can remain in the queue and not be applied on
+    // the next frame.
+    virtual void setQueuedWorkload(ftl::Flags<Workload> workload) = 0;
+    // Track additional workload dur to a screenshot request for load up hint heuristics. This
+    // would indicate an immediate increase in GPU workload.
+    virtual void setScreenshotWorkload() = 0;
+    // Track committed workload from transactions that are applied on the main thread.
+    // This workload is determined from the applied transactions. This can provide a high
+    // confidence that the CPU and or GPU workload will increase immediately.
+    virtual void setCommittedWorkload(ftl::Flags<Workload> workload) = 0;
+    // Update committed workload with the actual workload from post composition. This is
+    // used to update the baseline workload so we can detect increases in workloads on the
+    // next commit. We use composite instead of commit to update the baseline to account
+    // for optimizations like caching which may reduce the workload.
+    virtual void setCompositedWorkload(ftl::Flags<Workload> workload) = 0;
+
     // --- The following methods may run on threads besides SF main ---
     // Send a hint about an upcoming increase in the CPU workload
     virtual void notifyCpuLoadUp() = 0;
@@ -173,6 +196,11 @@ public:
     void setDisplays(std::vector<DisplayId>& displayIds) override;
     void setTotalFrameTargetWorkDuration(Duration targetDuration) override;
     std::shared_ptr<SessionManager> getSessionManager() override;
+
+    void setQueuedWorkload(ftl::Flags<Workload> workload) override;
+    void setScreenshotWorkload() override;
+    void setCommittedWorkload(ftl::Flags<Workload> workload) override;
+    void setCompositedWorkload(ftl::Flags<Workload> workload) override;
 
     // --- The following methods may run on threads besides SF main ---
     void notifyCpuLoadUp() override;
@@ -351,6 +379,11 @@ private:
     // How long we expect hwc to run after the present call until it waits for the fence
     static constexpr const Duration kFenceWaitStartDelayValidated{150us};
     static constexpr const Duration kFenceWaitStartDelaySkippedValidate{250us};
+
+    // Track queued and committed workloads per frame. Queued workload is atomic because it's
+    // updated on both binder and the main thread.
+    std::atomic<uint32_t> mQueuedWorkload;
+    ftl::Flags<Workload> mCommittedWorkload;
 
     void sendHintSessionHint(aidl::android::hardware::power::SessionHint hint);
 

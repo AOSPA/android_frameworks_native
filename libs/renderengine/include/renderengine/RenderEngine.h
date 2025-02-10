@@ -264,10 +264,10 @@ public:
 
     virtual void setEnableTracing(bool /*tracingEnabled*/) {}
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
     virtual void setViewportAndProjection(Rect viewPort, Rect sourceCrop) = 0;
-    /* QTI_END */
 
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
 protected:
     RenderEngine() : RenderEngine(Threaded::NO) {}
 

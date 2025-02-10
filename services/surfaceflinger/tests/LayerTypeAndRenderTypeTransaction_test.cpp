@@ -585,6 +585,83 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, ParentCornerRadiusTakesPrecedence)
     }
 }
 
+TEST_P(LayerTypeAndRenderTypeTransactionTest, SetClientDrawnCornerRadius) {
+    sp<SurfaceControl> layer;
+    const uint8_t size = 64;
+    const uint8_t testArea = 4;
+    const float cornerRadius = 20.0f;
+    ASSERT_NO_FATAL_FAILURE(layer = createLayer("test", size, size));
+    ASSERT_NO_FATAL_FAILURE(fillLayerColor(layer, Color::RED, size, size));
+
+    Transaction()
+            .setClientDrawnCornerRadius(layer, cornerRadius)
+            .setCornerRadius(layer, cornerRadius)
+            .setCrop(layer, Rect(size, size))
+            .apply();
+
+    {
+        const uint8_t bottom = size - 1;
+        const uint8_t right = size - 1;
+        auto shot = getScreenCapture();
+        // Solid corners
+        shot->expectColor(Rect(0, 0, testArea, testArea), Color::RED);
+        shot->expectColor(Rect(size - testArea, 0, right, testArea), Color::RED);
+        shot->expectColor(Rect(0, bottom - testArea, testArea, bottom), Color::RED);
+        shot->expectColor(Rect(size - testArea, bottom - testArea, right, bottom), Color::RED);
+        // Solid center
+        shot->expectColor(Rect(size / 2 - testArea / 2, size / 2 - testArea / 2,
+                               size / 2 + testArea / 2, size / 2 + testArea / 2),
+                          Color::RED);
+    }
+}
+
+// Test if ParentCornerRadiusTakesPrecedence if the parent's client drawn corner radius crop
+// is fully contained by the child corner radius crop.
+TEST_P(LayerTypeAndRenderTypeTransactionTest, ParentCornerRadiusPrecedenceClientDrawnCornerRadius) {
+    sp<SurfaceControl> parent;
+    sp<SurfaceControl> child;
+    const uint32_t size = 64;
+    const uint32_t parentSize = size * 3;
+    const Rect parentCrop(size, size, size, size);
+    const uint32_t testLength = 4;
+    const float cornerRadius = 20.0f;
+    ASSERT_NO_FATAL_FAILURE(parent = createLayer("parent", parentSize, parentSize));
+    ASSERT_NO_FATAL_FAILURE(fillLayerColor(parent, Color::RED, parentSize, parentSize));
+    ASSERT_NO_FATAL_FAILURE(child = createLayer("child", size, size));
+    ASSERT_NO_FATAL_FAILURE(fillLayerColor(child, Color::GREEN, size, size));
+
+    Transaction()
+            .setCornerRadius(parent, cornerRadius)
+            .setCrop(parent, parentCrop)
+            .setClientDrawnCornerRadius(parent, cornerRadius)
+            .reparent(child, parent)
+            .setPosition(child, size, size)
+            .apply(true);
+
+    {
+        const uint32_t top = size;
+        const uint32_t left = size;
+        const uint32_t bottom = size * 2;
+        const uint32_t right = size * 2;
+        auto shot = getScreenCapture();
+        // Corners are RED because parent's client drawn corner radius is actually 0
+        // and the child is fully within the parent's crop
+        // TL
+        shot->expectColor(Rect(left, top, testLength, testLength), Color::RED);
+        // TR
+        shot->expectColor(Rect(right - testLength, top, testLength, testLength), Color::RED);
+        // BL
+        shot->expectColor(Rect(left, bottom - testLength, testLength, testLength), Color::RED);
+        // BR
+        shot->expectColor(Rect(right - testLength, bottom - testLength, testLength, testLength),
+                          Color::RED);
+        // Solid center
+        shot->expectColor(Rect(parentSize / 2 - testLength, parentSize / 2 - testLength, testLength,
+                               testLength),
+                          Color::GREEN);
+    }
+}
+
 TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBackgroundBlurRadiusSimple) {
     if (!deviceSupportsBlurs()) GTEST_SKIP();
     if (!deviceUsesSkiaRenderEngine()) GTEST_SKIP();

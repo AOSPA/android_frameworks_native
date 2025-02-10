@@ -36,6 +36,10 @@
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
 
+namespace aidl::android::hardware::graphics::composer3 {
+enum class Composition;
+}
+
 namespace android {
 
 class Fence;
@@ -121,6 +125,8 @@ public:
 
         // True if layers with 170M dataspace should be overridden to sRGB.
         const bool treat170mAsSrgb;
+
+        std::shared_ptr<gui::DisplayLuts> luts;
     };
 
     // A superset of LayerSettings required by RenderEngine to compose a layer
@@ -131,6 +137,9 @@ public:
 
         // Currently latched frame number, 0 if invalid.
         uint64_t frameNumber = 0;
+
+        // layer serial number, -1 if invalid.
+        int32_t sequence = -1;
     };
 
     // Describes the states of the release fence. Checking the states allows checks
@@ -173,12 +182,17 @@ public:
     // Whether the layer should be rendered with rounded corners.
     virtual bool hasRoundedCorners() const = 0;
     virtual void setWasClientComposed(const sp<Fence>&) {}
+    virtual void setHwcCompositionType(
+            aidl::android::hardware::graphics::composer3::Composition) = 0;
+    virtual aidl::android::hardware::graphics::composer3::Composition getHwcCompositionType()
+            const = 0;
+
     virtual const gui::LayerMetadata* getMetadata() const = 0;
     virtual const gui::LayerMetadata* getRelativeMetadata() const = 0;
+// QTI_BEGIN: 2024-07-26: Display: sf: use layer id instead of unique sequence
 
-    /* QTI_BEGIN */
     virtual int32_t getLayerId() const = 0;
-    /* QTI_END */
+// QTI_END: 2024-07-26: Display: sf: use layer id instead of unique sequence
 };
 
 // TODO(b/121291683): Specialize std::hash<> for sp<T> so these and others can

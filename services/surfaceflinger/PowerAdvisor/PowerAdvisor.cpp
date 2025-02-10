@@ -35,7 +35,9 @@
 
 #include <android-base/properties.h>
 #include <android/binder_libbinder.h>
+#include <common/WorkloadTracer.h>
 #include <common/trace.h>
+#include <ftl/concat.h>
 #include <utils/Log.h>
 #include <utils/Mutex.h>
 
@@ -50,6 +52,7 @@
 
 namespace android::adpf::impl {
 
+using namespace android::ftl::flag_operators;
 using aidl::android::hardware::common::fmq::SynchronizedReadWrite;
 using android::hardware::EventFlag;
 
@@ -68,6 +71,8 @@ void traceExpensiveRendering(bool enabled) {
     }
 }
 
+static constexpr ftl::Flags<Workload> TRIGGER_LOAD_CHANGE_HINTS = Workload::EFFECTS |
+        Workload::VISIBLE_REGION | Workload::DISPLAY_CHANGES | Workload::SCREENSHOT;
 } // namespace
 
 PowerAdvisor::PowerAdvisor(std::function<void()>&& sfDisableExpensiveFn,
@@ -763,4 +768,58 @@ power::PowerHalController& PowerAdvisor::getPowerHal() {
     return *mPowerHal;
 }
 
+void PowerAdvisor::setQueuedWorkload(ftl::Flags<Workload> queued) {
+    queued &= TRIGGER_LOAD_CHANGE_HINTS;
+    if (!(queued).get()) return;
+    uint32_t previousQueuedWorkload = mQueuedWorkload.fetch_or(queued.get());
+
+    uint32_t newHints = (previousQueuedWorkload ^ queued.get()) & queued.get();
+    if (newHints) {
+        SFTRACE_INSTANT_FOR_TRACK(WorkloadTracer::TRACK_NAME,
+                                  ftl::Concat("QueuedWorkload: ",
+                                              ftl::truncated<20>(ftl::Flags<Workload>(newHints)
+                                                                         .string()
+                                                                         .c_str()))
+                                          .c_str());
+    }
+    if (!previousQueuedWorkload) {
+        // TODO(b/385028458) maybe load up hint if close to wake up
+    }
+}
+
+void PowerAdvisor::setScreenshotWorkload() {
+    mCommittedWorkload |= Workload::SCREENSHOT;
+}
+
+void PowerAdvisor::setCommittedWorkload(ftl::Flags<Workload> workload) {
+    workload &= TRIGGER_LOAD_CHANGE_HINTS;
+    uint32_t queued = mQueuedWorkload.exchange(0);
+    mCommittedWorkload |= workload;
+
+    bool cancelLoadupHint = queued && !mCommittedWorkload.get();
+    if (cancelLoadupHint) {
+        SFTRACE_INSTANT_FOR_TRACK(WorkloadTracer::TRACK_NAME,
+                                  ftl::Concat("UncommittedQueuedWorkload: ",
+                                              ftl::truncated<20>(ftl::Flags<Workload>(queued)
+                                                                         .string()
+                                                                         .c_str()))
+                                          .c_str());
+        // TODO(b/385028458) cancel load up hint
+    }
+
+    bool increasedWorkload = queued == 0 && mCommittedWorkload.get() != 0;
+    if (increasedWorkload) {
+        SFTRACE_INSTANT_FOR_TRACK(WorkloadTracer::TRACK_NAME,
+                                  ftl::Concat("CommittedWorkload: ",
+                                              ftl::truncated<20>(mCommittedWorkload.string()))
+                                          .c_str());
+
+        // TODO(b/385028458) load up hint
+    }
+}
+
+void PowerAdvisor::setCompositedWorkload(ftl::Flags<Workload> composited) {
+    composited &= TRIGGER_LOAD_CHANGE_HINTS;
+    mCommittedWorkload = composited;
+}
 } // namespace android::adpf::impl

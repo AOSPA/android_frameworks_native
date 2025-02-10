@@ -48,7 +48,7 @@ impl DebugStore {
     ///
     /// This constant is used as a part of the debug store's data format,
     /// allowing for version tracking and compatibility checks.
-    const ENCODE_VERSION: u32 = 1;
+    const ENCODE_VERSION: u32 = 2;
 
     /// Creates a new instance of `DebugStore` with specified event limit and maximum delay.
     fn new() -> Self {
@@ -129,7 +129,7 @@ impl fmt::Display for DebugStore {
         write!(
             f,
             "{}",
-            self.event_store.fold(String::new(), |mut acc, event| {
+            self.event_store.rfold(String::new(), |mut acc, event| {
                 if !acc.is_empty() {
                     acc.push_str("||");
                 }

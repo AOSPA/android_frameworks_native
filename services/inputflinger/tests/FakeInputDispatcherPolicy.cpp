@@ -16,6 +16,8 @@
 
 #include "FakeInputDispatcherPolicy.h"
 
+#include <variant>
+
 #include <gtest/gtest.h>
 
 namespace android {
@@ -409,12 +411,18 @@ void FakeInputDispatcherPolicy::interceptKeyBeforeQueueing(const KeyEvent& input
 void FakeInputDispatcherPolicy::interceptMotionBeforeQueueing(ui::LogicalDisplayId, uint32_t,
                                                               int32_t, nsecs_t, uint32_t&) {}
 
-nsecs_t FakeInputDispatcherPolicy::interceptKeyBeforeDispatching(const sp<IBinder>&,
-                                                                 const KeyEvent&, uint32_t) {
+std::variant<nsecs_t, inputdispatcher::KeyEntry::InterceptKeyResult>
+FakeInputDispatcherPolicy::interceptKeyBeforeDispatching(const sp<IBinder>&, const KeyEvent&,
+                                                         uint32_t) {
     if (mConsumeKeyBeforeDispatching) {
-        return -1;
+        return inputdispatcher::KeyEntry::InterceptKeyResult::SKIP;
     }
+
     nsecs_t delay = std::chrono::nanoseconds(mInterceptKeyTimeout).count();
+    if (delay == 0) {
+        return inputdispatcher::KeyEntry::InterceptKeyResult::CONTINUE;
+    }
+
     // Clear intercept state so we could dispatch the event in next wake.
     mInterceptKeyTimeout = 0ms;
     return delay;

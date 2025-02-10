@@ -131,9 +131,10 @@ HalResult<void> HalWrapper::performPwleEffect(const std::vector<PrimitivePwle>&,
     return HalResult<void>::unsupported();
 }
 
-HalResult<void> HalWrapper::composePwleV2(const CompositePwleV2&, const std::function<void()>&) {
+HalResult<milliseconds> HalWrapper::composePwleV2(const CompositePwleV2&,
+                                                  const std::function<void()>&) {
     ALOGV("Skipped composePwleV2 because it's not available in Vibrator HAL");
-    return HalResult<void>::unsupported();
+    return HalResult<milliseconds>::unsupported();
 }
 
 HalResult<Capabilities> HalWrapper::getCapabilities() {
@@ -359,11 +360,18 @@ HalResult<void> AidlHalWrapper::performPwleEffect(const std::vector<PrimitivePwl
     return HalResultFactory::fromStatus(getHal()->composePwle(primitives, cb));
 }
 
-HalResult<void> AidlHalWrapper::composePwleV2(const CompositePwleV2& composite,
-                                              const std::function<void()>& completionCallback) {
+HalResult<milliseconds> AidlHalWrapper::composePwleV2(
+        const CompositePwleV2& composite, const std::function<void()>& completionCallback) {
     // This method should always support callbacks, so no need to double check.
     auto cb = ndk::SharedRefBase::make<HalCallbackWrapper>(completionCallback);
-    return HalResultFactory::fromStatus(getHal()->composePwleV2(composite, cb));
+
+    milliseconds totalDuration(0);
+    for (const auto& primitive : composite.pwlePrimitives) {
+        totalDuration += milliseconds(primitive.timeMillis);
+    }
+
+    return HalResultFactory::fromStatus<milliseconds>(getHal()->composePwleV2(composite, cb),
+                                                      totalDuration);
 }
 
 HalResult<Capabilities> AidlHalWrapper::getCapabilitiesInternal() {

@@ -566,14 +566,14 @@ std::string SurfaceFrame::miniDump() const {
     return result;
 }
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2024-03-18: Performance: SF: Add one dump option to print present time only
 void SurfaceFrame::dumpPresentTime(std::string& result) const {
     std::scoped_lock lock(mMutex);
     StringAppendF(&result, "Layer - %s\n", mDebugName.c_str());
     StringAppendF(&result, "Layer present time: %" PRId64 "\n", mActuals.presentTime);
 }
-/* QTI_END */
 
+// QTI_END: 2024-03-18: Performance: SF: Add one dump option to print present time only
 void SurfaceFrame::classifyJankLocked(int32_t displayFrameJankType, const Fps& refreshRate,
                                       Fps displayFrameRenderRate, nsecs_t* outDeadlineDelta) {
     if (mActuals.presentTime == Fence::SIGNAL_TIME_INVALID) {
@@ -1643,15 +1643,15 @@ void FrameTimeline::DisplayFrame::dump(std::string& result, nsecs_t baseTime) co
     StringAppendF(&result, "\n");
 }
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2024-03-18: Performance: SF: Add one dump option to print present time only
 void FrameTimeline::DisplayFrame::dumpPresentTime(std::string& result) const {
     StringAppendF(&result, "SF present time: %" PRId64 "\n", mSurfaceFlingerActuals.presentTime);
     for (const auto& surfaceFrame : mSurfaceFrames) {
         surfaceFrame->dumpPresentTime(result);
     }
 }
-/* QTI_END */
 
+// QTI_END: 2024-03-18: Performance: SF: Add one dump option to print present time only
 void FrameTimeline::dumpAll(std::string& result) {
     std::scoped_lock lock(mMutex);
     StringAppendF(&result, "Number of display frames : %d\n", (int)mDisplayFrames.size());
@@ -1670,7 +1670,7 @@ void FrameTimeline::dumpJank(std::string& result) {
     }
 }
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2024-03-18: Performance: SF: Add one dump option to print present time only
 void FrameTimeline::dumpPresentTime(std::string& result) {
     std::scoped_lock lock(mMutex);
     for (size_t i = 0; i < mDisplayFrames.size(); i++) {
@@ -1679,8 +1679,8 @@ void FrameTimeline::dumpPresentTime(std::string& result) {
         StringAppendF(&result, "\n");
     }
 }
-/* QTI_END */
 
+// QTI_END: 2024-03-18: Performance: SF: Add one dump option to print present time only
 void FrameTimeline::parseArgs(const Vector<String16>& args, std::string& result) {
     SFTRACE_CALL();
     std::unordered_map<std::string, bool> argsMap;
@@ -1693,11 +1693,11 @@ void FrameTimeline::parseArgs(const Vector<String16>& args, std::string& result)
     if (argsMap.count("-all")) {
         dumpAll(result);
     }
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-03-18: Performance: SF: Add one dump option to print present time only
     if (argsMap.count("-presenttime")) {
         dumpPresentTime(result);
     }
-    /* QTI_END */
+// QTI_END: 2024-03-18: Performance: SF: Add one dump option to print present time only
 }
 
 void FrameTimeline::setMaxDisplayFrames(uint32_t size) {

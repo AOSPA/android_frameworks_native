@@ -14,12 +14,18 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2024-04-07: Display: gui: handle destruction of QtiBLASTBufferQueueExtension
  * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// QTI_END: 2024-04-07: Display: gui: handle destruction of QtiBLASTBufferQueueExtension
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #undef LOG_TAG
 #define LOG_TAG "BLASTBufferQueue"
 
@@ -248,32 +254,23 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, bool updateDestinati
 #endif
 
     BQA_LOGV("BLASTBufferQueue created");
-
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     if (!mQtiBBQExtn) {
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-03-22: Performance: sf: Add support hook for GFAR/SuperTouch
         mQtiBBQExtn = new libguiextension::QtiBLASTBufferQueueExtension(this, name);
+// QTI_END: 2023-03-22: Performance: sf: Add support hook for GFAR/SuperTouch
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     }
-    /* QTI_END */
-}
-
-BLASTBufferQueue::BLASTBufferQueue(const std::string& name, const sp<SurfaceControl>& surface,
-                                   int width, int height, int32_t format)
-      : BLASTBufferQueue(name) {
-    /* QTI_BEGIN */
-    if (!mQtiBBQExtn) {
-        mQtiBBQExtn = new libguiextension::QtiBLASTBufferQueueExtension(this, name);
-    }
-    /* QTI_END */
-    update(surface, width, height, format);
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 }
 
 BLASTBufferQueue::~BLASTBufferQueue() {
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-04-07: Display: gui: handle destruction of QtiBLASTBufferQueueExtension
     if (mQtiBBQExtn) {
       delete mQtiBBQExtn;
     }
-    /* QTI_END */
-
+// QTI_END: 2024-04-07: Display: gui: handle destruction of QtiBLASTBufferQueueExtension
     TransactionCompletedListener::getInstance()->removeQueueStallListener(this);
     if (mPendingTransactions.empty()) {
         return;
@@ -351,12 +348,11 @@ void BLASTBufferQueue::update(const sp<SurfaceControl>& surface, uint32_t width,
         // All transactions on our apply token are one-way. See comment on mAppliedLastTransaction
         t.setApplyToken(mApplyToken).apply(false /* synchronous */, true /* oneWay */);
     }
-
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     if (mQtiBBQExtn) {
         mQtiBBQExtn->qtiSetConsumerUsageBitsForRC(mName, mSurfaceControl);
     }
-    /* QTI_END */
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 }
 
 static std::optional<SurfaceControlStats> findMatchingStat(
@@ -569,9 +565,9 @@ void BLASTBufferQueue::releaseBuffer(const ReleaseCallbackId& callbackId,
         return;
     }
     mNumAcquired--;
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-24: Performance: gui: Fix for thread safety
     mQtiNumUndequeued++;
-    /* QTI_END */
+// QTI_END: 2023-04-24: Performance: gui: Fix for thread safety
     BBQ_TRACE("frame=%" PRIu64, callbackId.framenumber);
     BQA_LOGV("released %s", callbackId.to_string().c_str());
     mBufferItemConsumer->releaseBuffer(it->second, releaseFence);
@@ -749,8 +745,10 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
 
     mergePendingTransactions(t, bufferItem.mFrameNumber);
     if (applyTransaction) {
+// QTI_BEGIN: 2024-04-24: Performance: gui: Remove gaming sync binder change in BLASTBufferQueue
         // All transactions on our apply token are one-way. See comment on mAppliedLastTransaction
         t->setApplyToken(mApplyToken).apply(false, true);
+// QTI_END: 2024-04-24: Performance: gui: Remove gaming sync binder change in BLASTBufferQueue
         mAppliedLastTransaction = true;
         mLastAppliedFrameNumber = bufferItem.mFrameNumber;
     } else {
@@ -890,9 +888,9 @@ void BLASTBufferQueue::onFrameReplaced(const BufferItem& item) {
 void BLASTBufferQueue::onFrameDequeued(const uint64_t bufferId) {
     std::lock_guard _lock{mTimestampMutex};
     mDequeueTimestamps[bufferId] = systemTime();
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-24: Performance: gui: Fix for thread safety
     mQtiNumUndequeued--;
-    /* QTI_END */
+// QTI_END: 2023-04-24: Performance: gui: Fix for thread safety
 };
 
 void BLASTBufferQueue::onFrameCancelled(const uint64_t bufferId) {
@@ -1262,15 +1260,11 @@ public:
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
     status_t waitForBufferRelease(std::unique_lock<std::mutex>& bufferQueueLock,
                                   nsecs_t timeout) const override {
+        const auto startTime = std::chrono::steady_clock::now();
         sp<BLASTBufferQueue> bbq = mBLASTBufferQueue.promote();
         if (!bbq) {
             return OK;
         }
-
-        // Provide a callback for Choreographer to start buffer stuffing recovery when blocked
-        // on buffer release.
-        std::function<void()> callbackCopy = bbq->getWaitForBufferReleaseCallback();
-        if (callbackCopy) callbackCopy();
 
         // BufferQueue has already checked if we have a free buffer. If there's an unread interrupt,
         // we want to ignore it. This must be done before unlocking the BufferQueue lock to ensure
@@ -1293,6 +1287,14 @@ public:
         }
 
         bbq->releaseBufferCallback(id, fence, maxAcquiredBufferCount);
+        const nsecs_t durationNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                              std::chrono::steady_clock::now() - startTime)
+                                              .count();
+        // Provide a callback for Choreographer to start buffer stuffing recovery when blocked
+        // on buffer release.
+        std::function<void(const nsecs_t)> callbackCopy = bbq->getWaitForBufferReleaseCallback();
+        if (callbackCopy) callbackCopy(durationNanos);
+
         return OK;
     }
 #endif
@@ -1384,12 +1386,13 @@ void BLASTBufferQueue::setApplyToken(sp<IBinder> applyToken) {
     mApplyToken = std::move(applyToken);
 }
 
-void BLASTBufferQueue::setWaitForBufferReleaseCallback(std::function<void()> callback) {
+void BLASTBufferQueue::setWaitForBufferReleaseCallback(
+        std::function<void(const nsecs_t)> callback) {
     std::lock_guard _lock{mWaitForBufferReleaseMutex};
     mWaitForBufferReleaseCallback = std::move(callback);
 }
 
-std::function<void()> BLASTBufferQueue::getWaitForBufferReleaseCallback() const {
+std::function<void(const nsecs_t)> BLASTBufferQueue::getWaitForBufferReleaseCallback() const {
     std::lock_guard _lock{mWaitForBufferReleaseMutex};
     return mWaitForBufferReleaseCallback;
 }

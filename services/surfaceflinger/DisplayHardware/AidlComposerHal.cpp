@@ -26,19 +26,22 @@
 #include <android/binder_manager.h>
 #include <common/FlagManager.h>
 #include <common/trace.h>
+#include <fmt/core.h>
 #include <log/log.h>
 
 #include <aidl/android/hardware/graphics/composer3/BnComposerCallback.h>
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 #ifdef QTI_COMPOSER3_EXTENSIONS
 #include <aidl/vendor/qti/hardware/display/composer3/IQtiComposer3Client.h>
 #include "../QtiExtension/QtiAidlComposerHalExtension.h"
 #endif
-/* QTI_END */
 
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 #include <algorithm>
 #include <cinttypes>
+#include <string>
+#include <string_view>
 
 #include "HWC2.h"
 
@@ -236,25 +239,32 @@ private:
     HWC2::ComposerCallback& mCallback;
 };
 
-std::string AidlComposer::instance(const std::string& serviceName) {
-    return std::string(AidlIComposer::descriptor) + "/" + serviceName;
+std::string AidlComposer::ensureFullyQualifiedName(std::string_view serviceName) {
+    if (!serviceName.starts_with(AidlIComposer::descriptor)) {
+        return fmt::format("{}/{}", AidlIComposer::descriptor, serviceName);
+    } else {
+        return std::string{serviceName};
+    }
 }
 
-bool AidlComposer::isDeclared(const std::string& serviceName) {
-    return AServiceManager_isDeclared(instance(serviceName).c_str());
+bool AidlComposer::namesAnAidlComposerService(std::string_view serviceName) {
+    if (!serviceName.starts_with(AidlIComposer::descriptor)) {
+        return AServiceManager_isDeclared(ensureFullyQualifiedName(serviceName).c_str());
+    }
+    return true;
 }
 
 AidlComposer::AidlComposer(const std::string& serviceName) {
     // This only waits if the service is actually declared
-    mAidlComposer = AidlIComposer::fromBinder(
-            ndk::SpAIBinder(AServiceManager_waitForService(instance(serviceName).c_str())));
+    mAidlComposer = AidlIComposer::fromBinder(ndk::SpAIBinder(
+            AServiceManager_waitForService(ensureFullyQualifiedName(serviceName).c_str())));
     if (!mAidlComposer) {
         LOG_ALWAYS_FATAL("Failed to get AIDL composer service");
         return;
     }
 
     if (!mAidlComposer->createClient(&mAidlComposerClient).isOk()) {
-        LOG_ALWAYS_FATAL("Can't create AidlComposerClient, fallback to HIDL");
+        LOG_ALWAYS_FATAL("Can't create AidlComposerClient");
         return;
     }
 
@@ -285,11 +295,13 @@ AidlComposer::AidlComposer(const std::string& serviceName) {
                 FlagManager::getInstance().enable_layer_command_batching();
     }
     ALOGI("Loaded AIDL composer3 HAL service");
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 #ifdef QTI_COMPOSER3_EXTENSIONS
     ndk::SpAIBinder qtiComposer3ClientBinder;
     AIBinder_getExtension(ndk::SpAIBinder(
-                                  AServiceManager_waitForService(instance(serviceName).c_str()))
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+                                  AServiceManager_waitForService(ensureFullyQualifiedName(serviceName).c_str()))
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
                                   .get(),
                           qtiComposer3ClientBinder.getR());
     if (qtiComposer3ClientBinder.get() != nullptr) {
@@ -301,7 +313,7 @@ AidlComposer::AidlComposer(const std::string& serviceName) {
     }
     ALOGI("Loaded QtiComposer3Client HAL service");
 #endif
-    /* QTI_END */
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 }
 
 AidlComposer::~AidlComposer() = default;
@@ -371,7 +383,9 @@ void AidlComposer::registerCallback(HWC2::ComposerCallback& callback) {
     mAidlComposerCallback = ndk::SharedRefBase::make<AidlIComposerCallbackWrapper>(callback);
 
     ndk::SpAIBinder binder = mAidlComposerCallback->asBinder();
-    AIBinder_setMinSchedulerPolicy(binder.get(), SCHED_FIFO, 2);
+    if (!FlagManager::getInstance().disable_sched_fifo_composer_callback()) {
+        AIBinder_setMinSchedulerPolicy(binder.get(), SCHED_FIFO, 2);
+    }
 
     const auto status = mAidlComposerClient->registerCallback(mAidlComposerCallback);
     if (!status.isOk()) {
@@ -710,6 +724,36 @@ Error AidlComposer::getReleaseFences(Display display, std::vector<Layer>* outLay
     return error;
 }
 
+Error AidlComposer::getLayerPresentFences(Display display, std::vector<Layer>* outLayers,
+                                          std::vector<int>* outFences,
+                                          std::vector<int64_t>* outLatenciesNanos) {
+    Error error = Error::NONE;
+    std::vector<PresentFence::LayerPresentFence> fences;
+    {
+        mMutex.lock_shared();
+        if (auto reader = getReader(display)) {
+            fences = reader->get().takeLayerPresentFences(translate<int64_t>(display));
+        } else {
+            error = Error::BAD_DISPLAY;
+        }
+        mMutex.unlock_shared();
+    }
+
+    outLayers->reserve(fences.size());
+    outFences->reserve(fences.size());
+    outLatenciesNanos->reserve(fences.size());
+
+    for (auto& fence : fences) {
+        outLayers->emplace_back(translate<Layer>(fence.layer));
+        // take ownership
+        const int fenceOwner = fence.bufferFence.get();
+        *fence.bufferFence.getR() = -1;
+        outFences->emplace_back(fenceOwner);
+        outLatenciesNanos->emplace_back(fence.bufferLatencyNanos);
+    }
+    return error;
+}
+
 Error AidlComposer::presentDisplay(Display display, int* outPresentFence) {
     const auto displayId = translate<int64_t>(display);
     SFTRACE_FORMAT("HwcPresentDisplay %" PRId64, displayId);
@@ -904,7 +948,7 @@ Error AidlComposer::presentOrValidateDisplay(Display display, nsecs_t expectedPr
 
     *state = translate<uint32_t>(*result);
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2024-02-28: Display: AidlComposerHal: Add handling for presentOrValidatedisplay state
     if (*state == 2) {
         auto fence = reader->get().takePresentFence(displayId);
         // take ownership
@@ -912,8 +956,8 @@ Error AidlComposer::presentOrValidateDisplay(Display display, nsecs_t expectedPr
         *fence.getR() = -1;
         reader->get().hasChanges(displayId, outNumTypes, outNumRequests);
     }
-    /* QTI_END */
 
+// QTI_END: 2024-02-28: Display: AidlComposerHal: Add handling for presentOrValidatedisplay state
     if (*result == PresentOrValidate::Result::Presented) {
         auto fence = reader->get().takePresentFence(displayId);
         // take ownership
@@ -1173,25 +1217,29 @@ Error AidlComposer::execute(Display display) {
         return Error::BAD_DISPLAY;
     }
     auto commands = writer->get().takePendingCommands();
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 #ifdef QTI_COMPOSER3_EXTENSIONS
     const auto& qtiCommands = writer->get().getPendingQtiCommands();
 
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+// QTI_BEGIN: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
     if (commands.empty() && qtiCommands.empty()) {
         writer->get().qtiReset();
         return Error::NONE;
     }
 #else
+// QTI_END: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
     if (commands.empty()) {
         return Error::NONE;
     }
+// QTI_BEGIN: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
 #endif
-    /* QTI_END */
+// QTI_END: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
 
     { // scope for results
         std::vector<CommandResultPayload> results;
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
         ::ndk::ScopedAStatus status;
-        /* QTI_BEGIN */
 #ifdef QTI_COMPOSER3_EXTENSIONS
         if (qtiComposer3Client) {
             status = qtiComposer3Client->qtiExecuteCommands(commands, qtiCommands, &results);
@@ -1201,7 +1249,7 @@ Error AidlComposer::execute(Display display) {
 #else
         status = mAidlComposerClient->executeCommands(commands, &results);
 #endif
-        /* QTI_END */
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
         if (!status.isOk()) {
             ALOGE("executeCommands failed %s", status.getDescription().c_str());
             return static_cast<Error>(status.getServiceSpecificError());
@@ -1227,11 +1275,11 @@ Error AidlComposer::execute(Display display) {
         }
     }
 
-    /* QTI_BEGIN */
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 #ifdef QTI_COMPOSER3_EXTENSIONS
     writer->get().qtiReset();
 #endif
-    /* QTI_END */
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 
     return error;
 }
@@ -1762,8 +1810,10 @@ Error AidlComposer::getLuts(Display display, const std::vector<sp<GraphicBuffer>
     return Error::NONE;
 }
 
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 ftl::Optional<std::reference_wrapper<QtiAidlCommandWriter>> AidlComposer::getWriter(
         Display display) REQUIRES_SHARED(mMutex) {
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
     return mWriters.get(display);
 }
 

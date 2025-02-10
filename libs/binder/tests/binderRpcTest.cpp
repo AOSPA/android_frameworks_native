@@ -1328,6 +1328,109 @@ TEST_P(BinderRpcAccessor, InjectNoSockaddrProvided) {
     EXPECT_EQ(status, OK);
 }
 
+class BinderRpcAccessorNoConnection : public ::testing::Test {};
+
+TEST_F(BinderRpcAccessorNoConnection, listServices) {
+    const String16 kInstanceName("super.cool.service/better_than_default");
+    const String16 kInstanceName2("super.cool.service/better_than_default2");
+
+    auto receipt =
+            addAccessorProvider({String8(kInstanceName).c_str(), String8(kInstanceName2).c_str()},
+                                [&](const String16&) -> sp<IBinder> { return nullptr; });
+    EXPECT_FALSE(receipt.expired());
+    Vector<String16> list =
+            defaultServiceManager()->listServices(IServiceManager::DUMP_FLAG_PRIORITY_ALL);
+    bool name1 = false;
+    bool name2 = false;
+    for (auto name : list) {
+        if (name == kInstanceName) name1 = true;
+        if (name == kInstanceName2) name2 = true;
+    }
+    EXPECT_TRUE(name1);
+    EXPECT_TRUE(name2);
+    status_t status = removeAccessorProvider(receipt);
+    EXPECT_EQ(status, OK);
+}
+
+TEST_F(BinderRpcAccessorNoConnection, isDeclared) {
+    const String16 kInstanceName("super.cool.service/default");
+    const String16 kInstanceName2("still_counts_as_declared");
+
+    auto receipt =
+            addAccessorProvider({String8(kInstanceName).c_str(), String8(kInstanceName2).c_str()},
+                                [&](const String16&) -> sp<IBinder> { return nullptr; });
+    EXPECT_FALSE(receipt.expired());
+    EXPECT_TRUE(defaultServiceManager()->isDeclared(kInstanceName));
+    EXPECT_TRUE(defaultServiceManager()->isDeclared(kInstanceName2));
+    EXPECT_FALSE(defaultServiceManager()->isDeclared(String16("doesnt_exist")));
+    status_t status = removeAccessorProvider(receipt);
+    EXPECT_EQ(status, OK);
+}
+
+TEST_F(BinderRpcAccessorNoConnection, getDeclaredInstances) {
+    const String16 kInstanceName("super.cool.service.IFoo/default");
+    const String16 kInstanceName2("super.cool.service.IFoo/extra/default");
+    const String16 kInstanceName3("super.cool.service.IFoo");
+
+    auto receipt =
+            addAccessorProvider({String8(kInstanceName).c_str(), String8(kInstanceName2).c_str(),
+                                 String8(kInstanceName3).c_str()},
+                                [&](const String16&) -> sp<IBinder> { return nullptr; });
+    EXPECT_FALSE(receipt.expired());
+    Vector<String16> list =
+            defaultServiceManager()->getDeclaredInstances(String16("super.cool.service.IFoo"));
+    // We would prefer ASSERT_EQ here, but we must call removeAccessorProvider
+    EXPECT_EQ(list.size(), 3u);
+    if (list.size() == 3) {
+        bool name1 = false;
+        bool name2 = false;
+        bool name3 = false;
+        for (auto name : list) {
+            if (name == String16("default")) name1 = true;
+            if (name == String16("extra/default")) name2 = true;
+            if (name == String16()) name3 = true;
+        }
+        EXPECT_TRUE(name1) << String8(list[0]);
+        EXPECT_TRUE(name2) << String8(list[1]);
+        EXPECT_TRUE(name3) << String8(list[2]);
+    }
+
+    status_t status = removeAccessorProvider(receipt);
+    EXPECT_EQ(status, OK);
+}
+
+TEST_F(BinderRpcAccessorNoConnection, getDeclaredWrongInstances) {
+    const String16 kInstanceName("super.cool.service.IFoo");
+
+    auto receipt = addAccessorProvider({String8(kInstanceName).c_str()},
+                                       [&](const String16&) -> sp<IBinder> { return nullptr; });
+    EXPECT_FALSE(receipt.expired());
+    Vector<String16> list = defaultServiceManager()->getDeclaredInstances(String16("unknown"));
+    EXPECT_TRUE(list.empty());
+
+    status_t status = removeAccessorProvider(receipt);
+    EXPECT_EQ(status, OK);
+}
+
+TEST_F(BinderRpcAccessorNoConnection, getDeclaredInstancesSlash) {
+    // This is treated as if there were no '/' and the declared instance is ""
+    const String16 kInstanceName("super.cool.service.IFoo/");
+
+    auto receipt = addAccessorProvider({String8(kInstanceName).c_str()},
+                                       [&](const String16&) -> sp<IBinder> { return nullptr; });
+    EXPECT_FALSE(receipt.expired());
+    Vector<String16> list =
+            defaultServiceManager()->getDeclaredInstances(String16("super.cool.service.IFoo"));
+    bool name1 = false;
+    for (auto name : list) {
+        if (name == String16("")) name1 = true;
+    }
+    EXPECT_TRUE(name1);
+
+    status_t status = removeAccessorProvider(receipt);
+    EXPECT_EQ(status, OK);
+}
+
 constexpr const char* kARpcInstance = "some.instance.name.IFoo/default";
 const char* kARpcSupportedServices[] = {
         kARpcInstance,

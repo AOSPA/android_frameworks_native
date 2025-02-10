@@ -24,7 +24,7 @@ QtiHWComposerExtension::QtiHWComposerExtension(android::impl::HWComposer& hwc)
 QtiHWComposerExtension::QtiHWComposerExtension(android::impl::HWComposer& hwc,
                                                Hwc2::Composer* composerHal)
       : mQtiHWComposer(hwc) {
-    if (Hwc2::AidlComposer::isDeclared("default")) {
+    if (Hwc2::AidlComposer::namesAnAidlComposerService("default")) {
         mQtiComposerHalExtn =
                 static_cast<QtiComposerHalExtension*>(new QtiAidlComposerHalExtension(composerHal));
     } else {

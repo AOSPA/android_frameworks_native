@@ -16,7 +16,9 @@
 
 #include "AndroidInputEventProtoConverter.h"
 
+#include <android/input.h>
 #include <android-base/logging.h>
+#include <input/Input.h>
 #include <perfetto/trace/android/android_input_event.pbzero.h>
 
 namespace android::inputdispatcher::trace {
@@ -51,11 +53,15 @@ void AndroidInputEventProtoConverter::toProtoMotionEvent(const TracedMotionEvent
     outProto.set_classification(static_cast<int32_t>(event.classification));
     outProto.set_flags(event.flags);
     outProto.set_policy_flags(event.policyFlags);
+    outProto.set_button_state(event.buttonState);
+    outProto.set_action_button(event.actionButton);
 
     if (!isRedacted) {
         outProto.set_cursor_position_x(event.xCursorPosition);
         outProto.set_cursor_position_y(event.yCursorPosition);
         outProto.set_meta_state(event.metaState);
+        outProto.set_precision_x(event.xPrecision);
+        outProto.set_precision_y(event.yPrecision);
     }
 
     for (uint32_t i = 0; i < event.pointerProperties.size(); i++) {
@@ -67,6 +73,12 @@ void AndroidInputEventProtoConverter::toProtoMotionEvent(const TracedMotionEvent
 
         const auto& coords = event.pointerCoords[i];
         auto bits = BitSet64(coords.bits);
+        if (isFromSource(event.source, AINPUT_SOURCE_CLASS_POINTER)) {
+            // Always include the X and Y axes for pointer events, since the
+            // bits will not be marked if the value is 0.
+            bits.markBit(AMOTION_EVENT_AXIS_X);
+            bits.markBit(AMOTION_EVENT_AXIS_Y);
+        }
         for (int32_t axisIndex = 0; !bits.isEmpty(); axisIndex++) {
             const auto axis = bits.clearFirstMarkedBit();
             auto axisEntry = pointer->add_axis_value();
@@ -115,13 +127,17 @@ void AndroidInputEventProtoConverter::toProtoWindowDispatchEvent(
         for (size_t i = 0; i < motion->pointerProperties.size(); i++) {
             auto* pointerProto = outProto.add_dispatched_pointer();
             pointerProto->set_pointer_id(motion->pointerProperties[i].id);
+            const auto& coords = motion->pointerCoords[i];
             const auto rawXY =
                     MotionEvent::calculateTransformedXY(motion->source, args.rawTransform,
-                                                        motion->pointerCoords[i].getXYValue());
-            pointerProto->set_x_in_display(rawXY.x);
-            pointerProto->set_y_in_display(rawXY.y);
+                                                        coords.getXYValue());
+            if (coords.getXYValue() != rawXY) {
+                // These values are only traced if they were modified by the raw transform
+                // to save space. Trace consumers should be aware of this optimization.
+                pointerProto->set_x_in_display(rawXY.x);
+                pointerProto->set_y_in_display(rawXY.y);
+            }
 
-            const auto& coords = motion->pointerCoords[i];
             const auto coordsInWindow =
                     MotionEvent::calculateTransformedCoords(motion->source, motion->flags,
                                                             args.transform, coords);
@@ -129,6 +145,7 @@ void AndroidInputEventProtoConverter::toProtoWindowDispatchEvent(
             for (int32_t axisIndex = 0; !bits.isEmpty(); axisIndex++) {
                 const uint32_t axis = bits.clearFirstMarkedBit();
                 const float axisValueInWindow = coordsInWindow.values[axisIndex];
+                // Only values that are modified by the window transform are traced.
                 if (coords.values[axisIndex] != axisValueInWindow) {
                     auto* axisEntry = pointerProto->add_axis_value_in_window();
                     axisEntry->set_axis(axis);

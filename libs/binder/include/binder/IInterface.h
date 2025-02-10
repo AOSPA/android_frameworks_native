@@ -243,7 +243,6 @@ constexpr const char* const kManualInterfaces[] = {
         "android.media.IMediaHTTPService",
         "android.media.IMediaLogService",
         "android.media.IMediaMetadataRetriever",
-        "android.media.IMediaMetricsService",
         "android.media.IMediaPlayer",
         "android.media.IMediaPlayerClient",
         "android.media.IMediaPlayerService",

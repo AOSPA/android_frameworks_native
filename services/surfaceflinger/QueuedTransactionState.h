@@ -21,7 +21,9 @@
 #include "FrontEnd/LayerCreationArgs.h"
 #include "renderengine/ExternalTexture.h"
 
+#include <PowerAdvisor/Workload.h>
 #include <common/FlagManager.h>
+#include <ftl/flags.h>
 #include <gui/LayerState.h>
 #include <system/window.h>
 
@@ -148,6 +150,7 @@ struct QueuedTransactionState {
     uint64_t id;
     bool sentFenceTimeoutWarning = false;
     std::vector<uint64_t> mergedTransactionIds;
+    ftl::Flags<adpf::Workload> workloadHint;
 };
 
 } // namespace android

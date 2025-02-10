@@ -173,7 +173,7 @@ std::optional<compositionengine::LayerFE::LayerSettings> LayerFE::prepareClientC
     layerSettings.edgeExtensionEffect = mSnapshot->edgeExtensionEffect;
     // Record the name of the layer for debugging further down the stack.
     layerSettings.name = mSnapshot->name;
-    layerSettings.luts = mSnapshot->luts;
+    layerSettings.luts = mSnapshot->luts ? mSnapshot->luts : targetSettings.luts;
 
     if (hasEffect() && !hasBufferOrSidebandStream()) {
         prepareEffectsClientComposition(layerSettings, targetSettings);
@@ -191,6 +191,7 @@ void LayerFE::prepareClearClientComposition(LayerFE::LayerSettings& layerSetting
     layerSettings.disableBlending = true;
     layerSettings.bufferId = 0;
     layerSettings.frameNumber = 0;
+    layerSettings.sequence = -1;
 
     // If layer is blacked out, force alpha to 1 so that we draw a black color layer.
     layerSettings.alpha = blackout ? 1.0f : 0.0f;
@@ -262,6 +263,7 @@ void LayerFE::prepareBufferStateClientComposition(
     layerSettings.source.buffer.maxLuminanceNits = maxLuminance;
     layerSettings.frameNumber = mSnapshot->frameNumber;
     layerSettings.bufferId = mSnapshot->externalTexture->getId();
+    layerSettings.sequence = mSnapshot->sequence;
 
     const bool useFiltering = targetSettings.needsFiltering ||
                               mSnapshot->geomLayerTransform.needsBilinearFiltering();
@@ -426,10 +428,18 @@ LayerFE::ReleaseFencePromiseStatus LayerFE::getReleaseFencePromiseStatus() {
     return mReleaseFencePromiseStatus;
 }
 
-/* QTI_BEGIN */
+void LayerFE::setHwcCompositionType(
+        aidl::android::hardware::graphics::composer3::Composition type) {
+    mLastHwcCompositionType = type;
+}
+
+aidl::android::hardware::graphics::composer3::Composition LayerFE::getHwcCompositionType() const {
+    return mLastHwcCompositionType;
+}
+
+// QTI_BEGIN: 2024-07-26: Display: sf: use layer id instead of unique sequence
 int32_t LayerFE::getLayerId() const {
     return static_cast<int32_t>(mSnapshot->sequence);
 }
-/* QTI_END */
-
+// QTI_END: 2024-07-26: Display: sf: use layer id instead of unique sequence
 } // namespace android

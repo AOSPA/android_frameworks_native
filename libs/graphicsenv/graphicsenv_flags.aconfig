@@ -1,0 +1,9 @@
+package: "com.android.graphics.graphicsenv.flags"
+container: "system"
+
+flag {
+  name: "feature_overrides"
+  namespace: "core_graphics"
+  description: "This flag controls the Feature Overrides in GraphicsEnv."
+  bug: "372694741"
+}

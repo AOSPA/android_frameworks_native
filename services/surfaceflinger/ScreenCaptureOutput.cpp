@@ -16,11 +16,13 @@
 
 #include "ScreenCaptureOutput.h"
 #include "ScreenCaptureRenderSurface.h"
+#include "common/include/common/FlagManager.h"
 #include "ui/Rotation.h"
 
 #include <compositionengine/CompositionEngine.h>
 #include <compositionengine/DisplayColorProfileCreationArgs.h>
 #include <compositionengine/impl/DisplayColorProfile.h>
+#include <ui/HdrRenderTypeUtils.h>
 #include <ui/Rotation.h>
 
 namespace android {
@@ -104,13 +106,83 @@ renderengine::DisplaySettings ScreenCaptureOutput::generateClientCompositionDisp
     return clientCompositionDisplay;
 }
 
+std::unordered_map<int32_t, aidl::android::hardware::graphics::composer3::Luts>
+ScreenCaptureOutput::generateLuts() {
+    std::unordered_map<int32_t, aidl::android::hardware::graphics::composer3::Luts> lutsMapper;
+    if (FlagManager::getInstance().luts_api()) {
+        std::vector<sp<GraphicBuffer>> buffers;
+        std::vector<int32_t> layerIds;
+
+        for (const auto* layer : getOutputLayersOrderedByZ()) {
+            const auto& layerState = layer->getState();
+            const auto* layerFEState = layer->getLayerFE().getCompositionState();
+            auto pixelFormat = layerFEState->buffer
+                    ? std::make_optional(
+                              static_cast<ui::PixelFormat>(layerFEState->buffer->getPixelFormat()))
+                    : std::nullopt;
+            const auto hdrType = getHdrRenderType(layerState.dataspace, pixelFormat,
+                                                  layerFEState->desiredHdrSdrRatio);
+            if (layerFEState->buffer && !layerFEState->luts &&
+                hdrType == HdrRenderType::GENERIC_HDR) {
+                buffers.push_back(layerFEState->buffer);
+                layerIds.push_back(layer->getLayerFE().getSequence());
+            }
+        }
+
+        std::vector<aidl::android::hardware::graphics::composer3::Luts> luts;
+        if (auto displayDevice = mRenderArea.getDisplayDevice()) {
+            const auto id = PhysicalDisplayId::tryCast(displayDevice->getId());
+            if (id) {
+                auto& hwc = getCompositionEngine().getHwComposer();
+                hwc.getLuts(*id, buffers, &luts);
+            }
+        }
+
+        if (buffers.size() == luts.size()) {
+            for (size_t i = 0; i < luts.size(); i++) {
+                lutsMapper[layerIds[i]] = std::move(luts[i]);
+            }
+        }
+    }
+    return lutsMapper;
+}
+
 std::vector<compositionengine::LayerFE::LayerSettings>
 ScreenCaptureOutput::generateClientCompositionRequests(
         bool supportsProtectedContent, ui::Dataspace outputDataspace,
         std::vector<compositionengine::LayerFE*>& outLayerFEs) {
+    // This map maps the layer unique id to a Lut
+    std::unordered_map<int32_t, aidl::android::hardware::graphics::composer3::Luts> lutsMapper =
+            generateLuts();
+
     auto clientCompositionLayers = compositionengine::impl::Output::
             generateClientCompositionRequests(supportsProtectedContent, outputDataspace,
                                               outLayerFEs);
+
+    for (auto& layer : clientCompositionLayers) {
+        if (lutsMapper.find(layer.sequence) != lutsMapper.end()) {
+            auto& aidlLuts = lutsMapper[layer.sequence];
+            if (aidlLuts.pfd.get() >= 0 && aidlLuts.offsets) {
+                std::vector<int32_t> offsets = *aidlLuts.offsets;
+                std::vector<int32_t> dimensions;
+                dimensions.reserve(offsets.size());
+                std::vector<int32_t> sizes;
+                sizes.reserve(offsets.size());
+                std::vector<int32_t> keys;
+                keys.reserve(offsets.size());
+                for (size_t j = 0; j < offsets.size(); j++) {
+                    dimensions.emplace_back(
+                            static_cast<int32_t>(aidlLuts.lutProperties[j].dimension));
+                    sizes.emplace_back(aidlLuts.lutProperties[j].size);
+                    keys.emplace_back(
+                            static_cast<int32_t>(aidlLuts.lutProperties[j].samplingKeys[0]));
+                }
+                layer.luts = std::make_shared<gui::DisplayLuts>(base::unique_fd(
+                                                                        aidlLuts.pfd.dup().get()),
+                                                                offsets, dimensions, sizes, keys);
+            }
+        }
+    }
 
     if (mRegionSampling) {
         for (auto& layer : clientCompositionLayers) {

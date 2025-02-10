@@ -28,6 +28,7 @@
 #include <MultiTouchInputMapper.h>
 #include <NotifyArgsBuilders.h>
 #include <PeripheralController.h>
+#include <ScopedFlagOverride.h>
 #include <SingleTouchInputMapper.h>
 #include <TestEventMatchers.h>
 #include <TestInputListener.h>
@@ -2474,10 +2475,10 @@ TEST_F(ExternalStylusIntegrationTest, FusedExternalStylusPressureNotReported) {
     const auto syncTime = std::chrono::system_clock::now();
     // After 72 ms, the event *will* be generated. If we wait the full 72 ms to check that NO event
     // is generated in that period, there will be a race condition between the event being generated
-    // and the test's wait timeout expiring. Thus, we wait for a shorter duration in the test, which
-    // will reduce the liklihood of the race condition occurring.
-    const auto waitUntilTimeForNoEvent =
-            syncTime + std::chrono::milliseconds(ns2ms(EXTERNAL_STYLUS_DATA_TIMEOUT / 2));
+    // and the test's wait timeout expiring. Thus, we wait for a shorter duration in the test to
+    // ensure the event is not immediately generated, which should reduce the liklihood of the race
+    // condition occurring.
+    const auto waitUntilTimeForNoEvent = syncTime + std::chrono::milliseconds(1);
     mDevice->sendSync();
     ASSERT_NO_FATAL_FAILURE(mTestListener->assertNotifyMotionWasNotCalled(waitUntilTimeForNoEvent));
 
@@ -4526,12 +4527,19 @@ TEST_F(SingleTouchInputMapperTest, Process_ShouldHandleAllToolTypes) {
 
     NotifyMotionArgs motionArgs;
 
+    // Hold down the mouse button for the duration of the test, since the mouse tools require
+    // the button to be pressed to make sure they are not hovering.
+    processKey(mapper, BTN_MOUSE, 1);
+
     // default tool type is finger
     processDown(mapper, 100, 200);
     processSync(mapper);
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
     ASSERT_EQ(ToolType::FINGER, motionArgs.pointerProperties[0].toolType);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS)));
 
     // eraser
     processKey(mapper, BTN_TOOL_RUBBER, 1);
@@ -7175,6 +7183,10 @@ TEST_F(MultiTouchInputMapperTest, Process_ShouldHandleAllToolTypes) {
 
     NotifyMotionArgs motionArgs;
 
+    // Hold down the mouse button for the duration of the test, since the mouse tools require
+    // the button to be pressed to make sure they are not hovering.
+    processKey(mapper, BTN_MOUSE, 1);
+
     // default tool type is finger
     processId(mapper, 1);
     processPosition(mapper, 100, 200);
@@ -7182,6 +7194,9 @@ TEST_F(MultiTouchInputMapperTest, Process_ShouldHandleAllToolTypes) {
     ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
     ASSERT_EQ(AMOTION_EVENT_ACTION_DOWN, motionArgs.action);
     ASSERT_EQ(ToolType::FINGER, motionArgs.pointerProperties[0].toolType);
+
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS)));
 
     // eraser
     processKey(mapper, BTN_TOOL_RUBBER, 1);
@@ -7520,6 +7535,7 @@ TEST_F(MultiTouchInputMapperTest, Configure_AssignsDisplayUniqueId) {
 }
 
 TEST_F(MultiTouchInputMapperTest, Process_Pointer_ShouldHandleDisplayId) {
+    SCOPED_FLAG_OVERRIDE(disable_touch_input_mapper_pointer_usage, true);
     prepareSecondaryDisplay(ViewportType::EXTERNAL);
 
     prepareDisplay(ui::ROTATION_0);
@@ -7532,9 +7548,9 @@ TEST_F(MultiTouchInputMapperTest, Process_Pointer_ShouldHandleDisplayId) {
     processPosition(mapper, 100, 100);
     processSync(mapper);
 
-    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(&motionArgs));
-    ASSERT_EQ(AMOTION_EVENT_ACTION_HOVER_MOVE, motionArgs.action);
-    ASSERT_EQ(ui::LogicalDisplayId::INVALID, motionArgs.displayId);
+    ASSERT_NO_FATAL_FAILURE(mFakeListener->assertNotifyMotionWasCalled(
+            AllOf(WithMotionAction(AMOTION_EVENT_ACTION_DOWN), WithDisplayId(DISPLAY_ID),
+                  WithSource(AINPUT_SOURCE_MOUSE), WithToolType(ToolType::FINGER))));
 }
 
 /**
@@ -8604,6 +8620,8 @@ protected:
  * fingers start to move downwards, the gesture should be swipe.
  */
 TEST_F(MultiTouchPointerModeTest, PointerGestureMaxSwipeWidthSwipe) {
+    SCOPED_FLAG_OVERRIDE(disable_touch_input_mapper_pointer_usage, false);
+
     // The min freeform gesture width is 25units/mm x 30mm = 750
     // which is greater than fraction of the diagnal length of the touchpad (349).
     // Thus, MaxSwipWidth is 750.
@@ -8664,6 +8682,8 @@ TEST_F(MultiTouchPointerModeTest, PointerGestureMaxSwipeWidthSwipe) {
  * the gesture should be swipe.
  */
 TEST_F(MultiTouchPointerModeTest, PointerGestureMaxSwipeWidthLowResolutionSwipe) {
+    SCOPED_FLAG_OVERRIDE(disable_touch_input_mapper_pointer_usage, false);
+
     // The min freeform gesture width is 5units/mm x 30mm = 150
     // which is greater than fraction of the diagnal length of the touchpad (349).
     // Thus, MaxSwipWidth is the fraction of the diagnal length, 349.
@@ -8723,6 +8743,8 @@ TEST_F(MultiTouchPointerModeTest, PointerGestureMaxSwipeWidthLowResolutionSwipe)
  * freeform gestures after two fingers start to move downwards.
  */
 TEST_F(MultiTouchPointerModeTest, PointerGestureMaxSwipeWidthFreeform) {
+    SCOPED_FLAG_OVERRIDE(disable_touch_input_mapper_pointer_usage, false);
+
     preparePointerMode(/*xResolution=*/25, /*yResolution=*/25);
     MultiTouchInputMapper& mapper = constructAndAddMapper<MultiTouchInputMapper>();
 
@@ -8818,6 +8840,8 @@ TEST_F(MultiTouchPointerModeTest, PointerGestureMaxSwipeWidthFreeform) {
 }
 
 TEST_F(MultiTouchPointerModeTest, TwoFingerSwipeOffsets) {
+    SCOPED_FLAG_OVERRIDE(disable_touch_input_mapper_pointer_usage, false);
+
     preparePointerMode(/*xResolution=*/25, /*yResolution=*/25);
     MultiTouchInputMapper& mapper = constructAndAddMapper<MultiTouchInputMapper>();
     NotifyMotionArgs motionArgs;
@@ -8864,6 +8888,8 @@ TEST_F(MultiTouchPointerModeTest, TwoFingerSwipeOffsets) {
 }
 
 TEST_F(MultiTouchPointerModeTest, WhenViewportActiveStatusChanged_PointerGestureIsReset) {
+    SCOPED_FLAG_OVERRIDE(disable_touch_input_mapper_pointer_usage, false);
+
     preparePointerMode(/*xResolution=*/25, /*yResolution=*/25);
     mFakeEventHub->addKey(EVENTHUB_ID, BTN_TOOL_PEN, 0, AKEYCODE_UNKNOWN, 0);
     MultiTouchInputMapper& mapper = constructAndAddMapper<MultiTouchInputMapper>();

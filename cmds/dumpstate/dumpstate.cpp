@@ -128,6 +128,9 @@ using android::os::dumpstate::PropertiesHelper;
 using android::os::dumpstate::TaskQueue;
 using android::os::dumpstate::WaitForTask;
 
+// BAD - See README.md: "Dumpstate philosophy: exec not link"
+// Do not add more complicated variables here, prefer to execute only. Don't link more code here.
+
 // Keep in sync with
 // frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java
 static const int TRACE_DUMP_TIMEOUT_MS = 10000; // 10 seconds
@@ -135,9 +138,11 @@ static const int TRACE_DUMP_TIMEOUT_MS = 10000; // 10 seconds
 /* Most simple commands have 10 as timeout, so 5 is a good estimate */
 static const int32_t WEIGHT_FILE = 5;
 
+// QTI_BEGIN: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
 //CRITICAL_CPU_INFO_DISABLE used to disable writing critical CPU information into bugreport.
 bool CRITICAL_CPU_INFO_DISABLE = false;
 
+// QTI_END: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
 // TODO: temporary variables and functions used during C++ refactoring
 static Dumpstate& ds = Dumpstate::GetInstance();
 static int RunCommand(const std::string& title, const std::vector<std::string>& full_command,
@@ -194,7 +199,6 @@ void add_mountinfo();
 #define CGROUPFS_DIR "/sys/fs/cgroup"
 #define SDK_EXT_INFO "/apex/com.android.sdkext/bin/derive_sdk"
 #define DROPBOX_DIR "/data/system/dropbox"
-#define PRINT_FLAGS "/system/bin/printflags"
 #define UWB_LOG_DIR "/data/misc/apexdata/com.android.uwb/log"
 
 // TODO(narayan): Since this information has to be kept in sync
@@ -1276,6 +1280,8 @@ static void DumpKernelMemoryAllocations() {
     }
 }
 
+// BAD - See README.md: "Dumpstate philosophy: exec not link"
+// This should all be moved into a separate binary rather than have complex logic here.
 static Dumpstate::RunStatus RunDumpsysTextByPriority(const std::string& title, int priority,
                                                      std::chrono::milliseconds timeout,
                                                      std::chrono::milliseconds service_timeout) {
@@ -1289,10 +1295,12 @@ static Dumpstate::RunStatus RunDumpsysTextByPriority(const std::string& title, i
         RETURN_IF_USER_DENIED_CONSENT();
         std::string path(title);
         path.append(" - ").append(String8(service).c_str());
+// QTI_BEGIN: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
         if (CRITICAL_CPU_INFO_DISABLE && service.contains(u"cpu_monitor")) {
             MYLOGI("%s service information is disabled from bugreport",path.c_str());
             continue;
         }
+// QTI_END: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
         size_t bytes_written = 0;
         if (PropertiesHelper::IsDryRun()) {
              dumpsys.writeDumpHeader(STDOUT_FILENO, service, priority);
@@ -1360,6 +1368,8 @@ static Dumpstate::RunStatus RunDumpsysTextNormalPriority(const std::string& titl
                                     service_timeout);
 }
 
+// BAD - See README.md: "Dumpstate philosophy: exec not link"
+// This should all be moved into a separate binary rather than have complex logic here.
 static Dumpstate::RunStatus RunDumpsysProto(const std::string& title, int priority,
                                             std::chrono::milliseconds timeout,
                                             std::chrono::milliseconds service_timeout) {
@@ -1441,6 +1451,8 @@ static Dumpstate::RunStatus RunDumpsysNormal() {
  * Dumpstate can pick up later and output to the bugreport. Using STDOUT_FILENO
  * if it's not running in the parallel task.
  */
+// BAD - See README.md: "Dumpstate philosophy: exec not link"
+// This should all be moved into a separate binary rather than have complex logic here.
 static void DumpHals(int out_fd = STDOUT_FILENO) {
     RunCommand("HARDWARE HALS", {"lshal", "--all", "--types=all"},
                CommandOptions::WithTimeout(10).AsRootIfAvailable().Build(),
@@ -1497,6 +1509,9 @@ static void DumpHals(int out_fd = STDOUT_FILENO) {
     }
 }
 
+// BAD - See README.md: "Dumpstate philosophy: exec not link"
+// This should all be moved into a separate binary rather than have complex logic here.
+//
 // Dump all of the files that make up the vendor interface.
 // See the files listed in dumpFileList() for the latest list of files.
 static void DumpVintf() {
@@ -1526,6 +1541,8 @@ static void DumpExternalFragmentationInfo() {
     printf("------ EXTERNAL FRAGMENTATION INFO ------\n");
     std::ifstream ifs("/proc/buddyinfo");
     auto unusable_index_regex = std::regex{"Node\\s+([0-9]+),\\s+zone\\s+(\\S+)\\s+(.*)"};
+    // BAD - See README.md: "Dumpstate philosophy: exec not link"
+    // This should all be moved into a separate binary rather than have complex logic here.
     for (std::string line; std::getline(ifs, line);) {
         std::smatch match_results;
         if (std::regex_match(line, match_results, unusable_index_regex)) {
@@ -1725,11 +1742,13 @@ Dumpstate::RunStatus Dumpstate::dumpstate() {
     DumpFile("PAGETYPEINFO", "/proc/pagetypeinfo");
     DumpFile("BUDDYINFO", "/proc/buddyinfo");
     DumpExternalFragmentationInfo();
+// QTI_BEGIN: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
     if (!CRITICAL_CPU_INFO_DISABLE) {
         DumpFile("KERNEL CPUFREQ", "/sys/devices/system/cpu/cpu0/cpufreq/stats/time_in_state");
     } else {
         MYLOGI("KERNEL CPUFREQ information is disabled from bugreport");
     }
+// QTI_END: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
 
     RunCommand("PROCESSES AND THREADS",
                {"ps", "-A", "-T", "-Z", "-O", "pri,nice,rtprio,sched,pcy,time"});
@@ -1819,11 +1838,7 @@ Dumpstate::RunStatus Dumpstate::dumpstate() {
     DumpFile("PRODUCT BUILD-TIME RELEASE FLAGS", "/product/etc/build_flags.json");
     DumpFile("VENDOR BUILD-TIME RELEASE FLAGS", "/vendor/etc/build_flags.json");
 
-    RunCommand("ACONFIG FLAGS", {PRINT_FLAGS},
-               CommandOptions::WithTimeout(10).Always().DropRoot().Build());
     RunCommand("ACONFIG FLAGS DUMP", {AFLAGS, "list"},
-               CommandOptions::WithTimeout(10).Always().AsRootIfAvailable().Build());
-    RunCommand("WHICH ACONFIG FLAG STORAGE", {AFLAGS, "which-backing"},
                CommandOptions::WithTimeout(10).Always().AsRootIfAvailable().Build());
 
     RunCommand("STORAGED IO INFO", {"storaged", "-u", "-p"});
@@ -2474,6 +2489,8 @@ static dumpstate_hal_aidl::IDumpstateDevice::DumpstateMode GetDumpstateHalModeAi
     return dumpstate_hal_aidl::IDumpstateDevice::DumpstateMode::DEFAULT;
 }
 
+// BAD - See README.md: "Dumpstate philosophy: exec not link"
+// This should all be moved into a separate binary rather than have complex logic here.
 static void DoDumpstateBoardHidl(
     const sp<dumpstate_hal_hidl_1_0::IDumpstateDevice> dumpstate_hal_1_0,
     const std::vector<::ndk::ScopedFileDescriptor>& dumpstate_fds,
@@ -3106,9 +3123,11 @@ void Dumpstate::SetOptions(std::unique_ptr<DumpOptions> options) {
 void Dumpstate::Initialize() {
     /* gets the sequential id */
     uint32_t last_id = android::base::GetIntProperty(PROPERTY_LAST_ID, 0);
+// QTI_BEGIN: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
     if (android::base::GetProperty("vendor.sys.bugreport.cpuinfo.disable", "") == "1"){
         CRITICAL_CPU_INFO_DISABLE = true;
     }
+// QTI_END: 2023-09-13: Frameworks: Disabled critical CPU related information from bugreport.
     id_ = ++last_id;
     android::base::SetProperty(PROPERTY_LAST_ID, std::to_string(last_id));
 }

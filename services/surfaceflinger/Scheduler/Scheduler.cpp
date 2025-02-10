@@ -14,12 +14,18 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
  * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 #undef LOG_TAG
 #define LOG_TAG "Scheduler"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
@@ -1185,14 +1191,16 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
                     updateFrameRateOverridesLocked(consideredSignals, modeOpt->fps);
         }
         if (mPolicy.modeOpt != modeOpt) {
-            /* QTI_BEGIN */
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
             // Need a null pointer check for mPolicy since it's null during boot up
             std::string str = "UpdateRefreshRate " +
                     (!mPolicy.modeOpt ? "NA" : std::to_string(mPolicy.modeOpt->fps.getIntValue())) +
                     " to " + std::to_string(modeOpt->fps.getIntValue());
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
             SFTRACE_NAME(str.c_str());
-            /* QTI_END */
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
             mPolicy.modeOpt = modeOpt;
             refreshRateChanged = true;
         } else if (consideredSignals.shouldEmitEvent()) {
@@ -1351,15 +1359,16 @@ bool Scheduler::isSmallDirtyArea(int32_t appId, uint32_t dirtyArea) {
     return false;
 }
 
-/* QTI_BEGIN */
+// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
 void Scheduler::qtiUpdateThermalFps(float fps) {
     mQtiThermalFps = fps;
     mLayerHistory.qtiUpdateThermalFps(fps);
 }
+// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
 
 void Scheduler::qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes) {
   mLayerHistory.qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
 }
-/* QTI_END */
-
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
 } // namespace android::scheduler
