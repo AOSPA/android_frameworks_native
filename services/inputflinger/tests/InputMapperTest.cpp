@@ -186,8 +186,10 @@ void InputMapperTest::setDisplayInfoAndReconfigure(ui::LogicalDisplayId displayI
                                                    const std::string& uniqueId,
                                                    std::optional<uint8_t> physicalPort,
                                                    ViewportType viewportType) {
-    mFakePolicy->addDisplayViewport(displayId, width, height, orientation, /* isActive= */ true,
-                                    uniqueId, physicalPort, viewportType);
+    DisplayViewport viewport =
+            createViewport(displayId, width, height, orientation, /* isActive= */ true, uniqueId,
+                           physicalPort, viewportType);
+    mFakePolicy->addDisplayViewport(viewport);
     configureDevice(InputReaderConfiguration::Change::DISPLAY_INFO);
 }
 

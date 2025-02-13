@@ -477,9 +477,14 @@ status_t BufferQueueConsumer::attachBuffer(int* outSlot,
     return NO_ERROR;
 }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
+status_t BufferQueueConsumer::releaseBuffer(int slot, uint64_t frameNumber,
+                                            const sp<Fence>& releaseFence) {
+#else
 status_t BufferQueueConsumer::releaseBuffer(int slot, uint64_t frameNumber,
         const sp<Fence>& releaseFence, EGLDisplay eglDisplay,
         EGLSyncKHR eglFence) {
+#endif
     ATRACE_CALL();
     ATRACE_BUFFER_INDEX(slot);
 
@@ -492,27 +497,6 @@ status_t BufferQueueConsumer::releaseBuffer(int slot, uint64_t frameNumber,
         BQ_LOGE("releaseBuffer: slot %d fence %p NULL", slot, releaseFence.get());
         return BAD_VALUE;
     }
-
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
-    if (eglFence != EGL_NO_SYNC_KHR) {
-        // Most platforms will be using native fences, so it's unlikely that we'll ever have to
-        // process an eglFence. Ideally we can remove this code eventually. In the mean time, do our
-        // best to wait for it so the buffer stays valid, otherwise return an error to the caller.
-        //
-        // EGL_SYNC_FLUSH_COMMANDS_BIT_KHR so that we don't wait forever on a fence that hasn't
-        // shown up on the GPU yet.
-        EGLint result = eglClientWaitSyncKHR(eglDisplay, eglFence, EGL_SYNC_FLUSH_COMMANDS_BIT_KHR,
-                                             1000000000);
-        if (result == EGL_FALSE) {
-            BQ_LOGE("releaseBuffer: error %#x waiting for fence", eglGetError());
-            return UNKNOWN_ERROR;
-        } else if (result == EGL_TIMEOUT_EXPIRED_KHR) {
-            BQ_LOGE("releaseBuffer: timeout waiting for fence");
-            return UNKNOWN_ERROR;
-        }
-        eglDestroySyncKHR(eglDisplay, eglFence);
-    }
-#endif
 
     sp<IProducerListener> listener;
     { // Autolock scope

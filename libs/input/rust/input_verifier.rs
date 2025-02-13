@@ -39,8 +39,7 @@ fn verify_event(
         | MotionAction::Up => {
             if pointer_count != 1 {
                 return Err(format!(
-                    "Invalid {} event: there are {} pointers in the event",
-                    action, pointer_count
+                    "Invalid {action} event: there are {pointer_count} pointers in the event",
                 ));
             }
         }
@@ -48,15 +47,14 @@ fn verify_event(
         MotionAction::Cancel => {
             if !flags.contains(MotionFlags::CANCELED) {
                 return Err(format!(
-                    "For ACTION_CANCEL, must set FLAG_CANCELED. Received flags: {:#?}",
-                    flags
+                    "For ACTION_CANCEL, must set FLAG_CANCELED. Received flags: {flags:#?}",
                 ));
             }
         }
 
         MotionAction::PointerDown { action_index } | MotionAction::PointerUp { action_index } => {
             if action_index >= pointer_count {
-                return Err(format!("Got {}, but event has {} pointer(s)", action, pointer_count));
+                return Err(format!("Got {action}, but event has {pointer_count} pointer(s)"));
             }
         }
 

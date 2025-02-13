@@ -51,7 +51,7 @@ protected:
         mConsumer->setDefaultBufferSize(mMainDisplayMode.resolution.getWidth(),
                                         mMainDisplayMode.resolution.getHeight());
 
-        class StubConsumerListener : public BnConsumerListener {
+        class StubConsumerListener : public IConsumerListener {
             virtual void onFrameAvailable(const BufferItem&) override {}
             virtual void onBuffersReleased() override {}
             virtual void onSidebandStreamChanged() override {}

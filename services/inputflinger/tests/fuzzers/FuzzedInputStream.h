@@ -18,10 +18,8 @@
 
 namespace android {
 
-namespace {
 static constexpr int32_t MAX_RANDOM_POINTERS = 4;
 static constexpr int32_t MAX_RANDOM_DEVICES = 4;
-} // namespace
 
 int getFuzzedMotionAction(FuzzedDataProvider& fdp) {
     int actionMasked = fdp.PickValueInArray<int>({

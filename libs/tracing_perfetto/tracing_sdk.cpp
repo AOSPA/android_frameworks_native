@@ -254,6 +254,47 @@ const PerfettoTeHlProtoFieldNested* ProtoFieldNested::get() const {
   return &field_;
 }
 
+Session::Session(bool is_backend_in_process, void* buf, size_t len) {
+  session_ = PerfettoTracingSessionCreate(is_backend_in_process
+                                              ? PERFETTO_BACKEND_IN_PROCESS
+                                              : PERFETTO_BACKEND_SYSTEM);
+
+  PerfettoTracingSessionSetup(session_, buf, len);
+
+  PerfettoTracingSessionStartBlocking(session_);
+}
+
+Session::~Session() {
+  PerfettoTracingSessionStopBlocking(session_);
+  PerfettoTracingSessionDestroy(session_);
+}
+
+bool Session::FlushBlocking(uint32_t timeout_ms) {
+  return PerfettoTracingSessionFlushBlocking(session_, timeout_ms);
+}
+
+void Session::StopBlocking() {
+  PerfettoTracingSessionStopBlocking(session_);
+}
+
+std::vector<uint8_t> Session::ReadBlocking() {
+  std::vector<uint8_t> data;
+  PerfettoTracingSessionReadTraceBlocking(
+      session_,
+      [](struct PerfettoTracingSessionImpl*, const void* trace_data,
+         size_t size, bool, void* user_arg) {
+        auto& dst = *static_cast<std::vector<uint8_t>*>(user_arg);
+        auto* src = static_cast<const uint8_t*>(trace_data);
+        dst.insert(dst.end(), src, src + size);
+      },
+      &data);
+  return data;
+}
+
+void Session::delete_session(Session* ptr) {
+  delete ptr;
+}
+
 void activate_trigger(const char* name, uint32_t ttl_ms) {
   const char* names[] = {name, nullptr};
   PerfettoProducerActivateTriggers(names, ttl_ms);

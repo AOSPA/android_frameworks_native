@@ -245,10 +245,13 @@ protected:
     // must take place when a buffer is released back to the BufferQueue.  If
     // it is overridden the derived class's implementation must call
     // ConsumerBase::releaseBufferLocked.
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
+    virtual status_t releaseBufferLocked(int slot, const sp<GraphicBuffer> graphicBuffer);
+#else
     virtual status_t releaseBufferLocked(int slot,
             const sp<GraphicBuffer> graphicBuffer,
             EGLDisplay display = EGL_NO_DISPLAY, EGLSyncKHR eglFence = EGL_NO_SYNC_KHR);
-
+#endif
     // returns true iff the slot still has the graphicBuffer in it.
     bool stillTracking(int slot, const sp<GraphicBuffer> graphicBuffer);
 

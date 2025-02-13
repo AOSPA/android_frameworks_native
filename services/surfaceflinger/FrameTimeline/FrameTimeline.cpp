@@ -662,7 +662,7 @@ void SurfaceFrame::classifyJankLocked(int32_t displayFrameJankType, const Fps& r
             // We try to do this by moving the deadline. Since the queue could be stuffed by more
             // than one buffer, we take the last latch time as reference and give one vsync
             // worth of time for the frame to be ready.
-            nsecs_t adjustedDeadline = mLastLatchTime + refreshRate.getPeriodNsecs();
+            nsecs_t adjustedDeadline = mLastLatchTime + displayFrameRenderRate.getPeriodNsecs();
             if (adjustedDeadline > mActuals.endTime) {
                 mFrameReadyMetadata = FrameReadyMetadata::OnTimeFinish;
             } else {

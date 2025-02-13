@@ -18,6 +18,7 @@
 #define ATRACE_TAG ATRACE_TAG_INPUT
 
 #include <inttypes.h>
+#include <set>
 
 #include <android-base/logging.h>
 #include <android-base/properties.h>

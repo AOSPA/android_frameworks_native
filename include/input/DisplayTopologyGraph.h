@@ -43,7 +43,7 @@ enum class DisplayTopologyPosition : int32_t {
 struct DisplayTopologyAdjacentDisplay {
     ui::LogicalDisplayId displayId = ui::LogicalDisplayId::INVALID;
     DisplayTopologyPosition position;
-    float offsetPx;
+    float offsetDp;
 };
 
 /**
@@ -52,6 +52,7 @@ struct DisplayTopologyAdjacentDisplay {
 struct DisplayTopologyGraph {
     ui::LogicalDisplayId primaryDisplayId = ui::LogicalDisplayId::INVALID;
     std::unordered_map<ui::LogicalDisplayId, std::vector<DisplayTopologyAdjacentDisplay>> graph;
+    std::unordered_map<ui::LogicalDisplayId, int> displaysDensity;
 };
 
 } // namespace android

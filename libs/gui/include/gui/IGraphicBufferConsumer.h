@@ -40,15 +40,8 @@ class NativeHandle;
 /*
  * See IGraphicBufferProducer for details on SLOT_COUNT.
  */
-#ifndef NO_BINDER
-class IGraphicBufferConsumer : public IInterface {
-public:
-    DECLARE_META_INTERFACE(GraphicBufferConsumer)
-#else
 class IGraphicBufferConsumer : public RefBase {
 public:
-#endif
-
     enum {
         // Returned by releaseBuffer, after which the consumer must free any references to the
         // just-released buffer that it might have.
@@ -139,12 +132,17 @@ public:
     //               * the buffer slot was invalid
     //               * the fence was NULL
     //               * the buffer slot specified is not in the acquired state
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
+    virtual status_t releaseBuffer(int buf, uint64_t frameNumber,
+                                   const sp<Fence>& releaseFence) = 0;
+#else
     virtual status_t releaseBuffer(int buf, uint64_t frameNumber, EGLDisplay display,
                                    EGLSyncKHR fence, const sp<Fence>& releaseFence) = 0;
 
     status_t releaseBuffer(int buf, uint64_t frameNumber, const sp<Fence>& releaseFence) {
         return releaseBuffer(buf, frameNumber, EGL_NO_DISPLAY, EGL_NO_SYNC_KHR, releaseFence);
     }
+#endif
 
     // consumerConnect connects a consumer to the BufferQueue. Only one consumer may be connected,
     // and when that consumer disconnects the BufferQueue is placed into the "abandoned" state,
@@ -316,19 +314,5 @@ public:
         result.append(returned);
     }
 };
-
-#ifndef NO_BINDER
-class BnGraphicBufferConsumer : public SafeBnInterface<IGraphicBufferConsumer> {
-public:
-    BnGraphicBufferConsumer()
-          : SafeBnInterface<IGraphicBufferConsumer>("BnGraphicBufferConsumer") {}
-
-    status_t onTransact(uint32_t code, const Parcel& data, Parcel* reply,
-                        uint32_t flags = 0) override;
-};
-#else
-class BnGraphicBufferConsumer : public IGraphicBufferConsumer {
-};
-#endif
 
 } // namespace android

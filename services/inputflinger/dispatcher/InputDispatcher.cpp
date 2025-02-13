@@ -918,6 +918,21 @@ InputTarget createInputTarget(const std::shared_ptr<Connection>& connection,
     return inputTarget;
 }
 
+std::string dumpWindowForTouchOcclusion(const WindowInfo& info, bool isTouchedWindow) {
+    return StringPrintf(INDENT2 "* %spackage=%s/%s, id=%" PRId32 ", mode=%s, alpha=%.2f, "
+                                "frame=[%" PRId32 ",%" PRId32 "][%" PRId32 ",%" PRId32
+                                "], touchableRegion=%s, window={%s}, inputConfig={%s}, "
+                                "hasToken=%s, applicationInfo.name=%s, applicationInfo.token=%s\n",
+                        isTouchedWindow ? "[TOUCHED] " : "", info.packageName.c_str(),
+                        info.ownerUid.toString().c_str(), info.id,
+                        toString(info.touchOcclusionMode).c_str(), info.alpha, info.frame.left,
+                        info.frame.top, info.frame.right, info.frame.bottom,
+                        dumpRegion(info.touchableRegion).c_str(), info.name.c_str(),
+                        info.inputConfig.string().c_str(), toString(info.token != nullptr),
+                        info.applicationInfo.name.c_str(),
+                        binderToString(info.applicationInfo.token).c_str());
+}
+
 } // namespace
 
 // --- InputDispatcher ---
@@ -933,13 +948,12 @@ InputDispatcher::InputDispatcher(InputDispatcherPolicyInterface& policy,
         mLastDropReason(DropReason::NOT_DROPPED),
         mIdGenerator(IdGenerator::Source::INPUT_DISPATCHER),
         mMinTimeBetweenUserActivityPokes(DEFAULT_USER_ACTIVITY_POKE_INTERVAL),
+        mConnectionManager(mLooper),
         mNextUnblockedEvent(nullptr),
         mMonitorDispatchingTimeout(DEFAULT_INPUT_DISPATCHING_TIMEOUT),
         mDispatchEnabled(false),
         mDispatchFrozen(false),
         mInputFilterEnabled(false),
-        mMaximumObscuringOpacityForTouch(1.0f),
-        mConnectionManager(mLooper),
         mFocusedDisplayId(ui::LogicalDisplayId::DEFAULT),
         mWindowTokenWithPointerCapture(nullptr),
         mAwaitedApplicationDisplayId(ui::LogicalDisplayId::INVALID),
@@ -2484,9 +2498,9 @@ InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime, const Motio
             if (isSplit) {
                 targetFlags |= InputTarget::Flags::SPLIT;
             }
-            if (isWindowObscuredAtPointLocked(windowHandle, x, y)) {
+            if (mWindowInfos.isWindowObscuredAtPoint(windowHandle, x, y)) {
                 targetFlags |= InputTarget::Flags::WINDOW_IS_OBSCURED;
-            } else if (isWindowObscuredLocked(windowHandle)) {
+            } else if (mWindowInfos.isWindowObscured(windowHandle)) {
                 targetFlags |= InputTarget::Flags::WINDOW_IS_PARTIALLY_OBSCURED;
             }
 
@@ -2517,7 +2531,8 @@ InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime, const Motio
                 if (isDownOrPointerDown && targetFlags.test(InputTarget::Flags::FOREGROUND) &&
                     windowHandle->getInfo()->inputConfig.test(
                             gui::WindowInfo::InputConfig::DUPLICATE_TOUCH_TO_WALLPAPER)) {
-                    sp<WindowInfoHandle> wallpaper = findWallpaperWindowBelow(windowHandle);
+                    sp<WindowInfoHandle> wallpaper =
+                            mWindowInfos.findWallpaperWindowBelow(windowHandle);
                     if (wallpaper != nullptr) {
                         ftl::Flags<InputTarget::Flags> wallpaperFlags =
                                 InputTarget::Flags::WINDOW_IS_OBSCURED |
@@ -2629,9 +2644,9 @@ InputDispatcher::findTouchedWindowTargetsLocked(nsecs_t currentTime, const Motio
                 if (isSplit) {
                     targetFlags |= InputTarget::Flags::SPLIT;
                 }
-                if (isWindowObscuredAtPointLocked(newTouchedWindowHandle, x, y)) {
+                if (mWindowInfos.isWindowObscuredAtPoint(newTouchedWindowHandle, x, y)) {
                     targetFlags |= InputTarget::Flags::WINDOW_IS_OBSCURED;
-                } else if (isWindowObscuredLocked(newTouchedWindowHandle)) {
+                } else if (mWindowInfos.isWindowObscured(newTouchedWindowHandle)) {
                     targetFlags |= InputTarget::Flags::WINDOW_IS_PARTIALLY_OBSCURED;
                 }
 
@@ -3083,12 +3098,12 @@ static bool canBeObscuredBy(const sp<WindowInfoHandle>& windowHandle,
  *
  * If neither of those is true, then it means the touch can be allowed.
  */
-InputDispatcher::TouchOcclusionInfo InputDispatcher::computeTouchOcclusionInfoLocked(
+InputDispatcher::DispatcherWindowInfo::TouchOcclusionInfo
+InputDispatcher::DispatcherWindowInfo::computeTouchOcclusionInfo(
         const sp<WindowInfoHandle>& windowHandle, float x, float y) const {
     const WindowInfo* windowInfo = windowHandle->getInfo();
     ui::LogicalDisplayId displayId = windowInfo->displayId;
-    const std::vector<sp<WindowInfoHandle>>& windowHandles =
-            mWindowInfos.getWindowHandlesForDisplay(displayId);
+    const std::vector<sp<WindowInfoHandle>>& windowHandles = getWindowHandlesForDisplay(displayId);
     TouchOcclusionInfo info;
     info.hasBlockingOcclusion = false;
     info.obscuringOpacity = 0;
@@ -3100,12 +3115,11 @@ InputDispatcher::TouchOcclusionInfo InputDispatcher::computeTouchOcclusionInfoLo
         }
         const WindowInfo* otherInfo = otherHandle->getInfo();
         if (canBeObscuredBy(windowHandle, otherHandle) &&
-            windowOccludesTouchAt(*otherInfo, displayId, x, y,
-                                  mWindowInfos.getDisplayTransform(displayId)) &&
+            windowOccludesTouchAt(*otherInfo, displayId, x, y, getDisplayTransform(displayId)) &&
             !haveSameApplicationToken(windowInfo, otherInfo)) {
             if (DEBUG_TOUCH_OCCLUSION) {
                 info.debugInfo.push_back(
-                        dumpWindowForTouchOcclusion(otherInfo, /*isTouchedWindow=*/false));
+                        dumpWindowForTouchOcclusion(*otherInfo, /*isTouchedWindow=*/false));
             }
             // canBeObscuredBy() has returned true above, which means this window is untrusted, so
             // we perform the checks below to see if the touch can be propagated or not based on the
@@ -3133,28 +3147,14 @@ InputDispatcher::TouchOcclusionInfo InputDispatcher::computeTouchOcclusionInfoLo
         }
     }
     if (DEBUG_TOUCH_OCCLUSION) {
-        info.debugInfo.push_back(dumpWindowForTouchOcclusion(windowInfo, /*isTouchedWindow=*/true));
+        info.debugInfo.push_back(
+                dumpWindowForTouchOcclusion(*windowInfo, /*isTouchedWindow=*/true));
     }
     return info;
 }
 
-std::string InputDispatcher::dumpWindowForTouchOcclusion(const WindowInfo* info,
-                                                         bool isTouchedWindow) const {
-    return StringPrintf(INDENT2 "* %spackage=%s/%s, id=%" PRId32 ", mode=%s, alpha=%.2f, "
-                                "frame=[%" PRId32 ",%" PRId32 "][%" PRId32 ",%" PRId32
-                                "], touchableRegion=%s, window={%s}, inputConfig={%s}, "
-                                "hasToken=%s, applicationInfo.name=%s, applicationInfo.token=%s\n",
-                        isTouchedWindow ? "[TOUCHED] " : "", info->packageName.c_str(),
-                        info->ownerUid.toString().c_str(), info->id,
-                        toString(info->touchOcclusionMode).c_str(), info->alpha, info->frame.left,
-                        info->frame.top, info->frame.right, info->frame.bottom,
-                        dumpRegion(info->touchableRegion).c_str(), info->name.c_str(),
-                        info->inputConfig.string().c_str(), toString(info->token != nullptr),
-                        info->applicationInfo.name.c_str(),
-                        binderToString(info->applicationInfo.token).c_str());
-}
-
-bool InputDispatcher::isTouchTrustedLocked(const TouchOcclusionInfo& occlusionInfo) const {
+bool InputDispatcher::DispatcherWindowInfo::isTouchTrusted(
+        const TouchOcclusionInfo& occlusionInfo) const {
     if (occlusionInfo.hasBlockingOcclusion) {
         ALOGW("Untrusted touch due to occlusion by %s/%s", occlusionInfo.obscuringPackage.c_str(),
               occlusionInfo.obscuringUid.toString().c_str());
@@ -3170,29 +3170,27 @@ bool InputDispatcher::isTouchTrustedLocked(const TouchOcclusionInfo& occlusionIn
     return true;
 }
 
-bool InputDispatcher::isWindowObscuredAtPointLocked(const sp<WindowInfoHandle>& windowHandle,
-                                                    float x, float y) const {
+bool InputDispatcher::DispatcherWindowInfo::isWindowObscuredAtPoint(
+        const sp<WindowInfoHandle>& windowHandle, float x, float y) const {
     ui::LogicalDisplayId displayId = windowHandle->getInfo()->displayId;
-    const std::vector<sp<WindowInfoHandle>>& windowHandles =
-            mWindowInfos.getWindowHandlesForDisplay(displayId);
+    const std::vector<sp<WindowInfoHandle>>& windowHandles = getWindowHandlesForDisplay(displayId);
     for (const sp<WindowInfoHandle>& otherHandle : windowHandles) {
         if (windowHandle == otherHandle) {
             break; // All future windows are below us. Exit early.
         }
         const WindowInfo* otherInfo = otherHandle->getInfo();
         if (canBeObscuredBy(windowHandle, otherHandle) &&
-            windowOccludesTouchAt(*otherInfo, displayId, x, y,
-                                  mWindowInfos.getDisplayTransform(displayId))) {
+            windowOccludesTouchAt(*otherInfo, displayId, x, y, getDisplayTransform(displayId))) {
             return true;
         }
     }
     return false;
 }
 
-bool InputDispatcher::isWindowObscuredLocked(const sp<WindowInfoHandle>& windowHandle) const {
+bool InputDispatcher::DispatcherWindowInfo::isWindowObscured(
+        const sp<WindowInfoHandle>& windowHandle) const {
     ui::LogicalDisplayId displayId = windowHandle->getInfo()->displayId;
-    const std::vector<sp<WindowInfoHandle>>& windowHandles =
-            mWindowInfos.getWindowHandlesForDisplay(displayId);
+    const std::vector<sp<WindowInfoHandle>>& windowHandles = getWindowHandlesForDisplay(displayId);
     const WindowInfo* windowInfo = windowHandle->getInfo();
     for (const sp<WindowInfoHandle>& otherHandle : windowHandles) {
         if (windowHandle == otherHandle) {
@@ -4856,6 +4854,10 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
                 flags |= AMOTION_EVENT_FLAG_IS_ACCESSIBILITY_EVENT;
             }
 
+            if (policyFlags & POLICY_FLAG_INJECTED_FROM_ACCESSIBILITY_TOOL) {
+                flags |= AMOTION_EVENT_FLAG_INJECTED_FROM_ACCESSIBILITY_TOOL;
+            }
+
             mLock.lock();
 
             if (shouldRejectInjectedMotionLocked(motionEvent, resolvedDeviceId, displayId,
@@ -5262,8 +5264,9 @@ std::string InputDispatcher::DispatcherWindowInfo::dumpDisplayAndWindowInfo() co
     return dump;
 }
 
-bool InputDispatcher::canWindowReceiveMotionLocked(const sp<WindowInfoHandle>& window,
-                                                   const MotionEntry& motionEntry) const {
+bool InputDispatcher::canWindowReceiveMotionLocked(
+        const sp<android::gui::WindowInfoHandle>& window,
+        const android::inputdispatcher::MotionEntry& motionEntry) const {
     const WindowInfo& info = *window->getInfo();
 
     // Skip spy window targets that are not valid for targeted injection.
@@ -5296,8 +5299,9 @@ bool InputDispatcher::canWindowReceiveMotionLocked(const sp<WindowInfoHandle>& w
 
     // Drop events that can't be trusted due to occlusion
     const auto [x, y] = resolveTouchedPosition(motionEntry);
-    TouchOcclusionInfo occlusionInfo = computeTouchOcclusionInfoLocked(window, x, y);
-    if (!isTouchTrustedLocked(occlusionInfo)) {
+    DispatcherWindowInfo::TouchOcclusionInfo occlusionInfo =
+            mWindowInfos.computeTouchOcclusionInfo(window, x, y);
+    if (!mWindowInfos.isTouchTrusted(occlusionInfo)) {
         if (DEBUG_TOUCH_OCCLUSION) {
             ALOGD("Stack of obscuring windows during untrusted touch (%.1f, %.1f):", x, y);
             for (const auto& log : occlusionInfo.debugInfo) {
@@ -5741,13 +5745,8 @@ bool InputDispatcher::recentWindowsAreOwnedByLocked(gui::Pid pid, gui::Uid uid) 
 }
 
 void InputDispatcher::setMaximumObscuringOpacityForTouch(float opacity) {
-    if (opacity < 0 || opacity > 1) {
-        LOG_ALWAYS_FATAL("Maximum obscuring opacity for touch should be >= 0 and <= 1");
-        return;
-    }
-
     std::scoped_lock lock(mLock);
-    mMaximumObscuringOpacityForTouch = opacity;
+    mWindowInfos.setMaximumObscuringOpacityForTouch(opacity);
 }
 
 std::tuple<const TouchState*, const TouchedWindow*, ui::LogicalDisplayId>
@@ -5800,8 +5799,8 @@ bool InputDispatcher::transferTouchGesture(const sp<IBinder>& fromToken, const s
         }
         std::set<DeviceId> deviceIds = touchedWindow->getTouchingDeviceIds();
         if (deviceIds.size() != 1) {
-            LOG(INFO) << "Can't transfer touch. Currently touching devices: " << dumpSet(deviceIds)
-                      << " for window: " << touchedWindow->dump();
+            LOG(INFO) << "Can't transfer touch. Currently touching devices: "
+                      << dumpContainer(deviceIds) << " for window: " << touchedWindow->dump();
             return false;
         }
         const DeviceId deviceId = *deviceIds.begin();
@@ -7041,7 +7040,7 @@ bool InputDispatcher::shouldDropInput(
     if (windowHandle->getInfo()->inputConfig.test(WindowInfo::InputConfig::DROP_INPUT) ||
         (windowHandle->getInfo()->inputConfig.test(
                  WindowInfo::InputConfig::DROP_INPUT_IF_OBSCURED) &&
-         isWindowObscuredLocked(windowHandle))) {
+         mWindowInfos.isWindowObscured(windowHandle))) {
         ALOGW("Dropping %s event targeting %s as requested by the input configuration {%s} on "
               "display %s.",
               ftl::enum_string(entry.type).c_str(), windowHandle->getName().c_str(),
@@ -7094,7 +7093,7 @@ void InputDispatcher::slipWallpaperTouch(ftl::Flags<InputTarget::Flags> targetFl
     const sp<WindowInfoHandle> oldWallpaper =
             oldHasWallpaper ? state.getWallpaperWindow(deviceId) : nullptr;
     const sp<WindowInfoHandle> newWallpaper =
-            newHasWallpaper ? findWallpaperWindowBelow(newWindowHandle) : nullptr;
+            newHasWallpaper ? mWindowInfos.findWallpaperWindowBelow(newWindowHandle) : nullptr;
     if (oldWallpaper == newWallpaper) {
         return;
     }
@@ -7131,7 +7130,7 @@ void InputDispatcher::transferWallpaperTouch(
     const sp<WindowInfoHandle> oldWallpaper =
             oldHasWallpaper ? state.getWallpaperWindow(deviceId) : nullptr;
     const sp<WindowInfoHandle> newWallpaper =
-            newHasWallpaper ? findWallpaperWindowBelow(toWindowHandle) : nullptr;
+            newHasWallpaper ? mWindowInfos.findWallpaperWindowBelow(toWindowHandle) : nullptr;
     if (oldWallpaper == newWallpaper) {
         return;
     }
@@ -7163,10 +7162,10 @@ void InputDispatcher::transferWallpaperTouch(
     }
 }
 
-sp<WindowInfoHandle> InputDispatcher::findWallpaperWindowBelow(
+sp<WindowInfoHandle> InputDispatcher::DispatcherWindowInfo::findWallpaperWindowBelow(
         const sp<WindowInfoHandle>& windowHandle) const {
     const std::vector<sp<WindowInfoHandle>>& windowHandles =
-            mWindowInfos.getWindowHandlesForDisplay(windowHandle->getInfo()->displayId);
+            getWindowHandlesForDisplay(windowHandle->getInfo()->displayId);
     bool foundWindow = false;
     for (const sp<WindowInfoHandle>& otherHandle : windowHandles) {
         if (!foundWindow && otherHandle != windowHandle) {
@@ -7345,6 +7344,13 @@ std::string InputDispatcher::ConnectionManager::dump(nsecs_t currentTime) const 
         dump += "Connections: <none>\n";
     }
     return dump;
+}
+
+void InputDispatcher::DispatcherWindowInfo::setMaximumObscuringOpacityForTouch(float opacity) {
+    if (opacity < 0 || opacity > 1) {
+        LOG_ALWAYS_FATAL("Maximum obscuring opacity for touch should be >= 0 and <= 1");
+    }
+    mMaximumObscuringOpacityForTouch = opacity;
 }
 
 } // namespace android::inputdispatcher

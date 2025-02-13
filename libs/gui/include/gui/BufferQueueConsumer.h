@@ -28,8 +28,7 @@ namespace android {
 
 class BufferQueueCore;
 
-class BufferQueueConsumer : public BnGraphicBufferConsumer {
-
+class BufferQueueConsumer : public IGraphicBufferConsumer {
 public:
     explicit BufferQueueConsumer(const sp<BufferQueueCore>& core);
     ~BufferQueueConsumer() override;
@@ -65,13 +64,14 @@ public:
     // any references to the just-released buffer that it might have, as if it
     // had received a onBuffersReleased() call with a mask set for the released
     // buffer.
-    //
-    // Note that the dependencies on EGL will be removed once we switch to using
-    // the Android HW Sync HAL.
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
+    virtual status_t releaseBuffer(int slot, uint64_t frameNumber,
+                                   const sp<Fence>& releaseFence) override;
+#else
     virtual status_t releaseBuffer(int slot, uint64_t frameNumber,
             const sp<Fence>& releaseFence, EGLDisplay display,
             EGLSyncKHR fence);
-
+#endif
     // connect connects a consumer to the BufferQueue.  Only one
     // consumer may be connected, and when that consumer disconnects the
     // BufferQueue is placed into the "abandoned" state, causing most
@@ -167,6 +167,7 @@ public:
     // dump our state in a String
     status_t dumpState(const String8& prefix, String8* outResult) const override;
 
+#if !COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
     // Functions required for backwards compatibility.
     // These will be modified/renamed in IGraphicBufferConsumer and will be
     // removed from this class at that time. See b/13306289.
@@ -176,6 +177,7 @@ public:
             const sp<Fence>& releaseFence) {
         return releaseBuffer(buf, frameNumber, releaseFence, display, fence);
     }
+#endif
 
     virtual status_t consumerConnect(const sp<IConsumerListener>& consumer,
             bool controlledByApp) {
