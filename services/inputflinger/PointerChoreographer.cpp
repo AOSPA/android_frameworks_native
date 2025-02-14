@@ -1017,9 +1017,9 @@ PointerChoreographer::findDestinationDisplayLocked(const ui::LogicalDisplayId so
                         sourceBoundary == DisplayTopologyPosition::BOTTOM
                 ? (destinationViewport->logicalRight - destinationViewport->logicalLeft)
                 : (destinationViewport->logicalBottom - destinationViewport->logicalTop);
-        if (cursorOffset >= adjacentDisplay.offsetPx &&
-            cursorOffset <= adjacentDisplay.offsetPx + edgeSize) {
-            return std::make_pair(destinationViewport, adjacentDisplay.offsetPx);
+        if (cursorOffset >= adjacentDisplay.offsetDp &&
+            cursorOffset <= adjacentDisplay.offsetDp + edgeSize) {
+            return std::make_pair(destinationViewport, adjacentDisplay.offsetDp);
         }
     }
     return std::nullopt;

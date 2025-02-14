@@ -1103,7 +1103,8 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
 void SurfaceFlinger::initBootProperties() {
     property_set("service.sf.present_timestamp", mHasReliablePresentFences ? "1" : "0");
 
-    if (base::GetBoolProperty("debug.sf.boot_animation"s, true)) {
+    if (base::GetBoolProperty("debug.sf.boot_animation"s, true) &&
+        (base::GetIntProperty("debug.sf.nobootanimation"s, 0) == 0)) {
         // Reset and (if needed) start BootAnimation.
         property_set("service.bootanim.exit", "0");
         property_set("service.bootanim.progress", "0");
@@ -3136,22 +3137,21 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
     }
 
     int index = 0;
-    std::array<char, WorkloadTracer::COMPOSITION_SUMMARY_SIZE> compositionSummary = {0};
+    ftl::StaticVector<char, WorkloadTracer::COMPOSITION_SUMMARY_SIZE> compositionSummary;
     auto lastLayerStack = ui::INVALID_LAYER_STACK;
     for (auto& [layer, layerFE] : layers) {
         CompositionResult compositionResult{layerFE->stealCompositionResult()};
-        if (index < compositionSummary.size()) {
-            if (lastLayerStack != ui::INVALID_LAYER_STACK &&
-                lastLayerStack != layerFE->mSnapshot->outputFilter.layerStack) {
+        if (lastLayerStack != layerFE->mSnapshot->outputFilter.layerStack) {
+            if (lastLayerStack != ui::INVALID_LAYER_STACK) {
                 // add a space to separate displays
-                compositionSummary[index++] = ' ';
+                compositionSummary.push_back(' ');
             }
             lastLayerStack = layerFE->mSnapshot->outputFilter.layerStack;
-            compositionSummary[index++] = layerFE->mSnapshot->classifyCompositionForDebug(
-                    layerFE->getHwcCompositionType());
-            if (layerFE->mSnapshot->hasEffect()) {
-                compositedWorkload |= adpf::Workload::EFFECTS;
-            }
+        }
+        compositionSummary.push_back(
+                layerFE->mSnapshot->classifyCompositionForDebug(layerFE->getHwcCompositionType()));
+        if (layerFE->mSnapshot->hasEffect()) {
+            compositedWorkload |= adpf::Workload::EFFECTS;
         }
 
         if (compositionResult.lastClientCompositionFence) {
@@ -3168,7 +3168,8 @@ CompositeResultsPerDisplay SurfaceFlinger::composite(
     SFTRACE_INSTANT_FOR_TRACK(WorkloadTracer::TRACK_NAME,
                               ftl::Concat("Layers: ", layers.size(), " ",
                                           ftl::truncated<WorkloadTracer::COMPOSITION_SUMMARY_SIZE>(
-                                                  compositionSummary.data()))
+                                                  std::string_view(compositionSummary.begin(),
+                                                                   compositionSummary.size())))
                                       .c_str());
 
     mPowerAdvisor->setCompositedWorkload(compositedWorkload);
@@ -4893,27 +4894,6 @@ void SurfaceFlinger::invalidateLayerStack(const ui::LayerFilter& layerFilter, co
 status_t SurfaceFlinger::addClientLayer(LayerCreationArgs& args, const sp<IBinder>& handle,
                                         const sp<Layer>& layer, const wp<Layer>& parent,
                                         uint32_t* outTransformHint) {
-    if (mNumLayers >= MAX_LAYERS) {
-        static std::atomic<nsecs_t> lasttime{0};
-        nsecs_t now = systemTime();
-        if (lasttime != 0 && ns2s(now - lasttime.load()) < 10) {
-            ALOGE("AddClientLayer already dumped 10s before");
-            return NO_MEMORY;
-        } else {
-            lasttime = now;
-        }
-
-        ALOGE("AddClientLayer failed, mNumLayers (%zu) >= MAX_LAYERS (%zu)", mNumLayers.load(),
-              MAX_LAYERS);
-        static_cast<void>(mScheduler->schedule([&]() FTL_FAKE_GUARD(kMainThreadContext) {
-            ALOGE("Dumping on-screen layers.");
-            mLayerHierarchyBuilder.dumpLayerSample(mLayerHierarchyBuilder.getHierarchy());
-            ALOGE("Dumping off-screen layers.");
-            mLayerHierarchyBuilder.dumpLayerSample(mLayerHierarchyBuilder.getOffscreenHierarchy());
-        }));
-        return NO_MEMORY;
-    }
-
     if (outTransformHint) {
         *outTransformHint = mActiveDisplayTransformHint;
     }
@@ -5738,14 +5718,13 @@ status_t SurfaceFlinger::mirrorDisplay(DisplayId displayId, const LayerCreationA
         mirrorArgs.addToRoot = true;
         mirrorArgs.layerStackToMirror = layerStack;
         result = createEffectLayer(mirrorArgs, &outResult.handle, &rootMirrorLayer);
+        if (result != NO_ERROR) {
+            return result;
+        }
         outResult.layerId = rootMirrorLayer->sequence;
         outResult.layerName = String16(rootMirrorLayer->getDebugName());
-        result |= addClientLayer(mirrorArgs, outResult.handle, rootMirrorLayer /* layer */,
-                                 nullptr /* parent */, nullptr /* outTransformHint */);
-    }
-
-    if (result != NO_ERROR) {
-        return result;
+        addClientLayer(mirrorArgs, outResult.handle, rootMirrorLayer /* layer */,
+                       nullptr /* parent */, nullptr /* outTransformHint */);
     }
 
     setTransactionFlags(eTransactionFlushNeeded);
@@ -5765,6 +5744,9 @@ status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, gui::CreateSurface
             [[fallthrough]];
         case ISurfaceComposerClient::eFXSurfaceEffect: {
             result = createBufferStateLayer(args, &outResult.handle, &layer);
+            if (result != NO_ERROR) {
+                return result;
+            }
             std::atomic<int32_t>* pendingBufferCounter = layer->getPendingBufferCounter();
             if (pendingBufferCounter) {
                 std::string counterName = layer->getPendingBufferCounterName();
@@ -5805,6 +5787,9 @@ status_t SurfaceFlinger::createLayer(LayerCreationArgs& args, gui::CreateSurface
 
 status_t SurfaceFlinger::createBufferStateLayer(LayerCreationArgs& args, sp<IBinder>* handle,
                                                 sp<Layer>* outLayer) {
+    if (checkLayerLeaks() != NO_ERROR) {
+        return NO_MEMORY;
+    }
     *outLayer = getFactory().createBufferStateLayer(args);
     *handle = (*outLayer)->getHandle();
     return NO_ERROR;
@@ -5812,8 +5797,35 @@ status_t SurfaceFlinger::createBufferStateLayer(LayerCreationArgs& args, sp<IBin
 
 status_t SurfaceFlinger::createEffectLayer(const LayerCreationArgs& args, sp<IBinder>* handle,
                                            sp<Layer>* outLayer) {
+    if (checkLayerLeaks() != NO_ERROR) {
+        return NO_MEMORY;
+    }
     *outLayer = getFactory().createEffectLayer(args);
     *handle = (*outLayer)->getHandle();
+    return NO_ERROR;
+}
+
+status_t SurfaceFlinger::checkLayerLeaks() {
+    if (mNumLayers >= MAX_LAYERS) {
+        static std::atomic<nsecs_t> lasttime{0};
+        nsecs_t now = systemTime();
+        if (lasttime != 0 && ns2s(now - lasttime.load()) < 10) {
+            ALOGE("CreateLayer already dumped 10s before");
+            return NO_MEMORY;
+        } else {
+            lasttime = now;
+        }
+
+        ALOGE("CreateLayer failed, mNumLayers (%zu) >= MAX_LAYERS (%zu)", mNumLayers.load(),
+              MAX_LAYERS);
+        static_cast<void>(mScheduler->schedule([&]() FTL_FAKE_GUARD(kMainThreadContext) {
+            ALOGE("Dumping on-screen layers.");
+            mLayerHierarchyBuilder.dumpLayerSample(mLayerHierarchyBuilder.getHierarchy());
+            ALOGE("Dumping off-screen layers.");
+            mLayerHierarchyBuilder.dumpLayerSample(mLayerHierarchyBuilder.getOffscreenHierarchy());
+        }));
+        return NO_MEMORY;
+    }
     return NO_ERROR;
 }
 

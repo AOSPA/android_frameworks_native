@@ -27,6 +27,10 @@
 #include "perfetto/public/te_macros.h"
 #include "perfetto/public/track_event.h"
 
+#include "perfetto/public/abi/pb_decoder_abi.h"
+#include "perfetto/public/pb_utils.h"
+#include "perfetto/public/tracing_session.h"
+
 /**
  * The objects declared here are intended to be managed by Java.
  * This means the Java Garbage Collector is responsible for freeing the
@@ -450,6 +454,22 @@ class Proto {
   // PerfettoTeHlProtoFieldVarInt, PerfettoTeHlProtoFieldNested. Those objects are
   // individually managed by Java.
   std::vector<PerfettoTeHlProtoField*> fields_;
+};
+
+class Session {
+ public:
+  Session(bool is_backend_in_process, void* buf, size_t len);
+  ~Session();
+  Session(const Session&) = delete;
+  Session& operator=(const Session&) = delete;
+
+  bool FlushBlocking(uint32_t timeout_ms);
+  void StopBlocking();
+  std::vector<uint8_t> ReadBlocking();
+
+  static void delete_session(Session* session);
+
+  struct PerfettoTracingSessionImpl* session_ = nullptr;
 };
 
 /**

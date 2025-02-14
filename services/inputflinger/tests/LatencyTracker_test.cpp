@@ -80,8 +80,9 @@ bool timelinesAreEqual(const InputEventTimeline& received, const InputEventTimel
             << "Received timeline with productId=" << received.productId
             << " instead of expected productId=" << expected.productId;
     LOG_IF(ERROR, expected.sources != received.sources)
-            << "Received timeline with sources=" << dumpSet(received.sources, ftl::enum_string)
-            << " instead of expected sources=" << dumpSet(expected.sources, ftl::enum_string);
+            << "Received timeline with sources="
+            << dumpContainer(received.sources, ftl::enum_string)
+            << " instead of expected sources=" << dumpContainer(expected.sources, ftl::enum_string);
     LOG_IF(ERROR, expected.inputEventActionType != received.inputEventActionType)
             << "Received timeline with inputEventActionType="
             << ftl::enum_string(received.inputEventActionType)

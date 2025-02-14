@@ -1231,7 +1231,7 @@ public:
         consumer->setConsumerName(String8("Virtual disp consumer (MultiDisplayTests)"));
         consumer->setDefaultBufferSize(width, height);
 
-        class StubConsumerListener : public BnConsumerListener {
+        class StubConsumerListener : public IConsumerListener {
             virtual void onFrameAvailable(const BufferItem&) override {}
             virtual void onBuffersReleased() override {}
             virtual void onSidebandStreamChanged() override {}

@@ -32,6 +32,7 @@
 #include <ui/PictureProfileHandle.h>
 
 #include <android-base/properties.h>
+#include <android-base/unique_fd.h>
 
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
@@ -45,6 +46,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <csignal>
 #include <future>
 #include <optional>
 #include <thread>
@@ -65,6 +67,15 @@ class BufferQueueTest : public ::testing::Test {
 
 public:
 protected:
+    void TearDown() override {
+        std::vector<std::function<void()>> teardownFns;
+        teardownFns.swap(mTeardownFns);
+
+        for (auto& fn : teardownFns) {
+            fn();
+        }
+    }
+
     void GetMinUndequeuedBufferCount(int* bufferCount) {
         ASSERT_TRUE(bufferCount != nullptr);
         ASSERT_EQ(OK, mProducer->query(NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS,
@@ -99,6 +110,7 @@ protected:
 
     sp<IGraphicBufferProducer> mProducer;
     sp<IGraphicBufferConsumer> mConsumer;
+    std::vector<std::function<void()>> mTeardownFns;
 };
 
 static const uint32_t TEST_DATA = 0x12345678u;
@@ -106,12 +118,14 @@ static const uint32_t TEST_DATA = 0x12345678u;
 // XXX: Tests that fork a process to hold the BufferQueue must run before tests
 // that use a local BufferQueue, or else Binder will get unhappy
 //
-// In one instance this was a crash in the createBufferQueue where the
-// binder call to create a buffer allocator apparently got garbage back.
-// See b/36592665.
+// TODO(b/392945118): In one instance this was a crash in the createBufferQueue
+// where the binder call to create a buffer allocator apparently got garbage
+// back. See b/36592665.
 TEST_F(BufferQueueTest, DISABLED_BufferQueueInAnotherProcess) {
     const String16 PRODUCER_NAME = String16("BQTestProducer");
-    const String16 CONSUMER_NAME = String16("BQTestConsumer");
+
+    base::unique_fd readfd, writefd;
+    ASSERT_TRUE(base::Pipe(&readfd, &writefd));
 
     pid_t forkPid = fork();
     ASSERT_NE(forkPid, -1);
@@ -123,23 +137,51 @@ TEST_F(BufferQueueTest, DISABLED_BufferQueueInAnotherProcess) {
         BufferQueue::createBufferQueue(&producer, &consumer);
         sp<IServiceManager> serviceManager = defaultServiceManager();
         serviceManager->addService(PRODUCER_NAME, IInterface::asBinder(producer));
-        serviceManager->addService(CONSUMER_NAME, IInterface::asBinder(consumer));
+
+        class ChildConsumerListener : public IConsumerListener {
+        public:
+            ChildConsumerListener(const sp<IGraphicBufferConsumer>& consumer,
+                                  base::unique_fd&& writeFd)
+                  : mConsumer(consumer), mWriteFd(std::move(writeFd)) {}
+
+            virtual void onFrameAvailable(const BufferItem&) override {
+                BufferItem item;
+                ASSERT_EQ(OK, mConsumer->acquireBuffer(&item, 0));
+
+                uint32_t* dataOut;
+                ASSERT_EQ(OK,
+                          item.mGraphicBuffer->lock(GraphicBuffer::USAGE_SW_READ_OFTEN,
+                                                    reinterpret_cast<void**>(&dataOut)));
+                ASSERT_EQ(*dataOut, TEST_DATA);
+                ASSERT_EQ(OK, item.mGraphicBuffer->unlock());
+
+                bool isOk = true;
+                write(mWriteFd, &isOk, sizeof(bool));
+            }
+            virtual void onBuffersReleased() override {}
+            virtual void onSidebandStreamChanged() override {}
+
+        private:
+            sp<IGraphicBufferConsumer> mConsumer;
+            base::unique_fd mWriteFd;
+        };
+
+        sp<ChildConsumerListener> mc =
+                sp<ChildConsumerListener>::make(consumer, std::move(writefd));
+        ASSERT_EQ(OK, consumer->consumerConnect(mc, false));
+
         ProcessState::self()->startThreadPool();
         IPCThreadState::self()->joinThreadPool();
         LOG_ALWAYS_FATAL("Shouldn't be here");
+    } else {
+        mTeardownFns.emplace_back([forkPid]() { kill(forkPid, SIGTERM); });
     }
 
     sp<IServiceManager> serviceManager = defaultServiceManager();
     sp<IBinder> binderProducer = serviceManager->waitForService(PRODUCER_NAME);
     mProducer = interface_cast<IGraphicBufferProducer>(binderProducer);
     EXPECT_TRUE(mProducer != nullptr);
-    sp<IBinder> binderConsumer =
-        serviceManager->getService(CONSUMER_NAME);
-    mConsumer = interface_cast<IGraphicBufferConsumer>(binderConsumer);
-    EXPECT_TRUE(mConsumer != nullptr);
 
-    sp<MockConsumer> mc(new MockConsumer);
-    ASSERT_EQ(OK, mConsumer->consumerConnect(mc, false));
     IGraphicBufferProducer::QueueBufferOutput output;
     ASSERT_EQ(OK,
             mProducer->connect(nullptr, NATIVE_WINDOW_API_CPU, false, &output));
@@ -163,14 +205,9 @@ TEST_F(BufferQueueTest, DISABLED_BufferQueueInAnotherProcess) {
             NATIVE_WINDOW_SCALING_MODE_FREEZE, 0, Fence::NO_FENCE);
     ASSERT_EQ(OK, mProducer->queueBuffer(slot, input, &output));
 
-    BufferItem item;
-    ASSERT_EQ(OK, mConsumer->acquireBuffer(&item, 0));
-
-    uint32_t* dataOut;
-    ASSERT_EQ(OK, item.mGraphicBuffer->lock(GraphicBuffer::USAGE_SW_READ_OFTEN,
-            reinterpret_cast<void**>(&dataOut)));
-    ASSERT_EQ(*dataOut, TEST_DATA);
-    ASSERT_EQ(OK, item.mGraphicBuffer->unlock());
+    bool isOk;
+    read(readfd, &isOk, sizeof(bool));
+    ASSERT_TRUE(isOk);
 }
 
 TEST_F(BufferQueueTest, GetMaxBufferCountInQueueBufferOutput_Succeeds) {

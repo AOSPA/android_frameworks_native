@@ -116,7 +116,7 @@ pub use binder::{BinderFeatures, FromIBinder, IBinder, Interface, Strong, Weak};
 pub use error::{ExceptionCode, IntoBinderResult, Status, StatusCode};
 pub use parcel::{ParcelFileDescriptor, Parcelable, ParcelableHolder};
 #[cfg(not(trusty))]
-pub use persistable_bundle::PersistableBundle;
+pub use persistable_bundle::{PersistableBundle, ValueType};
 pub use proxy::{DeathRecipient, SpIBinder, WpIBinder};
 #[cfg(not(any(trusty, android_ndk)))]
 pub use service::{
