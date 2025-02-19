@@ -1444,9 +1444,8 @@ std::vector<PhysicalDisplayId> SurfaceComposerClient::getPhysicalDisplayIds() {
             ComposerServiceAIDL::getComposerService()->getPhysicalDisplayIds(&displayIds);
     if (status.isOk()) {
         physicalDisplayIds.reserve(displayIds.size());
-        for (auto item : displayIds) {
-            auto id = DisplayId::fromValue<PhysicalDisplayId>(static_cast<uint64_t>(item));
-            physicalDisplayIds.push_back(*id);
+        for (auto id : displayIds) {
+            physicalDisplayIds.push_back(PhysicalDisplayId::fromValue(static_cast<uint64_t>(id)));
         }
     }
     return physicalDisplayIds;
@@ -1717,17 +1716,6 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setClien
     return *this;
 }
 
-SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setClientDrawnShadowRadius(
-        const sp<SurfaceControl>& sc, float clientDrawnShadowRadius) {
-    layer_state_t* s = getLayerState(sc);
-    if (!s) {
-        mStatus = BAD_INDEX;
-        return *this;
-    }
-    s->what |= layer_state_t::eClientDrawnShadowsChanged;
-    s->clientDrawnShadowRadius = clientDrawnShadowRadius;
-    return *this;
-}
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setBackgroundBlurRadius(
         const sp<SurfaceControl>& sc, int backgroundBlurRadius) {
     layer_state_t* s = getLayerState(sc);

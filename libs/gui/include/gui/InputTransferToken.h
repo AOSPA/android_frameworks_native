@@ -25,7 +25,7 @@
 namespace android {
 struct InputTransferToken : public RefBase, Parcelable {
 public:
-    InputTransferToken() { mToken = new BBinder(); }
+    InputTransferToken() { mToken = sp<BBinder>::make(); }
 
     InputTransferToken(const sp<IBinder>& token) { mToken = token; }
 

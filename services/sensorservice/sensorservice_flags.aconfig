@@ -28,3 +28,13 @@ flag {
   description: "When this flag is enabled, sensor service will only erase dynamic sensor data at the end of the threadLoop to prevent race condition."
   bug: "329020894"
 }
+
+flag {
+  name: "enforce_permissions_for_all_target_sdk"
+  namespace: "sensors"
+  description: "When this flag is enabled, sensor service will enforce permissions for all target sdks."
+  bug: "389176817"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}

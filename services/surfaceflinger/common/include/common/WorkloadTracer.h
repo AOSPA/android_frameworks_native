@@ -23,7 +23,7 @@ namespace android::WorkloadTracer {
 
 static constexpr int32_t COMPOSITION_TRACE_COOKIE = 1;
 static constexpr int32_t POST_COMPOSITION_TRACE_COOKIE = 2;
-static constexpr size_t COMPOSITION_SUMMARY_SIZE = 20;
+static constexpr size_t COMPOSITION_SUMMARY_SIZE = 64;
 static constexpr const char* TRACK_NAME = "CriticalWorkload";
 
 } // namespace android::WorkloadTracer

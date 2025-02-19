@@ -2617,12 +2617,17 @@ public:
     static constexpr ui::LogicalDisplayId DISPLAY_BOTTOM_ID = ui::LogicalDisplayId{40};
     static constexpr ui::LogicalDisplayId DISPLAY_LEFT_ID = ui::LogicalDisplayId{50};
     static constexpr ui::LogicalDisplayId DISPLAY_TOP_RIGHT_CORNER_ID = ui::LogicalDisplayId{60};
+    static constexpr ui::LogicalDisplayId DISPLAY_HIGH_DENSITY_ID = ui::LogicalDisplayId{70};
+
+    static constexpr int DENSITY_MEDIUM = 160;
+    static constexpr int DENSITY_HIGH = 320;
 
     PointerChoreographerDisplayTopologyTestFixture() {
         com::android::input::flags::connected_displays_cursor(true);
     }
 
 protected:
+    // Note: viewport size is in pixels and offsets in topology are in dp
     std::vector<DisplayViewport> mViewports{
             createViewport(DISPLAY_CENTER_ID, /*width*/ 100, /*height*/ 100, ui::ROTATION_0),
             createViewport(DISPLAY_TOP_ID, /*width*/ 90, /*height*/ 90, ui::ROTATION_0),
@@ -2631,16 +2636,28 @@ protected:
             createViewport(DISPLAY_LEFT_ID, /*width*/ 90, /*height*/ 90, ui::ROTATION_270),
             createViewport(DISPLAY_TOP_RIGHT_CORNER_ID, /*width*/ 90, /*height*/ 90,
                            ui::ROTATION_0),
+            // Create a high density display size 100x100 dp i.e. 200x200 px
+            createViewport(DISPLAY_HIGH_DENSITY_ID, /*width*/ 200, /*height*/ 200, ui::ROTATION_0),
     };
 
-    DisplayTopologyGraph mTopology{DISPLAY_CENTER_ID,
-                                   {{DISPLAY_CENTER_ID,
-                                     {{DISPLAY_TOP_ID, DisplayTopologyPosition::TOP, 10.0f},
-                                      {DISPLAY_RIGHT_ID, DisplayTopologyPosition::RIGHT, 10.0f},
-                                      {DISPLAY_BOTTOM_ID, DisplayTopologyPosition::BOTTOM, 10.0f},
-                                      {DISPLAY_LEFT_ID, DisplayTopologyPosition::LEFT, 10.0f},
-                                      {DISPLAY_TOP_RIGHT_CORNER_ID, DisplayTopologyPosition::RIGHT,
-                                       -90.0f}}}}};
+    DisplayTopologyGraph
+            mTopology{DISPLAY_CENTER_ID,
+                      {{DISPLAY_CENTER_ID,
+                        {{DISPLAY_TOP_ID, DisplayTopologyPosition::TOP, 50.0f},
+                         // Place a high density display on the left of DISPLAY_TOP_ID with 25 dp
+                         // gap
+                         {DISPLAY_HIGH_DENSITY_ID, DisplayTopologyPosition::TOP, -75.0f},
+                         {DISPLAY_RIGHT_ID, DisplayTopologyPosition::RIGHT, 10.0f},
+                         {DISPLAY_BOTTOM_ID, DisplayTopologyPosition::BOTTOM, 10.0f},
+                         {DISPLAY_LEFT_ID, DisplayTopologyPosition::LEFT, 10.0f},
+                         {DISPLAY_TOP_RIGHT_CORNER_ID, DisplayTopologyPosition::RIGHT, -90.0f}}}},
+                      {{DISPLAY_CENTER_ID, DENSITY_MEDIUM},
+                       {DISPLAY_TOP_ID, DENSITY_MEDIUM},
+                       {DISPLAY_RIGHT_ID, DENSITY_MEDIUM},
+                       {DISPLAY_BOTTOM_ID, DENSITY_MEDIUM},
+                       {DISPLAY_LEFT_ID, DENSITY_MEDIUM},
+                       {DISPLAY_TOP_RIGHT_CORNER_ID, DENSITY_MEDIUM},
+                       {DISPLAY_HIGH_DENSITY_ID, DENSITY_HIGH}}};
 
 private:
     DisplayViewport createViewport(ui::LogicalDisplayId displayId, int32_t width, int32_t height,
@@ -2731,7 +2748,7 @@ INSTANTIATE_TEST_SUITE_P(
                                 ToolType::FINGER, vec2(50, 50) /* initial x/y */,
                                 vec2(25, -100) /* delta x/y */,
                                 PointerChoreographerDisplayTopologyTestFixture::DISPLAY_TOP_ID,
-                                vec2(50 + 25 - 10,
+                                vec2(50 + 25 - 50,
                                      90) /* Bottom edge: (source + delta - offset, height) */),
                 std::make_tuple("TransitionToBottomDisplay",
                                 AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_TOUCHPAD, ControllerType::MOUSE,
@@ -2739,11 +2756,12 @@ INSTANTIATE_TEST_SUITE_P(
                                 vec2(25, 100) /* delta x/y */,
                                 PointerChoreographerDisplayTopologyTestFixture::DISPLAY_BOTTOM_ID,
                                 vec2(50 + 25 - 10, 0) /* Top edge: (source + delta - offset, 0) */),
+                // move towards 25 dp gap between DISPLAY_HIGH_DENSITY_ID and DISPLAY_TOP_ID
                 std::make_tuple("NoTransitionAtTopOffset", AINPUT_SOURCE_MOUSE,
                                 ControllerType::MOUSE, ToolType::MOUSE,
-                                vec2(5, 50) /* initial x/y */, vec2(0, -100) /* Move Up */,
+                                vec2(35, 50) /* initial x/y */, vec2(0, -100) /* Move Up */,
                                 PointerChoreographerDisplayTopologyTestFixture::DISPLAY_CENTER_ID,
-                                vec2(5, 0) /* Top edge */),
+                                vec2(35, 0) /* Top edge */),
                 std::make_tuple("NoTransitionAtRightOffset", AINPUT_SOURCE_MOUSE,
                                 ControllerType::MOUSE, ToolType::MOUSE,
                                 vec2(95, 5) /* initial x/y */, vec2(100, 0) /* Move Right */,
@@ -2764,9 +2782,16 @@ INSTANTIATE_TEST_SUITE_P(
                 std::make_tuple(
                         "TransitionAtTopRightCorner", AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_TOUCHPAD,
                         ControllerType::MOUSE, ToolType::FINGER, vec2(95, 5) /* initial x/y */,
-                        vec2(10, -10) /* Move dignally to top right corner */,
+                        vec2(10, -10) /* Move diagonally to top right corner */,
                         PointerChoreographerDisplayTopologyTestFixture::DISPLAY_TOP_RIGHT_CORNER_ID,
-                        vec2(0, 90) /* bottom left corner */)),
+                        vec2(0, 90) /* bottom left corner */),
+                std::make_tuple(
+                        "TransitionToHighDpDisplay", AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_TOUCHPAD,
+                        ControllerType::MOUSE, ToolType::MOUSE, vec2(20, 20) /* initial x/y */,
+                        vec2(0, -50) /* delta x/y */,
+                        PointerChoreographerDisplayTopologyTestFixture::DISPLAY_HIGH_DENSITY_ID,
+                        /* Bottom edge: ((source + delta - offset) * density, height) */
+                        vec2((20 + 0 + 75) * 2, 200))),
         [](const testing::TestParamInfo<PointerChoreographerDisplayTopologyTestFixtureParam>& p) {
             return std::string{std::get<0>(p.param)};
         });

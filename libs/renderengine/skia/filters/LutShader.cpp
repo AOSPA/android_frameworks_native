@@ -182,8 +182,8 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
      * (R1, G1, B1, 0)
      * ...
      */
-    SkImageInfo info = SkImageInfo::Make(length /* the number of rgba */ * 4, 1,
-                                         kRGBA_F16_SkColorType, kPremul_SkAlphaType);
+    SkImageInfo info = SkImageInfo::Make(length /* the number of rgba */, 1, kRGBA_F16_SkColorType,
+                                         kPremul_SkAlphaType);
     SkBitmap bitmap;
     bitmap.allocPixels(info);
     if (!bitmap.installPixels(info, buffer.data(), info.minRowBytes())) {

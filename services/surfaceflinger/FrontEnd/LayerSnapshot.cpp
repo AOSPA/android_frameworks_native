@@ -403,11 +403,8 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
     if (forceUpdate || requested.what & layer_state_t::eSidebandStreamChanged) {
         sidebandStream = requested.sidebandStream;
     }
-    if (forceUpdate || requested.what & layer_state_t::eShadowRadiusChanged ||
-        requested.what & layer_state_t::eClientDrawnShadowsChanged) {
-        shadowSettings.length =
-                requested.clientDrawnShadowRadius > 0 ? 0.f : requested.shadowRadius;
-        shadowSettings.clientDrawnLength = requested.clientDrawnShadowRadius;
+    if (forceUpdate || requested.what & layer_state_t::eShadowRadiusChanged) {
+        shadowSettings.length = requested.shadowRadius;
     }
 
     if (forceUpdate || requested.what & layer_state_t::eFrameRateSelectionPriority) {
@@ -537,12 +534,13 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
     }
 }
 
-char LayerSnapshot::classifyCompositionForDebug(Composition compositionType) const {
+char LayerSnapshot::classifyCompositionForDebug(
+        const compositionengine::LayerFE::HwcLayerDebugState& hwcState) const {
     if (!isVisible) {
         return '.';
     }
 
-    switch (compositionType) {
+    switch (hwcState.lastCompositionType) {
         case Composition::INVALID:
             return 'i';
         case Composition::SOLID_COLOR:
@@ -561,21 +559,21 @@ char LayerSnapshot::classifyCompositionForDebug(Composition compositionType) con
     }
 
     char code = '.'; // Default to invisible
-    if (hasBufferOrSidebandStream()) {
-        code = 'b';
-    } else if (fillsColor()) {
-        code = 'c'; // Solid color
-    } else if (hasBlur()) {
+    if (hasBlur()) {
         code = 'l'; // Blur
     } else if (hasProtectedContent) {
         code = 'p'; // Protected content
-    } else if (drawShadows()) {
-        code = 's'; // Shadow
     } else if (roundedCorner.hasRoundedCorners()) {
         code = 'r'; // Rounded corners
+    } else if (drawShadows()) {
+        code = 's'; // Shadow
+    } else if (fillsColor()) {
+        code = 'c'; // Solid color
+    } else if (hasBufferOrSidebandStream()) {
+        code = 'b';
     }
 
-    if (compositionType == Composition::CLIENT) {
+    if (hwcState.lastCompositionType == Composition::CLIENT) {
         return static_cast<char>(std::toupper(code));
     } else {
         return code;

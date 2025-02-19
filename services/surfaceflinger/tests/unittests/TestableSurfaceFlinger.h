@@ -42,7 +42,6 @@
 #include "FrontEnd/RequestedLayerState.h"
 #include "Layer.h"
 #include "NativeWindowSurface.h"
-#include "RenderArea.h"
 #include "Scheduler/RefreshRateSelector.h"
 #include "Scheduler/VSyncTracker.h"
 #include "Scheduler/VsyncController.h"
@@ -461,11 +460,11 @@ public:
         return mFlinger->setPowerModeInternal(display, mode);
     }
 
-    auto renderScreenImpl(const sp<DisplayDevice> display,
-                          std::unique_ptr<const RenderArea> renderArea,
+    auto renderScreenImpl(const sp<DisplayDevice> display, const Rect sourceCrop,
+                          ui::Dataspace dataspace,
                           SurfaceFlinger::GetLayerSnapshotsFunction getLayerSnapshotsFn,
                           const std::shared_ptr<renderengine::ExternalTexture>& buffer,
-                          bool regionSampling) {
+                          bool regionSampling, bool isSecure, bool seamlessTransition) {
         Mutex::Autolock lock(mFlinger->mStateLock);
         ftl::FakeGuard guard(kMainThreadContext);
 
@@ -473,7 +472,16 @@ public:
         auto displayState = std::optional{display->getCompositionDisplay()->getState()};
         auto layers = getLayerSnapshotsFn();
 
-        return mFlinger->renderScreenImpl(std::move(renderArea), buffer, regionSampling,
+        SurfaceFlinger::ScreenshotArgs screenshotArgs;
+        screenshotArgs.captureTypeVariant = display;
+        screenshotArgs.displayId = std::nullopt;
+        screenshotArgs.sourceCrop = sourceCrop;
+        screenshotArgs.reqSize = sourceCrop.getSize();
+        screenshotArgs.dataspace = dataspace;
+        screenshotArgs.isSecure = isSecure;
+        screenshotArgs.seamlessTransition = seamlessTransition;
+
+        return mFlinger->renderScreenImpl(screenshotArgs, buffer, regionSampling,
                                           false /* grayscale */, false /* isProtected */,
                                           captureResults, displayState, layers);
     }

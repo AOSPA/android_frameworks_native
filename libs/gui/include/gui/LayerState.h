@@ -235,7 +235,6 @@ struct layer_state_t {
         ePictureProfileHandleChanged = 0x80000'00000000,
         eAppContentPriorityChanged = 0x100000'00000000,
         eClientDrawnCornerRadiusChanged = 0x200000'00000000,
-        eClientDrawnShadowsChanged = 0x400000'00000000,
     };
 
     layer_state_t();
@@ -279,7 +278,7 @@ struct layer_state_t {
             layer_state_t::eColorSpaceAgnosticChanged | layer_state_t::eColorTransformChanged |
             layer_state_t::eCornerRadiusChanged | layer_state_t::eDimmingEnabledChanged |
             layer_state_t::eHdrMetadataChanged | layer_state_t::eShadowRadiusChanged |
-            layer_state_t::eClientDrawnShadowsChanged | layer_state_t::eStretchChanged |
+            layer_state_t::eStretchChanged |
             layer_state_t::ePictureProfileHandleChanged | layer_state_t::eAppContentPriorityChanged;
 
     // Changes which invalidates the layer's visible region in CE.
@@ -339,7 +338,6 @@ struct layer_state_t {
     matrix22_t matrix;
     float cornerRadius;
     float clientDrawnCornerRadius;
-    float clientDrawnShadowRadius;
     uint32_t backgroundBlurRadius;
 
     sp<SurfaceControl> relativeLayerSurfaceControl;

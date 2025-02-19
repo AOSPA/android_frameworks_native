@@ -29,11 +29,15 @@ namespace android {
 
 std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutputArgs args) {
     std::shared_ptr<ScreenCaptureOutput> output = compositionengine::impl::createOutputTemplated<
-            ScreenCaptureOutput, compositionengine::CompositionEngine, const RenderArea&,
+            ScreenCaptureOutput, compositionengine::CompositionEngine,
+            /* sourceCrop */ const Rect, std::optional<DisplayId>,
             const compositionengine::Output::ColorProfile&,
-            bool>(args.compositionEngine, args.renderArea, args.colorProfile, args.regionSampling,
-                  args.dimInGammaSpaceForEnhancedScreenshots, args.enableLocalTonemapping);
-    output->editState().isSecure = args.renderArea.isSecure();
+            /* layerAlpha */ float,
+            /* regionSampling */ bool>(args.compositionEngine, args.sourceCrop, args.displayId,
+                                       args.colorProfile, args.layerAlpha, args.regionSampling,
+                                       args.dimInGammaSpaceForEnhancedScreenshots,
+                                       args.enableLocalTonemapping);
+    output->editState().isSecure = args.isSecure;
     output->editState().isProtected = args.isProtected;
     output->setCompositionEnabled(true);
     output->setLayerFilter({args.layerStack});
@@ -47,16 +51,16 @@ std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutp
                     .setHasWideColorGamut(true)
                     .Build()));
 
-    const Rect& sourceCrop = args.renderArea.getSourceCrop();
+    const Rect& sourceCrop = args.sourceCrop;
     const ui::Rotation orientation = ui::ROTATION_0;
     output->setDisplaySize({sourceCrop.getWidth(), sourceCrop.getHeight()});
     output->setProjection(orientation, sourceCrop,
-                          {args.renderArea.getReqWidth(), args.renderArea.getReqHeight()});
+                          {args.reqBufferSize.width, args.reqBufferSize.height});
 
     {
         std::string name = args.regionSampling ? "RegionSampling" : "ScreenCaptureOutput";
-        if (auto displayDevice = args.renderArea.getDisplayDevice()) {
-            base::StringAppendF(&name, " for %" PRIu64, displayDevice->getId().value);
+        if (args.displayId) {
+            base::StringAppendF(&name, " for %" PRIu64, args.displayId.value().value);
         }
         output->setName(name);
     }
@@ -64,11 +68,14 @@ std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutp
 }
 
 ScreenCaptureOutput::ScreenCaptureOutput(
-        const RenderArea& renderArea, const compositionengine::Output::ColorProfile& colorProfile,
+        const Rect sourceCrop, std::optional<DisplayId> displayId,
+        const compositionengine::Output::ColorProfile& colorProfile, float layerAlpha,
         bool regionSampling, bool dimInGammaSpaceForEnhancedScreenshots,
         bool enableLocalTonemapping)
-      : mRenderArea(renderArea),
+      : mSourceCrop(sourceCrop),
+        mDisplayId(displayId),
         mColorProfile(colorProfile),
+        mLayerAlpha(layerAlpha),
         mRegionSampling(regionSampling),
         mDimInGammaSpaceForEnhancedScreenshots(dimInGammaSpaceForEnhancedScreenshots),
         mEnableLocalTonemapping(enableLocalTonemapping) {}
@@ -83,7 +90,7 @@ renderengine::DisplaySettings ScreenCaptureOutput::generateClientCompositionDisp
         const std::shared_ptr<renderengine::ExternalTexture>& buffer) const {
     auto clientCompositionDisplay =
             compositionengine::impl::Output::generateClientCompositionDisplaySettings(buffer);
-    clientCompositionDisplay.clip = mRenderArea.getSourceCrop();
+    clientCompositionDisplay.clip = mSourceCrop;
 
     auto renderIntent = static_cast<ui::RenderIntent>(clientCompositionDisplay.renderIntent);
     if (mDimInGammaSpaceForEnhancedScreenshots && renderIntent != ui::RenderIntent::COLORIMETRIC &&
@@ -130,8 +137,8 @@ ScreenCaptureOutput::generateLuts() {
         }
 
         std::vector<aidl::android::hardware::graphics::composer3::Luts> luts;
-        if (auto displayDevice = mRenderArea.getDisplayDevice()) {
-            const auto id = PhysicalDisplayId::tryCast(displayDevice->getId());
+        if (mDisplayId) {
+            const auto id = PhysicalDisplayId::tryCast(mDisplayId.value());
             if (id) {
                 auto& hwc = getCompositionEngine().getHwComposer();
                 hwc.getLuts(*id, buffers, &luts);
@@ -201,14 +208,15 @@ ScreenCaptureOutput::generateClientCompositionRequests(
         }
     }
 
-    Rect sourceCrop = mRenderArea.getSourceCrop();
     compositionengine::LayerFE::LayerSettings fillLayer;
     fillLayer.source.buffer.buffer = nullptr;
     fillLayer.source.solidColor = half3(0.0f, 0.0f, 0.0f);
     fillLayer.geometry.boundaries =
-            FloatRect(static_cast<float>(sourceCrop.left), static_cast<float>(sourceCrop.top),
-                      static_cast<float>(sourceCrop.right), static_cast<float>(sourceCrop.bottom));
-    fillLayer.alpha = half(RenderArea::getCaptureFillValue(mRenderArea.getCaptureFill()));
+            FloatRect(static_cast<float>(mSourceCrop.left), static_cast<float>(mSourceCrop.top),
+                      static_cast<float>(mSourceCrop.right),
+                      static_cast<float>(mSourceCrop.bottom));
+
+    fillLayer.alpha = half(mLayerAlpha);
     clientCompositionLayers.insert(clientCompositionLayers.begin(), fillLayer);
 
     return clientCompositionLayers;

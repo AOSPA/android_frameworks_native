@@ -1620,41 +1620,43 @@ std::shared_ptr<const EventHub::AssociatedDevice> EventHub::obtainAssociatedDevi
 
     const auto& path = *sysfsRootPathOpt;
 
-    std::shared_ptr<const AssociatedDevice> associatedDevice = std::make_shared<AssociatedDevice>(
-            AssociatedDevice{.sysfsRootPath = path,
-                             .batteryInfos = readBatteryConfiguration(path),
-                             .lightInfos = readLightsConfiguration(path),
-                             .layoutInfo = readLayoutConfiguration(path)});
-
-    bool associatedDeviceChanged = false;
+    std::shared_ptr<const AssociatedDevice> associatedDevice;
     for (const auto& [id, dev] : mDevices) {
-        if (dev->associatedDevice && dev->associatedDevice->sysfsRootPath == path) {
-            if (*associatedDevice != *dev->associatedDevice) {
-                associatedDeviceChanged = true;
-                dev->associatedDevice = associatedDevice;
-            }
-            associatedDevice = dev->associatedDevice;
+        if (!dev->associatedDevice || dev->associatedDevice->sysfsRootPath != path) {
+            continue;
         }
+        if (!associatedDevice) {
+            // Found matching associated device for the first time.
+            associatedDevice = dev->associatedDevice;
+            // Reload this associated device if needed.
+            const auto reloadedDevice = AssociatedDevice(path);
+            if (reloadedDevice != *dev->associatedDevice) {
+                ALOGI("The AssociatedDevice changed for path '%s'. Using new AssociatedDevice: %s",
+                      path.c_str(), associatedDevice->dump().c_str());
+                associatedDevice = std::make_shared<AssociatedDevice>(std::move(reloadedDevice));
+            }
+        }
+        // Update the associatedDevice.
+        dev->associatedDevice = associatedDevice;
     }
-    ALOGI_IF(associatedDeviceChanged,
-             "The AssociatedDevice changed for path '%s'. Using new AssociatedDevice: %s",
-             path.c_str(), associatedDevice->dump().c_str());
+
+    if (!associatedDevice) {
+        // No existing associated device found for this path, so create a new one.
+        associatedDevice = std::make_shared<AssociatedDevice>(path);
+    }
 
     return associatedDevice;
 }
 
-bool EventHub::AssociatedDevice::isChanged() const {
-    std::unordered_map<int32_t, RawBatteryInfo> newBatteryInfos =
-            readBatteryConfiguration(sysfsRootPath);
-    std::unordered_map<int32_t, RawLightInfo> newLightInfos =
-            readLightsConfiguration(sysfsRootPath);
-    std::optional<RawLayoutInfo> newLayoutInfo = readLayoutConfiguration(sysfsRootPath);
+EventHub::AssociatedDevice::AssociatedDevice(const std::filesystem::path& sysfsRootPath)
+      : sysfsRootPath(sysfsRootPath),
+        batteryInfos(readBatteryConfiguration(sysfsRootPath)),
+        lightInfos(readLightsConfiguration(sysfsRootPath)),
+        layoutInfo(readLayoutConfiguration(sysfsRootPath)) {}
 
-    if (newBatteryInfos == batteryInfos && newLightInfos == lightInfos &&
-        newLayoutInfo == layoutInfo) {
-        return false;
-    }
-    return true;
+std::string EventHub::AssociatedDevice::dump() const {
+    return StringPrintf("path=%s, numBatteries=%zu, numLight=%zu", sysfsRootPath.c_str(),
+                        batteryInfos.size(), lightInfos.size());
 }
 
 void EventHub::vibrate(int32_t deviceId, const VibrationElement& element) {
@@ -2646,33 +2648,56 @@ status_t EventHub::disableDevice(int32_t deviceId) {
 void EventHub::sysfsNodeChanged(const std::string& sysfsNodePath) {
     std::scoped_lock _l(mLock);
 
-    // Check in opening devices
-    for (auto it = mOpeningDevices.begin(); it != mOpeningDevices.end(); it++) {
-        std::unique_ptr<Device>& device = *it;
-        if (device->associatedDevice &&
-            sysfsNodePath.find(device->associatedDevice->sysfsRootPath.string()) !=
-                    std::string::npos &&
-            device->associatedDevice->isChanged()) {
-            it = mOpeningDevices.erase(it);
-            openDeviceLocked(device->path);
+    // Testing whether a sysfs node changed involves several syscalls, so use a cache to avoid
+    // testing the same node multiple times.
+    std::map<std::shared_ptr<const AssociatedDevice>, bool /*changed*/> testedDevices;
+    auto isAssociatedDeviceChanged = [&testedDevices, &sysfsNodePath](const Device& dev) {
+        if (!dev.associatedDevice) {
+            return false;
+        }
+        if (auto testedIt = testedDevices.find(dev.associatedDevice);
+            testedIt != testedDevices.end()) {
+            return testedIt->second;
+        }
+        // Cache miss
+        if (sysfsNodePath.find(dev.associatedDevice->sysfsRootPath.string()) == std::string::npos) {
+            testedDevices.emplace(dev.associatedDevice, false);
+            return false;
+        }
+        auto reloadedDevice = AssociatedDevice(dev.associatedDevice->sysfsRootPath);
+        const bool changed = *dev.associatedDevice != reloadedDevice;
+        testedDevices.emplace(dev.associatedDevice, changed);
+        return changed;
+    };
+
+    std::set<Device*> devicesToClose;
+    std::set<std::string /*path*/> devicesToOpen;
+
+    // Check in opening devices. If its associated device changed,
+    // the device should be removed from mOpeningDevices and needs to be opened again.
+    std::erase_if(mOpeningDevices, [&](const auto& dev) {
+        if (isAssociatedDeviceChanged(*dev)) {
+            devicesToOpen.emplace(dev->path);
+            return true;
+        }
+        return false;
+    });
+
+    // Check in already added device. If its associated device changed,
+    // the device needs to be re-opened.
+    for (const auto& [id, dev] : mDevices) {
+        if (isAssociatedDeviceChanged(*dev)) {
+            devicesToOpen.emplace(dev->path);
+            devicesToClose.emplace(dev.get());
         }
     }
 
-    // Check in already added device
-    std::vector<Device*> devicesToReopen;
-    for (const auto& [id, device] : mDevices) {
-        if (device->associatedDevice &&
-            sysfsNodePath.find(device->associatedDevice->sysfsRootPath.string()) !=
-                    std::string::npos &&
-            device->associatedDevice->isChanged()) {
-            devicesToReopen.push_back(device.get());
-        }
-    }
-    for (const auto& device : devicesToReopen) {
+    for (auto* device : devicesToClose) {
         closeDeviceLocked(*device);
-        openDeviceLocked(device->path);
     }
-    devicesToReopen.clear();
+    for (const auto& path : devicesToOpen) {
+        openDeviceLocked(path);
+    }
 }
 
 void EventHub::createVirtualKeyboardLocked() {
@@ -2970,11 +2995,6 @@ void EventHub::dump(std::string& dump) const {
 void EventHub::monitor() const {
     // Acquire and release the lock to ensure that the event hub has not deadlocked.
     std::unique_lock<std::mutex> lock(mLock);
-}
-
-std::string EventHub::AssociatedDevice::dump() const {
-    return StringPrintf("path=%s, numBatteries=%zu, numLight=%zu", sysfsRootPath.c_str(),
-                        batteryInfos.size(), lightInfos.size());
 }
 
 } // namespace android

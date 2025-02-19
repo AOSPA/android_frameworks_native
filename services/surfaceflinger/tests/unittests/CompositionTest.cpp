@@ -36,7 +36,6 @@
 #include <system/window.h>
 #include <utils/String8.h>
 
-#include "DisplayRenderArea.h"
 #include "Layer.h"
 #include "TestableSurfaceFlinger.h"
 #include "mock/DisplayHardware/MockComposer.h"
@@ -199,25 +198,21 @@ void CompositionTest::captureScreenComposition() {
     const Rect sourceCrop(0, 0, DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT);
     constexpr bool regionSampling = false;
 
-    auto renderArea =
-            DisplayRenderArea::create(mDisplay, sourceCrop, sourceCrop.getSize(),
-                                      ui::Dataspace::V0_SRGB,
-                                      RenderArea::Options::CAPTURE_SECURE_LAYERS |
-                                              RenderArea::Options::HINT_FOR_SEAMLESS_TRANSITION);
-
     auto getLayerSnapshotsFn = mFlinger.getLayerSnapshotsForScreenshotsFn(mDisplay->getLayerStack(),
                                                                           CaptureArgs::UNSET_UID);
 
     const uint32_t usage = GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN |
             GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE;
     mCaptureScreenBuffer =
-            std::make_shared<renderengine::mock::FakeExternalTexture>(renderArea->getReqWidth(),
-                                                                      renderArea->getReqHeight(),
+            std::make_shared<renderengine::mock::FakeExternalTexture>(sourceCrop.getSize().width,
+                                                                      sourceCrop.getSize().height,
                                                                       HAL_PIXEL_FORMAT_RGBA_8888, 1,
                                                                       usage);
 
-    auto future = mFlinger.renderScreenImpl(mDisplay, std::move(renderArea), getLayerSnapshotsFn,
-                                            mCaptureScreenBuffer, regionSampling);
+    auto future = mFlinger.renderScreenImpl(mDisplay, sourceCrop, ui::Dataspace::V0_SRGB,
+                                            getLayerSnapshotsFn, mCaptureScreenBuffer,
+                                            regionSampling, mDisplay->isSecure(),
+                                            /* seamlessTransition */ true);
     ASSERT_TRUE(future.valid());
     const auto fenceResult = future.get();
 
