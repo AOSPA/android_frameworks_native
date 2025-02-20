@@ -101,6 +101,7 @@ bitflags! {
 
 /// A rust enum representation of a MotionEvent action.
 #[repr(u32)]
+#[derive(Eq, PartialEq)]
 pub enum MotionAction {
     /// ACTION_DOWN
     Down = input_bindgen::AMOTION_EVENT_ACTION_DOWN,
@@ -190,6 +191,27 @@ impl MotionAction {
         let index = (action & input_bindgen::AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
             >> input_bindgen::AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
         (action_masked, index.try_into().unwrap())
+    }
+}
+
+bitflags! {
+    /// MotionEvent buttons.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    pub struct MotionButton: u32 {
+        /// Primary button (e.g. the left mouse button)
+        const Primary = input_bindgen::AMOTION_EVENT_BUTTON_PRIMARY;
+        /// Secondary button (e.g. the right mouse button)
+        const Secondary = input_bindgen::AMOTION_EVENT_BUTTON_SECONDARY;
+        /// Tertiary button (e.g. the middle mouse button)
+        const Tertiary = input_bindgen::AMOTION_EVENT_BUTTON_TERTIARY;
+        /// Back button
+        const Back = input_bindgen::AMOTION_EVENT_BUTTON_BACK;
+        /// Forward button
+        const Forward = input_bindgen::AMOTION_EVENT_BUTTON_FORWARD;
+        /// Primary stylus button
+        const StylusPrimary = input_bindgen::AMOTION_EVENT_BUTTON_STYLUS_PRIMARY;
+        /// Secondary stylus button
+        const StylusSecondary = input_bindgen::AMOTION_EVENT_BUTTON_STYLUS_SECONDARY;
     }
 }
 

@@ -163,10 +163,10 @@ private:
     void handleUnconsumedDeltaLocked(PointerControllerInterface& pc, const vec2& unconsumedDelta)
             REQUIRES(getLock());
 
-    std::optional<std::pair<const DisplayViewport*, float /*offset*/>> findDestinationDisplayLocked(
-            const ui::LogicalDisplayId sourceDisplayId,
-            const DisplayTopologyPosition sourceBoundary, float cursorOffset) const
-            REQUIRES(getLock());
+    std::optional<std::pair<const DisplayViewport*, float /*offsetPx*/>>
+    findDestinationDisplayLocked(const ui::LogicalDisplayId sourceDisplayId,
+                                 const DisplayTopologyPosition sourceBoundary,
+                                 int32_t sourceCursorOffsetPx) const REQUIRES(getLock());
 
     /* Topology is initialized with default-constructed value, which is an empty topology. Till we
      * receive setDisplayTopology call.

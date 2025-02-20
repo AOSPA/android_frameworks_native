@@ -24,8 +24,8 @@ mod keyboard_classifier;
 
 pub use data_store::{DataStore, DefaultFileReaderWriter};
 pub use input::{
-    DeviceClass, DeviceId, InputDevice, KeyboardType, ModifierState, MotionAction, MotionFlags,
-    Source,
+    DeviceClass, DeviceId, InputDevice, KeyboardType, ModifierState, MotionAction, MotionButton,
+    MotionFlags, Source,
 };
 pub use input_verifier::InputVerifier;
 pub use keyboard_classifier::KeyboardClassifier;
@@ -57,14 +57,17 @@ mod ffi {
         /// ```
         type InputVerifier;
         #[cxx_name = create]
-        fn create_input_verifier(name: String) -> Box<InputVerifier>;
+        fn create_input_verifier(name: String, verify_buttons: bool) -> Box<InputVerifier>;
+        #[allow(clippy::too_many_arguments)]
         fn process_movement(
             verifier: &mut InputVerifier,
             device_id: i32,
             source: u32,
             action: u32,
+            action_button: u32,
             pointer_properties: &[RustPointerProperties],
             flags: u32,
+            button_state: u32,
         ) -> String;
         fn reset_device(verifier: &mut InputVerifier, device_id: i32);
     }
@@ -115,17 +118,20 @@ mod ffi {
 
 use crate::ffi::{RustInputDeviceIdentifier, RustPointerProperties};
 
-fn create_input_verifier(name: String) -> Box<InputVerifier> {
-    Box::new(InputVerifier::new(&name, ffi::shouldLog("InputVerifierLogEvents")))
+fn create_input_verifier(name: String, verify_buttons: bool) -> Box<InputVerifier> {
+    Box::new(InputVerifier::new(&name, ffi::shouldLog("InputVerifierLogEvents"), verify_buttons))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_movement(
     verifier: &mut InputVerifier,
     device_id: i32,
     source: u32,
     action: u32,
+    action_button: u32,
     pointer_properties: &[RustPointerProperties],
     flags: u32,
+    button_state: u32,
 ) -> String {
     let motion_flags = MotionFlags::from_bits(flags);
     if motion_flags.is_none() {
@@ -135,12 +141,28 @@ fn process_movement(
             flags
         );
     }
+    let motion_action_button = MotionButton::from_bits(action_button);
+    if motion_action_button.is_none() {
+        panic!(
+            "The conversion of action button 0x{action_button:08x} failed, please check if some \
+             buttons need to be added to MotionButton."
+        );
+    }
+    let motion_button_state = MotionButton::from_bits(button_state);
+    if motion_button_state.is_none() {
+        panic!(
+            "The conversion of button state 0x{button_state:08x} failed, please check if some \
+             buttons need to be added to MotionButton."
+        );
+    }
     let result = verifier.process_movement(
         DeviceId(device_id),
         Source::from_bits(source).unwrap(),
         action,
+        motion_action_button.unwrap(),
         pointer_properties,
         motion_flags.unwrap(),
+        motion_button_state.unwrap(),
     );
     match result {
         Ok(()) => "".to_string(),

@@ -30,7 +30,7 @@
 
 #include "AsyncCallRecorder.h"
 #include "DisplayHardware/DisplayMode.h"
-#include "FrameTimeline.h"
+#include "FrameTimeline/FrameTimeline.h"
 #include "Scheduler/EventThread.h"
 #include "mock/MockVSyncDispatch.h"
 #include "mock/MockVSyncTracker.h"
@@ -270,7 +270,7 @@ void EventThreadTest::expectVsyncEventReceivedByConnection(
     ASSERT_TRUE(args.has_value()) << name << " did not receive an event for timestamp "
                                   << expectedTimestamp;
     const auto& event = std::get<0>(args.value());
-    EXPECT_EQ(DisplayEventReceiver::DISPLAY_EVENT_VSYNC, event.header.type)
+    EXPECT_EQ(DisplayEventType::DISPLAY_EVENT_VSYNC, event.header.type)
             << name << " did not get the correct event for timestamp " << expectedTimestamp;
     EXPECT_EQ(expectedTimestamp, event.header.timestamp)
             << name << " did not get the expected timestamp for timestamp " << expectedTimestamp;
@@ -344,7 +344,7 @@ void EventThreadTest::expectHotplugEventReceivedByConnection(PhysicalDisplayId e
     auto args = mConnectionEventCallRecorder.waitForCall();
     ASSERT_TRUE(args.has_value());
     const auto& event = std::get<0>(args.value());
-    EXPECT_EQ(DisplayEventReceiver::DISPLAY_EVENT_HOTPLUG, event.header.type);
+    EXPECT_EQ(DisplayEventType::DISPLAY_EVENT_HOTPLUG, event.header.type);
     EXPECT_EQ(expectedDisplayId, event.header.displayId);
     EXPECT_EQ(expectedConnected, event.hotplug.connected);
 }
@@ -355,7 +355,7 @@ void EventThreadTest::expectConfigChangedEventReceivedByConnection(
     auto args = mConnectionEventCallRecorder.waitForCall();
     ASSERT_TRUE(args.has_value());
     const auto& event = std::get<0>(args.value());
-    EXPECT_EQ(DisplayEventReceiver::DISPLAY_EVENT_MODE_CHANGE, event.header.type);
+    EXPECT_EQ(DisplayEventType::DISPLAY_EVENT_MODE_CHANGE, event.header.type);
     EXPECT_EQ(expectedDisplayId, event.header.displayId);
     EXPECT_EQ(expectedConfigId, event.modeChange.modeId);
     EXPECT_EQ(expectedVsyncPeriod, event.modeChange.vsyncPeriod);
@@ -367,7 +367,7 @@ void EventThreadTest::expectUidFrameRateMappingEventReceivedByConnection(
         auto args = mConnectionEventCallRecorder.waitForCall();
         ASSERT_TRUE(args.has_value());
         const auto& event = std::get<0>(args.value());
-        EXPECT_EQ(DisplayEventReceiver::DISPLAY_EVENT_FRAME_RATE_OVERRIDE, event.header.type);
+        EXPECT_EQ(DisplayEventType::DISPLAY_EVENT_FRAME_RATE_OVERRIDE, event.header.type);
         EXPECT_EQ(expectedDisplayId, event.header.displayId);
         EXPECT_EQ(uid, event.frameRateOverride.uid);
         EXPECT_EQ(frameRateHz, event.frameRateOverride.frameRateHz);
@@ -376,7 +376,7 @@ void EventThreadTest::expectUidFrameRateMappingEventReceivedByConnection(
     auto args = mConnectionEventCallRecorder.waitForCall();
     ASSERT_TRUE(args.has_value());
     const auto& event = std::get<0>(args.value());
-    EXPECT_EQ(DisplayEventReceiver::DISPLAY_EVENT_FRAME_RATE_OVERRIDE_FLUSH, event.header.type);
+    EXPECT_EQ(DisplayEventType::DISPLAY_EVENT_FRAME_RATE_OVERRIDE_FLUSH, event.header.type);
     EXPECT_EQ(expectedDisplayId, event.header.displayId);
 }
 
@@ -874,7 +874,7 @@ TEST_F(EventThreadTest, postHcpLevelsChanged) {
     auto args = mConnectionEventCallRecorder.waitForCall();
     ASSERT_TRUE(args.has_value());
     const auto& event = std::get<0>(args.value());
-    EXPECT_EQ(DisplayEventReceiver::DISPLAY_EVENT_HDCP_LEVELS_CHANGE, event.header.type);
+    EXPECT_EQ(DisplayEventType::DISPLAY_EVENT_HDCP_LEVELS_CHANGE, event.header.type);
     EXPECT_EQ(EXTERNAL_DISPLAY_ID, event.header.displayId);
     EXPECT_EQ(HDCP_V1, event.hdcpLevelsChange.connectedLevel);
     EXPECT_EQ(HDCP_V2, event.hdcpLevelsChange.maxLevel);

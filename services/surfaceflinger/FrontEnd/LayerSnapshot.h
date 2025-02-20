@@ -24,6 +24,7 @@
 #include "RequestedLayerState.h"
 #include "Scheduler/LayerInfo.h"
 #include "android-base/stringprintf.h"
+#include "compositionengine/LayerFE.h"
 
 namespace android::surfaceflinger::frontend {
 
@@ -163,7 +164,7 @@ struct LayerSnapshot : public compositionengine::LayerFECompositionState {
     // Returns a char summarizing the composition request
     // This function tries to maintain parity with planner::Plan chars.
     char classifyCompositionForDebug(
-            aidl::android::hardware::graphics::composer3::Composition compositionType) const;
+            const compositionengine::LayerFE::HwcLayerDebugState& hwcState) const;
 };
 
 } // namespace android::surfaceflinger::frontend

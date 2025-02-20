@@ -42,7 +42,9 @@ enum class DisplayTopologyPosition : int32_t {
  */
 struct DisplayTopologyAdjacentDisplay {
     ui::LogicalDisplayId displayId = ui::LogicalDisplayId::INVALID;
+    // Position of the adjacent display, relative to the source display.
     DisplayTopologyPosition position;
+    // The offset in DP of the adjacent display, relative to the source display.
     float offsetDp;
 };
 

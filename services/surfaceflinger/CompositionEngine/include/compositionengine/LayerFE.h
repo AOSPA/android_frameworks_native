@@ -19,6 +19,7 @@
 #include <optional>
 #include <ostream>
 #include <unordered_set>
+#include "aidl/android/hardware/graphics/composer3/Composition.h"
 #include "ui/LayerStack.h"
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
@@ -35,10 +36,6 @@
 #include <ui/FenceResult.h>
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
-
-namespace aidl::android::hardware::graphics::composer3 {
-enum class Composition;
-}
 
 namespace android {
 
@@ -182,10 +179,27 @@ public:
     // Whether the layer should be rendered with rounded corners.
     virtual bool hasRoundedCorners() const = 0;
     virtual void setWasClientComposed(const sp<Fence>&) {}
-    virtual void setHwcCompositionType(
-            aidl::android::hardware::graphics::composer3::Composition) = 0;
-    virtual aidl::android::hardware::graphics::composer3::Composition getHwcCompositionType()
-            const = 0;
+
+    // These fields are all copied from the last written HWC state.
+    // This state is only used for debugging purposes.
+    struct HwcLayerDebugState {
+        aidl::android::hardware::graphics::composer3::Composition lastCompositionType =
+                aidl::android::hardware::graphics::composer3::Composition::INVALID;
+        // Corresponds to passing an alpha of 0 to HWC2::Layer::setPlaneAlpha.
+        bool wasSkipped = false;
+
+        // Indicates whether the compositionengine::OutputLayer had properties overwritten.
+        // Not directly passed to HWC.
+        bool wasOverridden = false;
+
+        // Corresponds to the GraphicBuffer ID of the buffer passed to HWC2::Layer::setBuffer.
+        // This buffer corresponds to a CachedSet that the LayerFE was flattened to.
+        uint64_t overrideBufferId = 0;
+    };
+
+    // Used for debugging purposes, e.g. perfetto tracing, dumpsys.
+    virtual void setLastHwcState(const LayerFE::HwcLayerDebugState &hwcState) = 0;
+    virtual const HwcLayerDebugState &getLastHwcState() const = 0;
 
     virtual const gui::LayerMetadata* getMetadata() const = 0;
     virtual const gui::LayerMetadata* getRelativeMetadata() const = 0;

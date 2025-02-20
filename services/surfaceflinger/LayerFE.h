@@ -59,9 +59,10 @@ public:
     void setReleaseFence(const FenceResult& releaseFence) override;
     LayerFE::ReleaseFencePromiseStatus getReleaseFencePromiseStatus() override;
     void onPictureProfileCommitted() override;
-    void setHwcCompositionType(aidl::android::hardware::graphics::composer3::Composition) override;
-    aidl::android::hardware::graphics::composer3::Composition getHwcCompositionType()
-            const override;
+
+    // Used for debugging purposes, e.g. perfetto tracing, dumpsys.
+    void setLastHwcState(const HwcLayerDebugState &state) override;
+    const HwcLayerDebugState &getLastHwcState() const override;
 
 // QTI_BEGIN: 2024-07-26: Display: sf: use layer id instead of unique sequence
     int32_t getLayerId() const override;
@@ -97,8 +98,7 @@ private:
     std::string mName;
     std::promise<FenceResult> mReleaseFence;
     ReleaseFencePromiseStatus mReleaseFencePromiseStatus = ReleaseFencePromiseStatus::UNINITIALIZED;
-    aidl::android::hardware::graphics::composer3::Composition mLastHwcCompositionType =
-            aidl::android::hardware::graphics::composer3::Composition::INVALID;
+    HwcLayerDebugState mLastHwcState;
 };
 
 } // namespace android

@@ -193,7 +193,7 @@ struct DisplayIdGetter<PhysicalDisplayIdType<PhysicalDisplay>> {
     }
 };
 
-template <uint64_t displayId>
+template <VirtualDisplayId::BaseId displayId>
 struct DisplayIdGetter<HalVirtualDisplayIdType<displayId>> {
     static HalVirtualDisplayId get() { return HalVirtualDisplayId(displayId); }
 };

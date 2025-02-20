@@ -59,9 +59,9 @@ public:
     MOCK_CONST_METHOD0(getMetadata, gui::LayerMetadata*());
     MOCK_CONST_METHOD0(getRelativeMetadata, gui::LayerMetadata*());
     MOCK_METHOD0(onPictureProfileCommitted, void());
-    MOCK_METHOD(void, setHwcCompositionType,
-                (aidl::android::hardware::graphics::composer3::Composition), (override));
-    MOCK_METHOD(aidl::android::hardware::graphics::composer3::Composition, getHwcCompositionType,
+    MOCK_METHOD(void, setLastHwcState,
+                (const HwcLayerDebugState&), (override));
+    MOCK_METHOD(const HwcLayerDebugState&, getLastHwcState,
                 (), (const, override));
 // QTI_BEGIN: 2024-07-26: Display: sf: use layer id instead of unique sequence
 

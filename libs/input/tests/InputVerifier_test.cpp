@@ -49,9 +49,9 @@ TEST(InputVerifierTest, ProcessSourceClassPointer) {
 
     const Result<void> result =
             verifier.processMovement(/*deviceId=*/0, AINPUT_SOURCE_CLASS_POINTER,
-                                     AMOTION_EVENT_ACTION_DOWN,
+                                     AMOTION_EVENT_ACTION_DOWN, /*actionButton=*/0,
                                      /*pointerCount=*/properties.size(), properties.data(),
-                                     coords.data(), /*flags=*/0);
+                                     coords.data(), /*flags=*/0, /*buttonState=*/0);
     ASSERT_RESULT_OK(result);
 }
 

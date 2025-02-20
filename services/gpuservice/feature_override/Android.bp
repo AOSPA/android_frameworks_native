@@ -34,9 +34,7 @@ cc_defaults {
         "libbase",
         "libgraphicsenv",
         "liblog",
-    ],
-    static_libs: [
-        "libprotobuf-cpp-lite-ndk",
+        "libprotobuf-cpp-lite",
     ],
 }
 

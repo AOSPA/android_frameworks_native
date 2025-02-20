@@ -48,7 +48,7 @@ impl DebugStore {
     ///
     /// This constant is used as a part of the debug store's data format,
     /// allowing for version tracking and compatibility checks.
-    const ENCODE_VERSION: u32 = 2;
+    const ENCODE_VERSION: u32 = 3;
 
     /// Creates a new instance of `DebugStore` with specified event limit and maximum delay.
     fn new() -> Self {
@@ -123,9 +123,11 @@ impl DebugStore {
 
 impl fmt::Display for DebugStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Write the debug store header information
         let uptime_now = uptimeMillis();
         write!(f, "{},{},{}::", Self::ENCODE_VERSION, self.event_store.len(), uptime_now)?;
 
+        // Join events with a separator
         write!(
             f,
             "{}",
@@ -136,7 +138,10 @@ impl fmt::Display for DebugStore {
                 acc.push_str(&event.to_string());
                 acc
             })
-        )
+        )?;
+
+        // Write the debug store footer
+        write!(f, ";;")
     }
 }
 

@@ -110,8 +110,8 @@ binder::Status Client::mirrorDisplay(int64_t displayId, gui::CreateSurfaceResult
     LayerCreationArgs args(mFlinger.get(), sp<Client>::fromExisting(this),
                            "MirrorRoot-" + std::to_string(displayId), 0 /* flags */,
                            gui::LayerMetadata());
-    std::optional<DisplayId> id = DisplayId::fromValue(static_cast<uint64_t>(displayId));
-    status_t status = mFlinger->mirrorDisplay(*id, args, *outResult);
+    const DisplayId id = DisplayId::fromValue(static_cast<uint64_t>(displayId));
+    status_t status = mFlinger->mirrorDisplay(id, args, *outResult);
     return binderStatusFromStatusT(status);
 }
 

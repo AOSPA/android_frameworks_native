@@ -17,6 +17,7 @@
 #define LOG_TAG "PointerChoreographer"
 
 #include <android-base/logging.h>
+#include <android/configuration.h>
 #include <com_android_input_flags.h>
 #if defined(__ANDROID__)
 #include <gui/SurfaceComposerClient.h>
@@ -112,6 +113,17 @@ vec2 calculatePositionOnDestinationViewport(const DisplayViewport& destinationVi
         case DisplayTopologyPosition::BOTTOM:
             return {pointerOffset, 0}; // top edge
     }
+}
+
+// The standardised medium display density for which 1 px  = 1 dp
+constexpr int32_t DENSITY_MEDIUM = ACONFIGURATION_DENSITY_MEDIUM;
+
+inline float pxToDp(int px, int dpi) {
+    return static_cast<float>(px * DENSITY_MEDIUM) / static_cast<float>(dpi);
+}
+
+inline int dpToPx(float dp, int dpi) {
+    return static_cast<int>((dp * dpi) / DENSITY_MEDIUM);
 }
 
 } // namespace
@@ -385,8 +397,7 @@ void PointerChoreographer::handleUnconsumedDeltaLocked(PointerControllerInterfac
     pc.fade(PointerControllerInterface::Transition::IMMEDIATE);
     pc.setDisplayViewport(destinationViewport);
     vec2 destinationPosition =
-            calculatePositionOnDestinationViewport(destinationViewport,
-                                                   cursorOffset - destinationOffset,
+            calculatePositionOnDestinationViewport(destinationViewport, destinationOffset,
                                                    sourceBoundary);
 
     // Transform position back to un-rotated coordinate space before sending it to controller
@@ -990,10 +1001,10 @@ PointerChoreographer::ControllerConstructor PointerChoreographer::getStylusContr
     return ConstructorDelegate(std::move(ctor));
 }
 
-std::optional<std::pair<const DisplayViewport*, float /*offset*/>>
+std::optional<std::pair<const DisplayViewport*, float /*offsetPx*/>>
 PointerChoreographer::findDestinationDisplayLocked(const ui::LogicalDisplayId sourceDisplayId,
                                                    const DisplayTopologyPosition sourceBoundary,
-                                                   float cursorOffset) const {
+                                                   int32_t sourceCursorOffsetPx) const {
     const auto& sourceNode = mTopology.graph.find(sourceDisplayId);
     if (sourceNode == mTopology.graph.end()) {
         // Topology is likely out of sync with viewport info, wait for it to be updated
@@ -1004,22 +1015,32 @@ PointerChoreographer::findDestinationDisplayLocked(const ui::LogicalDisplayId so
         if (adjacentDisplay.position != sourceBoundary) {
             continue;
         }
-        const DisplayViewport* destinationViewport =
-                findViewportByIdLocked(adjacentDisplay.displayId);
-        if (destinationViewport == nullptr) {
+        const DisplayViewport* adjacentViewport = findViewportByIdLocked(adjacentDisplay.displayId);
+        if (adjacentViewport == nullptr) {
             // Topology is likely out of sync with viewport info, wait for them to be updated
             LOG(WARNING) << "Cannot find viewport for adjacent display "
                          << adjacentDisplay.displayId << "of source display " << sourceDisplayId;
             continue;
         }
-        // target position must be within target display boundary
-        const int32_t edgeSize = sourceBoundary == DisplayTopologyPosition::TOP ||
+        // As displays can have different densities we need to do all calculations in
+        // density-independent-pixels a.k.a. dp values.
+        const int sourceDensity = mTopology.displaysDensity.at(sourceDisplayId);
+        const int adjacentDisplayDensity = mTopology.displaysDensity.at(adjacentDisplay.displayId);
+        const float sourceCursorOffsetDp = pxToDp(sourceCursorOffsetPx, sourceDensity);
+        const int32_t edgeSizePx = sourceBoundary == DisplayTopologyPosition::TOP ||
                         sourceBoundary == DisplayTopologyPosition::BOTTOM
-                ? (destinationViewport->logicalRight - destinationViewport->logicalLeft)
-                : (destinationViewport->logicalBottom - destinationViewport->logicalTop);
-        if (cursorOffset >= adjacentDisplay.offsetDp &&
-            cursorOffset <= adjacentDisplay.offsetDp + edgeSize) {
-            return std::make_pair(destinationViewport, adjacentDisplay.offsetDp);
+                ? (adjacentViewport->logicalRight - adjacentViewport->logicalLeft)
+                : (adjacentViewport->logicalBottom - adjacentViewport->logicalTop);
+        const float adjacentEdgeSizeDp = pxToDp(edgeSizePx, adjacentDisplayDensity);
+        // Target position must be within target display boundary.
+        // Cursor should also be able to cross displays when only display corners are touching and
+        // there may be zero overlapping pixels. To accommodate this we have margin of one pixel
+        // around the end of the overlapping edge.
+        if (sourceCursorOffsetDp >= adjacentDisplay.offsetDp &&
+            sourceCursorOffsetDp <= adjacentDisplay.offsetDp + adjacentEdgeSizeDp) {
+            const int destinationOffsetPx =
+                    dpToPx(sourceCursorOffsetDp - adjacentDisplay.offsetDp, adjacentDisplayDensity);
+            return std::make_pair(adjacentViewport, destinationOffsetPx);
         }
     }
     return std::nullopt;

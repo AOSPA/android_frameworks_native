@@ -30,26 +30,15 @@ struct DisplayId {
     // Flag indicating that the display is virtual.
     static constexpr uint64_t FLAG_VIRTUAL = 1ULL << 63;
 
-    // TODO(b/162612135) Remove default constructor
+    // TODO: b/162612135 - Remove default constructor.
     DisplayId() = default;
     constexpr DisplayId(const DisplayId&) = default;
     DisplayId& operator=(const DisplayId&) = default;
 
+    static constexpr DisplayId fromValue(uint64_t value) { return DisplayId(value); }
     constexpr bool isVirtual() const { return value & FLAG_VIRTUAL; }
 
     uint64_t value;
-
-    // For deserialization.
-    static constexpr std::optional<DisplayId> fromValue(uint64_t);
-
-    // As above, but also upcast to Id.
-    template <typename Id>
-    static constexpr std::optional<Id> fromValue(uint64_t value) {
-        if (const auto id = Id::tryCast(DisplayId(value))) {
-            return id;
-        }
-        return {};
-    }
 
 protected:
     explicit constexpr DisplayId(uint64_t id) : value(id) {}
@@ -74,6 +63,9 @@ inline std::ostream& operator<<(std::ostream& stream, DisplayId displayId) {
 
 // DisplayId of a physical display, such as the internal display or externally connected display.
 struct PhysicalDisplayId : DisplayId {
+    // TODO: b/162612135 - Remove default constructor.
+    PhysicalDisplayId() = default;
+
     static constexpr ftl::Optional<PhysicalDisplayId> tryCast(DisplayId id) {
         if (id.isVirtual()) {
             return std::nullopt;
@@ -87,11 +79,6 @@ struct PhysicalDisplayId : DisplayId {
         return PhysicalDisplayId(FLAG_STABLE, port, manufacturerId, modelHash);
     }
 
-    // Returns a stable and consistent ID based exclusively on EDID information.
-    static constexpr PhysicalDisplayId fromEdidHash(uint64_t hashedEdid) {
-        return PhysicalDisplayId(hashedEdid);
-    }
-
     // Returns an unstable ID. If EDID is available using "fromEdid" is preferred.
     static constexpr PhysicalDisplayId fromPort(uint8_t port) {
         constexpr uint16_t kManufacturerId = 0;
@@ -99,8 +86,9 @@ struct PhysicalDisplayId : DisplayId {
         return PhysicalDisplayId(0, port, kManufacturerId, kModelHash);
     }
 
-    // TODO(b/162612135) Remove default constructor
-    PhysicalDisplayId() = default;
+    static constexpr PhysicalDisplayId fromValue(uint64_t value) {
+        return PhysicalDisplayId(value);
+    }
 
     constexpr uint8_t getPort() const { return static_cast<uint8_t>(value); }
 
@@ -131,8 +119,15 @@ struct VirtualDisplayId : DisplayId {
         return std::nullopt;
     }
 
+    static constexpr VirtualDisplayId fromValue(uint64_t value) {
+        return VirtualDisplayId(SkipVirtualFlag{}, value);
+    }
+
 protected:
+    struct SkipVirtualFlag {};
+    constexpr VirtualDisplayId(SkipVirtualFlag, uint64_t value) : DisplayId(value) {}
     explicit constexpr VirtualDisplayId(uint64_t value) : DisplayId(FLAG_VIRTUAL | value) {}
+
     explicit constexpr VirtualDisplayId(DisplayId other) : DisplayId(other) {}
 };
 
@@ -146,8 +141,12 @@ struct HalVirtualDisplayId : VirtualDisplayId {
         return std::nullopt;
     }
 
+    static constexpr HalVirtualDisplayId fromValue(uint64_t value) {
+        return HalVirtualDisplayId(SkipVirtualFlag{}, value);
+    }
+
 private:
-    explicit constexpr HalVirtualDisplayId(DisplayId other) : VirtualDisplayId(other) {}
+    using VirtualDisplayId::VirtualDisplayId;
 };
 
 struct GpuVirtualDisplayId : VirtualDisplayId {
@@ -160,8 +159,12 @@ struct GpuVirtualDisplayId : VirtualDisplayId {
         return std::nullopt;
     }
 
+    static constexpr GpuVirtualDisplayId fromValue(uint64_t value) {
+        return GpuVirtualDisplayId(SkipVirtualFlag{}, value);
+    }
+
 private:
-    explicit constexpr GpuVirtualDisplayId(DisplayId other) : VirtualDisplayId(other) {}
+    using VirtualDisplayId::VirtualDisplayId;
 };
 
 // HalDisplayId is the ID of a display which is managed by HWC.
@@ -177,19 +180,12 @@ struct HalDisplayId : DisplayId {
         return HalDisplayId(id);
     }
 
+    static constexpr HalDisplayId fromValue(uint64_t value) { return HalDisplayId(value); }
+
 private:
+    using DisplayId::DisplayId;
     explicit constexpr HalDisplayId(DisplayId other) : DisplayId(other) {}
 };
-
-constexpr std::optional<DisplayId> DisplayId::fromValue(uint64_t value) {
-    if (const auto id = fromValue<PhysicalDisplayId>(value)) {
-        return id;
-    }
-    if (const auto id = fromValue<VirtualDisplayId>(value)) {
-        return id;
-    }
-    return {};
-}
 
 static_assert(sizeof(DisplayId) == sizeof(uint64_t));
 static_assert(sizeof(HalDisplayId) == sizeof(uint64_t));

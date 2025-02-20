@@ -238,7 +238,7 @@ void Choreographer::scheduleLatestConfigRequest() {
         // socket should be atomic across processes.
         DisplayEventReceiver::Event event;
         event.header =
-                DisplayEventReceiver::Event::Header{DisplayEventReceiver::DISPLAY_EVENT_NULL,
+                DisplayEventReceiver::Event::Header{DisplayEventType::DISPLAY_EVENT_NULL,
                                                     PhysicalDisplayId::fromPort(0), systemTime()};
         injectEvent(event);
     }

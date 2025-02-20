@@ -1505,14 +1505,6 @@ TEST_F(LayerSnapshotTest, childIgnoreCornerRadiusOverridesParent) {
     EXPECT_EQ(getSnapshot({.id = 111})->roundedCorner.radius.x, RADIUS);
 }
 
-TEST_F(LayerSnapshotTest, ignoreShadows) {
-    static constexpr float SHADOW_RADIUS = 123.f;
-    setClientDrawnShadowRadius(1, SHADOW_RADIUS);
-    setShadowRadius(1, SHADOW_RADIUS);
-    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
-    EXPECT_EQ(getSnapshot({.id = 1})->shadowSettings.length, 0.f);
-}
-
 TEST_F(LayerSnapshotTest, setShadowRadius) {
     static constexpr float SHADOW_RADIUS = 123.f;
     setShadowRadius(1, SHADOW_RADIUS);
