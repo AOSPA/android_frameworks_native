@@ -387,11 +387,11 @@ void QtiSurfaceFlingerExtension::qtiUpdateDisplaysList(sp<DisplayDevice> display
 }
 
 void QtiSurfaceFlingerExtension::qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDisplayId,
-                                                                  hal::Connection connection,
+                                                                  const HWComposer::HotplugEvent hotplugEvent,
                                                                   PhysicalDisplayId id) {
     bool qtiIsInternalDisplay = (mQtiFlinger->getHwComposer().getDisplayConnectionType(id) ==
                                  ui::DisplayConnectionType::Internal);
-    bool qtiIsConnected = (connection == hal::Connection::CONNECTED);
+    bool qtiIsConnected = (hotplugEvent == HWComposer::HotplugEvent::Connected);
     auto qtiActiveConfigId = mQtiFlinger->getHwComposer().getActiveMode(id);
 
     if (!qtiIsConnected && mQtiInternalPresentationDisplays && qtiIsInternalDisplay) {
@@ -413,10 +413,10 @@ void QtiSurfaceFlingerExtension::qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDi
 }
 
 void QtiSurfaceFlingerExtension::qtiUpdateOnComposerHalHotplug(
-        hal::HWDisplayId hwcDisplayId, hal::Connection connection,
+        hal::HWDisplayId hwcDisplayId, const HWComposer::HotplugEvent hotplugEvent,
         std::optional<DisplayIdentificationInfo> info) {
     // QTI: Update QTI Extension's displays list when a display is disconnected
-    if (connection != hal::Connection::CONNECTED) {
+    if (hotplugEvent != HWComposer::HotplugEvent::Connected) {
         if (info) {
             ConditionalLock lock(mQtiFlinger->mStateLock,
                                  std::this_thread::get_id() != mQtiFlinger->mMainThreadId);

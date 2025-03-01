@@ -506,7 +506,7 @@ std::list<NotifyArgs> TouchpadInputMapper::processGestures(nsecs_t when, nsecs_t
     return out;
 }
 
-std::optional<ui::LogicalDisplayId> TouchpadInputMapper::getAssociatedDisplayId() {
+std::optional<ui::LogicalDisplayId> TouchpadInputMapper::getAssociatedDisplayId() const {
     return mDisplayId;
 }
 

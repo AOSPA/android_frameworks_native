@@ -104,7 +104,7 @@ sk_sp<SkImage> makeImage(SkSurface* surface, const SkRuntimeShaderBuilder& build
     paint.setShader(std::move(shader));
     paint.setBlendMode(SkBlendMode::kSrc);
     surface->getCanvas()->drawPaint(paint);
-    return surface->makeImageSnapshot();
+    return surface->makeTemporaryImage();
 }
 
 } // namespace

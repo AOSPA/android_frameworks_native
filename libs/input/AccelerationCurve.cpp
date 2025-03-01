@@ -47,9 +47,9 @@ constexpr std::array<double, 15> kSensitivityFactors = {1,  2,  4,  6,  7,  8,  
 // in faster pointer movements.
 //
 // The base gain is calculated using a linear mapping function that maps the
-// sensitivity range [-7, 7] to a base gain range [0.5, 2.0].
+// sensitivity range [-7, 7] to a base gain range [1.0, 3.5].
 double calculateBaseGain(int32_t sensitivity) {
-    return 0.5 + (sensitivity + 7) * (2.0 - 0.5) / (7 + 7);
+    return 1.0 + (sensitivity + 7) * (3.5 - 1.0) / (7 + 7);
 }
 
 } // namespace

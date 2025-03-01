@@ -41,9 +41,9 @@ TEST_F(HotplugTest, schedulesConfigureToProcessHotplugEvents) {
     const auto& pendingEvents = mFlinger.mutablePendingHotplugEvents();
     ASSERT_EQ(2u, pendingEvents.size());
     EXPECT_EQ(hwcDisplayId1, pendingEvents[0].hwcDisplayId);
-    EXPECT_EQ(Connection::CONNECTED, pendingEvents[0].connection);
+    EXPECT_EQ(HWComposer::HotplugEvent::Connected, pendingEvents[0].event);
     EXPECT_EQ(hwcDisplayId2, pendingEvents[1].hwcDisplayId);
-    EXPECT_EQ(Connection::DISCONNECTED, pendingEvents[1].connection);
+    EXPECT_EQ(HWComposer::HotplugEvent::Disconnected, pendingEvents[1].event);
 }
 
 TEST_F(HotplugTest, schedulesFrameToCommitDisplayTransaction) {
@@ -64,7 +64,7 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithIdentificationData) {
     using PrimaryDisplay = InnerDisplayVariant;
     PrimaryDisplay::setupHwcHotplugCallExpectations(this);
     PrimaryDisplay::setupHwcGetActiveConfigCallExpectations(this);
-    PrimaryDisplay::injectPendingHotplugEvent(this, Connection::CONNECTED);
+    PrimaryDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
     // TODO(b/241286146): Remove this unnecessary call.
     EXPECT_CALL(*mComposer,
@@ -80,7 +80,7 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithIdentificationData) {
     using ExternalDisplay = ExternalDisplayWithIdentificationVariant;
     ExternalDisplay::setupHwcHotplugCallExpectations(this);
     ExternalDisplay::setupHwcGetActiveConfigCallExpectations(this);
-    ExternalDisplay::injectPendingHotplugEvent(this, Connection::CONNECTED);
+    ExternalDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
     // TODO(b/241286146): Remove this unnecessary call.
     EXPECT_CALL(*mComposer,
@@ -123,7 +123,7 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithoutIdentificationData)
     using PrimaryDisplay = PrimaryDisplayVariant;
     PrimaryDisplay::setupHwcHotplugCallExpectations(this);
     PrimaryDisplay::setupHwcGetActiveConfigCallExpectations(this);
-    PrimaryDisplay::injectPendingHotplugEvent(this, Connection::CONNECTED);
+    PrimaryDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
     // TODO(b/241286146): Remove this unnecessary call.
     EXPECT_CALL(*mComposer,
@@ -139,7 +139,7 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithoutIdentificationData)
     using ExternalDisplay = ExternalDisplayWithIdentificationVariant;
     ExternalDisplay::setupHwcHotplugCallExpectations(this);
     ExternalDisplay::setupHwcGetActiveConfigCallExpectations(this);
-    ExternalDisplay::injectPendingHotplugEvent(this, Connection::CONNECTED);
+    ExternalDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
 
     // TODO(b/241286146): Remove this unnecessary call.
     EXPECT_CALL(*mComposer,
@@ -206,15 +206,15 @@ TEST_F(HotplugTest, ignoresDuplicateDisconnection) {
     // A single commit should be scheduled for both configure calls.
     EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame(_)).Times(1);
 
-    ExternalDisplay::injectPendingHotplugEvent(this, Connection::CONNECTED);
+    ExternalDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
     mFlinger.configure();
 
     EXPECT_TRUE(hasPhysicalHwcDisplay(ExternalDisplay::HWC_DISPLAY_ID));
 
     // Disconnecting a display that was already disconnected should be a no-op.
-    ExternalDisplay::injectPendingHotplugEvent(this, Connection::DISCONNECTED);
-    ExternalDisplay::injectPendingHotplugEvent(this, Connection::DISCONNECTED);
-    ExternalDisplay::injectPendingHotplugEvent(this, Connection::DISCONNECTED);
+    ExternalDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Disconnected);
+    ExternalDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Disconnected);
+    ExternalDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Disconnected);
     mFlinger.configure();
 
     // The display should be scheduled for removal during the next commit. At this point, it should
@@ -249,14 +249,14 @@ TEST_F(HotplugTest, rejectsHotplugIfFailedToLoadDisplayModes) {
 
     EXPECT_CALL(*mFlinger.scheduler(), scheduleFrame(_)).Times(1);
 
-    ExternalDisplay::injectPendingHotplugEvent(this, Connection::CONNECTED);
+    ExternalDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Connected);
     mFlinger.configure();
 
     // The hotplug should be rejected, so no HWComposer::DisplayData should be created.
     EXPECT_FALSE(hasPhysicalHwcDisplay(ExternalDisplay::HWC_DISPLAY_ID));
 
     // Disconnecting a display that does not exist should be a no-op.
-    ExternalDisplay::injectPendingHotplugEvent(this, Connection::DISCONNECTED);
+    ExternalDisplay::injectPendingHotplugEvent(this, HWComposer::HotplugEvent::Disconnected);
     mFlinger.configure();
 
     EXPECT_FALSE(hasPhysicalHwcDisplay(ExternalDisplay::HWC_DISPLAY_ID));

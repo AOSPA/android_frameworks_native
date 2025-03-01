@@ -48,6 +48,10 @@
 #define DEFAULT_MAX_BINDER_THREADS 15
 #define DEFAULT_ENABLE_ONEWAY_SPAM_DETECTION 1
 
+#if defined(__ANDROID__) || defined(__Fuchsia__)
+#define EXPECT_BINDER_OPEN_SUCCESS
+#endif
+
 #ifdef __ANDROID_VNDK__
 const char* kDefaultDriver = "/dev/vndbinder";
 #else
@@ -613,7 +617,7 @@ ProcessState::ProcessState(const char* driver)
         }
     }
 
-#ifdef __ANDROID__
+#if defined(EXPECT_BINDER_OPEN_SUCCESS)
     LOG_ALWAYS_FATAL_IF(!opened.ok(),
                         "Binder driver '%s' could not be opened. Error: %s. Terminating.",
                         driver, error.c_str());

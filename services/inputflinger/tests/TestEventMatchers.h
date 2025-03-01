@@ -32,7 +32,13 @@
 
 namespace android {
 
-namespace {
+struct PointF {
+    float x;
+    float y;
+    auto operator<=>(const PointF&) const = default;
+};
+
+namespace internal {
 
 template <typename T>
 static bool valuesMatch(T value1, T value2) {
@@ -43,17 +49,11 @@ static bool valuesMatch(T value1, T value2) {
     }
 }
 
-struct PointF {
-    float x;
-    float y;
-    auto operator<=>(const PointF&) const = default;
-};
-
 inline std::string pointFToString(const PointF& p) {
     return std::string("(") + std::to_string(p.x) + ", " + std::to_string(p.y) + ")";
 }
 
-} // namespace
+} // namespace internal
 
 /// Source
 class WithSourceMatcher {
@@ -453,8 +453,10 @@ public:
         }
 
         if (mPointers != actualPointers) {
-            *os << "expected pointers " << dumpMap(mPointers, constToString, pointFToString)
-                << ", but got " << dumpMap(actualPointers, constToString, pointFToString);
+            *os << "expected pointers "
+                << dumpMap(mPointers, constToString, internal::pointFToString)
+                << ", but got "
+                << dumpMap(actualPointers, constToString, internal::pointFToString);
             return false;
         }
         return true;
@@ -469,15 +471,17 @@ public:
         }
 
         if (mPointers != actualPointers) {
-            *os << "expected pointers " << dumpMap(mPointers, constToString, pointFToString)
-                << ", but got " << dumpMap(actualPointers, constToString, pointFToString);
+            *os << "expected pointers "
+                << dumpMap(mPointers, constToString, internal::pointFToString)
+                << ", but got "
+                << dumpMap(actualPointers, constToString, internal::pointFToString);
             return false;
         }
         return true;
     }
 
     void DescribeTo(std::ostream* os) const {
-        *os << "with pointers " << dumpMap(mPointers, constToString, pointFToString);
+        *os << "with pointers " << dumpMap(mPointers, constToString, internal::pointFToString);
     }
 
     void DescribeNegationTo(std::ostream* os) const { *os << "wrong pointers"; }
@@ -505,8 +509,8 @@ public:
         }
 
         if (mPointerIds != actualPointerIds) {
-            *os << "expected pointer ids " << dumpSet(mPointerIds) << ", but got "
-                << dumpSet(actualPointerIds);
+            *os << "expected pointer ids " << dumpContainer(mPointerIds) << ", but got "
+                << dumpContainer(actualPointerIds);
             return false;
         }
         return true;
@@ -519,14 +523,16 @@ public:
         }
 
         if (mPointerIds != actualPointerIds) {
-            *os << "expected pointer ids " << dumpSet(mPointerIds) << ", but got "
-                << dumpSet(actualPointerIds);
+            *os << "expected pointer ids " << dumpContainer(mPointerIds) << ", but got "
+                << dumpContainer(actualPointerIds);
             return false;
         }
         return true;
     }
 
-    void DescribeTo(std::ostream* os) const { *os << "with pointer ids " << dumpSet(mPointerIds); }
+    void DescribeTo(std::ostream* os) const {
+        *os << "with pointer ids " << dumpContainer(mPointerIds);
+    }
 
     void DescribeNegationTo(std::ostream* os) const { *os << "wrong pointer ids"; }
 
@@ -719,8 +725,9 @@ public:
         }
 
         const PointerCoords& coords = event.pointerCoords[mPointerIndex];
-        bool matches = valuesMatch(mRelX, coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X)) &&
-                valuesMatch(mRelY, coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y));
+        bool matches =
+            internal::valuesMatch(mRelX, coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X)) &&
+                internal::valuesMatch(mRelY, coords.getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y));
         if (!matches) {
             *os << "expected relative motion (" << mRelX << ", " << mRelY << ") at pointer index "
                 << mPointerIndex << ", but got ("

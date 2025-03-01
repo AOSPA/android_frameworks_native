@@ -28,6 +28,7 @@
 #include <stdio.h>
 
 #include "BuildFlags.h"
+#include "Constants.h"
 #include "file.h"
 
 //#undef ALOGV
@@ -62,9 +63,6 @@ std::atomic<uint32_t> BpBinder::sBinderProxyCount(0);
 std::atomic<uint32_t> BpBinder::sBinderProxyCountWarned(0);
 
 static constexpr uint32_t kBinderProxyCountWarnInterval = 5000;
-
-// Log any transactions for which the data exceeds this size
-#define LOG_TRANSACTIONS_OVER_SIZE (300 * 1024)
 
 enum {
     LIMIT_REACHED_MASK = 0x80000000,        // A flag denoting that the limit has been reached
@@ -403,9 +401,11 @@ status_t BpBinder::transact(
 
             status = IPCThreadState::self()->transact(binderHandle(), code, data, reply, flags);
         }
-        if (data.dataSize() > LOG_TRANSACTIONS_OVER_SIZE) {
+
+        if (data.dataSize() > binder::kLogTransactionsOverBytes) {
             RpcMutexUniqueLock _l(mLock);
-            ALOGW("Large outgoing transaction of %zu bytes, interface descriptor %s, code %d",
+            ALOGW("Large outgoing transaction of %zu bytes, interface descriptor %s, code %d was "
+                  "sent",
                   data.dataSize(), String8(mDescriptorCache).c_str(), code);
         }
 

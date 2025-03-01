@@ -603,7 +603,7 @@ TEST_F(SurfaceTest, TestGetLastDequeueStartTime) {
     ASSERT_GE(after, lastDequeueTime);
 }
 
-class FakeConsumer : public BnConsumerListener {
+class FakeConsumer : public IConsumerListener {
 public:
     void onFrameAvailable(const BufferItem& /*item*/) override {}
     void onBuffersReleased() override {}

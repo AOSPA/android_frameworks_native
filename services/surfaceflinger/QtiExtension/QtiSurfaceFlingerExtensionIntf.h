@@ -62,10 +62,11 @@ public:
     virtual void qtiUpdateDisplayExtension(uint32_t displayId, uint32_t configId,
                                            bool connected) = 0;
     virtual void qtiUpdateDisplaysList(sp<DisplayDevice> display, bool addDisplay) = 0;
-    virtual void qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDisplayId, hal::Connection connection,
+    virtual void qtiUpdateOnProcessDisplayHotplug(uint32_t hwcDisplayId, 
+                                                  const HWComposer::HotplugEvent hotplugEvent,
                                                   PhysicalDisplayId id) = 0;
     virtual void qtiUpdateOnComposerHalHotplug(hal::HWDisplayId hwcDisplayId,
-                                               hal::Connection connection,
+                                               const HWComposer::HotplugEvent hotplugEvent,
                                                std::optional<DisplayIdentificationInfo> info) = 0;
     virtual void qtiUpdateInternalDisplaysPresentationMode() = 0;
     virtual QtiHWComposerExtensionIntf* qtiGetHWComposerExtensionIntf() = 0;

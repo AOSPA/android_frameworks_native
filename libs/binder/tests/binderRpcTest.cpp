@@ -711,6 +711,35 @@ TEST_P(BinderRpc, OnewayCallExhaustion) {
     proc.proc->sessions.erase(proc.proc->sessions.begin() + 1);
 }
 
+// TODO(b/392717039): can we move this to universal tests?
+TEST_P(BinderRpc, SendTooLargeVector) {
+    if (GetParam().singleThreaded) {
+        GTEST_SKIP() << "Requires multi-threaded server to test one of the sessions crashing.";
+    }
+
+    auto proc = createRpcTestSocketServerProcess({.numSessions = 2});
+
+    // need a working transaction
+    EXPECT_EQ(OK, proc.rootBinder->pingBinder());
+
+    // see libbinder internal Constants.h
+    const size_t kTooLargeSize = 650 * 1024;
+    const std::vector<uint8_t> kTestValue(kTooLargeSize / sizeof(uint8_t), 42);
+
+    // TODO(b/392717039): Telling a server to allocate too much data currently causes the session to
+    // close since RpcServer treats any transaction error as a failure. We likely want to change
+    // this behavior to be a soft failure, since it isn't hard to keep track of this state.
+    sp<IBinderRpcTest> rootIface2 = interface_cast<IBinderRpcTest>(proc.proc->sessions.at(1).root);
+    std::vector<uint8_t> result;
+    status_t res = rootIface2->repeatBytes(kTestValue, &result).transactionError();
+
+    // TODO(b/392717039): consistent error results always
+    EXPECT_TRUE(res == -ECONNRESET || res == DEAD_OBJECT) << statusToString(res);
+
+    // died, so remove it for checks in destructor of proc
+    proc.proc->sessions.erase(proc.proc->sessions.begin() + 1);
+}
+
 TEST_P(BinderRpc, SessionWithIncomingThreadpoolDoesntLeak) {
     if (clientOrServerSingleThreaded()) {
         GTEST_SKIP() << "This test requires multiple threads";
@@ -2742,7 +2771,9 @@ INSTANTIATE_TEST_SUITE_P(
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
+#ifndef __ANDROID__
     __android_log_set_logger(__android_log_stderr_logger);
+#endif
 
     return RUN_ALL_TESTS();
 }

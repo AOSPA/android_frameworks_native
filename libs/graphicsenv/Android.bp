@@ -41,6 +41,7 @@ cc_library_shared {
     ],
 
     srcs: [
+        "FeatureOverrides.cpp",
         "GpuStatsInfo.cpp",
         "GraphicsEnv.cpp",
         "IGpuService.cpp",

@@ -167,14 +167,14 @@ sk_sp<SkImage> KawaseBlurDualFilter::generate(SkiaGpuContext* context, const uin
     }
     // Next the remaining downscale blur passes.
     for (int i = 0; i < filterPasses; i++) {
-        blurInto(surfaces[i + 1], surfaces[i]->makeImageSnapshot(), kWeights[1 + i] * step, 1.0f);
+        blurInto(surfaces[i + 1], surfaces[i]->makeTemporaryImage(), kWeights[1 + i] * step, 1.0f);
     }
     // Finally blur+upscale back to our original size.
     for (int i = filterPasses - 1; i >= 0; i--) {
-        blurInto(surfaces[i], surfaces[i + 1]->makeImageSnapshot(), kWeights[4 - i] * step,
+        blurInto(surfaces[i], surfaces[i + 1]->makeTemporaryImage(), kWeights[4 - i] * step,
                  std::min(1.0f, filterDepth - i));
     }
-    return surfaces[0]->makeImageSnapshot();
+    return surfaces[0]->makeTemporaryImage();
 }
 
 } // namespace skia

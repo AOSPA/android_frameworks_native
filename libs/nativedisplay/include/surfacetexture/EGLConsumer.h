@@ -120,18 +120,11 @@ public:
 
 protected:
     struct PendingRelease {
-        PendingRelease()
-              : isPending(false),
-                currentTexture(-1),
-                graphicBuffer(),
-                display(nullptr),
-                fence(nullptr) {}
+        PendingRelease() : isPending(false), currentTexture(-1), graphicBuffer() {}
 
         bool isPending;
         int currentTexture;
         sp<GraphicBuffer> graphicBuffer;
-        EGLDisplay display;
-        EGLSyncKHR fence;
     };
 
     /**
@@ -261,13 +254,16 @@ protected:
      * EGLConsumer maintains about a BufferQueue buffer slot.
      */
     struct EglSlot {
-        EglSlot() : mEglFence(EGL_NO_SYNC_KHR) {}
+#if !COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
 
+        EglSlot() : mEglFence(EGL_NO_SYNC_KHR) {}
+#endif
         /**
          * mEglImage is the EGLImage created from mGraphicBuffer.
          */
         sp<EglImage> mEglImage;
 
+#if !COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
         /**
          * mFence is the EGL sync object that must signal before the buffer
          * associated with this buffer slot may be dequeued. It is initialized
@@ -275,6 +271,7 @@ protected:
          * on a compile-time option) set to a new sync object in updateTexImage.
          */
         EGLSyncKHR mEglFence;
+#endif
     };
 
     /**

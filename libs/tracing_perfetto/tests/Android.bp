@@ -21,44 +21,12 @@ package {
     default_applicable_licenses: ["frameworks_native_license"],
 }
 
-cc_library_static {
-    name: "libtracing_perfetto_test_utils",
-    export_include_dirs: [
-        "include",
-    ],
-    static_libs: [
-        "libflagtest",
-        "libgmock",
-        "perfetto_trace_protos",
-    ],
-    cflags: [
-        "-Wall",
-        "-Werror",
-        "-Wno-enum-compare",
-        "-Wno-unused-function",
-    ],
-
-    srcs: [
-        "utils.cpp",
-    ],
-
-    shared_libs: [
-        "libperfetto_c",
-        "liblog",
-        "libprotobuf-cpp-lite",
-    ],
-    export_shared_lib_headers: [
-        "libperfetto_c",
-    ],
-}
-
 cc_test {
     name: "libtracing_perfetto_tests",
     static_libs: [
         "libflagtest",
         "libgmock",
         "perfetto_trace_protos",
-        "libtracing_perfetto_test_utils",
     ],
     cflags: [
         "-Wall",
@@ -68,12 +36,15 @@ cc_test {
         "android.os.flags-aconfig-cc-host",
         "libbase",
         "libperfetto_c",
-        "liblog",
         "libprotobuf-cpp-lite",
         "libtracing_perfetto",
     ],
     srcs: [
         "tracing_perfetto_test.cpp",
+        "utils.cpp",
+    ],
+    local_include_dirs: [
+        "include",
     ],
     test_suites: ["device-tests"],
 }

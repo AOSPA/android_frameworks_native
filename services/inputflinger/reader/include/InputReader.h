@@ -154,7 +154,7 @@ protected:
                 REQUIRES(mReader->mLock) override;
         InputReaderPolicyInterface* getPolicy() REQUIRES(mReader->mLock) override;
         EventHubInterface* getEventHub() REQUIRES(mReader->mLock) override;
-        int32_t getNextId() NO_THREAD_SAFETY_ANALYSIS override;
+        int32_t getNextId() const NO_THREAD_SAFETY_ANALYSIS override;
         void updateLedMetaState(int32_t metaState) REQUIRES(mReader->mLock) override;
         int32_t getLedMetaState() REQUIRES(mReader->mLock) REQUIRES(mLock) override;
         void setPreventingTouchpadTaps(bool prevent) REQUIRES(mReader->mLock)

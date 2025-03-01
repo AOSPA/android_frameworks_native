@@ -266,8 +266,6 @@ filegroup {
         "FenceMonitor.cpp",
         "Flags.cpp",
         "GLConsumer.cpp",
-        "IConsumerListener.cpp",
-        "IGraphicBufferConsumer.cpp",
         "IGraphicBufferProducer.cpp",
         "IProducerListener.cpp",
         "ISurfaceComposer.cpp",

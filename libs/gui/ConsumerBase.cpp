@@ -656,9 +656,13 @@ status_t ConsumerBase::addReleaseFenceLocked(int slot,
     return OK;
 }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
+status_t ConsumerBase::releaseBufferLocked(int slot, const sp<GraphicBuffer> graphicBuffer) {
+#else
 status_t ConsumerBase::releaseBufferLocked(
         int slot, const sp<GraphicBuffer> graphicBuffer,
         EGLDisplay display, EGLSyncKHR eglFence) {
+#endif
     if (mAbandoned) {
         CB_LOGE("releaseBufferLocked: ConsumerBase is abandoned!");
         return NO_INIT;
@@ -675,8 +679,12 @@ status_t ConsumerBase::releaseBufferLocked(
 
     CB_LOGV("releaseBufferLocked: slot=%d/%" PRIu64,
             slot, mSlots[slot].mFrameNumber);
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
+    status_t err = mConsumer->releaseBuffer(slot, mSlots[slot].mFrameNumber, mSlots[slot].mFence);
+#else
     status_t err = mConsumer->releaseBuffer(slot, mSlots[slot].mFrameNumber,
             display, eglFence, mSlots[slot].mFence);
+#endif
     if (err == IGraphicBufferConsumer::STALE_BUFFER_SLOT) {
         freeBufferLocked(slot);
     }

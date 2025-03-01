@@ -219,6 +219,9 @@ bitflags! {
                 MotionEventFlag::PRIVATE_FLAG_SUPPORTS_DIRECTIONAL_ORIENTATION.0 as u32;
         /// FLAG_IS_ACCESSIBILITY_EVENT
         const IS_ACCESSIBILITY_EVENT = MotionEventFlag::IS_ACCESSIBILITY_EVENT.0 as u32;
+        /// FLAG_INJECTED_FROM_ACCESSIBILITY_TOOL
+        const INJECTED_FROM_ACCESSIBILITY_TOOL =
+                MotionEventFlag::INJECTED_FROM_ACCESSIBILITY_TOOL.0 as u32;
         /// FLAG_TAINTED
         const TAINTED = MotionEventFlag::TAINTED.0 as u32;
         /// FLAG_TARGET_ACCESSIBILITY_FOCUS

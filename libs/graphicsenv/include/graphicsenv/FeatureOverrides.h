@@ -27,6 +27,7 @@ public:
     FeatureConfig() = default;
     FeatureConfig(const FeatureConfig&) = default;
     virtual ~FeatureConfig() = default;
+    std::string toString() const;
 
     std::string mFeatureName;
     bool mEnabled;
@@ -41,6 +42,7 @@ public:
     FeatureOverrides() = default;
     FeatureOverrides(const FeatureOverrides&) = default;
     virtual ~FeatureOverrides() = default;
+    std::string toString() const;
 
     std::vector<FeatureConfig> mGlobalFeatures;
     /* Key: Package Name, Value: Package's Feature Configs */

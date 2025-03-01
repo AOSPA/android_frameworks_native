@@ -209,6 +209,18 @@ TEST_P(BinderRpc, RepeatBinder) {
     EXPECT_EQ(0, MyBinderRpcSession::gNum);
 }
 
+TEST_P(BinderRpc, SendLargeVector) {
+    auto proc = createRpcTestSocketServerProcess({});
+
+    // see libbinder internal Constants.h
+    const size_t kLargeSize = 550 * 1024;
+    const std::vector<uint8_t> kTestValue(kLargeSize / sizeof(uint8_t), 42);
+
+    std::vector<uint8_t> result;
+    EXPECT_OK(proc.rootIface->repeatBytes(kTestValue, &result));
+    EXPECT_EQ(result, kTestValue);
+}
+
 TEST_P(BinderRpc, RepeatTheirBinder) {
     auto proc = createRpcTestSocketServerProcess({});
 

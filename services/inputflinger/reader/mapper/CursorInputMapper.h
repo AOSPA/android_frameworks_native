@@ -63,7 +63,7 @@ public:
 
     virtual int32_t getScanCodeState(uint32_t sourceMask, int32_t scanCode) override;
 
-    virtual std::optional<ui::LogicalDisplayId> getAssociatedDisplayId() override;
+    virtual std::optional<ui::LogicalDisplayId> getAssociatedDisplayId() const override;
 
 private:
     // Amount that trackball needs to move in order to generate a key event.
