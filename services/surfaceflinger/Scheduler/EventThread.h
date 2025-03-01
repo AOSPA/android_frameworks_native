@@ -144,7 +144,7 @@ public:
 
     // An elevated number of queued buffers in the server is detected. This propagates a
     // flag to Choreographer indicating that buffer stuffing recovery should begin.
-    virtual void addBufferStuffedUids(BufferStuffingMap bufferStuffedUids);
+    virtual void addBufferStuffedUids(BufferStuffingMap bufferStuffedUids) = 0;
 };
 
 struct IEventThreadCallback {

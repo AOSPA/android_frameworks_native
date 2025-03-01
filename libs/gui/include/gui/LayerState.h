@@ -505,11 +505,17 @@ struct DisplayState {
     Rect layerStackSpaceRect = Rect::EMPTY_RECT;
     Rect orientedDisplaySpaceRect = Rect::EMPTY_RECT;
 
-    // Exclusive to virtual displays: The sink surface into which the virtual display is rendered,
-    // and an optional resolution that overrides its default dimensions.
-    sp<IGraphicBufferProducer> surface;
+    // For physical displays, this is the resolution, which must match the active display mode. To
+    // change the resolution, the client must first call SurfaceControl.setDesiredDisplayModeSpecs
+    // with the new DesiredDisplayModeSpecs#defaultMode, then commit the matching width and height.
+    //
+    // For virtual displays, this is an optional resolution that overrides its default dimensions.
+    //
     uint32_t width = 0;
     uint32_t height = 0;
+
+    // For virtual displays, this is the sink surface into which the virtual display is rendered.
+    sp<IGraphicBufferProducer> surface;
 
     status_t write(Parcel& output) const;
     status_t read(const Parcel& input);

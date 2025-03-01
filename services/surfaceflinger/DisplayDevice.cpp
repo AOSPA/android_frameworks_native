@@ -281,9 +281,7 @@ void DisplayDevice::setFlags(uint32_t flags) {
     mFlags = flags;
 }
 
-void DisplayDevice::setDisplaySize(int width, int height) {
-    LOG_FATAL_IF(!isVirtual(), "Changing the display size is supported only for virtual displays.");
-    const auto size = ui::Size(width, height);
+void DisplayDevice::setDisplaySize(ui::Size size) {
     mCompositionDisplay->setDisplaySize(size);
     if (mRefreshRateOverlay) {
         mRefreshRateOverlay->setViewport(size);

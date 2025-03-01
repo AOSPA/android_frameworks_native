@@ -44,7 +44,8 @@ public:
     MOCK_METHOD(bool, allocateVirtualDisplay, (HalVirtualDisplayId, ui::Size, ui::PixelFormat*),
                 (override));
     MOCK_METHOD(void, allocatePhysicalDisplay,
-                (hal::HWDisplayId, PhysicalDisplayId, std::optional<ui::Size>), (override));
+                (hal::HWDisplayId, PhysicalDisplayId, uint8_t port, std::optional<ui::Size>),
+                (override));
 
     MOCK_METHOD(std::shared_ptr<HWC2::Layer>, createLayer, (HalDisplayId), (override));
     MOCK_METHOD(status_t, getDeviceCompositionChanges,

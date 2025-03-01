@@ -89,6 +89,7 @@ cc_test {
     ],
     header_libs: ["bpf_headers"],
     shared_libs: [
+        "gpuservice_multiuser_flags_c_lib",
         "libbase",
         "libbinder",
         "libbpf_bcc",

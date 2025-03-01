@@ -263,7 +263,6 @@ constexpr const char* const kManualInterfaces[] = {
         "android.utils.IMemory",
         "android.utils.IMemoryHeap",
         "com.android.car.procfsinspector.IProcfsInspector",
-        "com.android.internal.app.IAppOpsCallback",
         "com.android.internal.app.IAppOpsService",
         "com.android.internal.app.IBatteryStats",
         "com.android.internal.os.IResultReceiver",

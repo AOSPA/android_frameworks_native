@@ -103,7 +103,7 @@ public:
     virtual void handleMessage(const Message& message) override;
 
     static void initJVM(JNIEnv* env);
-    static Choreographer* getForThread();
+    static sp<Choreographer> getForThread();
     static void signalRefreshRateCallbacks(nsecs_t vsyncPeriod) EXCLUDES(gChoreographers.lock);
     static int64_t getStartTimeNanosForVsyncId(AVsyncId vsyncId) EXCLUDES(gChoreographers.lock);
     virtual ~Choreographer() override EXCLUDES(gChoreographers.lock);

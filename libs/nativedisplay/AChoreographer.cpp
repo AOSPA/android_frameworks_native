@@ -142,7 +142,7 @@ static inline AChoreographer* Choreographer_to_AChoreographer(Choreographer* cho
 }
 
 AChoreographer* AChoreographer_getInstance() {
-    return Choreographer_to_AChoreographer(Choreographer::getForThread());
+    return Choreographer_to_AChoreographer(Choreographer::getForThread().get());
 }
 
 void AChoreographer_postFrameCallback(AChoreographer* choreographer,

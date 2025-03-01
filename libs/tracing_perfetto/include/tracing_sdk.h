@@ -292,13 +292,8 @@ class DebugArg {
     arg_ = std::move(arg);
   }
 
-  ~DebugArg() {
-    free_string_value();
-  }
-
   void set_value(T value) {
     if constexpr (std::is_same_v<T, const char*>) {
-      free_string_value();
       arg_.value = value;
     } else if constexpr (std::is_same_v<T, int64_t>) {
       arg_.value = value;
@@ -321,16 +316,6 @@ class DebugArg {
   DISALLOW_COPY_AND_ASSIGN(DebugArg);
   TypeMap::type arg_;
   const std::string name_;
-
-  constexpr void free_string_value() {
-    if constexpr (std::is_same_v<typename TypeMap::type,
-                                 PerfettoTeHlExtraDebugArgString>) {
-      if (arg_.value) {
-        free((void*)arg_.value);
-        arg_.value = nullptr;
-      }
-    }
-  }
 };
 
 template <typename T>
@@ -375,10 +360,6 @@ class ProtoField {
     arg_ = std::move(arg);
   }
 
-  ~ProtoField() {
-    free_string_value();
-  }
-
   void set_value(uint32_t id, T value) {
     if constexpr (std::is_same_v<T, int64_t>) {
       arg_.header.id = id;
@@ -387,7 +368,6 @@ class ProtoField {
       arg_.header.id = id;
       arg_.value = value;
     } else if constexpr (std::is_same_v<T, const char*>) {
-      free_string_value();
       arg_.header.id = id;
       arg_.str = value;
     }
@@ -404,16 +384,6 @@ class ProtoField {
  private:
   DISALLOW_COPY_AND_ASSIGN(ProtoField);
   TypeMap::type arg_;
-
-  constexpr void free_string_value() {
-    if constexpr (std::is_same_v<typename TypeMap::type,
-                                 PerfettoTeHlProtoFieldCstr>) {
-      if (arg_.str) {
-        free((void*)arg_.str);
-        arg_.str = nullptr;
-      }
-    }
-  }
 };
 
 class ProtoFieldNested {

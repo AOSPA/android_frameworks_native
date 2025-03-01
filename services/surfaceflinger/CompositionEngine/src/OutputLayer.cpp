@@ -883,7 +883,8 @@ void OutputLayer::writeCompositionTypeToHWC(HWC2::Layer* hwcLayer,
                                             bool isPeekingThrough, bool skipLayer) {
     auto& outputDependentState = editState();
 
-    if (isClientCompositionForced(isPeekingThrough)) {
+    bool isCached = !skipLayer && outputDependentState.overrideInfo.buffer;
+    if (isClientCompositionForced(isPeekingThrough, isCached)) {
         // If we are forcing client composition, we need to tell the HWC
         requestedCompositionType = Composition::CLIENT;
     }
@@ -973,9 +974,12 @@ void OutputLayer::detectDisallowedCompositionTypeChange(Composition from, Compos
     }
 }
 
-bool OutputLayer::isClientCompositionForced(bool isPeekingThrough) const {
+bool OutputLayer::isClientCompositionForced(bool isPeekingThrough, bool isCached) const {
+    // If this layer was flattened into a CachedSet then it is not necessary for
+    // the GPU to compose it.
+    bool requiresClientDrawnRoundedCorners = !isCached && getLayerFE().hasRoundedCorners();
     return getState().forceClientComposition ||
-            (!isPeekingThrough && getLayerFE().hasRoundedCorners());
+            (!isPeekingThrough && requiresClientDrawnRoundedCorners);
 }
 
 void OutputLayer::applyDeviceCompositionTypeChange(Composition compositionType) {

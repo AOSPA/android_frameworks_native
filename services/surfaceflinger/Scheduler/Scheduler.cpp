@@ -17,11 +17,7 @@
 // QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
-// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
-// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
  * Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
-// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
-// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -1198,9 +1194,7 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
                     " to " + std::to_string(modeOpt->fps.getIntValue());
 // QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
             SFTRACE_NAME(str.c_str());
-// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 
-// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
             mPolicy.modeOpt = modeOpt;
             refreshRateChanged = true;
         } else if (consideredSignals.shouldEmitEvent()) {
@@ -1371,11 +1365,11 @@ void Scheduler::qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_v
   mLayerHistory.qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
 }
 // QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
 
-// QTI_BEGIN: 2024-02-13: Display: sf:avoid smomo override when game frame rate override is present
 bool Scheduler::isGameFrameRateOverridePresent() {
     return mLayerHistory.isGameFrameRateOverridePresent();
 }
-// QTI_END: 2024-02-13: Display: sf:avoid smomo override when game frame rate override is present
 
+// QTI_END: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
 } // namespace android::scheduler
