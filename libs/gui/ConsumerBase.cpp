@@ -110,7 +110,7 @@ void ConsumerBase::initialize(bool controlledByApp) {
     // dropping to 0 at the end of the ctor.  Since all we need is a wp<...>
     // that's what we create.
     wp<ConsumerListener> listener = static_cast<ConsumerListener*>(this);
-    sp<IConsumerListener> proxy = new BufferQueue::ProxyConsumerListener(listener);
+    sp<IConsumerListener> proxy = sp<BufferQueue::ProxyConsumerListener>::make(listener);
 
     status_t err = mConsumer->consumerConnect(proxy, controlledByApp);
     if (err != NO_ERROR) {
@@ -384,6 +384,26 @@ status_t ConsumerBase::detachBuffer(const sp<GraphicBuffer>& buffer) {
     return detachBufferLocked(slotIndex);
 }
 #endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+
+status_t ConsumerBase::addReleaseFence(const sp<GraphicBuffer> buffer, const sp<Fence>& fence) {
+    CB_LOGV("addReleaseFence");
+    Mutex::Autolock lock(mMutex);
+
+    if (mAbandoned) {
+        CB_LOGE("addReleaseFence: ConsumerBase is abandoned!");
+        return NO_INIT;
+    }
+    if (buffer == nullptr) {
+        return BAD_VALUE;
+    }
+
+    int slotIndex = getSlotForBufferLocked(buffer);
+    if (slotIndex == BufferQueue::INVALID_BUFFER_SLOT) {
+        return BAD_VALUE;
+    }
+
+    return addReleaseFenceLocked(slotIndex, buffer, fence);
+}
 
 status_t ConsumerBase::setDefaultBufferSize(uint32_t width, uint32_t height) {
     Mutex::Autolock _l(mMutex);

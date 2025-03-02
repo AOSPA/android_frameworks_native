@@ -20,8 +20,8 @@
  * Copyright (c) 2024-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
-
 // QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+
 #pragma once
 
 #include <android-base/thread_annotations.h>
@@ -107,9 +107,9 @@ public:
       refresh_rate_votes_ = refresh_rate_votes;
     }
 // QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
-// QTI_BEGIN: 2024-02-13: Display: sf:avoid smomo override when game frame rate override is present
+// QTI_BEGIN: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
     bool isGameFrameRateOverridePresent();
-// QTI_END: 2024-02-13: Display: sf:avoid smomo override when game frame rate override is present
+// QTI_END: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
 
     // Updates the frame rate override set by game mode intervention
     void updateGameModeFrameRateOverride(FrameRateOverride frameRateOverride) EXCLUDES(mLock);
@@ -181,9 +181,9 @@ private:
 // QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
     std::map<int, int> refresh_rate_votes_;
 // QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
-// QTI_BEGIN: 2024-02-13: Display: sf:avoid smomo override when game frame rate override is present
+// QTI_BEGIN: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
     bool mQtiGameFrameRateOverridePresent = false;
-// QTI_END: 2024-02-13: Display: sf:avoid smomo override when game frame rate override is present
+// QTI_END: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
 
     // A list to look up the game frame rate overrides
     // Each entry includes:

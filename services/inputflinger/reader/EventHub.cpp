@@ -351,6 +351,22 @@ static std::optional<std::array<LightColor, COLOR_NUM>> getColorIndexArray(
     return colors;
 }
 
+static base::Result<std::shared_ptr<PropertyMap>> loadConfiguration(
+        const InputDeviceIdentifier& ident) {
+    std::string configurationFile =
+            getInputDeviceConfigurationFilePathByDeviceIdentifier(ident,
+                                                                  InputDeviceConfigurationFileType::
+                                                                          CONFIGURATION);
+    if (configurationFile.empty()) {
+        ALOGD("No input device configuration file found for device '%s'.", ident.name.c_str());
+        return base::Result<std::shared_ptr<PropertyMap>>(nullptr);
+    }
+    base::Result<std::shared_ptr<PropertyMap>> propertyMap =
+            PropertyMap::load(configurationFile.c_str());
+
+    return propertyMap;
+}
+
 /**
  * Read country code information exposed through the sysfs path and convert it to Layout info.
  */
@@ -409,11 +425,22 @@ static std::unordered_map<int32_t /*batteryId*/, RawBatteryInfo> readBatteryConf
  *  Read information about lights exposed through the sysfs path.
  */
 static std::unordered_map<int32_t /*lightId*/, RawLightInfo> readLightsConfiguration(
-        const std::filesystem::path& sysfsRootPath) {
+        const std::filesystem::path& sysfsRootPath, const std::shared_ptr<PropertyMap>& config) {
     std::unordered_map<int32_t, RawLightInfo> lightInfos;
     int32_t nextLightId = 0;
-    // Check if device has any lights.
-    const auto& paths = findSysfsNodes(sysfsRootPath, SysfsClass::LEDS);
+    // Check if device has any lights.  If the Input Device Configuration file specifies any lights,
+    // use those in addition to searching the device node itself for lights.
+    std::vector<std::filesystem::path> paths = findSysfsNodes(sysfsRootPath, SysfsClass::LEDS);
+
+    if (config) {
+        auto additionalLights = config->getString("device.additionalSysfsLedsNode");
+        if (additionalLights) {
+            ALOGI("IDC specifies additional path for lights at '%s'",
+                  additionalLights.value().c_str());
+            paths.push_back(std::filesystem::path(additionalLights.value()));
+        }
+    }
+
     for (const auto& nodePath : paths) {
         RawLightInfo info;
         info.id = ++nextLightId;
@@ -532,17 +559,16 @@ std::ostream& operator<<(std::ostream& out, const std::optional<RawAbsoluteAxisI
 // --- EventHub::Device ---
 
 EventHub::Device::Device(int fd, int32_t id, std::string path, InputDeviceIdentifier identifier,
-                         std::shared_ptr<const AssociatedDevice> assocDev)
+                         std::shared_ptr<PropertyMap> config)
       : fd(fd),
         id(id),
         path(std::move(path)),
         identifier(std::move(identifier)),
         classes(0),
-        configuration(nullptr),
+        configuration(std::move(config)),
         virtualKeyMap(nullptr),
         ffEffectPlaying(false),
         ffEffectId(-1),
-        associatedDevice(std::move(assocDev)),
         controllerNumber(0),
         enabled(true),
         isVirtual(fd < 0),
@@ -694,26 +720,6 @@ bool EventHub::Device::hasKeycodeInternalLocked(int keycode) const {
         return true;
     }
     return false;
-}
-
-void EventHub::Device::loadConfigurationLocked() {
-    configurationFile =
-            getInputDeviceConfigurationFilePathByDeviceIdentifier(identifier,
-                                                                  InputDeviceConfigurationFileType::
-                                                                          CONFIGURATION);
-    if (configurationFile.empty()) {
-        ALOGD("No input device configuration file found for device '%s'.", identifier.name.c_str());
-    } else {
-        android::base::Result<std::unique_ptr<PropertyMap>> propertyMap =
-                PropertyMap::load(configurationFile.c_str());
-        if (!propertyMap.ok()) {
-            ALOGE("Error loading input device configuration file for device '%s'.  "
-                  "Using default configuration.",
-                  identifier.name.c_str());
-        } else {
-            configuration = std::move(*propertyMap);
-        }
-    }
 }
 
 bool EventHub::Device::loadVirtualKeyMapLocked() {
@@ -1611,7 +1617,7 @@ void EventHub::assignDescriptorLocked(InputDeviceIdentifier& identifier) {
 }
 
 std::shared_ptr<const EventHub::AssociatedDevice> EventHub::obtainAssociatedDeviceLocked(
-        const std::filesystem::path& devicePath) const {
+        const std::filesystem::path& devicePath, const std::shared_ptr<PropertyMap>& config) const {
     const std::optional<std::filesystem::path> sysfsRootPathOpt =
             getSysfsRootPath(devicePath.c_str());
     if (!sysfsRootPathOpt) {
@@ -1628,8 +1634,13 @@ std::shared_ptr<const EventHub::AssociatedDevice> EventHub::obtainAssociatedDevi
         if (!associatedDevice) {
             // Found matching associated device for the first time.
             associatedDevice = dev->associatedDevice;
-            // Reload this associated device if needed.
-            const auto reloadedDevice = AssociatedDevice(path);
+            // Reload this associated device if needed.  Use the base device
+            // config.  Note that this will essentially arbitrarily pick one
+            // Device as the base for the AssociatedDevice configuration.  If
+            // there are multiple Device's that have a configuration for the
+            // AssociatedDevice, only one configuration will be chosen and will
+            // be used for all other AssociatedDevices for the same sysfs path.
+            const auto reloadedDevice = AssociatedDevice(path, associatedDevice->baseDevConfig);
             if (reloadedDevice != *dev->associatedDevice) {
                 ALOGI("The AssociatedDevice changed for path '%s'. Using new AssociatedDevice: %s",
                       path.c_str(), associatedDevice->dump().c_str());
@@ -1642,16 +1653,18 @@ std::shared_ptr<const EventHub::AssociatedDevice> EventHub::obtainAssociatedDevi
 
     if (!associatedDevice) {
         // No existing associated device found for this path, so create a new one.
-        associatedDevice = std::make_shared<AssociatedDevice>(path);
+        associatedDevice = std::make_shared<AssociatedDevice>(path, config);
     }
 
     return associatedDevice;
 }
 
-EventHub::AssociatedDevice::AssociatedDevice(const std::filesystem::path& sysfsRootPath)
+EventHub::AssociatedDevice::AssociatedDevice(const std::filesystem::path& sysfsRootPath,
+                                             std::shared_ptr<PropertyMap> config)
       : sysfsRootPath(sysfsRootPath),
+        baseDevConfig(std::move(config)),
         batteryInfos(readBatteryConfiguration(sysfsRootPath)),
-        lightInfos(readLightsConfiguration(sysfsRootPath)),
+        lightInfos(readLightsConfiguration(sysfsRootPath, baseDevConfig)),
         layoutInfo(readLayoutConfiguration(sysfsRootPath)) {}
 
 std::string EventHub::AssociatedDevice::dump() const {
@@ -2337,11 +2350,21 @@ void EventHub::openDeviceLocked(const std::string& devicePath) {
     // Fill in the descriptor.
     assignDescriptorLocked(identifier);
 
+    // Load the configuration file for the device.
+    std::shared_ptr<PropertyMap> configuration = nullptr;
+    base::Result<std::shared_ptr<PropertyMap>> propertyMapResult = loadConfiguration(identifier);
+    if (!propertyMapResult.ok()) {
+        ALOGE("Error loading input device configuration file for device '%s'. "
+              "Using default configuration. Error: %s",
+              identifier.name.c_str(), propertyMapResult.error().message().c_str());
+    } else {
+        configuration = propertyMapResult.value();
+    }
+
     // Allocate device.  (The device object takes ownership of the fd at this point.)
     int32_t deviceId = mNextDeviceId++;
     std::unique_ptr<Device> device =
-            std::make_unique<Device>(fd, deviceId, devicePath, identifier,
-                                     obtainAssociatedDeviceLocked(devicePath));
+            std::make_unique<Device>(fd, deviceId, devicePath, identifier, configuration);
 
     ALOGV("add device %d: %s\n", deviceId, devicePath.c_str());
     ALOGV("  bus:        %04x\n"
@@ -2356,8 +2379,8 @@ void EventHub::openDeviceLocked(const std::string& devicePath) {
     ALOGV("  driver:     v%d.%d.%d\n", driverVersion >> 16, (driverVersion >> 8) & 0xff,
           driverVersion & 0xff);
 
-    // Load the configuration file for the device.
-    device->loadConfigurationLocked();
+    // Obtain the associated device, if any.
+    device->associatedDevice = obtainAssociatedDeviceLocked(devicePath, device->configuration);
 
     // Figure out the kinds of events the device reports.
     device->readDeviceBitMask(EVIOCGBIT(EV_KEY, 0), device->keyBitmask);
@@ -2664,7 +2687,8 @@ void EventHub::sysfsNodeChanged(const std::string& sysfsNodePath) {
             testedDevices.emplace(dev.associatedDevice, false);
             return false;
         }
-        auto reloadedDevice = AssociatedDevice(dev.associatedDevice->sysfsRootPath);
+        auto reloadedDevice = AssociatedDevice(dev.associatedDevice->sysfsRootPath,
+                                               dev.associatedDevice->baseDevConfig);
         const bool changed = *dev.associatedDevice != reloadedDevice;
         testedDevices.emplace(dev.associatedDevice, changed);
         return changed;

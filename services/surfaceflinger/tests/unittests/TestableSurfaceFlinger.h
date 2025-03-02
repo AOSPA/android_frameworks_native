@@ -469,7 +469,7 @@ public:
         ftl::FakeGuard guard(kMainThreadContext);
 
         ScreenCaptureResults captureResults;
-        auto displayState = std::optional{display->getCompositionDisplay()->getState()};
+        const auto& state = display->getCompositionDisplay()->getState();
         auto layers = getLayerSnapshotsFn();
 
         SurfaceFlinger::ScreenshotArgs screenshotArgs;
@@ -480,10 +480,14 @@ public:
         screenshotArgs.dataspace = dataspace;
         screenshotArgs.isSecure = isSecure;
         screenshotArgs.seamlessTransition = seamlessTransition;
+        screenshotArgs.displayBrightnessNits = state.displayBrightnessNits;
+        screenshotArgs.sdrWhitePointNits = state.sdrWhitePointNits;
+        screenshotArgs.renderIntent = state.renderIntent;
+        screenshotArgs.colorMode = state.colorMode;
 
         return mFlinger->renderScreenImpl(screenshotArgs, buffer, regionSampling,
                                           false /* grayscale */, false /* isProtected */,
-                                          captureResults, displayState, layers);
+                                          captureResults, layers);
     }
 
     auto getLayerSnapshotsForScreenshotsFn(ui::LayerStack layerStack, uint32_t uid) {

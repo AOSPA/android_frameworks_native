@@ -22,29 +22,17 @@
 
 #include <log/log.h>
 
+#include "Logging.h"
 #include "include/gestures.h"
 
 extern "C" {
-
-namespace {
-
-/**
- * Log details of each gesture output by the gestures library.
- * Enable this via "adb shell setprop log.tag.TouchpadInputMapperGestures DEBUG" (requires
- * restarting the shell)
- */
-const bool DEBUG_TOUCHPAD_GESTURES =
-        __android_log_is_loggable(ANDROID_LOG_DEBUG, "TouchpadInputMapperGestures",
-                                  ANDROID_LOG_INFO);
-
-} // namespace
 
 void gestures_log(int verb, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     if (verb == GESTURES_LOG_ERROR) {
         LOG_PRI_VA(ANDROID_LOG_ERROR, LOG_TAG, fmt, args);
-    } else if (DEBUG_TOUCHPAD_GESTURES) {
+    } else if (android::debugTouchpadGestures()) {
         if (verb == GESTURES_LOG_INFO) {
             LOG_PRI_VA(ANDROID_LOG_INFO, LOG_TAG, fmt, args);
         } else {

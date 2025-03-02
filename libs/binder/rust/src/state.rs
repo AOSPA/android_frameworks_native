@@ -28,8 +28,9 @@ impl ProcessState {
     /// `num_threads` additional threads as specified by
     /// [`set_thread_pool_max_thread_count`](Self::set_thread_pool_max_thread_count).
     ///
-    /// This should be done before creating any Binder client or server. If
-    /// neither this nor [`join_thread_pool`](Self::join_thread_pool) are
+    /// If this is called, it must be done before creating any Binder client or server.
+    ///
+    /// If neither this nor [`join_thread_pool`](Self::join_thread_pool) are
     /// called, then some things (such as callbacks and
     /// [`IBinder::link_to_death`](crate::IBinder::link_to_death)) will silently
     /// not work: the callbacks will be queued but never called as there is no

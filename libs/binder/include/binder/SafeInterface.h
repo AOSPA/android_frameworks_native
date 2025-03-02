@@ -79,7 +79,7 @@ public:
     template <typename T>
     typename std::enable_if<std::is_base_of<Flattenable<T>, T>::value, status_t>::type read(
             const Parcel& parcel, sp<T>* t) const {
-        *t = new T{};
+        *t = sp<T>::make();
         return callParcel("read(sp<Flattenable>)", [&]() { return parcel.read(*(t->get())); });
     }
     template <typename T>

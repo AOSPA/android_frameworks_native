@@ -59,7 +59,8 @@ status_t DisplayEventDispatcher::initialize() {
     }
 
     if (mLooper != nullptr) {
-        int rc = mLooper->addFd(mReceiver.getFd(), 0, Looper::EVENT_INPUT, this, NULL);
+        int rc = mLooper->addFd(mReceiver.getFd(), 0, Looper::EVENT_INPUT,
+                                sp<LooperCallback>::fromExisting(this), NULL);
         if (rc < 0) {
             return UNKNOWN_ERROR;
         }

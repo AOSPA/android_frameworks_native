@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "EventHub.h"
+#include "InputDevice.h"
 #include "InputListener.h"
 #include "InputReaderBase.h"
 #include "InputReaderContext.h"
@@ -127,7 +128,8 @@ public:
 protected:
     // These members are protected so they can be instrumented by test cases.
     virtual std::shared_ptr<InputDevice> createDeviceLocked(nsecs_t when, int32_t deviceId,
-                                                            const InputDeviceIdentifier& identifier)
+                                                            const InputDeviceIdentifier& identifier,
+                                                            ftl::Flags<InputDeviceClass> classes)
             REQUIRES(mLock);
 
     // With each iteration of the loop, InputReader reads and processes one incoming message from

@@ -180,10 +180,10 @@ public:
     void finishOp(int32_t op, int32_t uid, const String16& callingPackage,
             const std::optional<String16>& attributionTag);
     void startWatchingMode(int32_t op, const String16& packageName,
-            const sp<IAppOpsCallback>& callback);
+            const sp<com::android::internal::app::IAppOpsCallback>& callback);
     void startWatchingMode(int32_t op, const String16& packageName, int32_t flags,
-            const sp<IAppOpsCallback>& callback);
-    void stopWatchingMode(const sp<IAppOpsCallback>& callback);
+            const sp<com::android::internal::app::IAppOpsCallback>& callback);
+    void stopWatchingMode(const sp<com::android::internal::app::IAppOpsCallback>& callback);
     int32_t permissionToOpCode(const String16& permission);
     void setCameraAudioRestriction(int32_t mode);
 

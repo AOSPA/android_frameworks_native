@@ -117,6 +117,7 @@ cc_defaults {
         "libdumpsys",
         "libserviceutils",
         "android.tracing.flags_c_lib",
+        "perfetto_flags_c_lib",
     ],
 }
 

@@ -2108,8 +2108,7 @@ void QtiSurfaceFlingerExtension::qtiSetFrameBufferSizeForScaling(
           currentState.orientedDisplaySpaceRect.bottom);
 
     if (mQtiFlinger->mBootFinished) {
-        displayDevice->setDisplaySize(static_cast<int>(currentState.width),
-                                      static_cast<int>(currentState.height));
+        displayDevice->setDisplaySize(ui::Size(currentState.width, currentState.height));
         displayDevice->setProjection(currentState.orientation, currentState.layerStackSpaceRect,
                                      currentState.orientedDisplaySpaceRect);
 

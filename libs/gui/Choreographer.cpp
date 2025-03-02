@@ -15,6 +15,7 @@
  */
 
 // #define LOG_NDEBUG 0
+#include "utils/Looper.h"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <gui/Choreographer.h>
@@ -69,7 +70,7 @@ namespace android {
 
 Choreographer::Context Choreographer::gChoreographers;
 
-static thread_local Choreographer* gChoreographer;
+static thread_local sp<Choreographer> gChoreographer;
 
 void Choreographer::initJVM(JNIEnv* env) {
     env->GetJavaVM(&gJni.jvm);
@@ -86,21 +87,21 @@ void Choreographer::initJVM(JNIEnv* env) {
                              "()V");
 }
 
-Choreographer* Choreographer::getForThread() {
+sp<Choreographer> Choreographer::getForThread() {
     if (gChoreographer == nullptr) {
         sp<Looper> looper = Looper::getForThread();
         if (!looper.get()) {
             ALOGW("No looper prepared for thread");
             return nullptr;
         }
-        gChoreographer = new Choreographer(looper);
+        gChoreographer = sp<Choreographer>::make(looper);
         status_t result = gChoreographer->initialize();
         if (result != OK) {
             ALOGW("Failed to initialize");
             return nullptr;
         }
     }
-    return gChoreographer;
+    return gChoreographer.get();
 }
 
 Choreographer::Choreographer(const sp<Looper>& looper, const sp<IBinder>& layerHandle)
@@ -154,7 +155,7 @@ void Choreographer::postFrameCallbackDelayed(AChoreographer_frameCallback cb,
         if (std::this_thread::get_id() != mThreadId) {
             if (mLooper != nullptr) {
                 Message m{MSG_SCHEDULE_VSYNC};
-                mLooper->sendMessage(this, m);
+                mLooper->sendMessage(sp<MessageHandler>::fromExisting(this), m);
             } else {
                 scheduleVsync();
             }
@@ -164,7 +165,7 @@ void Choreographer::postFrameCallbackDelayed(AChoreographer_frameCallback cb,
     } else {
         if (mLooper != nullptr) {
             Message m{MSG_SCHEDULE_CALLBACKS};
-            mLooper->sendMessageDelayed(delay, this, m);
+            mLooper->sendMessageDelayed(delay, sp<MessageHandler>::fromExisting(this), m);
         } else {
             scheduleCallbacks();
         }
@@ -228,7 +229,7 @@ void Choreographer::unregisterRefreshRateCallback(AChoreographer_refreshRateCall
 void Choreographer::scheduleLatestConfigRequest() {
     if (mLooper != nullptr) {
         Message m{MSG_HANDLE_REFRESH_RATE_UPDATES};
-        mLooper->sendMessage(this, m);
+        mLooper->sendMessage(sp<MessageHandler>::fromExisting(this), m);
     } else {
         // If the looper thread is detached from Choreographer, then refresh rate
         // changes will be handled in AChoreographer_handlePendingEvents, so we

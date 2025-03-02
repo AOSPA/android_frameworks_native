@@ -24,6 +24,7 @@
 #include <android/os/InputEventInjectionSync.h>
 #include <gui/InputApplication.h>
 #include <gui/WindowInfo.h>
+#include <input/DisplayTopologyGraph.h>
 #include <input/InputDevice.h>
 #include <input/InputTransport.h>
 #include <unordered_map>
@@ -243,6 +244,11 @@ public:
      * Notify the dispatcher that the state of the input method connection changed.
      */
     virtual void setInputMethodConnectionIsActive(bool isActive) = 0;
+
+    /*
+     * Notify the dispatcher of the latest DisplayTopology.
+     */
+    virtual void setDisplayTopology(const DisplayTopologyGraph& displayTopologyGraph) = 0;
 };
 
 } // namespace android

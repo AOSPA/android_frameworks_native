@@ -27,7 +27,7 @@ pub use input::{
     DeviceClass, DeviceId, InputDevice, KeyboardType, ModifierState, MotionAction, MotionButton,
     MotionFlags, Source,
 };
-pub use input_verifier::InputVerifier;
+pub use input_verifier::{InputVerifier, NotifyMotionArgs};
 pub use keyboard_classifier::KeyboardClassifier;
 
 #[cxx::bridge(namespace = "android::input")]
@@ -133,37 +133,46 @@ fn process_movement(
     flags: u32,
     button_state: u32,
 ) -> String {
-    let motion_flags = MotionFlags::from_bits(flags);
-    if motion_flags.is_none() {
+    let Some(motion_flags) = MotionFlags::from_bits(flags) else {
         panic!(
             "The conversion of flags 0x{:08x} failed, please check if some flags have not been \
             added to MotionFlags.",
             flags
         );
-    }
-    let motion_action_button = MotionButton::from_bits(action_button);
-    if motion_action_button.is_none() {
+    };
+    let Some(motion_action_button) = MotionButton::from_bits(action_button) else {
         panic!(
             "The conversion of action button 0x{action_button:08x} failed, please check if some \
              buttons need to be added to MotionButton."
         );
-    }
-    let motion_button_state = MotionButton::from_bits(button_state);
-    if motion_button_state.is_none() {
+    };
+    let Some(motion_button_state) = MotionButton::from_bits(button_state) else {
         panic!(
             "The conversion of button state 0x{button_state:08x} failed, please check if some \
              buttons need to be added to MotionButton."
         );
+    };
+    let motion_action = MotionAction::from_code(action, motion_action_button);
+    if motion_action_button != MotionButton::empty() {
+        match motion_action {
+            MotionAction::ButtonPress { action_button: _ }
+            | MotionAction::ButtonRelease { action_button: _ } => {}
+            _ => {
+                return format!(
+                    "Invalid {motion_action} event: has action button {motion_action_button:?} but \
+                     is not a button action"
+                );
+            }
+        }
     }
-    let result = verifier.process_movement(
-        DeviceId(device_id),
-        Source::from_bits(source).unwrap(),
-        action,
-        motion_action_button.unwrap(),
+    let result = verifier.process_movement(NotifyMotionArgs {
+        device_id: DeviceId(device_id),
+        source: Source::from_bits(source).unwrap(),
+        action: motion_action,
         pointer_properties,
-        motion_flags.unwrap(),
-        motion_button_state.unwrap(),
-    );
+        flags: motion_flags,
+        button_state: motion_button_state,
+    });
     match result {
         Ok(()) => "".to_string(),
         Err(e) => e,
@@ -229,4 +238,45 @@ fn process_key(
         );
     }
     classifier.process_key(DeviceId(device_id), evdev_code, modifier_state.unwrap());
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::create_input_verifier;
+    use crate::process_movement;
+    use crate::RustPointerProperties;
+
+    const BASE_POINTER_PROPERTIES: [RustPointerProperties; 1] = [RustPointerProperties { id: 0 }];
+
+    #[test]
+    fn verify_nonbutton_action_with_action_button() {
+        let mut verifier = create_input_verifier("Test".to_string(), /*verify_buttons*/ true);
+        assert!(process_movement(
+            &mut verifier,
+            1,
+            input_bindgen::AINPUT_SOURCE_MOUSE,
+            input_bindgen::AMOTION_EVENT_ACTION_HOVER_ENTER,
+            input_bindgen::AMOTION_EVENT_BUTTON_PRIMARY,
+            &BASE_POINTER_PROPERTIES,
+            0,
+            0,
+        )
+        .contains("button action"));
+    }
+
+    #[test]
+    fn verify_nonbutton_action_with_action_button_and_button_state() {
+        let mut verifier = create_input_verifier("Test".to_string(), /*verify_buttons*/ true);
+        assert!(process_movement(
+            &mut verifier,
+            1,
+            input_bindgen::AINPUT_SOURCE_MOUSE,
+            input_bindgen::AMOTION_EVENT_ACTION_HOVER_ENTER,
+            input_bindgen::AMOTION_EVENT_BUTTON_PRIMARY,
+            &BASE_POINTER_PROPERTIES,
+            0,
+            input_bindgen::AMOTION_EVENT_BUTTON_PRIMARY,
+        )
+        .contains("button action"));
+    }
 }

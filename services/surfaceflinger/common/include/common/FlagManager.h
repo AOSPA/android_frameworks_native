@@ -107,6 +107,7 @@ public:
     bool restore_blur_step() const;
     bool skip_invisible_windows_in_input() const;
     bool stable_edid_ids() const;
+    bool synced_resolution_switch() const;
     bool trace_frame_rate_override() const;
     bool true_hdr_screenshots() const;
     bool use_known_refresh_rate_for_fps_consistency() const;

@@ -356,12 +356,10 @@ void RegionSamplingThread::captureSample() {
     screenshotArgs.seamlessTransition = false;
 
     std::vector<std::pair<Layer*, sp<LayerFE>>> layers;
-    auto displayState =
-            mFlinger.getSnapshotsFromMainThread(screenshotArgs, getLayerSnapshotsFn, layers);
-    FenceResult fenceResult =
-            mFlinger.captureScreenshot(screenshotArgs, buffer, kRegionSampling, kGrayscale,
-                                       kIsProtected, nullptr, displayState, layers)
-                    .get();
+    mFlinger.getSnapshotsFromMainThread(screenshotArgs, getLayerSnapshotsFn, layers);
+    FenceResult fenceResult = mFlinger.captureScreenshot(screenshotArgs, buffer, kRegionSampling,
+                                                         kGrayscale, kIsProtected, nullptr, layers)
+                                      .get();
     if (fenceResult.ok()) {
         fenceResult.value()->waitForever(LOG_TAG);
     }

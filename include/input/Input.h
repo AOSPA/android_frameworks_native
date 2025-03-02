@@ -316,6 +316,19 @@ struct PointerProperties;
 
 bool isStylusEvent(uint32_t source, const std::vector<PointerProperties>& properties);
 
+bool isStylusHoverEvent(uint32_t source, const std::vector<PointerProperties>& properties,
+                        int32_t action);
+
+bool isFromMouse(uint32_t source, ToolType tooltype);
+
+bool isFromTouchpad(uint32_t source, ToolType tooltype);
+
+bool isFromDrawingTablet(uint32_t source, ToolType tooltype);
+
+bool isHoverAction(int32_t action);
+
+bool isMouseOrTouchpad(uint32_t sources);
+
 /*
  * Flags that flow alongside events in the input dispatch system to help with certain
  * policy decisions such as waking from device sleep.

@@ -1008,6 +1008,34 @@ TEST_F(PointerChoreographerTest, ShowTouchesOverridesUnspecifiedStylusIcon) {
     pc->assertPointerIconSet(PointerIconStyle::TYPE_SPOT_HOVER);
 }
 
+TEST_F(PointerChoreographerTest, StylusHoverEnterFadesMouseOnDisplay) {
+    // Make sure there are PointerControllers for a mouse and a stylus.
+    mChoreographer.setStylusPointerIconEnabled(true);
+    mChoreographer.setDefaultMouseDisplayId(DISPLAY_ID);
+    mChoreographer.notifyInputDevicesChanged(
+            {/*id=*/0,
+             {generateTestDeviceInfo(DEVICE_ID, AINPUT_SOURCE_MOUSE, ui::LogicalDisplayId::INVALID),
+              generateTestDeviceInfo(SECOND_DEVICE_ID, AINPUT_SOURCE_STYLUS, DISPLAY_ID)}});
+    mChoreographer.setDisplayViewports(createViewports({DISPLAY_ID}));
+    mChoreographer.notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_HOVER_MOVE, AINPUT_SOURCE_MOUSE)
+                    .pointer(MOUSE_POINTER)
+                    .deviceId(DEVICE_ID)
+                    .displayId(ui::LogicalDisplayId::INVALID)
+                    .build());
+    auto mousePc = assertPointerControllerCreated(ControllerType::MOUSE);
+    ASSERT_TRUE(mousePc->isPointerShown());
+
+    // Start hovering with a stylus. This should fade the mouse cursor.
+    mChoreographer.notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_HOVER_ENTER, AINPUT_SOURCE_STYLUS)
+                    .pointer(STYLUS_POINTER)
+                    .deviceId(SECOND_DEVICE_ID)
+                    .displayId(DISPLAY_ID)
+                    .build());
+    ASSERT_FALSE(mousePc->isPointerShown());
+}
+
 using StylusFixtureParam =
         std::tuple</*name*/ std::string_view, /*source*/ uint32_t, ControllerType>;
 
@@ -1774,6 +1802,89 @@ TEST_F(PointerChoreographerTest, SetsPointerIconForMouseOnTwoDisplays) {
                                               SECOND_DEVICE_ID));
     secondMousePc->assertPointerIconSet(PointerIconStyle::TYPE_TEXT);
     firstMousePc->assertPointerIconNotSet();
+}
+
+TEST_F(PointerChoreographerTest, A11yPointerMotionFilterMouse) {
+    mChoreographer.setDisplayViewports(createViewports({DISPLAY_ID}));
+    mChoreographer.setDefaultMouseDisplayId(DISPLAY_ID);
+    mChoreographer.notifyInputDevicesChanged(
+            {/*id=*/0,
+             {generateTestDeviceInfo(DEVICE_ID, AINPUT_SOURCE_MOUSE,
+                                     ui::LogicalDisplayId::INVALID)}});
+    auto pc = assertPointerControllerCreated(ControllerType::MOUSE);
+    ASSERT_EQ(DISPLAY_ID, pc->getDisplayId());
+
+    pc->setPosition(100, 200);
+    mChoreographer.setAccessibilityPointerMotionFilterEnabled(true);
+
+    EXPECT_CALL(mMockPolicy,
+                filterPointerMotionForAccessibility(testing::Eq(vec2{100, 200}),
+                                                    testing::Eq(vec2{10.f, 20.f}),
+                                                    testing::Eq(DISPLAY_ID)))
+            .Times(1)
+            .WillOnce(testing::Return(vec2{4, 13}));
+
+    mChoreographer.notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_HOVER_MOVE, AINPUT_SOURCE_MOUSE)
+                    .pointer(MOUSE_POINTER)
+                    .deviceId(DEVICE_ID)
+                    .displayId(ui::LogicalDisplayId::INVALID)
+                    .build());
+
+    // Cursor position is decided by filtered delta, but pointer coord's relative values are kept.
+    pc->assertPosition(104, 213);
+    mTestListener.assertNotifyMotionWasCalled(AllOf(WithCoords(104, 213), WithDisplayId(DISPLAY_ID),
+                                                    WithCursorPosition(104, 213),
+                                                    WithRelativeMotion(10, 20)));
+}
+
+TEST_F(PointerChoreographerTest, A11yPointerMotionFilterTouchpad) {
+    mChoreographer.setDisplayViewports(createViewports({DISPLAY_ID}));
+    mChoreographer.setDefaultMouseDisplayId(DISPLAY_ID);
+    mChoreographer.notifyInputDevicesChanged(
+            {/*id=*/0,
+             {generateTestDeviceInfo(DEVICE_ID, AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_TOUCHPAD,
+                                     ui::LogicalDisplayId::INVALID)}});
+    auto pc = assertPointerControllerCreated(ControllerType::MOUSE);
+    ASSERT_EQ(DISPLAY_ID, pc->getDisplayId());
+
+    pc->setPosition(100, 200);
+    mChoreographer.setAccessibilityPointerMotionFilterEnabled(true);
+
+    EXPECT_CALL(mMockPolicy,
+                filterPointerMotionForAccessibility(testing::Eq(vec2{100, 200}),
+                                                    testing::Eq(vec2{10.f, 20.f}),
+                                                    testing::Eq(DISPLAY_ID)))
+            .Times(1)
+            .WillOnce(testing::Return(vec2{4, 13}));
+
+    mChoreographer.notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_HOVER_MOVE, AINPUT_SOURCE_MOUSE)
+                    .pointer(TOUCHPAD_POINTER)
+                    .deviceId(DEVICE_ID)
+                    .displayId(ui::LogicalDisplayId::INVALID)
+                    .build());
+
+    // Cursor position is decided by filtered delta, but pointer coord's relative values are kept.
+    pc->assertPosition(104, 213);
+    mTestListener.assertNotifyMotionWasCalled(AllOf(WithCoords(104, 213), WithDisplayId(DISPLAY_ID),
+                                                    WithCursorPosition(104, 213),
+                                                    WithRelativeMotion(10, 20)));
+}
+
+TEST_F(PointerChoreographerTest, A11yPointerMotionFilterNotFilterTouch) {
+    mChoreographer.notifyInputDevicesChanged(
+            {/*id=*/0, {generateTestDeviceInfo(DEVICE_ID, AINPUT_SOURCE_TOUCHSCREEN, DISPLAY_ID)}});
+    mChoreographer.setAccessibilityPointerMotionFilterEnabled(true);
+
+    EXPECT_CALL(mMockPolicy, filterPointerMotionForAccessibility).Times(0);
+
+    mChoreographer.notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                    .pointer(FIRST_TOUCH_POINTER)
+                    .deviceId(DEVICE_ID)
+                    .displayId(DISPLAY_ID)
+                    .build());
 }
 
 using SkipPointerScreenshotForPrivacySensitiveDisplaysFixtureParam =
