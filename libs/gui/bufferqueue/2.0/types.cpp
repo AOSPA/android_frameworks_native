@@ -147,13 +147,13 @@ bool b2h(sp<BFence> const& from, HFenceWrapper* to) {
 
 bool h2b(native_handle_t const* from, sp<BFence>* to) {
     if (!from || from->numFds == 0) {
-        *to = sp<::android::Fence>::make();
+        *to = new ::android::Fence();
         return true;
     }
     if (from->numFds != 1 || from->numInts != 0) {
         return false;
     }
-    *to = sp<BFence>::make(dup(from->data[0]));
+    *to = new BFence(dup(from->data[0]));
     return true;
 }
 
@@ -288,7 +288,7 @@ bool h2b(HardwareBuffer const& from, sp<GraphicBuffer>* to) {
             &hwBuffer) != OK) {
         return false;
     }
-    *to = sp<GraphicBuffer>::fromExisting(GraphicBuffer::fromAHardwareBuffer(hwBuffer));
+    *to = GraphicBuffer::fromAHardwareBuffer(hwBuffer);
     AHardwareBuffer_release(hwBuffer);
     return true;
 }

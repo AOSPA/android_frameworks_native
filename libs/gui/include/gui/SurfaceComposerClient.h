@@ -620,7 +620,7 @@ public:
         Transaction& setExtendedRangeBrightness(const sp<SurfaceControl>& sc,
                                                 float currentBufferRatio, float desiredRatio);
         Transaction& setDesiredHdrHeadroom(const sp<SurfaceControl>& sc, float desiredRatio);
-        Transaction& setLuts(const sp<SurfaceControl>& sc, const base::unique_fd& lutFd,
+        Transaction& setLuts(const sp<SurfaceControl>& sc, base::unique_fd&& lutFd,
                              const std::vector<int32_t>& offsets,
                              const std::vector<int32_t>& dimensions,
                              const std::vector<int32_t>& sizes,

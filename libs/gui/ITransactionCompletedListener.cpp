@@ -92,7 +92,7 @@ status_t FrameEventHistoryStats::readFromParcel(const Parcel* input) {
     if (err != NO_ERROR) return err;
 
     if (hasFence) {
-        gpuCompositionDoneFence = sp<Fence>::make();
+        gpuCompositionDoneFence = new Fence();
         err = input->read(*gpuCompositionDoneFence);
         if (err != NO_ERROR) return err;
     }
@@ -157,7 +157,7 @@ status_t SurfaceStats::readFromParcel(const Parcel* input) {
 
     SAFE_PARCEL(input->readBool, &hasFence);
     if (hasFence) {
-        previousReleaseFence = sp<Fence>::make();
+        previousReleaseFence = new Fence();
         SAFE_PARCEL(input->read, *previousReleaseFence);
     }
     bool hasTransformHint = false;
@@ -216,7 +216,7 @@ status_t TransactionStats::readFromParcel(const Parcel* input) {
         return err;
     }
     if (hasFence) {
-        presentFence = sp<Fence>::make();
+        presentFence = new Fence();
         err = input->read(*presentFence);
         if (err != NO_ERROR) {
             return err;

@@ -38,7 +38,7 @@ void trace_event(int type, const PerfettoTeCategory* perfettoTeCategory,
     PerfettoTeHlEmitImpl(perfettoTeCategory->impl, type,
                          type == PERFETTO_TE_TYPE_COUNTER ? nullptr : name,
                          extra->get());
-    extra->pop_extra();
+    extra->clear_extras();
   }
 }
 

@@ -333,7 +333,7 @@ status_t GLConsumer::releaseTexImage() {
         }
 
         if (mReleasedTexImage == nullptr) {
-            mReleasedTexImage = sp<EglImage>::make(getDebugTexImageBuffer());
+            mReleasedTexImage = new EglImage(getDebugTexImageBuffer());
         }
 
         mCurrentTexture = BufferQueue::INVALID_BUFFER_SLOT;
@@ -365,10 +365,10 @@ sp<GraphicBuffer> GLConsumer::getDebugTexImageBuffer() {
     if (CC_UNLIKELY(sReleasedTexImageBuffer == nullptr)) {
         // The first time, create the debug texture in case the application
         // continues to use it.
-        sp<GraphicBuffer> buffer =
-                sp<GraphicBuffer>::make(kDebugData.width, kDebugData.height, PIXEL_FORMAT_RGBA_8888,
-                                        DEFAULT_USAGE_FLAGS | GraphicBuffer::USAGE_SW_WRITE_RARELY,
-                                        "[GLConsumer debug texture]");
+        sp<GraphicBuffer> buffer = new GraphicBuffer(
+                kDebugData.width, kDebugData.height, PIXEL_FORMAT_RGBA_8888,
+                DEFAULT_USAGE_FLAGS | GraphicBuffer::USAGE_SW_WRITE_RARELY,
+                "[GLConsumer debug texture]");
         uint32_t* bits;
         buffer->lock(GraphicBuffer::USAGE_SW_WRITE_RARELY, reinterpret_cast<void**>(&bits));
         uint32_t stride = buffer->getStride();
@@ -400,7 +400,7 @@ status_t GLConsumer::acquireBufferLocked(BufferItem *item,
     // replaces any old EglImage with a new one (using the new buffer).
     if (item->mGraphicBuffer != nullptr) {
         int slot = item->mSlot;
-        mEglSlots[slot].mEglImage = sp<EglImage>::make(item->mGraphicBuffer);
+        mEglSlots[slot].mEglImage = new EglImage(item->mGraphicBuffer);
     }
 
     return NO_ERROR;
@@ -737,7 +737,7 @@ status_t GLConsumer::syncForReleaseLocked(EGLDisplay dpy) {
                         "fd: %#x", eglGetError());
                 return UNKNOWN_ERROR;
             }
-            sp<Fence> fence = sp<Fence>::make(fenceFd);
+            sp<Fence> fence(new Fence(fenceFd));
             status_t err = addReleaseFenceLocked(mCurrentTexture,
                     mCurrentTextureImage->graphicBuffer(), fence);
             if (err != OK) {

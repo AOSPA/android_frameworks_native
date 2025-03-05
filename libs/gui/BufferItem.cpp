@@ -215,14 +215,14 @@ status_t BufferItem::unflatten(
     FlattenableUtils::read(buffer, size, flags);
 
     if (flags & 1) {
-        mGraphicBuffer = sp<GraphicBuffer>::make();
+        mGraphicBuffer = new GraphicBuffer();
         status_t err = mGraphicBuffer->unflatten(buffer, size, fds, count);
         if (err) return err;
         size -= FlattenableUtils::align<4>(buffer);
     }
 
     if (flags & 2) {
-        mFence = sp<Fence>::make();
+        mFence = new Fence();
         status_t err = mFence->unflatten(buffer, size, fds, count);
         if (err) return err;
         size -= FlattenableUtils::align<4>(buffer);

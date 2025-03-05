@@ -47,7 +47,7 @@ status_t StreamSplitter::createSplitter(
         return BAD_VALUE;
     }
 
-    sp<StreamSplitter> splitter = sp<StreamSplitter>::make(inputQueue);
+    sp<StreamSplitter> splitter(new StreamSplitter(inputQueue));
     status_t status = splitter->mInput->consumerConnect(splitter, false);
     if (status == NO_ERROR) {
         splitter->mInput->setConsumerName(String8("StreamSplitter"));
@@ -82,8 +82,7 @@ status_t StreamSplitter::addOutput(
     Mutex::Autolock lock(mMutex);
 
     IGraphicBufferProducer::QueueBufferOutput queueBufferOutput;
-    sp<OutputListener> listener =
-            sp<OutputListener>::make(sp<StreamSplitter>::fromExisting(this), outputQueue);
+    sp<OutputListener> listener(new OutputListener(this, outputQueue));
     IInterface::asBinder(outputQueue)->linkToDeath(listener);
     status_t status = outputQueue->connect(listener, NATIVE_WINDOW_API_CPU,
             /* producerControlledByApp */ false, &queueBufferOutput);
@@ -141,7 +140,7 @@ void StreamSplitter::onFrameAvailable(const BufferItem& /* item */) {
 
     // Initialize our reference count for this buffer
     mBuffers.add(bufferItem.mGraphicBuffer->getId(),
-                 sp<BufferTracker>::make(bufferItem.mGraphicBuffer));
+            new BufferTracker(bufferItem.mGraphicBuffer));
 
     IGraphicBufferProducer::QueueBufferInput queueInput(
             bufferItem.mTimestamp, bufferItem.mIsAutoTimestamp,

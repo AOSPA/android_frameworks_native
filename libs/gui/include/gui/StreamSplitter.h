@@ -153,8 +153,6 @@ private:
         size_t mReleaseCount;
     };
 
-    friend class sp<StreamSplitter>;
-
     // Only called from createSplitter
     explicit StreamSplitter(const sp<IGraphicBufferConsumer>& inputQueue);
 

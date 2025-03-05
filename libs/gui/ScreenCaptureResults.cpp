@@ -18,7 +18,6 @@
 
 #include <private/gui/ParcelUtils.h>
 #include <ui/FenceResult.h>
-#include "ui/GraphicBuffer.h"
 
 namespace android::gui {
 
@@ -55,7 +54,7 @@ status_t ScreenCaptureResults::readFromParcel(const android::Parcel* parcel) {
     bool hasGraphicBuffer;
     SAFE_PARCEL(parcel->readBool, &hasGraphicBuffer);
     if (hasGraphicBuffer) {
-        buffer = sp<GraphicBuffer>::make();
+        buffer = new GraphicBuffer();
         SAFE_PARCEL(parcel->read, *buffer);
     }
 
@@ -80,7 +79,7 @@ status_t ScreenCaptureResults::readFromParcel(const android::Parcel* parcel) {
     bool hasGainmap;
     SAFE_PARCEL(parcel->readBool, &hasGainmap);
     if (hasGainmap) {
-        optionalGainMap = sp<GraphicBuffer>::make();
+        optionalGainMap = new GraphicBuffer();
         SAFE_PARCEL(parcel->read, *optionalGainMap);
     }
     SAFE_PARCEL(parcel->readFloat, &hdrSdrRatio);
