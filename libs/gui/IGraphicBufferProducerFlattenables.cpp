@@ -105,7 +105,7 @@ status_t IGraphicBufferProducer::QueueBufferInput::unflatten(
             : std::nullopt;
 #endif // COM_ANDROID_GRAPHICS_LIBUI_FLAGS_APPLY_PICTURE_PROFILES
 
-    fence = sp<Fence>::make();
+    fence = new Fence();
     status_t result = fence->unflatten(buffer, size, fds, count);
     if (result != NO_ERROR) {
         return result;
@@ -228,7 +228,7 @@ status_t IGraphicBufferProducer::RequestBufferOutput::unflatten(
     FlattenableUtils::read(fBuffer, size, result);
     int32_t isBufferNull = 0;
     FlattenableUtils::read(fBuffer, size, isBufferNull);
-    buffer = sp<GraphicBuffer>::make();
+    buffer = new GraphicBuffer();
     if (!isBufferNull) {
         status_t status = buffer->unflatten(fBuffer, size, fds, count);
         if (status != NO_ERROR) {
@@ -323,7 +323,7 @@ status_t IGraphicBufferProducer::DequeueBufferOutput::unflatten(
     FlattenableUtils::read(buffer, size, slot);
     FlattenableUtils::read(buffer, size, bufferAge);
 
-    fence = sp<Fence>::make();
+    fence = new Fence();
     status_t status = fence->unflatten(buffer, size, fds, count);
     if (status != NO_ERROR) {
         return status;
@@ -395,7 +395,7 @@ status_t IGraphicBufferProducer::CancelBufferInput::unflatten(
 
     FlattenableUtils::read(buffer, size, slot);
 
-    fence = sp<Fence>::make();
+    fence = new Fence();
     return fence->unflatten(buffer, size, fds, count);
 }
 

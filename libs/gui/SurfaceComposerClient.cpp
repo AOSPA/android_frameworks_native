@@ -133,7 +133,7 @@ bool ComposerService::connectLocked() {
         explicit DeathObserver(ComposerService& mgr) : mComposerService(mgr) { }
     };
 
-    mDeathObserver = sp<DeathObserver>::make(*const_cast<ComposerService*>(this));
+    mDeathObserver = new DeathObserver(*const_cast<ComposerService*>(this));
     IInterface::asBinder(mComposerService)->linkToDeath(mDeathObserver);
     return true;
 }
@@ -180,7 +180,7 @@ bool ComposerServiceAIDL::connectLocked() {
         explicit DeathObserver(ComposerServiceAIDL& mgr) : mComposerService(mgr) {}
     };
 
-    mDeathObserver = sp<DeathObserver>::make(*const_cast<ComposerServiceAIDL*>(this));
+    mDeathObserver = new DeathObserver(*const_cast<ComposerServiceAIDL*>(this));
     IInterface::asBinder(mComposerService)->linkToDeath(mDeathObserver);
     return true;
 }
@@ -212,7 +212,7 @@ public:
         DefaultComposerClient& dc = DefaultComposerClient::getInstance();
         Mutex::Autolock _l(dc.mLock);
         if (dc.mClient == nullptr) {
-            dc.mClient = sp<SurfaceComposerClient>::make();
+            dc.mClient = new SurfaceComposerClient;
         }
         return dc.mClient;
     }
@@ -409,7 +409,7 @@ void TransactionCompletedListener::setInstance(const sp<TransactionCompletedList
 sp<TransactionCompletedListener> TransactionCompletedListener::getInstance() {
     std::lock_guard<std::mutex> lock(sListenerInstanceMutex);
     if (sInstance == nullptr) {
-        sInstance = sp<TransactionCompletedListener>::make();
+        sInstance = new TransactionCompletedListener;
     }
     return sInstance;
 }
@@ -687,7 +687,7 @@ void TransactionCompletedListener::removeReleaseBufferCallback(
 
 SurfaceComposerClient::PresentationCallbackRAII::PresentationCallbackRAII(
         TransactionCompletedListener* tcl, int id) {
-    mTcl = sp<TransactionCompletedListener>::fromExisting(tcl);
+    mTcl = tcl;
     mId = id;
 }
 
@@ -701,7 +701,7 @@ TransactionCompletedListener::addTrustedPresentationCallback(TrustedPresentation
     std::scoped_lock<std::mutex> lock(mMutex);
     mTrustedPresentationCallbacks[id] =
             std::tuple<TrustedPresentationCallback, void*>(tpc, context);
-    return sp<SurfaceComposerClient::PresentationCallbackRAII>::make(this, id);
+    return new SurfaceComposerClient::PresentationCallbackRAII(this, id);
 }
 
 void TransactionCompletedListener::clearTrustedPresentationCallback(int id) {
@@ -753,7 +753,7 @@ void removeDeadBufferCallback(void* /*context*/, uint64_t graphicBufferId);
  */
 class BufferCache : public Singleton<BufferCache> {
 public:
-    BufferCache() : token(sp<BBinder>::make()) {}
+    BufferCache() : token(new BBinder()) {}
 
     sp<IBinder> getToken() {
         return IInterface::asBinder(TransactionCompletedListener::getIInstance());
@@ -1386,7 +1386,7 @@ status_t SurfaceComposerClient::Transaction::apply(bool synchronous, bool oneWay
     return binderStatus;
 }
 
-sp<IBinder> SurfaceComposerClient::Transaction::sApplyToken = sp<BBinder>::make();
+sp<IBinder> SurfaceComposerClient::Transaction::sApplyToken = new BBinder();
 
 std::mutex SurfaceComposerClient::Transaction::sApplyTokenMutex;
 
@@ -1982,9 +1982,9 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setDesir
 }
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setLuts(
-        const sp<SurfaceControl>& sc, const base::unique_fd& lutFd,
-        const std::vector<int32_t>& offsets, const std::vector<int32_t>& dimensions,
-        const std::vector<int32_t>& sizes, const std::vector<int32_t>& samplingKeys) {
+        const sp<SurfaceControl>& sc, base::unique_fd&& lutFd, const std::vector<int32_t>& offsets,
+        const std::vector<int32_t>& dimensions, const std::vector<int32_t>& sizes,
+        const std::vector<int32_t>& samplingKeys) {
     layer_state_t* s = getLayerState(sc);
     if (!s) {
         mStatus = BAD_INDEX;
@@ -1993,8 +1993,8 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setLuts(
 
     s->what |= layer_state_t::eLutsChanged;
     if (lutFd.ok()) {
-        s->luts = std::make_shared<gui::DisplayLuts>(base::unique_fd(dup(lutFd.get())), offsets,
-                                                     dimensions, sizes, samplingKeys);
+        s->luts = std::make_shared<gui::DisplayLuts>(std::move(lutFd), offsets, dimensions, sizes,
+                                                     samplingKeys);
     } else {
         s->luts = nullptr;
     }
@@ -2712,10 +2712,9 @@ status_t SurfaceComposerClient::createSurfaceChecked(const String8& name, uint32
         }
         ALOGE_IF(err, "SurfaceComposerClient::createSurface error %s", strerror(-err));
         if (err == NO_ERROR) {
-            *outSurface = sp<SurfaceControl>::make(sp<SurfaceComposerClient>::fromExisting(this),
-                                                   result.handle, result.layerId,
-                                                   toString(result.layerName), w, h, format,
-                                                   result.transformHint, flags);
+            *outSurface = new SurfaceControl(this, result.handle, result.layerId,
+                                             toString(result.layerName), w, h, format,
+                                             result.transformHint, flags);
         }
     }
     return err;
@@ -2731,8 +2730,7 @@ sp<SurfaceControl> SurfaceComposerClient::mirrorSurface(SurfaceControl* mirrorFr
     const binder::Status status = mClient->mirrorSurface(mirrorFromHandle, &result);
     const status_t err = statusTFromBinderStatus(status);
     if (err == NO_ERROR) {
-        return sp<SurfaceControl>::make(sp<SurfaceComposerClient>::fromExisting(this),
-                                        result.handle, result.layerId, toString(result.layerName));
+        return new SurfaceControl(this, result.handle, result.layerId, toString(result.layerName));
     }
     return nullptr;
 }
@@ -2742,8 +2740,7 @@ sp<SurfaceControl> SurfaceComposerClient::mirrorDisplay(DisplayId displayId) {
     const binder::Status status = mClient->mirrorDisplay(displayId.value, &result);
     const status_t err = statusTFromBinderStatus(status);
     if (err == NO_ERROR) {
-        return sp<SurfaceControl>::make(sp<SurfaceComposerClient>::fromExisting(this),
-                                        result.handle, result.layerId, toString(result.layerName));
+        return new SurfaceControl(this, result.handle, result.layerId, toString(result.layerName));
     }
     return nullptr;
 }

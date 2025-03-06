@@ -971,7 +971,7 @@ inline HGraphicBufferProducer::DisconnectMode toHDisconnectMode(
 // H2BGraphicBufferProducer
 
 status_t H2BGraphicBufferProducer::requestBuffer(int slot, sp<GraphicBuffer>* buf) {
-    *buf = sp<GraphicBuffer>::make();
+    *buf = new GraphicBuffer();
     status_t fnStatus;
     status_t transStatus = toStatusT(mBase->requestBuffer(
             static_cast<int32_t>(slot),
@@ -999,7 +999,7 @@ status_t H2BGraphicBufferProducer::dequeueBuffer(int* slot, sp<Fence>* fence, ui
                                                  uint32_t h, ::android::PixelFormat format,
                                                  uint64_t usage, uint64_t* outBufferAge,
                                                  FrameEventHistoryDelta* outTimestamps) {
-    *fence = sp<Fence>::make();
+    *fence = new Fence();
     status_t fnStatus;
     status_t transStatus = toStatusT(mBase->dequeueBuffer(
             w, h, static_cast<PixelFormat>(format), uint32_t(usage),
@@ -1035,8 +1035,8 @@ status_t H2BGraphicBufferProducer::detachBuffer(int slot) {
 
 status_t H2BGraphicBufferProducer::detachNextBuffer(
         sp<GraphicBuffer>* outBuffer, sp<Fence>* outFence) {
-    *outBuffer = sp<GraphicBuffer>::make();
-    *outFence = sp<Fence>::make();
+    *outBuffer = new GraphicBuffer();
+    *outFence = new Fence();
     status_t fnStatus;
     status_t transStatus = toStatusT(mBase->detachNextBuffer(
             [&fnStatus, outBuffer, outFence] (
@@ -1127,8 +1127,8 @@ int H2BGraphicBufferProducer::query(int what, int* value) {
 status_t H2BGraphicBufferProducer::connect(
         const sp<IProducerListener>& listener, int api,
         bool producerControlledByApp, QueueBufferOutput* output) {
-    sp<HProducerListener> tListener =
-            listener == nullptr ? nullptr : sp<B2HProducerListener>::make(listener);
+    sp<HProducerListener> tListener = listener == nullptr ?
+            nullptr : new B2HProducerListener(listener);
     status_t fnStatus;
     status_t transStatus = toStatusT(mBase->connect(
             tListener, static_cast<int32_t>(api), producerControlledByApp,
@@ -1205,13 +1205,13 @@ status_t H2BGraphicBufferProducer::getLastQueuedBuffer(
                     hidl_handle const& fence,
                     hidl_array<float, 16> const& transformMatrix) {
                 fnStatus = toStatusT(status);
-                *outBuffer = sp<GraphicBuffer>::make();
+                *outBuffer = new GraphicBuffer();
                 if (!convertTo(outBuffer->get(), buffer)) {
                     ALOGE("H2BGraphicBufferProducer::getLastQueuedBuffer - "
                             "Invalid output buffer");
                     fnStatus = fnStatus == NO_ERROR ? BAD_VALUE : fnStatus;
                 }
-                *outFence = sp<Fence>::make();
+                *outFence = new Fence();
                 if (!convertTo(outFence->get(), fence)) {
                     ALOGE("H2BGraphicBufferProducer::getLastQueuedBuffer - "
                             "Invalid output fence");

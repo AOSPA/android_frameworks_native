@@ -110,7 +110,7 @@ void ConsumerBase::initialize(bool controlledByApp) {
     // dropping to 0 at the end of the ctor.  Since all we need is a wp<...>
     // that's what we create.
     wp<ConsumerListener> listener = static_cast<ConsumerListener*>(this);
-    sp<IConsumerListener> proxy = sp<BufferQueue::ProxyConsumerListener>::make(listener);
+    sp<IConsumerListener> proxy = new BufferQueue::ProxyConsumerListener(listener);
 
     status_t err = mConsumer->consumerConnect(proxy, controlledByApp);
     if (err != NO_ERROR) {

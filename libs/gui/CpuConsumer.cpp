@@ -230,7 +230,7 @@ status_t CpuConsumer::unlockBuffer(const LockedBuffer &nativeBuffer) {
         return err;
     }
 
-    sp<Fence> fence(fenceFd >= 0 ? sp<Fence>::make(fenceFd) : Fence::NO_FENCE);
+    sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
     addReleaseFenceLocked(ab.mSlot, ab.mGraphicBuffer, fence);
     releaseBufferLocked(ab.mSlot, ab.mGraphicBuffer);
 

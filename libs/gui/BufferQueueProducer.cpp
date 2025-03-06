@@ -722,11 +722,11 @@ status_t BufferQueueProducer::dequeueBuffer(int* outSlot, sp<android::Fence>* ou
                 .requestorName = {mConsumerName.c_str(), mConsumerName.size()},
                 .extras = std::move(tempOptions),
         };
-        sp<GraphicBuffer> graphicBuffer = sp<GraphicBuffer>::make(allocRequest);
+        sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(allocRequest);
 #else
         sp<GraphicBuffer> graphicBuffer =
-                sp<GraphicBuffer>::make(width, height, format, BQ_LAYER_COUNT, usage,
-                                        std::string{mConsumerName.c_str(), mConsumerName.size()});
+                new GraphicBuffer(width, height, format, BQ_LAYER_COUNT, usage,
+                                  {mConsumerName.c_str(), mConsumerName.size()});
 #endif
 
         status_t error = graphicBuffer->initCheck();
@@ -1502,7 +1502,7 @@ status_t BufferQueueProducer::connect(const sp<IProducerListener>& listener,
 #ifndef NO_BINDER
                 if (IInterface::asBinder(listener)->remoteBinder() != nullptr) {
                     status = IInterface::asBinder(listener)->linkToDeath(
-                            sp<IBinder::DeathRecipient>::fromExisting(this));
+                            static_cast<IBinder::DeathRecipient*>(this));
                     if (status != NO_ERROR) {
                         BQ_LOGE("connect: linkToDeath failed: %s (%d)",
                                 strerror(-status), status);
@@ -1591,7 +1591,8 @@ status_t BufferQueueProducer::disconnect(int api, DisconnectMode mode) {
                                 IInterface::asBinder(mCore->mLinkedToDeath);
                         // This can fail if we're here because of the death
                         // notification, but we just ignore it
-                        token->unlinkToDeath(sp<IBinder::DeathRecipient>::fromExisting(this));
+                        token->unlinkToDeath(
+                                static_cast<IBinder::DeathRecipient*>(this));
                     }
 #endif
                     mCore->mSharedBufferSlot =
@@ -1722,11 +1723,11 @@ void BufferQueueProducer::allocateBuffers(uint32_t width, uint32_t height,
 #endif
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_EXTENDEDALLOCATE)
-        sp<GraphicBuffer> graphicBuffer = sp<GraphicBuffer>::make(allocRequest);
+        sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(allocRequest);
 #else
-        sp<GraphicBuffer> graphicBuffer =
-                sp<GraphicBuffer>::make(allocWidth, allocHeight, allocFormat, BQ_LAYER_COUNT,
-                                        allocUsage, allocName);
+        sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(
+                allocWidth, allocHeight, allocFormat, BQ_LAYER_COUNT,
+                allocUsage, allocName);
 #endif
 
         status_t result = graphicBuffer->initCheck();

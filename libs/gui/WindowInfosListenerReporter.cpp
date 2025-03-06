@@ -17,7 +17,6 @@
 #include <android/gui/ISurfaceComposer.h>
 #include <gui/AidlUtil.h>
 #include <gui/WindowInfosListenerReporter.h>
-#include "android/gui/IWindowInfosListener.h"
 #include "gui/WindowInfosUpdate.h"
 
 namespace android {
@@ -28,7 +27,7 @@ using gui::WindowInfosListener;
 using gui::aidl_utils::statusTFromBinderStatus;
 
 sp<WindowInfosListenerReporter> WindowInfosListenerReporter::getInstance() {
-    static sp<WindowInfosListenerReporter> sInstance = sp<WindowInfosListenerReporter>::make();
+    static sp<WindowInfosListenerReporter> sInstance = new WindowInfosListenerReporter;
     return sInstance;
 }
 
@@ -41,11 +40,7 @@ status_t WindowInfosListenerReporter::addWindowInfosListener(
         std::scoped_lock lock(mListenersMutex);
         if (mWindowInfosListeners.empty()) {
             gui::WindowInfosListenerInfo listenerInfo;
-            binder::Status s =
-                    surfaceComposer
-                            ->addWindowInfosListener(sp<gui::IWindowInfosListener>::fromExisting(
-                                                             this),
-                                                     &listenerInfo);
+            binder::Status s = surfaceComposer->addWindowInfosListener(this, &listenerInfo);
             status = statusTFromBinderStatus(s);
             if (status == OK) {
                 mWindowInfosPublisher = std::move(listenerInfo.windowInfosPublisher);
@@ -77,8 +72,7 @@ status_t WindowInfosListenerReporter::removeWindowInfosListener(
         }
 
         if (mWindowInfosListeners.size() == 1) {
-            binder::Status s = surfaceComposer->removeWindowInfosListener(
-                    sp<gui::IWindowInfosListener>::fromExisting(this));
+            binder::Status s = surfaceComposer->removeWindowInfosListener(this);
             status = statusTFromBinderStatus(s);
             // Clear the last stored state since we're disabling updates and don't want to hold
             // stale values
@@ -122,8 +116,7 @@ void WindowInfosListenerReporter::reconnect(const sp<gui::ISurfaceComposer>& com
     std::scoped_lock lock(mListenersMutex);
     if (!mWindowInfosListeners.empty()) {
         gui::WindowInfosListenerInfo listenerInfo;
-        composerService->addWindowInfosListener(sp<gui::IWindowInfosListener>::fromExisting(this),
-                                                &listenerInfo);
+        composerService->addWindowInfosListener(this, &listenerInfo);
         mWindowInfosPublisher = std::move(listenerInfo.windowInfosPublisher);
         mListenerId = listenerInfo.listenerId;
     }
