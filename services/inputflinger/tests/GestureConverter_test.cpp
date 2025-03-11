@@ -1721,15 +1721,16 @@ protected:
             mParamContinueGesture(std::get<1>(GetParam())),
             mParamEndGesture(std::get<2>(GetParam())),
             mDeviceContext(*mDevice, EVENTHUB_ID),
-            mConverter(*mReader->getContext(), mDeviceContext, DEVICE_ID),
-            mVerifier("Test verifier") {
+            mConverter(*mReader->getContext(), mDeviceContext, DEVICE_ID) {
         mConverter.setDisplayId(ui::LogicalDisplayId::DEFAULT);
+        input_flags::enable_button_state_verification(true);
+        mVerifier = std::make_unique<InputVerifier>("Test verifier");
     }
 
     base::Result<void> processMotionArgs(NotifyMotionArgs arg) {
-        return mVerifier.processMovement(arg.deviceId, arg.source, arg.action,
-                                         arg.getPointerCount(), arg.pointerProperties.data(),
-                                         arg.pointerCoords.data(), arg.flags);
+        return mVerifier->processMovement(arg.deviceId, arg.source, arg.action, arg.actionButton,
+                                          arg.getPointerCount(), arg.pointerProperties.data(),
+                                          arg.pointerCoords.data(), arg.flags, arg.buttonState);
     }
 
     void verifyArgsFromGesture(const Gesture& gesture, size_t gestureIndex) {
@@ -1755,7 +1756,7 @@ protected:
 
     InputDeviceContext mDeviceContext;
     GestureConverter mConverter;
-    InputVerifier mVerifier;
+    std::unique_ptr<InputVerifier> mVerifier;
 };
 
 TEST_P(GestureConverterConsistencyTest, ButtonChangesDuringGesture) {

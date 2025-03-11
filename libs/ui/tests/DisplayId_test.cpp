@@ -33,7 +33,7 @@ TEST(DisplayIdTest, createPhysicalIdFromEdid) {
     EXPECT_TRUE(HalDisplayId::tryCast(id));
 
     EXPECT_EQ(id, DisplayId::fromValue(id.value));
-    EXPECT_EQ(id, DisplayId::fromValue<PhysicalDisplayId>(id.value));
+    EXPECT_EQ(id, PhysicalDisplayId::fromValue(id.value));
 }
 
 TEST(DisplayIdTest, createPhysicalIdFromPort) {
@@ -47,7 +47,7 @@ TEST(DisplayIdTest, createPhysicalIdFromPort) {
     EXPECT_TRUE(HalDisplayId::tryCast(id));
 
     EXPECT_EQ(id, DisplayId::fromValue(id.value));
-    EXPECT_EQ(id, DisplayId::fromValue<PhysicalDisplayId>(id.value));
+    EXPECT_EQ(id, PhysicalDisplayId::fromValue(id.value));
 }
 
 TEST(DisplayIdTest, createGpuVirtualId) {
@@ -59,7 +59,7 @@ TEST(DisplayIdTest, createGpuVirtualId) {
     EXPECT_FALSE(HalDisplayId::tryCast(id));
 
     EXPECT_EQ(id, DisplayId::fromValue(id.value));
-    EXPECT_EQ(id, DisplayId::fromValue<GpuVirtualDisplayId>(id.value));
+    EXPECT_EQ(id, GpuVirtualDisplayId::fromValue(id.value));
 }
 
 TEST(DisplayIdTest, createVirtualIdFromGpuVirtualId) {
@@ -83,7 +83,7 @@ TEST(DisplayIdTest, createHalVirtualId) {
     EXPECT_TRUE(HalDisplayId::tryCast(id));
 
     EXPECT_EQ(id, DisplayId::fromValue(id.value));
-    EXPECT_EQ(id, DisplayId::fromValue<HalVirtualDisplayId>(id.value));
+    EXPECT_EQ(id, HalVirtualDisplayId::fromValue(id.value));
 }
 
 TEST(DisplayIdTest, createVirtualIdFromHalVirtualId) {

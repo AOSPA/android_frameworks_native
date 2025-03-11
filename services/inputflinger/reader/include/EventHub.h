@@ -619,13 +619,13 @@ public:
 private:
     // Holds information about the sysfs device associated with the Device.
     struct AssociatedDevice {
+        AssociatedDevice(const std::filesystem::path& sysfsRootPath);
         // The sysfs root path of the misc device.
         std::filesystem::path sysfsRootPath;
         std::unordered_map<int32_t /*batteryId*/, RawBatteryInfo> batteryInfos;
         std::unordered_map<int32_t /*lightId*/, RawLightInfo> lightInfos;
         std::optional<RawLayoutInfo> layoutInfo;
 
-        bool isChanged() const;
         bool operator==(const AssociatedDevice&) const = default;
         bool operator!=(const AssociatedDevice&) const = default;
         std::string dump() const;

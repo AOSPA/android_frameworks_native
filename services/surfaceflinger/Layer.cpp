@@ -76,7 +76,7 @@
 
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWComposer.h"
-#include "FrameTimeline.h"
+#include "FrameTimeline/FrameTimeline.h"
 #include "FrameTracer/FrameTracer.h"
 #include "FrontEnd/LayerCreationArgs.h"
 #include "FrontEnd/LayerHandle.h"

@@ -22,23 +22,25 @@
 #include <ui/Rect.h>
 #include <unordered_map>
 
-#include "RenderArea.h"
-
 namespace android {
 
 struct ScreenCaptureOutputArgs {
     const compositionengine::CompositionEngine& compositionEngine;
     const compositionengine::Output::ColorProfile& colorProfile;
-    const RenderArea& renderArea;
     ui::LayerStack layerStack;
+    Rect sourceCrop;
     std::shared_ptr<renderengine::ExternalTexture> buffer;
+    std::optional<DisplayId> displayId;
+    ui::Size reqBufferSize;
     float sdrWhitePointNits;
     float displayBrightnessNits;
     // Counterintuitively, when targetBrightness > 1.0 then dim the scene.
     float targetBrightness;
+    float layerAlpha;
     bool regionSampling;
     bool treat170mAsSrgb;
     bool dimInGammaSpaceForEnhancedScreenshots;
+    bool isSecure = false;
     bool isProtected = false;
     bool enableLocalTonemapping = false;
 };
@@ -49,10 +51,10 @@ struct ScreenCaptureOutputArgs {
 // SurfaceFlinger::captureLayers and SurfaceFlinger::captureDisplay.
 class ScreenCaptureOutput : public compositionengine::impl::Output {
 public:
-    ScreenCaptureOutput(const RenderArea& renderArea,
+    ScreenCaptureOutput(const Rect sourceCrop, std::optional<DisplayId> displayId,
                         const compositionengine::Output::ColorProfile& colorProfile,
-                        bool regionSampling, bool dimInGammaSpaceForEnhancedScreenshots,
-                        bool enableLocalTonemapping);
+                        float layerAlpha, bool regionSampling,
+                        bool dimInGammaSpaceForEnhancedScreenshots, bool enableLocalTonemapping);
 
     void updateColorProfile(const compositionengine::CompositionRefreshArgs&) override;
 
@@ -67,8 +69,10 @@ protected:
 
 private:
     std::unordered_map<int32_t, aidl::android::hardware::graphics::composer3::Luts> generateLuts();
-    const RenderArea& mRenderArea;
+    const Rect mSourceCrop;
+    const std::optional<DisplayId> mDisplayId;
     const compositionengine::Output::ColorProfile& mColorProfile;
+    const float mLayerAlpha;
     const bool mRegionSampling;
     const bool mDimInGammaSpaceForEnhancedScreenshots;
     const bool mEnableLocalTonemapping;

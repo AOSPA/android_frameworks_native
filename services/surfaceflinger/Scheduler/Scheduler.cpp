@@ -19,7 +19,7 @@
  *
 // QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 // QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
- * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
 // QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
 // QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
  * SPDX-License-Identifier: BSD-3-Clause-Clear
@@ -1371,4 +1371,11 @@ void Scheduler::qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_v
   mLayerHistory.qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
 }
 // QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+
+// QTI_BEGIN: 2024-02-13: Display: sf:avoid smomo override when game frame rate override is present
+bool Scheduler::isGameFrameRateOverridePresent() {
+    return mLayerHistory.isGameFrameRateOverridePresent();
+}
+// QTI_END: 2024-02-13: Display: sf:avoid smomo override when game frame rate override is present
+
 } // namespace android::scheduler

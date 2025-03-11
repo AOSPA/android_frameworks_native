@@ -444,7 +444,7 @@ PhysicalDisplayId generateEdidDisplayId(const Edid& edid) {
             (edid.hashedBlockZeroSerialNumberOpt.value_or(0) >> 11) ^
             (edid.hashedDescriptorBlockSerialNumberOpt.value_or(0) << 23);
 
-    return PhysicalDisplayId::fromEdidHash(id);
+    return PhysicalDisplayId::fromValue(id);
 }
 
 } // namespace android

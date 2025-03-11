@@ -48,9 +48,9 @@ public:
         auto [it, _] = mVerifiers.emplace(args.displayId, "Fuzz Verifier");
         InputVerifier& verifier = it->second;
         const Result<void> result =
-                verifier.processMovement(args.deviceId, args.source, args.action,
+                verifier.processMovement(args.deviceId, args.source, args.action, args.actionButton,
                                          args.getPointerCount(), args.pointerProperties.data(),
-                                         args.pointerCoords.data(), args.flags);
+                                         args.pointerCoords.data(), args.flags, args.buttonState);
         if (result.ok()) {
             return args;
         }

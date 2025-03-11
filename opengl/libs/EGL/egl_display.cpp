@@ -134,6 +134,11 @@ static EGLDisplay getPlatformDisplayAngle(EGLNativeDisplayType display, egl_conn
 
     if (cnx->egl.eglGetPlatformDisplay) {
         std::vector<EGLAttrib> attrs;
+        // These must have the same lifetime as |attrs|, because |attrs| contains pointers to these
+        // variables.
+        std::vector<const char*> enabled;  // ANGLE features to enable
+        std::vector<const char*> disabled; // ANGLE features to disable
+
         if (attrib_list) {
             for (const EGLAttrib* attr = attrib_list; *attr != EGL_NONE; attr += 2) {
                 attrs.push_back(attr[0]);
@@ -142,9 +147,6 @@ static EGLDisplay getPlatformDisplayAngle(EGLNativeDisplayType display, egl_conn
         }
 
         if (graphicsenv_flags::feature_overrides()) {
-            std::vector<const char*> enabled;  // ANGLE features to enable
-            std::vector<const char*> disabled; // ANGLE features to disable
-
             // Get the list of ANGLE features to enable from Global.Settings.
             const auto& eglFeatures = GraphicsEnv::getInstance().getAngleEglFeatures();
             for (const std::string& eglFeature : eglFeatures) {
@@ -154,25 +156,24 @@ static EGLDisplay getPlatformDisplayAngle(EGLNativeDisplayType display, egl_conn
             // Get the list of ANGLE features to enable/disable from gpuservice.
             GraphicsEnv::getInstance().getAngleFeatureOverrides(enabled, disabled);
             if (!enabled.empty()) {
-                enabled.push_back(0);
+                enabled.push_back(nullptr);
                 attrs.push_back(EGL_FEATURE_OVERRIDES_ENABLED_ANGLE);
                 attrs.push_back(reinterpret_cast<EGLAttrib>(enabled.data()));
             }
             if (!disabled.empty()) {
-                disabled.push_back(0);
+                disabled.push_back(nullptr);
                 attrs.push_back(EGL_FEATURE_OVERRIDES_DISABLED_ANGLE);
                 attrs.push_back(reinterpret_cast<EGLAttrib>(disabled.data()));
             }
         } else {
             const auto& eglFeatures = GraphicsEnv::getInstance().getAngleEglFeatures();
-            std::vector<const char*> features;
-            if (eglFeatures.size() > 0) {
+            if (!eglFeatures.empty()) {
                 for (const std::string& eglFeature : eglFeatures) {
-                    features.push_back(eglFeature.c_str());
+                    enabled.push_back(eglFeature.c_str());
                 }
-                features.push_back(0);
+                enabled.push_back(nullptr);
                 attrs.push_back(EGL_FEATURE_OVERRIDES_ENABLED_ANGLE);
-                attrs.push_back(reinterpret_cast<EGLAttrib>(features.data()));
+                attrs.push_back(reinterpret_cast<EGLAttrib>(enabled.data()));
             }
         }
 

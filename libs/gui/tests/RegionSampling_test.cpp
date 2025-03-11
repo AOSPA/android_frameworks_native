@@ -40,7 +40,7 @@ struct ChoreographerSync {
         std::unique_lock<decltype(mutex_)> lk(mutex_);
 
         auto check_event = [](auto const& ev) -> bool {
-            return ev.header.type == DisplayEventReceiver::DISPLAY_EVENT_VSYNC;
+            return ev.header.type == DisplayEventType::DISPLAY_EVENT_VSYNC;
         };
         DisplayEventReceiver::Event ev_;
         int evs = receiver_.getEvents(&ev_, 1);

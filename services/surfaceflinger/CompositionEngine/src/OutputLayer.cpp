@@ -515,6 +515,15 @@ void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t
 
     editState().hwc->stateOverridden = isOverridden;
     editState().hwc->layerSkipped = skipLayer;
+
+
+    // Save the final HWC state for debugging purposes, e.g. perfetto tracing, dumpsys.
+    getLayerFE().setLastHwcState({.lastCompositionType = editState().hwc->hwcCompositionType,
+                                  .wasSkipped = skipLayer,
+                                  .wasOverridden = isOverridden,
+                                  .overrideBufferId = editState().overrideInfo.buffer
+                                          ? editState().overrideInfo.buffer.get()->getId()
+                                          : 0});
 }
 
 void OutputLayer::writeOutputDependentGeometryStateToHWC(HWC2::Layer* hwcLayer,
@@ -885,7 +894,6 @@ void OutputLayer::writeCompositionTypeToHWC(HWC2::Layer* hwcLayer,
     if (outputDependentState.hwc->hwcCompositionType != requestedCompositionType ||
         (outputDependentState.hwc->layerSkipped && !skipLayer)) {
         outputDependentState.hwc->hwcCompositionType = requestedCompositionType;
-        getLayerFE().setHwcCompositionType(requestedCompositionType);
 
         if (auto error = hwcLayer->setCompositionType(requestedCompositionType);
             error != hal::Error::NONE) {
@@ -983,7 +991,13 @@ void OutputLayer::applyDeviceCompositionTypeChange(Composition compositionType) 
     }
 
     hwcState.hwcCompositionType = compositionType;
-    getLayerFE().setHwcCompositionType(compositionType);
+
+    getLayerFE().setLastHwcState({.lastCompositionType = hwcState.hwcCompositionType,
+                                  .wasSkipped = hwcState.layerSkipped,
+                                  .wasOverridden = hwcState.stateOverridden,
+                                  .overrideBufferId = state.overrideInfo.buffer
+                                          ? state.overrideInfo.buffer.get()->getId()
+                                          : 0});
 }
 
 void OutputLayer::prepareForDeviceLayerRequests() {

@@ -47,6 +47,7 @@ TEST_P(BinderStabilityIntegrationTest, ExpectedStabilityForItsPartition) {
 
     Stability::Level level = Stability::Level::UNDECLARED;
     switch (partition) {
+        case Partition::PRODUCT:
         case Partition::SYSTEM:
         case Partition::SYSTEM_EXT:
             level = Stability::Level::SYSTEM;

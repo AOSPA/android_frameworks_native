@@ -144,7 +144,6 @@ class Layer;
 class MessageBase;
 class RefreshRateOverlay;
 class RegionSamplingThread;
-class RenderArea;
 class TimeStats;
 class FrameTracer;
 class ScreenCapturer;
@@ -222,9 +221,6 @@ enum class LatchUnsignaledConfig {
     // This is equivalent to ignoring the acquire fence when applying transactions.
     Always,
 };
-
-struct DisplayRenderAreaBuilder;
-struct LayerRenderAreaBuilder;
 
 using DisplayColorSetting = compositionengine::OutputColorSetting;
 
@@ -402,9 +398,7 @@ private:
     friend class Layer;
     friend class RefreshRateOverlay;
     friend class RegionSamplingThread;
-    friend class LayerRenderArea;
     friend class SurfaceComposerAIDL;
-    friend class DisplayRenderArea;
 
 // QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     friend class ::android::surfaceflingerextension::QtiSurfaceFlingerExtension;
@@ -419,7 +413,6 @@ private:
 
     using TransactionSchedule = scheduler::TransactionSchedule;
     using GetLayerSnapshotsFunction = std::function<std::vector<std::pair<Layer*, sp<LayerFE>>>()>;
-    using RenderAreaBuilderVariant = std::variant<DisplayRenderAreaBuilder, LayerRenderAreaBuilder>;
     using DumpArgs = Vector<String16>;
     using Dumper = std::function<void(const DumpArgs&, bool asProto, std::string&)>;
 
@@ -907,20 +900,56 @@ private:
 
     using OutputCompositionState = compositionengine::impl::OutputCompositionState;
 
+    /*
+     * Parameters used across screenshot methods.
+     */
+    struct ScreenshotArgs {
+        // Contains the sequence ID of the parent layer if the screenshot is
+        // initiated though captureLayers(), or the display that the render
+        // result will be on if initiated through captureDisplay()
+        std::variant<int32_t, wp<const DisplayDevice>> captureTypeVariant;
+
+        // Display ID of the display the result will be on
+        std::optional<DisplayId> displayId{std::nullopt};
+
+        // If true, transform is inverted from the parent layer snapshot
+        bool childrenOnly{false};
+
+        // Source crop of the render area
+        Rect sourceCrop;
+
+        // Transform to be applied on the layers to transform them
+        // into the logical render area
+        ui::Transform transform;
+
+        // Size of the physical render area
+        ui::Size reqSize;
+
+        // Composition dataspace of the render area
+        ui::Dataspace dataspace;
+
+        // If false, the secure layer is blacked out or skipped
+        // when rendered to an insecure render area
+        bool isSecure{false};
+
+        // If true, the render result may be used for system animations
+        // that must preserve the exact colors of the display
+        bool seamlessTransition{false};
+    };
+
     std::optional<OutputCompositionState> getSnapshotsFromMainThread(
-            RenderAreaBuilderVariant& renderAreaBuilder,
-            GetLayerSnapshotsFunction getLayerSnapshotsFn,
+            ScreenshotArgs& args, GetLayerSnapshotsFunction getLayerSnapshotsFn,
             std::vector<std::pair<Layer*, sp<LayerFE>>>& layers);
 
-    void captureScreenCommon(RenderAreaBuilderVariant, GetLayerSnapshotsFunction,
-                             ui::Size bufferSize, ui::PixelFormat, bool allowProtected,
-                             bool grayscale, const sp<IScreenCaptureListener>&);
+    void captureScreenCommon(ScreenshotArgs& args, GetLayerSnapshotsFunction, ui::Size bufferSize,
+                             ui::PixelFormat, bool allowProtected, bool grayscale,
+                             const sp<IScreenCaptureListener>&);
 
-    std::optional<OutputCompositionState> getDisplayStateFromRenderAreaBuilder(
-            RenderAreaBuilderVariant& renderAreaBuilder) REQUIRES(kMainThreadContext);
+    std::optional<OutputCompositionState> getDisplayStateOnMainThread(ScreenshotArgs& args)
+            REQUIRES(kMainThreadContext);
 
     ftl::SharedFuture<FenceResult> captureScreenshot(
-            const RenderAreaBuilderVariant& renderAreaBuilder,
+            const ScreenshotArgs& args,
             const std::shared_ptr<renderengine::ExternalTexture>& buffer, bool regionSampling,
             bool grayscale, bool isProtected, const sp<IScreenCaptureListener>& captureListener,
             const std::optional<OutputCompositionState>& displayState,
@@ -929,8 +958,7 @@ private:
             const std::shared_ptr<renderengine::ExternalTexture>& gainmapBuffer = nullptr);
 
     ftl::SharedFuture<FenceResult> renderScreenImpl(
-            std::unique_ptr<const RenderArea> renderArea,
-            const std::shared_ptr<renderengine::ExternalTexture>&,
+            const ScreenshotArgs& args, const std::shared_ptr<renderengine::ExternalTexture>&,
             bool regionSampling, bool grayscale, bool isProtected, ScreenCaptureResults&,
             const std::optional<OutputCompositionState>& displayState,
             const std::vector<std::pair<Layer*, sp<LayerFE>>>& layers);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
@@ -812,8 +812,8 @@ status_t QtiSurfaceFlingerExtension::qtiBinderSetPowerMode(uint64_t displayId, i
 
     if (tile_h_loc < 0) {
         ALOGI("Debug: Set display = %llu, power mode = %d", (unsigned long long)displayId, mode);
-        if (const auto dispId = DisplayId::fromValue<PhysicalDisplayId>(displayId); dispId) {
-            qtiSetPowerMode(mQtiFlinger->getPhysicalDisplayToken(dispId.value()), mode);
+        if (const auto dispId = PhysicalDisplayId::fromValue(displayId); dispId.value) {
+            qtiSetPowerMode(mQtiFlinger->getPhysicalDisplayToken(dispId), mode);
         }
     } else {
         if (mQtiDisplayConfigHidl) {
@@ -872,8 +872,8 @@ status_t QtiSurfaceFlingerExtension::qtiBinderSetPanelBrightnessTiled(uint64_t d
     if (tile_h_loc < 0) {
         ALOGI("Debug: Set display = %llu, brightness level = %d/255 (%0.2ff)",
               (unsigned long long)displayId, level, levelf);
-        if (const auto dispId = DisplayId::fromValue<PhysicalDisplayId>(displayId); dispId) {
-            mQtiFlinger->setDisplayBrightness(mQtiFlinger->getPhysicalDisplayToken(dispId.value()),
+        if (const auto dispId = PhysicalDisplayId::fromValue(displayId); dispId.value) {
+            mQtiFlinger->setDisplayBrightness(mQtiFlinger->getPhysicalDisplayToken(dispId),
                                               brightness);
         }
     } else {
@@ -1178,7 +1178,7 @@ void QtiSurfaceFlingerExtension::qtiCheckVirtualDisplayHint(const Vector<Display
                             ALOGW_IF(status != NO_ERROR, "Unable to query usage (%d)", status);
                             if ((status == NO_ERROR) && qtiCanAllocateHwcDisplayIdForVDS(usage)) {
                                 createVirtualDisplay = true;
-                                return;
+                                break;
                             }
                         }
                     }
@@ -1505,6 +1505,13 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
                                               : static_cast<uint32_t>(fps));
     }
 
+    // Disable DRC if active displays is more than 1.
+    bool allow_refresh_change = (numActiveDisplays == 1) &&
+            !mQtiFlinger->mScheduler->isGameFrameRateOverridePresent();
+    for (auto& instance : mQtiSmomoInstances) {
+        instance.smoMo->SetRefreshRateChangeStatus(allow_refresh_change);
+    }
+
     bool smomo_optimal_refresh = false;
     if (numActiveDisplays == 1) {
         std::map<int, int> refresh_rate_votes;
@@ -1524,11 +1531,6 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoState() {
     }
 
     mQtiSmomoOptimalRefreshActive = smomo_optimal_refresh;
-
-    // Disable DRC if active displays is more than 1.
-    for (auto& instance : mQtiSmomoInstances) {
-        instance.smoMo->SetRefreshRateChangeStatus((numActiveDisplays == 1));
-    }
 }
 
 void QtiSurfaceFlingerExtension::qtiSetDisplayAnimating() {
@@ -1820,10 +1822,10 @@ void QtiSurfaceFlingerExtension::qtiSetupDisplayExtnFeatures() {
                 uint32_t hwcDisplayId;
                 if (qtiGetHwcDisplayId(display, &hwcDisplayId)) {
                     const auto displayId =
-                            DisplayId::fromValue<PhysicalDisplayId>(display->getId().value);
-                    if (displayId) {
+                            PhysicalDisplayId::fromValue(display->getId().value);
+                    if (displayId.value) {
                         auto configId =
-                                mQtiFlinger->getHwComposer().getActiveMode(displayId.value());
+                                mQtiFlinger->getHwComposer().getActiveMode(displayId);
                         if (!configId.value_opt()) {
                             ALOGW("HWC returned no active config");
                             return;

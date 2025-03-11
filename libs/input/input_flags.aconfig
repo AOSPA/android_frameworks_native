@@ -16,6 +16,16 @@ flag {
 }
 
 flag {
+  name: "enable_button_state_verification"
+  namespace: "input"
+  description: "Set to true to enable crashing whenever bad inbound events are going into InputDispatcher"
+  bug: "392870542"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
   name: "remove_input_channel_from_windowstate"
   namespace: "input"
   description: "Do not store a copy of input channel inside WindowState."
