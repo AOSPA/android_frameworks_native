@@ -808,6 +808,13 @@ void HWComposer::disconnectDisplay(HalDisplayId displayId) {
     if (const auto port = displayData.port) {
         mActivePorts.erase(port.value());
     }
+
+    // QTI_BEGIN
+    // When the display is disconnected for any reason (user disconnects the display, or failure to
+    // connect the display), remove it from AidlComposer to avoid processing any commands for it.
+    mComposer->onHotplugDisconnect(hwcDisplayId);
+    // QTI_END
+
     mDisplayData.erase(displayId);
 
     // Reset the primary display ID if we're disconnecting it.
