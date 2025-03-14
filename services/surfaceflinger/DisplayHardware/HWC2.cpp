@@ -647,7 +647,7 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
                                [](int32_t i, LutProperties j) { return std::make_pair(i, j); });
                 outLuts->emplace_or_replace(layer.get(), lutOffsetsAndProperties);
                 lutFileDescriptorMapper.emplace_or_replace(layer.get(),
-                                                           ndk::ScopedFileDescriptor(
+                                                           ::android::base::unique_fd(
                                                                    layerLut.luts.pfd.release()));
             } else {
                 ALOGE("getRequestedLuts: invalid luts on layer %" PRIu64 " found"

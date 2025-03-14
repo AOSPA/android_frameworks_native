@@ -24,6 +24,7 @@
 #include <com_android_graphics_libgui_flags.h>
 #include <gui/BufferItem.h>
 #include <gui/BufferItemConsumer.h>
+#include <gui/Surface.h>
 #include <ui/BufferQueueDefs.h>
 #include <ui/GraphicBuffer.h>
 
@@ -34,6 +35,30 @@
 #define BI_LOGE(x, ...) ALOGE("[%s] " x, mName.c_str(), ##__VA_ARGS__)
 
 namespace android {
+
+std::tuple<sp<BufferItemConsumer>, sp<Surface>> BufferItemConsumer::create(
+        uint64_t consumerUsage, int bufferCount, bool controlledByApp,
+        bool isConsumerSurfaceFlinger) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+    sp<BufferItemConsumer> bufferItemConsumer =
+            sp<BufferItemConsumer>::make(consumerUsage, bufferCount, controlledByApp,
+                                         isConsumerSurfaceFlinger);
+    return {bufferItemConsumer, bufferItemConsumer->getSurface()};
+#else
+    sp<IGraphicBufferProducer> igbp;
+    sp<IGraphicBufferConsumer> igbc;
+    BufferQueue::createBufferQueue(&igbp, &igbc, isConsumerSurfaceFlinger);
+    sp<BufferItemConsumer> bufferItemConsumer =
+            sp<BufferItemConsumer>::make(igbc, consumerUsage, bufferCount, controlledByApp);
+    return {bufferItemConsumer, sp<Surface>::make(igbp, controlledByApp)};
+#endif
+}
+
+sp<BufferItemConsumer> BufferItemConsumer::create(const sp<IGraphicBufferConsumer>& consumer,
+                                                  uint64_t consumerUsage, int bufferCount,
+                                                  bool controlledByApp) {
+    return sp<BufferItemConsumer>::make(consumer, consumerUsage, bufferCount, controlledByApp);
+}
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
 BufferItemConsumer::BufferItemConsumer(uint64_t consumerUsage, int bufferCount,

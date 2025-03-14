@@ -294,9 +294,7 @@ TEST_F(SurfaceTest, LayerCountIsOne) {
 TEST_F(SurfaceTest, QueryConsumerUsage) {
     const int TEST_USAGE_FLAGS =
             GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_HW_RENDER;
-    sp<BufferItemConsumer> c = new BufferItemConsumer(TEST_USAGE_FLAGS);
-
-    sp<Surface> s = c->getSurface();
+    auto [c, s] = BufferItemConsumer::create(TEST_USAGE_FLAGS);
     sp<ANativeWindow> anw(s);
 
     int flags = -1;
@@ -2377,8 +2375,7 @@ TEST_F(SurfaceTest, QueueAcquireReleaseDequeue_CalledInStack_DoesNotDeadlock) {
     sp<IGraphicBufferConsumer> bqConsumer;
     BufferQueue::createBufferQueue(&bqProducer, &bqConsumer);
 
-    sp<BufferItemConsumer> consumer = sp<BufferItemConsumer>::make(bqConsumer, 3);
-    sp<Surface> surface = sp<Surface>::make(bqProducer);
+    auto [consumer, surface] = BufferItemConsumer::create(3);
     sp<ImmediateReleaseConsumerListener> consumerListener =
             sp<ImmediateReleaseConsumerListener>::make(consumer);
     consumer->setFrameAvailableListener(consumerListener);

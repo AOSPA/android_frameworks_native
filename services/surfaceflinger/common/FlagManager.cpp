@@ -128,6 +128,7 @@ void FlagManager::dump(std::string& result) const {
     DUMP_ACONFIG_FLAG(graphite_renderengine_preview_rollout);
     DUMP_ACONFIG_FLAG(increase_missed_frame_jank_threshold);
     DUMP_ACONFIG_FLAG(refresh_rate_overlay_on_external_display);
+    DUMP_ACONFIG_FLAG(vsync_predictor_recovery);
 
     /// Trunk stable readonly flags ///
     /// IMPORTANT - please keep alphabetize to reduce merge conflicts
@@ -304,6 +305,7 @@ FLAG_MANAGER_ACONFIG_FLAG(adpf_gpu_sf, "")
 FLAG_MANAGER_ACONFIG_FLAG(adpf_native_session_manager, "");
 FLAG_MANAGER_ACONFIG_FLAG(graphite_renderengine_preview_rollout, "");
 FLAG_MANAGER_ACONFIG_FLAG(increase_missed_frame_jank_threshold, "");
+FLAG_MANAGER_ACONFIG_FLAG(vsync_predictor_recovery, "");
 
 /// Trunk stable server (R/W) flags from outside SurfaceFlinger ///
 FLAG_MANAGER_ACONFIG_FLAG_IMPORTED(adpf_use_fmq_channel, "", android::os)

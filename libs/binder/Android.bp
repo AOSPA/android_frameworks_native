@@ -827,6 +827,7 @@ cc_library {
     // so we restrict its visibility to the Trusty-specific packages.
     visibility: [
         ":__subpackages__",
+        "//hardware/interfaces/security/see:__subpackages__",
         "//system/core/trusty:__subpackages__",
         "//vendor:__subpackages__",
     ],

@@ -47,6 +47,16 @@ class BufferItemConsumer: public ConsumerBase
     enum { INVALID_BUFFER_SLOT = BufferQueue::INVALID_BUFFER_SLOT };
     enum { NO_BUFFER_AVAILABLE = BufferQueue::NO_BUFFER_AVAILABLE };
 
+    static std::tuple<sp<BufferItemConsumer>, sp<Surface>> create(
+            uint64_t consumerUsage, int bufferCount = DEFAULT_MAX_BUFFERS,
+            bool controlledByApp = false, bool isConsumerSurfaceFlinger = false);
+
+    static sp<BufferItemConsumer> create(const sp<IGraphicBufferConsumer>& consumer,
+                                         uint64_t consumerUsage,
+                                         int bufferCount = DEFAULT_MAX_BUFFERS,
+                                         bool controlledByApp = false)
+            __attribute((deprecated("Prefer ctors that create their own surface and consumer.")));
+
     // Create a new buffer item consumer. The consumerUsage parameter determines
     // the consumer usage flags passed to the graphics allocator. The
     // bufferCount parameter specifies how many buffers can be locked for user

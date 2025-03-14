@@ -232,6 +232,16 @@ flag {
 }
 
 flag {
+  name: "connected_displays_associated_display_cursor_bugfix"
+  namespace: "lse_desktop_experience"
+  description: "Apply some rules to define associated display cursor behavior in connected displays"
+  bug: "396568321"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
   name: "use_cloned_screen_coordinates_as_raw"
   namespace: "input"
   description: "Use the cloned window's layer stack (screen) space as the raw coordinate space for input going to clones"

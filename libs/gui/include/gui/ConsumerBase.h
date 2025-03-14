@@ -123,9 +123,7 @@ public:
     // See IGraphicBufferConsumer::setMaxAcquiredBufferCount
     status_t setMaxAcquiredBufferCount(int maxAcquiredBuffers);
 
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
     status_t setConsumerIsProtected(bool isProtected);
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
 
     // See IGraphicBufferConsumer::getSidebandStream
     sp<NativeHandle> getSidebandStream() const;

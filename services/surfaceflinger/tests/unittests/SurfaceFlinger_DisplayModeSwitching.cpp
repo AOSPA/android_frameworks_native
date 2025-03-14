@@ -171,16 +171,22 @@ protected:
     static constexpr DisplayModeId kModeId90{1};
     static constexpr DisplayModeId kModeId120{2};
     static constexpr DisplayModeId kModeId90_4K{3};
+    static constexpr DisplayModeId kModeId60_8K{4};
 
     static inline const DisplayModePtr kMode60 = createDisplayMode(kModeId60, 60_Hz, 0);
     static inline const DisplayModePtr kMode90 = createDisplayMode(kModeId90, 90_Hz, 1);
     static inline const DisplayModePtr kMode120 = createDisplayMode(kModeId120, 120_Hz, 2);
 
     static constexpr ui::Size kResolution4K{3840, 2160};
+    static constexpr ui::Size kResolution8K{7680, 4320};
+
     static inline const DisplayModePtr kMode90_4K =
             createDisplayMode(kModeId90_4K, 90_Hz, 3, kResolution4K);
+    static inline const DisplayModePtr kMode60_8K =
+            createDisplayMode(kModeId60_8K, 60_Hz, 4, kResolution8K);
 
-    static inline const DisplayModes kModes = makeModes(kMode60, kMode90, kMode120, kMode90_4K);
+    static inline const DisplayModes kModes =
+            makeModes(kMode60, kMode90, kMode120, kMode90_4K, kMode60_8K);
 };
 
 void DisplayModeSwitchingTest::setupScheduler(
@@ -326,6 +332,8 @@ TEST_F(DisplayModeSwitchingTest, twoConsecutiveSetDesiredDisplayModeSpecs) {
 }
 
 TEST_F(DisplayModeSwitchingTest, changeResolutionWithoutRefreshRequired) {
+    SET_FLAG_FOR_TEST(flags::synced_resolution_switch, false);
+
     EXPECT_THAT(mDisplay, ModeSettledTo(&dmc(), kModeId60));
 
     EXPECT_EQ(NO_ERROR,
@@ -358,6 +366,44 @@ TEST_F(DisplayModeSwitchingTest, changeResolutionWithoutRefreshRequired) {
     mFlinger.commit();
 
     EXPECT_THAT(mDisplay, ModeSettledTo(&dmc(), kModeId90_4K));
+}
+
+TEST_F(DisplayModeSwitchingTest, changeResolutionSynced) {
+    SET_FLAG_FOR_TEST(flags::synced_resolution_switch, true);
+
+    EXPECT_THAT(mDisplay, ModeSettledTo(&dmc(), kModeId60));
+
+    // PrimaryDisplayVariant has a 4K size, so switch to 8K.
+    EXPECT_EQ(NO_ERROR,
+              mFlinger.setDesiredDisplayModeSpecs(mDisplay->getDisplayToken().promote(),
+                                                  mock::createDisplayModeSpecs(kModeId60_8K,
+                                                                               60_Hz)));
+
+    EXPECT_THAT(mDisplay, ModeSwitchingTo(&mFlinger, kModeId60_8K));
+
+    // The mode should not be set until the commit that resizes the display.
+    mFlinger.commit();
+    EXPECT_THAT(mDisplay, ModeSwitchingTo(&mFlinger, kModeId60_8K));
+    mFlinger.commit();
+    EXPECT_THAT(mDisplay, ModeSwitchingTo(&mFlinger, kModeId60_8K));
+
+    // Set the display size to match the resolution.
+    DisplayState state;
+    state.what = DisplayState::eDisplaySizeChanged;
+    state.token = mDisplay->getDisplayToken().promote();
+    state.width = static_cast<uint32_t>(kResolution8K.width);
+    state.height = static_cast<uint32_t>(kResolution8K.height);
+
+    // The next commit should set the mode and resize the framebuffer.
+    const VsyncPeriodChangeTimeline timeline{.refreshRequired = false};
+    EXPECT_CALL(*mDisplaySurface, resizeBuffers(kResolution8K));
+    EXPECT_SET_ACTIVE_CONFIG(kInnerDisplayHwcId, kModeId60_8K);
+
+    constexpr bool kModeset = true;
+    mFlinger.setDisplayStateLocked(state);
+    mFlinger.configureAndCommit(kModeset);
+
+    EXPECT_THAT(mDisplay, ModeSettledTo(&dmc(), kModeId60_8K));
 }
 
 TEST_F(DisplayModeSwitchingTest, innerXorOuterDisplay) {

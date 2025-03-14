@@ -15,6 +15,7 @@
  */
 
 #include <android/log.h>
+#include <driver.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <media/NdkImageReader.h>
@@ -28,6 +29,8 @@
 #define VK_CHECK(result) ASSERT_EQ(VK_SUCCESS, result)
 
 namespace android {
+
+namespace libvulkantest {
 
 class AImageReaderVulkanSwapchainTest : public ::testing::Test {
    public:
@@ -55,6 +58,7 @@ class AImageReaderVulkanSwapchainTest : public ::testing::Test {
         const char* extensions[] = {
             VK_KHR_SURFACE_EXTENSION_NAME,
             VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
+            VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME,
             VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
         };
 
@@ -161,7 +165,8 @@ class AImageReaderVulkanSwapchainTest : public ::testing::Test {
             << "No physical device found that supports present to the surface!";
     }
 
-    void createDeviceAndGetQueue(std::vector<const char*>& layers) {
+    void createDeviceAndGetQueue(std::vector<const char*>& layers,
+                                 std::vector<const char*> inExtensions = {}) {
         ASSERT_NE((void*)VK_NULL_HANDLE, mPhysicalDev);
         ASSERT_NE(UINT32_MAX, mPresentQueueFamily);
 
@@ -179,12 +184,14 @@ class AImageReaderVulkanSwapchainTest : public ::testing::Test {
         deviceInfo.enabledLayerCount = layers.size();
         deviceInfo.ppEnabledLayerNames = layers.data();
 
-        const char* extensions[] = {
+        std::vector<const char*> extensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         };
-        deviceInfo.enabledExtensionCount =
-            sizeof(extensions) / sizeof(extensions[0]);
-        deviceInfo.ppEnabledExtensionNames = extensions;
+        for (auto extension : inExtensions) {
+            extensions.push_back(extension);
+        }
+        deviceInfo.enabledExtensionCount = extensions.size();
+        deviceInfo.ppEnabledExtensionNames = extensions.data();
 
         VkResult res =
             vkCreateDevice(mPhysicalDev, &deviceInfo, nullptr, &mDevice);
@@ -271,17 +278,20 @@ class AImageReaderVulkanSwapchainTest : public ::testing::Test {
 
         VkResult res =
             vkCreateSwapchainKHR(mDevice, &swapchainInfo, nullptr, &mSwapchain);
-        VK_CHECK(res);
-        LOGI("Swapchain created successfully");
+        if (res == VK_SUCCESS) {
+            LOGI("Swapchain created successfully");
 
-        uint32_t swapchainImageCount = 0;
-        vkGetSwapchainImagesKHR(mDevice, mSwapchain, &swapchainImageCount,
-                                nullptr);
-        std::vector<VkImage> swapchainImages(swapchainImageCount);
-        vkGetSwapchainImagesKHR(mDevice, mSwapchain, &swapchainImageCount,
-                                swapchainImages.data());
+            uint32_t swapchainImageCount = 0;
+            vkGetSwapchainImagesKHR(mDevice, mSwapchain, &swapchainImageCount,
+                                    nullptr);
+            std::vector<VkImage> swapchainImages(swapchainImageCount);
+            vkGetSwapchainImagesKHR(mDevice, mSwapchain, &swapchainImageCount,
+                                    swapchainImages.data());
 
-        LOGI("Swapchain has %u images", swapchainImageCount);
+            LOGI("Swapchain has %u images", swapchainImageCount);
+        } else {
+            LOGI("Swapchain creation failed");
+        }
     }
 
     // Image available callback (AImageReader)
@@ -356,5 +366,242 @@ TEST_F(AImageReaderVulkanSwapchainTest, TestHelperMethods) {
     ASSERT_NE(mSwapchain, (VkSwapchainKHR)VK_NULL_HANDLE);
     cleanUpSwapchainForTest();
 }
+
+// Passing state in these tests requires global state. Wrap each test in an
+// anonymous namespace to prevent conflicting names.
+namespace {
+
+VKAPI_ATTR VkResult VKAPI_CALL hookedGetPhysicalDeviceImageFormatProperties2KHR(
+    VkPhysicalDevice,
+    const VkPhysicalDeviceImageFormatInfo2*,
+    VkImageFormatProperties2*) {
+    return VK_ERROR_SURFACE_LOST_KHR;
+}
+
+static PFN_vkGetSwapchainGrallocUsage2ANDROID
+    pfnNextGetSwapchainGrallocUsage2ANDROID = nullptr;
+
+static bool g_grallocCalled = false;
+
+VKAPI_ATTR VkResult VKAPI_CALL hookGetSwapchainGrallocUsage2ANDROID(
+    VkDevice device,
+    VkFormat format,
+    VkImageUsageFlags imageUsage,
+    VkSwapchainImageUsageFlagsANDROID swapchainImageUsage,
+    uint64_t* grallocConsumerUsage,
+    uint64_t* grallocProducerUsage) {
+    g_grallocCalled = true;
+    if (pfnNextGetSwapchainGrallocUsage2ANDROID) {
+        return pfnNextGetSwapchainGrallocUsage2ANDROID(
+            device, format, imageUsage, swapchainImageUsage,
+            grallocConsumerUsage, grallocProducerUsage);
+    }
+
+    return VK_ERROR_INITIALIZATION_FAILED;
+}
+
+TEST_F(AImageReaderVulkanSwapchainTest, getProducerUsageFallbackTest1) {
+    // BUG: 379230826
+    // Verify that getProducerUsage falls back to
+    // GetSwapchainGrallocUsage*ANDROID if GPDIFP2 fails
+    std::vector<const char*> instanceLayers = {};
+    std::vector<const char*> deviceLayers = {};
+    createVulkanInstance(instanceLayers);
+
+    createAImageReader(640, 480, AIMAGE_FORMAT_PRIVATE, 3);
+    getANativeWindowFromReader();
+    createVulkanSurface();
+    pickPhysicalDeviceAndQueueFamily();
+
+    createDeviceAndGetQueue(deviceLayers);
+    auto& pdev = vulkan::driver::GetData(mDevice).driver_physical_device;
+    auto& pdevDispatchTable = vulkan::driver::GetData(pdev).driver;
+    auto& deviceDispatchTable = vulkan::driver::GetData(mDevice).driver;
+
+    ASSERT_NE(deviceDispatchTable.GetSwapchainGrallocUsage2ANDROID, nullptr);
+
+    pdevDispatchTable.GetPhysicalDeviceImageFormatProperties2 =
+        hookedGetPhysicalDeviceImageFormatProperties2KHR;
+    deviceDispatchTable.GetSwapchainGrallocUsage2ANDROID =
+        hookGetSwapchainGrallocUsage2ANDROID;
+
+    ASSERT_FALSE(g_grallocCalled);
+
+    createSwapchain();
+
+    ASSERT_TRUE(g_grallocCalled);
+
+    ASSERT_NE(mVkInstance, (VkInstance)VK_NULL_HANDLE);
+    ASSERT_NE(mPhysicalDev, (VkPhysicalDevice)VK_NULL_HANDLE);
+    ASSERT_NE(mDevice, (VkDevice)VK_NULL_HANDLE);
+    ASSERT_NE(mSurface, (VkSurfaceKHR)VK_NULL_HANDLE);
+    cleanUpSwapchainForTest();
+}
+
+}  // namespace
+
+// Passing state in these tests requires global state. Wrap each test in an
+// anonymous namespace to prevent conflicting names.
+namespace {
+
+static bool g_returnNotSupportedOnce = true;
+
+VKAPI_ATTR VkResult VKAPI_CALL
+Hook_GetPhysicalDeviceImageFormatProperties2_NotSupportedOnce(
+    VkPhysicalDevice /*physicalDevice*/,
+    const VkPhysicalDeviceImageFormatInfo2* /*pImageFormatInfo*/,
+    VkImageFormatProperties2* /*pImageFormatProperties*/) {
+    if (g_returnNotSupportedOnce) {
+        g_returnNotSupportedOnce = false;
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    return VK_SUCCESS;
+}
+
+TEST_F(AImageReaderVulkanSwapchainTest, SurfaceFormats2KHR_IgnoreNotSupported) {
+    // BUG: 357903074
+    // Verify that vkGetPhysicalDeviceSurfaceFormats2KHR properly
+    // ignores VK_ERROR_FORMAT_NOT_SUPPORTED and continues enumerating formats.
+    std::vector<const char*> instanceLayers;
+    createVulkanInstance(instanceLayers);
+    createAImageReader(640, 480, AIMAGE_FORMAT_PRIVATE, 3);
+    getANativeWindowFromReader();
+    createVulkanSurface();
+    pickPhysicalDeviceAndQueueFamily();
+
+    auto& pdevDispatchTable = vulkan::driver::GetData(mPhysicalDev).driver;
+    pdevDispatchTable.GetPhysicalDeviceImageFormatProperties2 =
+        Hook_GetPhysicalDeviceImageFormatProperties2_NotSupportedOnce;
+
+    PFN_vkGetPhysicalDeviceSurfaceFormats2KHR
+        pfnGetPhysicalDeviceSurfaceFormats2KHR =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceFormats2KHR>(
+                vkGetInstanceProcAddr(mVkInstance,
+                                      "vkGetPhysicalDeviceSurfaceFormats2KHR"));
+    ASSERT_NE(nullptr, pfnGetPhysicalDeviceSurfaceFormats2KHR)
+        << "Could not get pointer to vkGetPhysicalDeviceSurfaceFormats2KHR";
+
+    VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo2{};
+    surfaceInfo2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR;
+    surfaceInfo2.pNext = nullptr;
+    surfaceInfo2.surface = mSurface;
+
+    uint32_t formatCount = 0;
+    VkResult res = pfnGetPhysicalDeviceSurfaceFormats2KHR(
+        mPhysicalDev, &surfaceInfo2, &formatCount, nullptr);
+
+    // If the loader never tries a second format, it might fail or 0-out the
+    // formatCount. The patch ensures it continues to the next format rather
+    // than bailing out on the first NOT_SUPPORTED.
+    ASSERT_EQ(VK_SUCCESS, res)
+        << "vkGetPhysicalDeviceSurfaceFormats2KHR failed unexpectedly";
+    ASSERT_GT(formatCount, 0U)
+        << "No surface formats found; the loader may have bailed early.";
+
+    std::vector<VkSurfaceFormat2KHR> formats(formatCount);
+    for (auto& f : formats) {
+        f.sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR;
+        f.pNext = nullptr;
+    }
+    res = pfnGetPhysicalDeviceSurfaceFormats2KHR(mPhysicalDev, &surfaceInfo2,
+                                                 &formatCount, formats.data());
+    ASSERT_EQ(VK_SUCCESS, res) << "Failed to retrieve surface formats";
+
+    LOGI(
+        "SurfaceFormats2KHR_IgnoreNotSupported test: found %u formats after "
+        "ignoring NOT_SUPPORTED",
+        formatCount);
+
+    cleanUpSwapchainForTest();
+}
+
+}  // namespace
+
+namespace {
+
+TEST_F(AImageReaderVulkanSwapchainTest, MutableFormatSwapchainTest) {
+    // Test swapchain with mutable format extension
+    std::vector<const char*> instanceLayers;
+    std::vector<const char*> deviceLayers;
+    std::vector<const char*> deviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME,
+        VK_KHR_MAINTENANCE2_EXTENSION_NAME,
+        VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME};
+
+    createVulkanInstance(instanceLayers);
+    createAImageReader(640, 480, AIMAGE_FORMAT_PRIVATE, 3);
+    getANativeWindowFromReader();
+    createVulkanSurface();
+    pickPhysicalDeviceAndQueueFamily();
+    createDeviceAndGetQueue(deviceLayers, deviceExtensions);
+
+    ASSERT_NE((VkDevice)VK_NULL_HANDLE, mDevice);
+    ASSERT_NE((VkSurfaceKHR)VK_NULL_HANDLE, mSurface);
+
+    VkSurfaceCapabilitiesKHR surfaceCaps{};
+    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(mPhysicalDev, mSurface,
+                                                       &surfaceCaps));
+
+    uint32_t formatCount = 0;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(mPhysicalDev, mSurface, &formatCount,
+                                         nullptr);
+    ASSERT_GT(formatCount, 0U);
+    std::vector<VkSurfaceFormatKHR> formats(formatCount);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(mPhysicalDev, mSurface, &formatCount,
+                                         formats.data());
+
+    VkFormat viewFormats[2] = {formats[0].format, formats[0].format};
+    if (formatCount > 1) {
+        viewFormats[1] = formats[1].format;
+    }
+
+    VkImageFormatListCreateInfoKHR formatList{};
+    formatList.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO_KHR;
+    formatList.viewFormatCount = 2;
+    formatList.pViewFormats = viewFormats;
+
+    VkSwapchainCreateInfoKHR swapchainInfo{};
+    swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    swapchainInfo.pNext = &formatList;
+    swapchainInfo.surface = mSurface;
+    swapchainInfo.minImageCount = surfaceCaps.minImageCount + 1;
+    swapchainInfo.imageFormat = formats[0].format;
+    swapchainInfo.imageColorSpace = formats[0].colorSpace;
+    swapchainInfo.imageExtent = surfaceCaps.currentExtent;
+    swapchainInfo.imageArrayLayers = 1;
+    swapchainInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    swapchainInfo.preTransform = surfaceCaps.currentTransform;
+    swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+    swapchainInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    swapchainInfo.clipped = VK_TRUE;
+
+    swapchainInfo.flags = VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR;
+
+    uint32_t queueFamilyIndices[] = {mPresentQueueFamily};
+    swapchainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    swapchainInfo.queueFamilyIndexCount = 1;
+    swapchainInfo.pQueueFamilyIndices = queueFamilyIndices;
+
+    VkResult res =
+        vkCreateSwapchainKHR(mDevice, &swapchainInfo, nullptr, &mSwapchain);
+    if (res == VK_SUCCESS) {
+        LOGI("Mutable format swapchain created successfully");
+
+        uint32_t imageCount = 0;
+        vkGetSwapchainImagesKHR(mDevice, mSwapchain, &imageCount, nullptr);
+        ASSERT_GT(imageCount, 0U);
+    } else {
+        LOGI(
+            "Mutable format swapchain creation failed (extension may not be "
+            "supported)");
+    }
+
+    cleanUpSwapchainForTest();
+}
+
+}  // namespace
+
+}  // namespace libvulkantest
 
 }  // namespace android

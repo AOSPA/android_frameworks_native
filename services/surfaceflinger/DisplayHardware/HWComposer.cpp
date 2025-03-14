@@ -1117,7 +1117,7 @@ const std::unordered_map<std::string, bool>& HWComposer::getSupportedLayerGeneri
     return mSupportedLayerGenericMetadata;
 }
 
-ftl::SmallMap<HWC2::Layer*, ndk::ScopedFileDescriptor, 20>&
+ftl::SmallMap<HWC2::Layer*, ::android::base::unique_fd, 20>&
 HWComposer::getLutFileDescriptorMapper() {
     return mLutFileDescriptorMapper;
 }

@@ -231,7 +231,12 @@ private:
     std::map<DeviceId, std::shared_ptr<PointerControllerInterface>> mDrawingTabletPointersByDevice
             GUARDED_BY(getLock());
 
-    ui::LogicalDisplayId mDefaultMouseDisplayId GUARDED_BY(getLock());
+    // In connected displays scenario, this tracks the latest display the cursor is at, within the
+    // DisplayTopology. By default, this will be set to topology primary display, and updated when
+    // mouse crossed to another display.
+    // In non-connected displays scenario, this will be treated as the default display cursor
+    // will be on, when mouse doesn't have associated display.
+    ui::LogicalDisplayId mCurrentMouseDisplayId GUARDED_BY(getLock());
     ui::LogicalDisplayId mNotifiedPointerDisplayId GUARDED_BY(getLock());
     std::vector<InputDeviceInfo> mInputDeviceInfos GUARDED_BY(getLock());
     std::set<DeviceId> mMouseDevices GUARDED_BY(getLock());

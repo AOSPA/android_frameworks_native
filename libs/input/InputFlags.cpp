@@ -39,4 +39,9 @@ bool InputFlags::connectedDisplaysCursorEnabled() {
     return com::android::input::flags::connected_displays_cursor();
 }
 
+bool InputFlags::connectedDisplaysCursorAndAssociatedDisplayCursorBugfixEnabled() {
+    return connectedDisplaysCursorEnabled() &&
+            com::android::input::flags::connected_displays_associated_display_cursor_bugfix();
+}
+
 } // namespace android

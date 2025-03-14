@@ -7551,9 +7551,10 @@ void InputDispatcher::DispatcherTouchState::forTouchAndCursorStatesOnDisplay(
         return;
     }
 
-    // TODO(b/383092013): This is currently not accounting for the "topology group" concept.
-    // Proper implementation requires looking tghrough all the displays in the topology group.
-    const auto cursorStateIt = mCursorStateByDisplay.find(displayId);
+    // DisplayId for the Cursor state may not be same as supplied displayId if display is part of
+    // topology. Instead we should to check from the topology's primary display.
+    const auto cursorStateIt =
+            mCursorStateByDisplay.find(mWindowInfos.getPrimaryDisplayId(displayId));
     if (cursorStateIt != mCursorStateByDisplay.end()) {
         f(cursorStateIt->second);
     }

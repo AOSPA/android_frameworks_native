@@ -115,7 +115,7 @@ public:
     using LayerLuts =
             ftl::SmallMap<HWC2::Layer*, LutOffsetAndProperties, kLutFileDescriptorMapperSize>;
     using LutFileDescriptorMapper =
-            ftl::SmallMap<HWC2::Layer*, ndk::ScopedFileDescriptor, kLutFileDescriptorMapperSize>;
+            ftl::SmallMap<HWC2::Layer*, ::android::base::unique_fd, kLutFileDescriptorMapperSize>;
 
     [[nodiscard]] virtual hal::Error acceptChanges() = 0;
     [[nodiscard]] virtual base::expected<std::shared_ptr<HWC2::Layer>, hal::Error>
