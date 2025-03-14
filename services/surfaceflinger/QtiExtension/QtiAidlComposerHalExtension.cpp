@@ -17,51 +17,83 @@ QtiAidlComposerHalExtension::QtiAidlComposerHalExtension(Hwc2::Composer* compose
 }
 
 Error QtiAidlComposerHalExtension::qtiSetDisplayElapseTime(Display display, uint64_t timeStamp) {
+    Error error = Error::NONE;
 #ifdef QTI_COMPOSER3_EXTENSIONS
     mQtiAidlComposer->mMutex.lock_shared();
-    mQtiAidlComposer->getWriter(display)->get().qtiSetDisplayElapseTime(static_cast<int64_t>(
-                                                                                display),
-                                                                        timeStamp);
+    if (mQtiAidlComposer->getWriter(display)) {
+        mQtiAidlComposer->getWriter(display)->get().qtiSetDisplayElapseTime(static_cast<int64_t>(
+                                                                                    display),
+                                                                            timeStamp);
+    } else {
+        error = Error::BAD_DISPLAY;
+        ALOGI("%s: Attempted to set display elapsed time for disconnected display %" PRId64,
+              __func__, display);
+    }
     mQtiAidlComposer->mMutex.unlock_shared();
 #endif
-    return Error::NONE;
+    return error;
 }
 
 Error QtiAidlComposerHalExtension::qtiSetLayerType(Display display, V2_1_Layer layer,
                                                    uint32_t type) {
+    Error error = Error::NONE;
 #ifdef QTI_COMPOSER3_EXTENSIONS
     mQtiAidlComposer->mMutex.lock_shared();
-    mQtiAidlComposer->getWriter(display)->get().qtiSetLayerType(static_cast<int64_t>(display),
-                                                                static_cast<int64_t>(layer), type);
+    if (mQtiAidlComposer->getWriter(display)) {
+        mQtiAidlComposer->getWriter(display)->get().qtiSetLayerType(static_cast<int64_t>(display),
+                                                                    static_cast<int64_t>(layer),
+                                                                    type);
+    } else {
+        error = Error::BAD_DISPLAY;
+        ALOGI("%s: Attempted to set layer type for disconnected display %" PRId64, __func__,
+              display);
+    }
     mQtiAidlComposer->mMutex.unlock_shared();
 #endif
-    return Error::NONE;
+    return error;
 }
 
 Error QtiAidlComposerHalExtension::qtiSetLayerFlag(Display display, V2_1_Layer layer,
                                                    uint32_t flags) {
+    Error error = Error::NONE;
 #ifdef QTI_COMPOSER3_EXTENSIONS
     mQtiAidlComposer->mMutex.lock_shared();
-    mQtiAidlComposer->getWriter(display)->get().qtiSetLayerFlag(static_cast<int64_t>(display),
-                                                                static_cast<int64_t>(layer),
-                                                                static_cast<QtiLayerFlags>(flags));
+    if (mQtiAidlComposer->getWriter(display)) {
+        mQtiAidlComposer->getWriter(display)->get().qtiSetLayerFlag(static_cast<int64_t>(display),
+                                                                    static_cast<int64_t>(layer),
+                                                                    static_cast<QtiLayerFlags>(
+                                                                            flags));
+
+    } else {
+        error = Error::BAD_DISPLAY;
+        ALOGI("%s: Attempted to set layer flag for disconnected display %" PRId64, __func__,
+              display);
+    }
     mQtiAidlComposer->mMutex.unlock_shared();
 #endif
-    return Error::NONE;
+    return error;
 }
 
 Error QtiAidlComposerHalExtension::qtiSetClientTarget_3_1(Display display, int32_t slot,
                                                           int acquireFence,
                                                           uint32_t dataspace) {
+    Error error = Error::NONE;
 #ifdef QTI_COMPOSER3_EXTENSIONS
     mQtiAidlComposer->mMutex.lock_shared();
-    mQtiAidlComposer->getWriter(display)->get().qtiSetClientTarget_3_1(static_cast<int64_t>(
-                                                                               display),
-                                                                       static_cast<uint32_t>(slot),
-                                                                       acquireFence, dataspace);
+    if (mQtiAidlComposer->getWriter(display)) {
+        mQtiAidlComposer->getWriter(display)->get().qtiSetClientTarget_3_1(static_cast<int64_t>(
+                                                                                   display),
+                                                                           static_cast<uint32_t>(
+                                                                                   slot),
+                                                                           acquireFence, dataspace);
+    } else {
+        error = Error::BAD_DISPLAY;
+        ALOGI("%s: Attempted to set client target for disconnected display %" PRId64, __func__,
+              display);
+    }
     mQtiAidlComposer->mMutex.unlock_shared();
 #endif
-    return Error::NONE;
+    return error;
 }
 
 Error QtiAidlComposerHalExtension::qtiTryDrawMethod(Display display,
