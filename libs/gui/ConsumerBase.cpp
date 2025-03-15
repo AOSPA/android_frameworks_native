@@ -480,7 +480,6 @@ status_t ConsumerBase::setMaxAcquiredBufferCount(int maxAcquiredBuffers) {
     return mConsumer->setMaxAcquiredBufferCount(maxAcquiredBuffers);
 }
 
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
 status_t ConsumerBase::setConsumerIsProtected(bool isProtected) {
     Mutex::Autolock lock(mMutex);
     if (mAbandoned) {
@@ -489,7 +488,6 @@ status_t ConsumerBase::setConsumerIsProtected(bool isProtected) {
     }
     return mConsumer->setConsumerIsProtected(isProtected);
 }
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
 
 sp<NativeHandle> ConsumerBase::getSidebandStream() const {
     Mutex::Autolock _l(mMutex);

@@ -317,6 +317,12 @@ prebuilt_etc {
 }
 
 prebuilt_etc {
+    name: "android.hardware.telephony.messaging.prebuilt.xml",
+    src: "android.hardware.telephony.messaging.xml",
+    defaults: ["frameworks_native_data_etc_defaults"],
+}
+
+prebuilt_etc {
     name: "android.hardware.thread_network.prebuilt.xml",
     src: "android.hardware.thread_network.xml",
     defaults: ["frameworks_native_data_etc_defaults"],

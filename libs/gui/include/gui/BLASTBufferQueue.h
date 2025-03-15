@@ -62,21 +62,6 @@ class BufferItemConsumer;
 
 class BLASTBufferItemConsumer : public BufferItemConsumer {
 public:
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
-    BLASTBufferItemConsumer(const sp<IGraphicBufferProducer>& producer,
-                            const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
-                            int bufferCount, bool controlledByApp, wp<BLASTBufferQueue> bbq)
-          : BufferItemConsumer(producer, consumer, consumerUsage, bufferCount, controlledByApp),
-#else
-    BLASTBufferItemConsumer(const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
-                            int bufferCount, bool controlledByApp, wp<BLASTBufferQueue> bbq)
-          : BufferItemConsumer(consumer, consumerUsage, bufferCount, controlledByApp),
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
-            mBLASTBufferQueue(std::move(bbq)),
-            mCurrentlyConnected(false),
-            mPreviouslyConnected(false) {
-    }
-
     void onDisconnect() override EXCLUDES(mMutex);
     void addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
                                   FrameEventHistoryDelta* outDelta) override EXCLUDES(mMutex);
@@ -97,6 +82,23 @@ protected:
 #endif
 
 private:
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+    BLASTBufferItemConsumer(const sp<IGraphicBufferProducer>& producer,
+                            const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
+                            int bufferCount, bool controlledByApp, wp<BLASTBufferQueue> bbq)
+          : BufferItemConsumer(producer, consumer, consumerUsage, bufferCount, controlledByApp),
+#else
+    BLASTBufferItemConsumer(const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
+                            int bufferCount, bool controlledByApp, wp<BLASTBufferQueue> bbq)
+          : BufferItemConsumer(consumer, consumerUsage, bufferCount, controlledByApp),
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+            mBLASTBufferQueue(std::move(bbq)),
+            mCurrentlyConnected(false),
+            mPreviouslyConnected(false) {
+    }
+
+    friend class sp<BLASTBufferItemConsumer>;
+
     const wp<BLASTBufferQueue> mBLASTBufferQueue;
 
     uint64_t mCurrentFrameNumber GUARDED_BY(mMutex) = 0;
@@ -110,8 +112,6 @@ private:
 
 class BLASTBufferQueue : public ConsumerBase::FrameAvailableListener {
 public:
-    BLASTBufferQueue(const std::string& name, bool updateDestinationFrame = true);
-
     sp<IGraphicBufferProducer> getIGraphicBufferProducer() const {
         return mProducer;
     }
@@ -191,8 +191,13 @@ public:
     void onFirstRef() override;
 
 private:
+    // Not public to ensure construction via sp<>::make().
+    BLASTBufferQueue(const std::string& name, bool updateDestinationFrame = true);
+
+    friend class sp<BLASTBufferQueue>;
     friend class BLASTBufferQueueHelper;
     friend class BBQBufferQueueProducer;
+    friend class TestBLASTBufferQueue;
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
     friend class BBQBufferQueueCore;
 #endif

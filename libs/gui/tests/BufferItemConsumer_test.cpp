@@ -62,14 +62,15 @@ class BufferItemConsumerTest : public ::testing::Test {
     void SetUp() override {
         mBuffers.resize(BufferQueueDefs::NUM_BUFFER_SLOTS);
 
-        mBIC = new BufferItemConsumer(kUsage, kMaxLockedBuffers, true);
+        sp<Surface> surface;
+        std::tie(mBIC, surface) = BufferItemConsumer::create(kUsage, kMaxLockedBuffers, true);
         String8 name("BufferItemConsumer_Under_Test");
         mBIC->setName(name);
         mBFL = new BufferFreedListener(this);
         mBIC->setBufferFreedListener(mBFL);
 
         sp<IProducerListener> producerListener = new TrackingProducerListener(this);
-        mProducer = mBIC->getSurface()->getIGraphicBufferProducer();
+        mProducer = surface->getIGraphicBufferProducer();
         IGraphicBufferProducer::QueueBufferOutput bufferOutput;
         ASSERT_EQ(NO_ERROR,
                   mProducer->connect(producerListener, NATIVE_WINDOW_API_CPU,

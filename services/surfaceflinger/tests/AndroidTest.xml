@@ -19,6 +19,9 @@
         <option name="push" value="SurfaceFlinger_test->/data/local/tmp/SurfaceFlinger_test" />
     </target_preparer>
     <target_preparer class="com.android.tradefed.targetprep.RootTargetPreparer"/>
+    <target_preparer class="com.android.tradefed.targetprep.DeviceSetup">
+        <option name="screen-always-on" value="on" />
+    </target_preparer>
     <option name="test-suite-tag" value="apct" />
     <test class="com.android.tradefed.testtype.GTest" >
         <option name="native-test-device-path" value="/data/local/tmp" />

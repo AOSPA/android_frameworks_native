@@ -209,15 +209,15 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, bool updateDestinati
         mUpdateDestinationFrame(updateDestinationFrame) {
     createBufferQueue(&mProducer, &mConsumer);
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
-    mBufferItemConsumer = new BLASTBufferItemConsumer(mProducer, mConsumer,
-                                                      GraphicBuffer::USAGE_HW_COMPOSER |
-                                                              GraphicBuffer::USAGE_HW_TEXTURE,
-                                                      1, false, this);
+    mBufferItemConsumer = sp<BLASTBufferItemConsumer>::make(mProducer, mConsumer,
+                                                            GraphicBuffer::USAGE_HW_COMPOSER |
+                                                                    GraphicBuffer::USAGE_HW_TEXTURE,
+                                                            1, false, this);
 #else
-    mBufferItemConsumer = new BLASTBufferItemConsumer(mConsumer,
-                                                      GraphicBuffer::USAGE_HW_COMPOSER |
-                                                              GraphicBuffer::USAGE_HW_TEXTURE,
-                                                      1, false, this);
+    mBufferItemConsumer = sp<BLASTBufferItemConsumer>::make(mConsumer,
+                                                            GraphicBuffer::USAGE_HW_COMPOSER |
+                                                                    GraphicBuffer::USAGE_HW_TEXTURE,
+                                                            1, false, this);
 #endif //  COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
     // since the adapter is in the client process, set dequeue timeout
     // explicitly so that dequeueBuffer will block
@@ -671,7 +671,8 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
                            bufferItem.mScalingMode, crop);
 
     auto releaseBufferCallback = makeReleaseBufferCallbackThunk();
-    sp<Fence> fence = bufferItem.mFence ? new Fence(bufferItem.mFence->dup()) : Fence::NO_FENCE;
+    sp<Fence> fence =
+            bufferItem.mFence ? sp<Fence>::make(bufferItem.mFence->dup()) : Fence::NO_FENCE;
 
     nsecs_t dequeueTime = -1;
     {
@@ -1053,7 +1054,7 @@ sp<Surface> BLASTBufferQueue::getSurface(bool includeSurfaceControlHandle) {
     if (includeSurfaceControlHandle && mSurfaceControl) {
         scHandle = mSurfaceControl->getHandle();
     }
-    return new BBQSurface(mProducer, true, scHandle, this);
+    return sp<BBQSurface>::make(mProducer, true, scHandle, this);
 }
 
 void BLASTBufferQueue::mergeWithNextTransaction(SurfaceComposerClient::Transaction* t,
@@ -1159,10 +1160,10 @@ ANDROID_SINGLETON_STATIC_INSTANCE(AsyncWorker);
 class AsyncProducerListener : public BnProducerListener {
 private:
     const sp<IProducerListener> mListener;
+    AsyncProducerListener(const sp<IProducerListener>& listener) : mListener(listener) {}
+    friend class sp<AsyncProducerListener>;
 
 public:
-    AsyncProducerListener(const sp<IProducerListener>& listener) : mListener(listener) {}
-
     void onBufferReleased() override {
         AsyncWorker::getInstance().post([listener = mListener]() { listener->onBufferReleased(); });
     }
@@ -1216,7 +1217,7 @@ public:
             return BufferQueueProducer::connect(listener, api, producerControlledByApp, output);
         }
 
-        return BufferQueueProducer::connect(new AsyncProducerListener(listener), api,
+        return BufferQueueProducer::connect(sp<AsyncProducerListener>::make(listener), api,
                                             producerControlledByApp, output);
     }
 

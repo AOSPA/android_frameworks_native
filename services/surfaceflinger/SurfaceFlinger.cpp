@@ -8268,15 +8268,16 @@ ftl::SharedFuture<FenceResult> SurfaceFlinger::renderScreenImpl(
     // Otherwise for seamless transitions it's important to match the current
     // display state as the buffer will be shown under these same conditions, and we
     // want to avoid any flickers.
-    if (captureResults.capturedHdrLayers && !enableLocalTonemapping &&
-        args.sdrWhitePointNits > 1.0f && !args.seamlessTransition) {
-        // Restrict the amount of HDR "headroom" in the screenshot to avoid
-        // over-dimming the SDR portion. 2.0 chosen by experimentation
-        constexpr float kMaxScreenshotHeadroom = 2.0f;
-        // TODO: Aim to update displayBrightnessNits earlier in screenshot
-        // path so ScreenshotArgs can be passed as const
-        args.displayBrightnessNits = std::min(args.sdrWhitePointNits * kMaxScreenshotHeadroom,
-                                              args.displayBrightnessNits);
+    if (captureResults.capturedHdrLayers) {
+        if (!enableLocalTonemapping && args.sdrWhitePointNits > 1.0f && !args.seamlessTransition) {
+            // Restrict the amount of HDR "headroom" in the screenshot to avoid
+            // over-dimming the SDR portion. 2.0 chosen by experimentation
+            constexpr float kMaxScreenshotHeadroom = 2.0f;
+            // TODO: Aim to update displayBrightnessNits earlier in screenshot
+            // path so ScreenshotArgs can be passed as const
+            args.displayBrightnessNits = std::min(args.sdrWhitePointNits * kMaxScreenshotHeadroom,
+                                                  args.displayBrightnessNits);
+        }
     } else {
         args.displayBrightnessNits = args.sdrWhitePointNits;
     }

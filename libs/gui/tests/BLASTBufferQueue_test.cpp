@@ -114,8 +114,8 @@ private:
 class BLASTBufferQueueHelper {
 public:
     BLASTBufferQueueHelper(const sp<SurfaceControl>& sc, int width, int height) {
-        mBlastBufferQueueAdapter = new TestBLASTBufferQueue("TestBLASTBufferQueue", sc, width,
-                                                            height, PIXEL_FORMAT_RGBA_8888);
+        mBlastBufferQueueAdapter = sp<TestBLASTBufferQueue>::make("TestBLASTBufferQueue", sc, width,
+                                                                  height, PIXEL_FORMAT_RGBA_8888);
     }
 
     void update(const sp<SurfaceControl>& sc, int width, int height) {

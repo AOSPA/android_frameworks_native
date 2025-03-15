@@ -570,7 +570,7 @@ int Surface::hook_dequeueBuffer_DEPRECATED(ANativeWindow* window,
     if (result != OK) {
         return result;
     }
-    sp<Fence> fence(new Fence(fenceFd));
+    sp<Fence> fence = sp<Fence>::make(fenceFd);
     int waitResult = fence->waitForever("dequeueBuffer_DEPRECATED");
     if (waitResult != OK) {
         ALOGE("dequeueBuffer_DEPRECATED: Fence::wait returned an error: %d",
@@ -1053,7 +1053,7 @@ int Surface::cancelBuffer(android_native_buffer_t* buffer,
         }
         return OK;
     }
-    sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
+    sp<Fence> fence(fenceFd >= 0 ? sp<Fence>::make(fenceFd) : Fence::NO_FENCE);
     mGraphicBufferProducer->cancelBuffer(i, fence);
 
     if (mSharedBufferMode && mAutoRefresh && mSharedBufferSlot == i) {
@@ -1091,7 +1091,7 @@ int Surface::cancelBuffers(const std::vector<BatchBuffer>& buffers) {
             ALOGE("%s: cannot find slot number for cancelled buffer", __FUNCTION__);
             badSlotResult = slot;
         } else {
-            sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
+            sp<Fence> fence(fenceFd >= 0 ? sp<Fence>::make(fenceFd) : Fence::NO_FENCE);
             cancelBufferInputs[numBuffersCancelled].slot = slot;
             cancelBufferInputs[numBuffersCancelled++].fence = fence;
         }
@@ -1152,7 +1152,7 @@ void Surface::getQueueBufferInputLocked(android_native_buffer_t* buffer, int fen
     Rect crop(Rect::EMPTY_RECT);
     mCrop.intersect(Rect(buffer->width, buffer->height), &crop);
 
-    sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
+    sp<Fence> fence(fenceFd >= 0 ? sp<Fence>::make(fenceFd) : Fence::NO_FENCE);
     IGraphicBufferProducer::QueueBufferInput input(timestamp, isAutoTimestamp,
             static_cast<android_dataspace>(mDataSpace), crop, mScalingMode,
             mTransform ^ mStickyTransform, fence, mStickyTransform,
@@ -2194,7 +2194,7 @@ bool Surface::transformToDisplayInverse() const {
 }
 
 int Surface::connect(int api) {
-    static sp<SurfaceListener> listener = new StubSurfaceListener();
+    static sp<SurfaceListener> listener = sp<StubSurfaceListener>::make();
     return connect(api, listener);
 }
 
@@ -2212,7 +2212,7 @@ int Surface::connect(int api, const sp<SurfaceListener>& listener, bool reportBu
 
 // QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
     if (listener != nullptr) {
-        mListenerProxy = new ProducerListenerProxy(this, listener);
+        mListenerProxy = sp<ProducerListenerProxy>::make(this, listener);
     }
 
     int err =

@@ -15403,4 +15403,47 @@ TEST_F(InputDispatcherConnectedDisplayTest, MultiDisplayMouseDragAndDropFromNonP
     mWindowOnSecondDisplay->assertNoEvents();
 }
 
+using InputDispatcherConnectedDisplayPointerInWindowTest = InputDispatcherConnectedDisplayTest;
+
+TEST_F(InputDispatcherConnectedDisplayPointerInWindowTest, MouseOnWindowOnPrimaryDisplay) {
+    SCOPED_FLAG_OVERRIDE(connected_displays_cursor, true);
+
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(ACTION_HOVER_ENTER, AINPUT_SOURCE_MOUSE)
+                    .pointer(PointerBuilder(/*id=*/0, ToolType::MOUSE).x(50).y(50))
+                    .build());
+
+    mWindow->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+    mSpyWindow->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+    mWindowOnSecondDisplay->assertNoEvents();
+
+    ASSERT_TRUE(mDispatcher->isPointerInWindow(mWindow->getToken(), DISPLAY_ID, DEVICE_ID,
+                                               /*pointerId=*/0));
+    ASSERT_TRUE(mDispatcher->isPointerInWindow(mSpyWindow->getToken(), DISPLAY_ID, DEVICE_ID,
+                                               /*pointerId=*/0));
+    ASSERT_FALSE(mDispatcher->isPointerInWindow(mWindowOnSecondDisplay->getToken(),
+                                                SECOND_DISPLAY_ID, DEVICE_ID, /*pointerId=*/0));
+}
+
+TEST_F(InputDispatcherConnectedDisplayPointerInWindowTest, MouseOnWindowOnNonPrimaryDisplay) {
+    SCOPED_FLAG_OVERRIDE(connected_displays_cursor, true);
+
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(ACTION_HOVER_ENTER, AINPUT_SOURCE_MOUSE)
+                    .displayId(SECOND_DISPLAY_ID)
+                    .pointer(PointerBuilder(/*id=*/0, ToolType::MOUSE).x(50).y(50))
+                    .build());
+
+    mWindow->assertNoEvents();
+    mSpyWindow->assertNoEvents();
+    mWindowOnSecondDisplay->consumeMotionEvent(WithMotionAction(ACTION_HOVER_ENTER));
+
+    ASSERT_FALSE(mDispatcher->isPointerInWindow(mWindow->getToken(), DISPLAY_ID, DEVICE_ID,
+                                                /*pointerId=*/0));
+    ASSERT_FALSE(mDispatcher->isPointerInWindow(mSpyWindow->getToken(), DISPLAY_ID, DEVICE_ID,
+                                                /*pointerId=*/0));
+    ASSERT_TRUE(mDispatcher->isPointerInWindow(mWindowOnSecondDisplay->getToken(),
+                                               SECOND_DISPLAY_ID, DEVICE_ID, /*pointerId=*/0));
+}
+
 } // namespace android::inputdispatcher

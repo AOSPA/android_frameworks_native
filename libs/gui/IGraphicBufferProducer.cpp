@@ -104,7 +104,7 @@ public:
         }
         bool nonNull = reply.readInt32();
         if (nonNull) {
-            *buf = new GraphicBuffer();
+            *buf = sp<GraphicBuffer>::make();
             result = reply.read(**buf);
             if(result != NO_ERROR) {
                 (*buf).clear();
@@ -197,7 +197,7 @@ public:
         }
 
         *buf = reply.readInt32();
-        *fence = new Fence();
+        *fence = sp<Fence>::make();
         result = reply.read(**fence);
         if (result != NO_ERROR) {
             fence->clear();
@@ -293,7 +293,7 @@ public:
         if (result == NO_ERROR) {
             bool nonNull = reply.readInt32();
             if (nonNull) {
-                *outBuffer = new GraphicBuffer;
+                *outBuffer = sp<GraphicBuffer>::make();
                 result = reply.read(**outBuffer);
                 if (result != NO_ERROR) {
                     outBuffer->clear();
@@ -302,7 +302,7 @@ public:
             }
             nonNull = reply.readInt32();
             if (nonNull) {
-                *outFence = new Fence;
+                *outFence = sp<Fence>::make();
                 result = reply.read(**outFence);
                 if (result != NO_ERROR) {
                     outBuffer->clear();
@@ -640,7 +640,7 @@ public:
         bool hasBuffer = reply.readBool();
         sp<GraphicBuffer> buffer;
         if (hasBuffer) {
-            buffer = new GraphicBuffer();
+            buffer = sp<GraphicBuffer>::make();
             result = reply.read(*buffer);
             if (result == NO_ERROR) {
                 result = reply.read(outTransformMatrix, sizeof(float) * 16);
@@ -650,7 +650,7 @@ public:
             ALOGE("getLastQueuedBuffer failed to read buffer: %d", result);
             return result;
         }
-        sp<Fence> fence(new Fence);
+        sp<Fence> fence = sp<Fence>::make();
         result = reply.read(*fence);
         if (result != NO_ERROR) {
             ALOGE("getLastQueuedBuffer failed to read fence: %d", result);
@@ -687,7 +687,7 @@ public:
         }
         sp<GraphicBuffer> buffer;
         if (hasBuffer) {
-            buffer = new GraphicBuffer();
+            buffer = sp<GraphicBuffer>::make();
             result = reply.read(*buffer);
             if (result == NO_ERROR) {
                 result = reply.read(*outRect);
@@ -700,7 +700,7 @@ public:
             ALOGE("getLastQueuedBuffer failed to read buffer: %d", result);
             return result;
         }
-        sp<Fence> fence(new Fence);
+        sp<Fence> fence = sp<Fence>::make();
         result = reply.read(*fence);
         if (result != NO_ERROR) {
             ALOGE("getLastQueuedBuffer failed to read fence: %d", result);
@@ -1232,7 +1232,7 @@ status_t BnGraphicBufferProducer::onTransact(
         }
         case ATTACH_BUFFER: {
             CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
-            sp<GraphicBuffer> buffer = new GraphicBuffer();
+            sp<GraphicBuffer> buffer = sp<GraphicBuffer>::make();
             status_t result = data.read(*buffer.get());
             int slot = 0;
             if (result == NO_ERROR) {
@@ -1250,7 +1250,7 @@ status_t BnGraphicBufferProducer::onTransact(
                 return result;
             }
             for (sp<GraphicBuffer>& buffer : buffers) {
-                buffer = new GraphicBuffer();
+                buffer = sp<GraphicBuffer>::make();
                 result = data.read(*buffer.get());
                 if (result != NO_ERROR) {
                     return result;
@@ -1306,7 +1306,7 @@ status_t BnGraphicBufferProducer::onTransact(
         case CANCEL_BUFFER: {
             CHECK_INTERFACE(IGraphicBufferProducer, data, reply);
             int buf = data.readInt32();
-            sp<Fence> fence = new Fence();
+            sp<Fence> fence = sp<Fence>::make();
             status_t result = data.read(*fence.get());
             if (result == NO_ERROR) {
                 result = cancelBuffer(buf, fence);

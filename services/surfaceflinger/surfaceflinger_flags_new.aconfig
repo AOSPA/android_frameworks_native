@@ -321,6 +321,16 @@ flag {
 } # vrr_bugfix_dropped_frame
 
 flag {
+  name: "vsync_predictor_recovery"
+  namespace: "core_graphics"
+  description: "Recover the vsync predictor from bad vsync model"
+  bug: "385059265"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+ } # vsync_predictor_recovery
+
+flag {
   name: "window_blur_kawase2"
   namespace: "core_graphics"
   description: "Flag for using Kawase2 algorithm for window blur"

@@ -337,9 +337,9 @@ public:
         mFlinger->configure();
     }
 
-    void configureAndCommit() {
+    void configureAndCommit(bool modeset = false) {
         configure();
-        commitTransactionsLocked(eDisplayTransactionNeeded);
+        commitTransactionsLocked(eDisplayTransactionNeeded, modeset);
     }
 
     void commit(TimePoint frameTime, VsyncId vsyncId, TimePoint expectedVsyncTime,
@@ -429,11 +429,14 @@ public:
                                                        dispSurface, producer);
     }
 
-    void commitTransactionsLocked(uint32_t transactionFlags) {
+    void commitTransactionsLocked(uint32_t transactionFlags, bool modeset = false) {
         Mutex::Autolock lock(mFlinger->mStateLock);
         ftl::FakeGuard guard(kMainThreadContext);
         mFlinger->processDisplayChangesLocked();
         mFlinger->commitTransactionsLocked(transactionFlags);
+        if (modeset) {
+            mFlinger->initiateDisplayModeChanges();
+        }
     }
 
     void onComposerHalHotplugEvent(hal::HWDisplayId hwcDisplayId, DisplayHotplugEvent event) {

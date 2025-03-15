@@ -35,6 +35,18 @@ status_t FeatureConfig::writeToParcel(Parcel* parcel) const {
     if (status != OK) {
         return status;
     }
+    // Number of GPU vendor IDs.
+    status = parcel->writeVectorSize(mGpuVendorIDs);
+    if (status != OK) {
+        return status;
+    }
+    // GPU vendor IDs.
+    for (const auto& vendorID : mGpuVendorIDs) {
+        status = parcel->writeUint32(vendorID);
+        if (status != OK) {
+            return status;
+        }
+    }
 
     return OK;
 }
@@ -50,6 +62,21 @@ status_t FeatureConfig::readFromParcel(const Parcel* parcel) {
     if (status != OK) {
         return status;
     }
+    // Number of GPU vendor IDs.
+    int numGpuVendorIDs;
+    status = parcel->readInt32(&numGpuVendorIDs);
+    if (status != OK) {
+        return status;
+    }
+    // GPU vendor IDs.
+    for (int i = 0; i < numGpuVendorIDs; i++) {
+        uint32_t gpuVendorIdUint;
+        status = parcel->readUint32(&gpuVendorIdUint);
+        if (status != OK) {
+            return status;
+        }
+        mGpuVendorIDs.emplace_back(gpuVendorIdUint);
+    }
 
     return OK;
 }
@@ -58,6 +85,10 @@ std::string FeatureConfig::toString() const {
     std::string result;
     StringAppendF(&result, "Feature: %s\n", mFeatureName.c_str());
     StringAppendF(&result, "      Status: %s\n", mEnabled ? "enabled" : "disabled");
+    for (const auto& vendorID : mGpuVendorIDs) {
+        // vkjson outputs decimal, so print both formats.
+        StringAppendF(&result, "      GPU Vendor ID: 0x%04X (%d)\n", vendorID, vendorID);
+    }
 
     return result;
 }
@@ -121,7 +152,12 @@ status_t FeatureOverrides::readFromParcel(const Parcel* parcel) {
     }
 
     // Number of package feature overrides.
-    int numPkgOverrides = parcel->readInt32();
+    int numPkgOverrides;
+    status = parcel->readInt32(&numPkgOverrides);
+    if (status != OK) {
+        return status;
+    }
+    // Package feature overrides.
     for (int i = 0; i < numPkgOverrides; i++) {
         // Package name.
         std::string name;
@@ -131,7 +167,11 @@ status_t FeatureOverrides::readFromParcel(const Parcel* parcel) {
         }
         std::vector<FeatureConfig> cfgs;
         // Number of package feature configs.
-        int numCfgs = parcel->readInt32();
+        int numCfgs;
+        status = parcel->readInt32(&numCfgs);
+        if (status != OK) {
+            return status;
+        }
         // Package feature configs.
         for (int j = 0; j < numCfgs; j++) {
             FeatureConfig cfg;

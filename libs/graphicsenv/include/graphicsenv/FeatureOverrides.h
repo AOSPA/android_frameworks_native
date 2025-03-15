@@ -35,6 +35,7 @@ public:
 
     std::string mFeatureName;
     bool mEnabled;
+    std::vector<uint32_t> mGpuVendorIDs;
 };
 
 /*

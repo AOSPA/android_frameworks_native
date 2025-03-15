@@ -114,7 +114,11 @@ public:
     // Test instances
 
     TestableSurfaceFlinger mFlinger;
+
     sp<mock::NativeWindow> mNativeWindow = sp<mock::NativeWindow>::make();
+    sp<compositionengine::mock::DisplaySurface> mDisplaySurface =
+            sp<compositionengine::mock::DisplaySurface>::make();
+
     sp<GraphicBuffer> mBuffer =
             sp<GraphicBuffer>::make(1u, 1u, PIXEL_FORMAT_RGBA_8888,
                                     GRALLOC_USAGE_SW_WRITE_OFTEN | GRALLOC_USAGE_SW_READ_OFTEN);
@@ -294,6 +298,7 @@ struct DisplayVariant {
 
         injector.setSecure(static_cast<bool>(SECURE));
         injector.setNativeWindow(test->mNativeWindow);
+        injector.setDisplaySurface(test->mDisplaySurface);
 
         // Creating a DisplayDevice requires getting default dimensions from the
         // native window along with some other initial setup.
