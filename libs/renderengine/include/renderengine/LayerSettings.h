@@ -301,6 +301,10 @@ static inline void PrintTo(const LayerSettings& settings, ::std::ostream* os) {
         *os << "\n    .edgeExtensionEffect = " << settings.edgeExtensionEffect;
     }
     *os << "\n    .whitePointNits = " << settings.whitePointNits;
+    if (settings.luts) {
+        *os << "\n    .luts = ";
+        PrintTo(settings.luts, os);
+    }
     *os << "\n}";
 }
 

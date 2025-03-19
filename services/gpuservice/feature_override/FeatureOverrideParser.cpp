@@ -90,13 +90,15 @@ bool FeatureOverrideParser::shouldReloadFeatureOverrides() const {
 }
 
 void FeatureOverrideParser::forceFileRead() {
-    resetFeatureOverrides(mFeatureOverrides);
     mLastProtobufReadTime = 0;
 }
 
 void FeatureOverrideParser::parseFeatureOverrides() {
     const feature_override::FeatureOverrideProtos overridesProtos = readFeatureConfigProtos(
             getFeatureOverrideFilePath());
+
+    // Clear out the stale values before adding the newly parsed data.
+    resetFeatureOverrides(mFeatureOverrides);
 
     // Global feature overrides.
     for (const auto &featureConfigProto: overridesProtos.global_features()) {

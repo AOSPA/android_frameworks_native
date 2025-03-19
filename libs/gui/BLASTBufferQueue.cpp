@@ -234,8 +234,6 @@ BLASTBufferQueue::BLASTBufferQueue(const std::string& name, bool updateDestinati
     ComposerServiceAIDL::getComposerService()->getMaxAcquiredBufferCount(&mMaxAcquiredBuffers);
     mBufferItemConsumer->setMaxAcquiredBufferCount(mMaxAcquiredBuffers);
     mCurrentMaxAcquiredBufferCount = mMaxAcquiredBuffers;
-    mNumAcquired = 0;
-    mNumFrameAvailable = 0;
 
     TransactionCompletedListener::getInstance()->addQueueStallListener(
             [&](const std::string& reason) {
@@ -470,7 +468,7 @@ void BLASTBufferQueue::transactionCallback(nsecs_t /*latchTime*/, const sp<Fence
 
 void BLASTBufferQueue::flushShadowQueue() {
     BQA_LOGV("flushShadowQueue");
-    int numFramesToFlush = mNumFrameAvailable;
+    int32_t numFramesToFlush = mNumFrameAvailable;
     while (numFramesToFlush > 0) {
         acquireNextBufferLocked(std::nullopt);
         numFramesToFlush--;

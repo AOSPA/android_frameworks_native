@@ -9924,6 +9924,9 @@ protected:
     virtual void SetUp() override {
         InputDispatcherTest::SetUp();
 
+        // Use current time as start time otherwise events may be dropped due to being stale.
+        mGestureStartTime = std::chrono::nanoseconds(systemTime(SYSTEM_TIME_MONOTONIC));
+
         std::shared_ptr<FakeApplicationHandle> application =
                 std::make_shared<FakeApplicationHandle>();
         application->setDispatchingTimeout(100ms);
@@ -9941,82 +9944,81 @@ protected:
         mWindow->consumeFocusEvent(true);
     }
 
-    void notifyAndConsumeMotion(int32_t action, uint32_t source, ui::LogicalDisplayId displayId,
-                                nsecs_t eventTime) {
-        mDispatcher->notifyMotion(MotionArgsBuilder(action, source)
-                                          .displayId(displayId)
-                                          .eventTime(eventTime)
-                                          .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
-                                          .build());
+    NotifyMotionArgs notifyAndConsumeMotion(int32_t action, uint32_t source,
+                                            ui::LogicalDisplayId displayId,
+                                            std::chrono::nanoseconds timeDelay) {
+        const NotifyMotionArgs motionArgs =
+                MotionArgsBuilder(action, source)
+                        .displayId(displayId)
+                        .eventTime((mGestureStartTime + timeDelay).count())
+                        .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                        .build();
+        mDispatcher->notifyMotion(motionArgs);
         mWindow->consumeMotionEvent(WithMotionAction(action));
+        return motionArgs;
     }
 
 private:
     sp<FakeWindowHandle> mWindow;
+    std::chrono::nanoseconds mGestureStartTime;
 };
 
 TEST_F_WITH_FLAGS(
         InputDispatcherUserActivityPokeTests, MinPokeTimeObserved,
         REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(com::android::input::flags,
                                             rate_limit_user_activity_poke_in_dispatcher))) {
-    // Use current time otherwise events may be dropped due to being stale.
-    const nsecs_t currentTime = systemTime(SYSTEM_TIME_MONOTONIC);
-
     mDispatcher->setMinTimeBetweenUserActivityPokes(50ms);
 
     // First event of type TOUCH. Should poke.
-    notifyAndConsumeMotion(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN, ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(50));
+    NotifyMotionArgs motionArgs =
+            notifyAndConsumeMotion(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN,
+                                   ui::LogicalDisplayId::DEFAULT, std::chrono::milliseconds(50));
     mFakePolicy->assertUserActivityPoked(
-            {{currentTime + milliseconds_to_nanoseconds(50), USER_ACTIVITY_EVENT_TOUCH,
-              ui::LogicalDisplayId::DEFAULT}});
+            {{motionArgs.eventTime, USER_ACTIVITY_EVENT_TOUCH, ui::LogicalDisplayId::DEFAULT}});
 
     // 80ns > 50ns has passed since previous TOUCH event. Should poke.
-    notifyAndConsumeMotion(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN, ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(130));
+    motionArgs =
+            notifyAndConsumeMotion(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN,
+                                   ui::LogicalDisplayId::DEFAULT, std::chrono::milliseconds(130));
     mFakePolicy->assertUserActivityPoked(
-            {{currentTime + milliseconds_to_nanoseconds(130), USER_ACTIVITY_EVENT_TOUCH,
-              ui::LogicalDisplayId::DEFAULT}});
+            {{motionArgs.eventTime, USER_ACTIVITY_EVENT_TOUCH, ui::LogicalDisplayId::DEFAULT}});
 
     // First event of type OTHER. Should poke (despite being within 50ns of previous TOUCH event).
-    notifyAndConsumeMotion(ACTION_SCROLL, AINPUT_SOURCE_ROTARY_ENCODER,
-                           ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(135));
+    motionArgs =
+            notifyAndConsumeMotion(ACTION_SCROLL, AINPUT_SOURCE_ROTARY_ENCODER,
+                                   ui::LogicalDisplayId::DEFAULT, std::chrono::milliseconds(135));
     mFakePolicy->assertUserActivityPoked(
-            {{currentTime + milliseconds_to_nanoseconds(135), USER_ACTIVITY_EVENT_OTHER,
-              ui::LogicalDisplayId::DEFAULT}});
+            {{motionArgs.eventTime, USER_ACTIVITY_EVENT_OTHER, ui::LogicalDisplayId::DEFAULT}});
 
     // Within 50ns of previous TOUCH event. Should NOT poke.
     notifyAndConsumeMotion(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN, ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(140));
+                           std::chrono::milliseconds(140));
     mFakePolicy->assertUserActivityNotPoked();
 
     // Within 50ns of previous OTHER event. Should NOT poke.
     notifyAndConsumeMotion(ACTION_SCROLL, AINPUT_SOURCE_ROTARY_ENCODER,
-                           ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(150));
+                           ui::LogicalDisplayId::DEFAULT, std::chrono::milliseconds(150));
     mFakePolicy->assertUserActivityNotPoked();
 
     // Within 50ns of previous TOUCH event (which was at time 130). Should NOT poke.
     // Note that STYLUS is mapped to TOUCH user activity, since it's a pointer-type source.
     notifyAndConsumeMotion(ACTION_DOWN, AINPUT_SOURCE_STYLUS, ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(160));
+                           std::chrono::milliseconds(160));
     mFakePolicy->assertUserActivityNotPoked();
 
     // 65ns > 50ns has passed since previous OTHER event. Should poke.
-    notifyAndConsumeMotion(ACTION_SCROLL, AINPUT_SOURCE_ROTARY_ENCODER,
-                           ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(200));
+    motionArgs =
+            notifyAndConsumeMotion(ACTION_SCROLL, AINPUT_SOURCE_ROTARY_ENCODER,
+                                   ui::LogicalDisplayId::DEFAULT, std::chrono::milliseconds(200));
     mFakePolicy->assertUserActivityPoked(
-            {{currentTime + milliseconds_to_nanoseconds(200), USER_ACTIVITY_EVENT_OTHER,
-              ui::LogicalDisplayId::DEFAULT}});
+            {{motionArgs.eventTime, USER_ACTIVITY_EVENT_OTHER, ui::LogicalDisplayId::DEFAULT}});
 
     // 170ns > 50ns has passed since previous TOUCH event. Should poke.
-    notifyAndConsumeMotion(ACTION_UP, AINPUT_SOURCE_STYLUS, ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(300));
+    motionArgs =
+            notifyAndConsumeMotion(ACTION_UP, AINPUT_SOURCE_STYLUS, ui::LogicalDisplayId::DEFAULT,
+                                   std::chrono::milliseconds(300));
     mFakePolicy->assertUserActivityPoked(
-            {{currentTime + milliseconds_to_nanoseconds(300), USER_ACTIVITY_EVENT_TOUCH,
-              ui::LogicalDisplayId::DEFAULT}});
+            {{motionArgs.eventTime, USER_ACTIVITY_EVENT_TOUCH, ui::LogicalDisplayId::DEFAULT}});
 
     // Assert that there's no more user activity poke event.
     mFakePolicy->assertUserActivityNotPoked();
@@ -10026,39 +10028,35 @@ TEST_F_WITH_FLAGS(
         InputDispatcherUserActivityPokeTests, DefaultMinPokeTimeOf100MsUsed,
         REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(com::android::input::flags,
                                             rate_limit_user_activity_poke_in_dispatcher))) {
-    // Use current time otherwise events may be dropped due to being stale.
-    const nsecs_t currentTime = systemTime(SYSTEM_TIME_MONOTONIC);
-    notifyAndConsumeMotion(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN, ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(200));
+    NotifyMotionArgs motionArgs =
+            notifyAndConsumeMotion(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN,
+                                   ui::LogicalDisplayId::DEFAULT, std::chrono::milliseconds(200));
     mFakePolicy->assertUserActivityPoked(
-            {{currentTime + milliseconds_to_nanoseconds(200), USER_ACTIVITY_EVENT_TOUCH,
-              ui::LogicalDisplayId::DEFAULT}});
+            {{motionArgs.eventTime, USER_ACTIVITY_EVENT_TOUCH, ui::LogicalDisplayId::DEFAULT}});
 
     notifyAndConsumeMotion(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN, ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(280));
+                           std::chrono::milliseconds(280));
     mFakePolicy->assertUserActivityNotPoked();
 
-    notifyAndConsumeMotion(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN, ui::LogicalDisplayId::DEFAULT,
-                           currentTime + milliseconds_to_nanoseconds(340));
+    motionArgs =
+            notifyAndConsumeMotion(ACTION_UP, AINPUT_SOURCE_TOUCHSCREEN,
+                                   ui::LogicalDisplayId::DEFAULT, std::chrono::milliseconds(340));
     mFakePolicy->assertUserActivityPoked(
-            {{currentTime + milliseconds_to_nanoseconds(340), USER_ACTIVITY_EVENT_TOUCH,
-              ui::LogicalDisplayId::DEFAULT}});
+            {{motionArgs.eventTime, USER_ACTIVITY_EVENT_TOUCH, ui::LogicalDisplayId::DEFAULT}});
 }
 
 TEST_F_WITH_FLAGS(
         InputDispatcherUserActivityPokeTests, ZeroMinPokeTimeDisablesRateLimiting,
         REQUIRES_FLAGS_ENABLED(ACONFIG_FLAG(com::android::input::flags,
                                             rate_limit_user_activity_poke_in_dispatcher))) {
-    // Use current time otherwise events may be dropped due to being stale.
-    const nsecs_t currentTime = systemTime(SYSTEM_TIME_MONOTONIC);
     mDispatcher->setMinTimeBetweenUserActivityPokes(0ms);
 
     notifyAndConsumeMotion(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN, ui::LogicalDisplayId::DEFAULT,
-                           currentTime + 20);
+                           std::chrono::milliseconds(20));
     mFakePolicy->assertUserActivityPoked();
 
     notifyAndConsumeMotion(ACTION_MOVE, AINPUT_SOURCE_TOUCHSCREEN, ui::LogicalDisplayId::DEFAULT,
-                           currentTime + 30);
+                           std::chrono::milliseconds(30));
     mFakePolicy->assertUserActivityPoked();
 }
 
@@ -12376,6 +12374,11 @@ protected:
     sp<FakeWindowHandle> mSecondWindow;
     sp<FakeWindowHandle> mDragWindow;
     sp<FakeWindowHandle> mSpyWindow;
+
+    std::vector<gui::DisplayInfo> mDisplayInfos;
+
+    std::shared_ptr<FakeApplicationHandle> mSecondApplication;
+    sp<FakeWindowHandle> mWindowOnSecondDisplay;
     // Mouse would force no-split, set the id as non-zero to verify if drag state could track it.
     static constexpr int32_t MOUSE_POINTER_ID = 1;
 
@@ -12396,26 +12399,37 @@ protected:
         mSpyWindow->setTrustedOverlay(true);
         mSpyWindow->setFrame(Rect(0, 0, 200, 100));
 
+        mSecondApplication = std::make_shared<FakeApplicationHandle>();
+        mWindowOnSecondDisplay =
+                sp<FakeWindowHandle>::make(mSecondApplication, mDispatcher,
+                                           "TestWindowOnSecondDisplay", SECOND_DISPLAY_ID);
+        mWindowOnSecondDisplay->setFrame({0, 0, 100, 100});
+
         mDispatcher->setFocusedApplication(ui::LogicalDisplayId::DEFAULT, mApp);
         mDispatcher->onWindowInfosChanged(
-                {{*mSpyWindow->getInfo(), *mWindow->getInfo(), *mSecondWindow->getInfo()},
-                 {},
+                {{*mSpyWindow->getInfo(), *mWindow->getInfo(), *mSecondWindow->getInfo(),
+                  *mWindowOnSecondDisplay->getInfo()},
+                 mDisplayInfos,
                  0,
                  0});
     }
 
-    void injectDown(int fromSource = AINPUT_SOURCE_TOUCHSCREEN) {
+    void injectDown(int fromSource = AINPUT_SOURCE_TOUCHSCREEN,
+                    ui::LogicalDisplayId displayId = ui::LogicalDisplayId::DEFAULT) {
         bool consumeButtonPress = false;
+        const PointF location =
+                displayId == ui::LogicalDisplayId::DEFAULT ? PointF(50, 50) : PointF(50, 450);
         switch (fromSource) {
             case AINPUT_SOURCE_TOUCHSCREEN: {
                 ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
-                          injectMotionDown(*mDispatcher, AINPUT_SOURCE_TOUCHSCREEN,
-                                           ui::LogicalDisplayId::DEFAULT, {50, 50}))
+                          injectMotionDown(*mDispatcher, AINPUT_SOURCE_TOUCHSCREEN, displayId,
+                                           location))
                         << "Inject motion event should return InputEventInjectionResult::SUCCEEDED";
                 break;
             }
             case AINPUT_SOURCE_STYLUS: {
-                PointerBuilder pointer = PointerBuilder(0, ToolType::STYLUS).x(50).y(50);
+                PointerBuilder pointer =
+                        PointerBuilder(0, ToolType::STYLUS).x(location.x).y(location.y);
                 ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
                           injectMotionEvent(*mDispatcher,
                                             MotionEventBuilder(AMOTION_EVENT_ACTION_DOWN,
@@ -12438,12 +12452,14 @@ protected:
                 break;
             }
             case AINPUT_SOURCE_MOUSE: {
-                PointerBuilder pointer =
-                        PointerBuilder(MOUSE_POINTER_ID, ToolType::MOUSE).x(50).y(50);
+                PointerBuilder pointer = PointerBuilder(MOUSE_POINTER_ID, ToolType::MOUSE)
+                                                 .x(location.x)
+                                                 .y(location.y);
                 ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
                           injectMotionEvent(*mDispatcher,
                                             MotionEventBuilder(AMOTION_EVENT_ACTION_DOWN,
                                                                AINPUT_SOURCE_MOUSE)
+                                                    .displayId(displayId)
                                                     .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
                                                     .pointer(pointer)
                                                     .build()));
@@ -12451,6 +12467,7 @@ protected:
                           injectMotionEvent(*mDispatcher,
                                             MotionEventBuilder(AMOTION_EVENT_ACTION_BUTTON_PRESS,
                                                                AINPUT_SOURCE_MOUSE)
+                                                    .displayId(displayId)
                                                     .actionButton(AMOTION_EVENT_BUTTON_PRIMARY)
                                                     .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
                                                     .pointer(pointer)
@@ -12464,42 +12481,58 @@ protected:
         }
 
         // Window should receive motion event.
-        mWindow->consumeMotionDown(ui::LogicalDisplayId::DEFAULT);
+        sp<FakeWindowHandle>& targetWindow =
+                displayId == ui::LogicalDisplayId::DEFAULT ? mWindow : mWindowOnSecondDisplay;
+        targetWindow->consumeMotionDown(displayId);
         if (consumeButtonPress) {
-            mWindow->consumeMotionEvent(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS));
+            targetWindow->consumeMotionEvent(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS));
         }
-        // Spy window should also receive motion event
-        mSpyWindow->consumeMotionDown(ui::LogicalDisplayId::DEFAULT);
+
+        // Spy window should also receive motion event if event is on the same display.
+        if (displayId == ui::LogicalDisplayId::DEFAULT) {
+            mSpyWindow->consumeMotionDown(ui::LogicalDisplayId::DEFAULT);
+        }
     }
 
     // Start performing drag, we will create a drag window and transfer touch to it.
     // @param sendDown : if true, send a motion down on first window before perform drag and drop.
     // Returns true on success.
-    bool startDrag(bool sendDown = true, int fromSource = AINPUT_SOURCE_TOUCHSCREEN) {
+    bool startDrag(bool sendDown = true, int fromSource = AINPUT_SOURCE_TOUCHSCREEN,
+                   ui::LogicalDisplayId dragStartDisplay = ui::LogicalDisplayId::DEFAULT) {
         if (sendDown) {
-            injectDown(fromSource);
+            injectDown(fromSource, dragStartDisplay);
         }
 
         // The drag window covers the entire display
-        mDragWindow = sp<FakeWindowHandle>::make(mApp, mDispatcher, "DragWindow",
-                                                 ui::LogicalDisplayId::DEFAULT);
+        mDragWindow = sp<FakeWindowHandle>::make(mApp, mDispatcher, "DragWindow", dragStartDisplay);
         mDragWindow->setTouchableRegion(Region{{0, 0, 0, 0}});
-        mDispatcher->onWindowInfosChanged({{*mDragWindow->getInfo(), *mSpyWindow->getInfo(),
-                                            *mWindow->getInfo(), *mSecondWindow->getInfo()},
-                                           {},
-                                           0,
-                                           0});
+        mDispatcher->onWindowInfosChanged(
+                {{*mDragWindow->getInfo(), *mSpyWindow->getInfo(), *mWindow->getInfo(),
+                  *mSecondWindow->getInfo(), *mWindowOnSecondDisplay->getInfo()},
+                 mDisplayInfos,
+                 0,
+                 0});
+
+        sp<FakeWindowHandle>& targetWindow = dragStartDisplay == ui::LogicalDisplayId::DEFAULT
+                ? mWindow
+                : mWindowOnSecondDisplay;
 
         // Transfer touch focus to the drag window
         bool transferred =
-                mDispatcher->transferTouchGesture(mWindow->getToken(), mDragWindow->getToken(),
+                mDispatcher->transferTouchGesture(targetWindow->getToken(), mDragWindow->getToken(),
                                                   /*isDragDrop=*/true);
         if (transferred) {
-            mWindow->consumeMotionCancel();
-            mDragWindow->consumeMotionDown(ui::LogicalDisplayId::DEFAULT,
-                                           AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
+            targetWindow->consumeMotionCancel(dragStartDisplay);
+            mDragWindow->consumeMotionDown(dragStartDisplay, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
         }
         return transferred;
+    }
+
+    void addDisplay(ui::LogicalDisplayId displayId, ui::Transform transform) {
+        gui::DisplayInfo displayInfo;
+        displayInfo.displayId = displayId;
+        displayInfo.transform = transform;
+        mDisplayInfos.push_back(displayInfo);
     }
 };
 
@@ -15186,5 +15219,188 @@ TEST_P(TransferOrDontTransferFixture, MouseAndTouchTransferSimultaneousMultiDevi
 }
 
 INSTANTIATE_TEST_SUITE_P(WithAndWithoutTransfer, TransferOrDontTransferFixture, testing::Bool());
+
+class InputDispatcherConnectedDisplayTest : public InputDispatcherDragTests {
+    constexpr static int DENSITY_MEDIUM = 160;
+
+    const DisplayTopologyGraph
+            mTopology{.primaryDisplayId = DISPLAY_ID,
+                      .graph = {{DISPLAY_ID,
+                                 {{SECOND_DISPLAY_ID, DisplayTopologyPosition::TOP, 0.0f}}},
+                                {SECOND_DISPLAY_ID,
+                                 {{DISPLAY_ID, DisplayTopologyPosition::BOTTOM, 0.0f}}}},
+                      .displaysDensity = {{DISPLAY_ID, DENSITY_MEDIUM},
+                                          {SECOND_DISPLAY_ID, DENSITY_MEDIUM}}};
+
+protected:
+    void SetUp() override {
+        addDisplay(DISPLAY_ID, ui::Transform());
+        addDisplay(SECOND_DISPLAY_ID,
+                   ui::Transform(ui::Transform::ROT_270, /*logicalDisplayWidth=*/
+                                 500, /*logicalDisplayHeight=*/500));
+
+        InputDispatcherDragTests::SetUp();
+
+        mDispatcher->setDisplayTopology(mTopology);
+    }
+};
+
+TEST_F(InputDispatcherConnectedDisplayTest, MultiDisplayMouseGesture) {
+    SCOPED_FLAG_OVERRIDE(connected_displays_cursor, true);
+
+    // pointer-down
+    mDispatcher->notifyMotion(MotionArgsBuilder(AMOTION_EVENT_ACTION_DOWN, AINPUT_SOURCE_MOUSE)
+                                      .displayId(DISPLAY_ID)
+                                      .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                                      .pointer(PointerBuilder(0, ToolType::MOUSE).x(60).y(60))
+                                      .build());
+    mWindow->consumeMotionEvent(
+            AllOf(WithMotionAction(ACTION_DOWN), WithDisplayId(DISPLAY_ID), WithRawCoords(60, 60)));
+
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_BUTTON_PRESS, AINPUT_SOURCE_MOUSE)
+                    .displayId(DISPLAY_ID)
+                    .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                    .actionButton(AMOTION_EVENT_BUTTON_PRIMARY)
+                    .pointer(PointerBuilder(0, ToolType::MOUSE).x(60).y(60))
+                    .build());
+    mWindow->consumeMotionEvent(AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_PRESS),
+                                      WithDisplayId(DISPLAY_ID), WithRawCoords(60, 60)));
+
+    // pointer-move
+    mDispatcher->notifyMotion(MotionArgsBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_MOUSE)
+                                      .displayId(DISPLAY_ID)
+                                      .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                                      .pointer(PointerBuilder(0, ToolType::MOUSE).x(60).y(60))
+                                      .build());
+    mWindow->consumeMotionEvent(AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                                      WithDisplayId(DISPLAY_ID), WithRawCoords(60, 60)));
+
+    // pointer-move with different display
+    // TODO (b/383092013): by default windows will not be topology aware and receive events as it
+    // was in the same display. This behaviour has not been implemented yet.
+    mDispatcher->notifyMotion(MotionArgsBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_MOUSE)
+                                      .displayId(SECOND_DISPLAY_ID)
+                                      .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                                      .pointer(PointerBuilder(0, ToolType::MOUSE).x(70).y(70))
+                                      .build());
+    // events should be delivered with the second displayId and in corrosponding coordinate space
+    mWindow->consumeMotionEvent(AllOf(WithMotionAction(AMOTION_EVENT_ACTION_MOVE),
+                                      WithDisplayId(SECOND_DISPLAY_ID), WithRawCoords(70, 430)));
+
+    // pointer-up
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_BUTTON_RELEASE, AINPUT_SOURCE_MOUSE)
+                    .displayId(SECOND_DISPLAY_ID)
+                    .buttonState(0)
+                    .actionButton(AMOTION_EVENT_BUTTON_PRIMARY)
+                    .pointer(PointerBuilder(0, ToolType::MOUSE).x(70).y(70))
+                    .build());
+    mWindow->consumeMotionEvent(AllOf(WithMotionAction(AMOTION_EVENT_ACTION_BUTTON_RELEASE),
+                                      WithDisplayId(SECOND_DISPLAY_ID), WithRawCoords(70, 430)));
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(AMOTION_EVENT_ACTION_UP, AINPUT_SOURCE_MOUSE)
+                                      .displayId(SECOND_DISPLAY_ID)
+                                      .buttonState(0)
+                                      .pointer(PointerBuilder(0, ToolType::MOUSE).x(70).y(70))
+                                      .build());
+    mWindow->consumeMotionUp(SECOND_DISPLAY_ID);
+}
+
+TEST_F(InputDispatcherConnectedDisplayTest, MultiDisplayMouseDragAndDropFromPrimaryDisplay) {
+    SCOPED_FLAG_OVERRIDE(connected_displays_cursor, true);
+
+    EXPECT_TRUE(startDrag(true, AINPUT_SOURCE_MOUSE));
+    // Move on window.
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_MOUSE)
+                    .displayId(DISPLAY_ID)
+                    .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                    .pointer(PointerBuilder(MOUSE_POINTER_ID, ToolType::MOUSE).x(50).y(50))
+                    .build());
+    mDragWindow->consumeMotionMove(DISPLAY_ID, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
+    mWindow->consumeDragEvent(false, 50, 50);
+    mSecondWindow->assertNoEvents();
+    mWindowOnSecondDisplay->assertNoEvents();
+
+    // Move to another window.
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_MOUSE)
+                    .displayId(DISPLAY_ID)
+                    .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                    .pointer(PointerBuilder(MOUSE_POINTER_ID, ToolType::MOUSE).x(150).y(50))
+                    .build());
+    mDragWindow->consumeMotionMove(DISPLAY_ID, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
+    mWindow->consumeDragEvent(true, 150, 50);
+    mSecondWindow->consumeDragEvent(false, 50, 50);
+    mWindowOnSecondDisplay->assertNoEvents();
+
+    // Move to window on the second display
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_MOUSE)
+                    .displayId(SECOND_DISPLAY_ID)
+                    .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                    .pointer(PointerBuilder(MOUSE_POINTER_ID, ToolType::MOUSE).x(50).y(50))
+                    .build());
+    mDragWindow->consumeMotionMove(SECOND_DISPLAY_ID, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
+    mWindow->assertNoEvents();
+    mSecondWindow->consumeDragEvent(true, -50, 50);
+    mWindowOnSecondDisplay->consumeDragEvent(false, 50, 50);
+
+    // drop on the second display
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_UP, AINPUT_SOURCE_MOUSE)
+                    .displayId(SECOND_DISPLAY_ID)
+                    .buttonState(0)
+                    .pointer(PointerBuilder(MOUSE_POINTER_ID, ToolType::MOUSE).x(50).y(50))
+                    .build());
+    mDragWindow->consumeMotionUp(SECOND_DISPLAY_ID, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
+    mFakePolicy->assertDropTargetEquals(*mDispatcher, mWindowOnSecondDisplay->getToken());
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
+    mWindowOnSecondDisplay->assertNoEvents();
+}
+
+TEST_F(InputDispatcherConnectedDisplayTest, MultiDisplayMouseDragAndDropFromNonPrimaryDisplay) {
+    SCOPED_FLAG_OVERRIDE(connected_displays_cursor, true);
+
+    EXPECT_TRUE(startDrag(true, AINPUT_SOURCE_MOUSE, SECOND_DISPLAY_ID));
+    // Move on window.
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_MOUSE)
+                    .displayId(SECOND_DISPLAY_ID)
+                    .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                    .pointer(PointerBuilder(MOUSE_POINTER_ID, ToolType::MOUSE).x(50).y(50))
+                    .build());
+    mDragWindow->consumeMotionMove(SECOND_DISPLAY_ID, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
+    mWindowOnSecondDisplay->consumeDragEvent(false, 50, 50);
+
+    // Move to window on the primary display
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_MOVE, AINPUT_SOURCE_MOUSE)
+                    .displayId(DISPLAY_ID)
+                    .buttonState(AMOTION_EVENT_BUTTON_PRIMARY)
+                    .pointer(PointerBuilder(MOUSE_POINTER_ID, ToolType::MOUSE).x(50).y(50))
+                    .build());
+    mDragWindow->consumeMotionMove(DISPLAY_ID, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
+    mWindow->consumeDragEvent(false, 50, 50);
+    mSecondWindow->assertNoEvents();
+    mWindowOnSecondDisplay->consumeDragEvent(true, 50, 50);
+
+    // drop on the primary display
+    mDispatcher->notifyMotion(
+            MotionArgsBuilder(AMOTION_EVENT_ACTION_UP, AINPUT_SOURCE_MOUSE)
+                    .displayId(DISPLAY_ID)
+                    .buttonState(0)
+                    .pointer(PointerBuilder(MOUSE_POINTER_ID, ToolType::MOUSE).x(50).y(50))
+                    .build());
+    mDragWindow->consumeMotionUp(DISPLAY_ID, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
+    mFakePolicy->assertDropTargetEquals(*mDispatcher, mWindow->getToken());
+    mWindow->assertNoEvents();
+    mSecondWindow->assertNoEvents();
+    mWindowOnSecondDisplay->assertNoEvents();
+}
 
 } // namespace android::inputdispatcher

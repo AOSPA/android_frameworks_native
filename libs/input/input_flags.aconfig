@@ -61,13 +61,6 @@ flag {
 }
 
 flag {
-  name: "report_palms_to_gestures_library"
-  namespace: "input"
-  description: "Report touches marked as palm by firmware to gestures library"
-  bug: "302505955"
-}
-
-flag {
   name: "enable_touchpad_typing_palm_rejection"
   namespace: "input"
   description: "Enabling additional touchpad palm rejection will disable the tap to click while the user is typing on a physical keyboard"
@@ -255,3 +248,12 @@ flag {
   bug: "277261245"
 }
 
+flag {
+  name: "prevent_merging_input_pointer_devices"
+  namespace: "desktop_input"
+  description: "Prevent merging input sub-devices that provide pointer input streams"
+  bug: "389689566"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}

@@ -305,7 +305,11 @@ std::ostream& operator<<(std::ostream& out, const LayerSnapshot& obj) {
             out << rootId << ",";
         }
     }
-    out << "] " << obj.name << "\n    " << (obj.isVisible ? "visible" : "invisible")
+    out << "] ";
+    if (obj.isSecure) {
+        out << "(Secure) ";
+    }
+    out << obj.name << "\n    " << (obj.isVisible ? "visible" : "invisible")
         << " reason=" << obj.getIsVisibleReason();
 
     if (!obj.geomLayerBounds.isEmpty()) {
@@ -544,7 +548,7 @@ char LayerSnapshot::classifyCompositionForDebug(
         case Composition::INVALID:
             return 'i';
         case Composition::SOLID_COLOR:
-            return 'c';
+            return 'e';
         case Composition::CURSOR:
             return 'u';
         case Composition::SIDEBAND:
@@ -552,7 +556,7 @@ char LayerSnapshot::classifyCompositionForDebug(
         case Composition::DISPLAY_DECORATION:
             return 'a';
         case Composition::REFRESH_RATE_INDICATOR:
-            return 'r';
+            return 'f';
         case Composition::CLIENT:
         case Composition::DEVICE:
             break;

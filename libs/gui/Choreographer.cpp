@@ -69,7 +69,7 @@ namespace android {
 
 Choreographer::Context Choreographer::gChoreographers;
 
-static thread_local Choreographer* gChoreographer;
+static thread_local sp<Choreographer> gChoreographer;
 
 void Choreographer::initJVM(JNIEnv* env) {
     env->GetJavaVM(&gJni.jvm);
@@ -86,21 +86,21 @@ void Choreographer::initJVM(JNIEnv* env) {
                              "()V");
 }
 
-Choreographer* Choreographer::getForThread() {
+sp<Choreographer> Choreographer::getForThread() {
     if (gChoreographer == nullptr) {
         sp<Looper> looper = Looper::getForThread();
         if (!looper.get()) {
             ALOGW("No looper prepared for thread");
             return nullptr;
         }
-        gChoreographer = new Choreographer(looper);
+        gChoreographer = sp<Choreographer>::make(looper);
         status_t result = gChoreographer->initialize();
         if (result != OK) {
             ALOGW("Failed to initialize");
             return nullptr;
         }
     }
-    return gChoreographer;
+    return gChoreographer.get();
 }
 
 Choreographer::Choreographer(const sp<Looper>& looper, const sp<IBinder>& layerHandle)

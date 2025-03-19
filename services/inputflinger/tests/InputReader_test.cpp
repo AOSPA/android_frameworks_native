@@ -1405,6 +1405,68 @@ TEST_F(InputReaderTest, SetPowerWakeUp) {
     ASSERT_EQ(mFakeEventHub->fakeReadKernelWakeup(3), false);
 }
 
+TEST_F(InputReaderTest, MergeableInputDevices) {
+    constexpr int32_t eventHubIds[2] = {END_RESERVED_ID, END_RESERVED_ID + 1};
+
+    // By default, all of the default-created eventhub devices will have the same identifier
+    // (implicitly vid 0, pid 0, etc.), which is why we expect them to be merged.
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[0], "1st", InputDeviceClass::KEYBOARD, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[1], "2nd", InputDeviceClass::JOYSTICK, nullptr));
+
+    // The two devices will be merged to one input device as they have same identifier, and none are
+    // pointer devices.
+    ASSERT_EQ(1U, mFakePolicy->getInputDevices().size());
+}
+
+TEST_F(InputReaderTest, MergeableDevicesWithTouch) {
+    constexpr int32_t eventHubIds[3] = {END_RESERVED_ID, END_RESERVED_ID + 1, END_RESERVED_ID + 2};
+
+    // By default, all of the default-created eventhub devices will have the same identifier
+    // (implicitly vid 0, pid 0, etc.), which is why we expect them to be merged.
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[0], "1st", InputDeviceClass::TOUCH_MT, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[1], "2nd", InputDeviceClass::KEYBOARD, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[2], "3rd", InputDeviceClass::GAMEPAD, nullptr));
+
+    // The three devices will be merged to one input device as they have same identifier, and only
+    // one is a pointer device.
+    ASSERT_EQ(1U, mFakePolicy->getInputDevices().size());
+}
+
+TEST_F(InputReaderTest, UnmergeableTouchDevices) {
+    SCOPED_FLAG_OVERRIDE(prevent_merging_input_pointer_devices, true);
+
+    constexpr int32_t eventHubIds[3] = {END_RESERVED_ID, END_RESERVED_ID + 1, END_RESERVED_ID + 2};
+
+    // By default, all of the default-created eventhub devices will have the same identifier
+    // (implicitly vid 0, pid 0, etc.), which is why they can potentially be merged.
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[0], "1st", InputDeviceClass::TOUCH, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[1], "2nd", InputDeviceClass::TOUCH_MT, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[2], "2nd", InputDeviceClass::CURSOR, nullptr));
+
+    // The three devices will not be merged, as they have same identifier, but are all pointer
+    // devices.
+    ASSERT_EQ(3U, mFakePolicy->getInputDevices().size());
+}
+
+TEST_F(InputReaderTest, MergeableMixedDevices) {
+    SCOPED_FLAG_OVERRIDE(prevent_merging_input_pointer_devices, true);
+
+    constexpr int32_t eventHubIds[4] = {END_RESERVED_ID, END_RESERVED_ID + 1, END_RESERVED_ID + 2,
+                                        END_RESERVED_ID + 3};
+
+    // By default, all of the default-created eventhub devices will have the same identifier
+    // (implicitly vid 0, pid 0, etc.), which is why they can potentially be merged.
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[0], "1st", InputDeviceClass::TOUCH, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[1], "2nd", InputDeviceClass::TOUCH_MT, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[2], "3rd", InputDeviceClass::DPAD, nullptr));
+    ASSERT_NO_FATAL_FAILURE(addDevice(eventHubIds[3], "4th", InputDeviceClass::JOYSTICK, nullptr));
+
+    // Non-touch devices can be merged with one of the touch devices, as they have same identifier,
+    // but the two touch devices will not combine with each other. It is not specified which touch
+    // device the non-touch devices merge with.
+    ASSERT_EQ(2U, mFakePolicy->getInputDevices().size());
+}
+
 // --- InputReaderIntegrationTest ---
 
 // These tests create and interact with the InputReader only through its interface.

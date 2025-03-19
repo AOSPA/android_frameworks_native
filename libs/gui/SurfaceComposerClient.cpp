@@ -1982,9 +1982,9 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setDesir
 }
 
 SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setLuts(
-        const sp<SurfaceControl>& sc, const base::unique_fd& lutFd,
-        const std::vector<int32_t>& offsets, const std::vector<int32_t>& dimensions,
-        const std::vector<int32_t>& sizes, const std::vector<int32_t>& samplingKeys) {
+        const sp<SurfaceControl>& sc, base::unique_fd&& lutFd, const std::vector<int32_t>& offsets,
+        const std::vector<int32_t>& dimensions, const std::vector<int32_t>& sizes,
+        const std::vector<int32_t>& samplingKeys) {
     layer_state_t* s = getLayerState(sc);
     if (!s) {
         mStatus = BAD_INDEX;
@@ -1993,8 +1993,8 @@ SurfaceComposerClient::Transaction& SurfaceComposerClient::Transaction::setLuts(
 
     s->what |= layer_state_t::eLutsChanged;
     if (lutFd.ok()) {
-        s->luts = std::make_shared<gui::DisplayLuts>(base::unique_fd(dup(lutFd.get())), offsets,
-                                                     dimensions, sizes, samplingKeys);
+        s->luts = std::make_shared<gui::DisplayLuts>(std::move(lutFd), offsets, dimensions, sizes,
+                                                     samplingKeys);
     } else {
         s->luts = nullptr;
     }

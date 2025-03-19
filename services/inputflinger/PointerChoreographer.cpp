@@ -19,9 +19,11 @@
 #include <android-base/logging.h>
 #include <android/configuration.h>
 #include <com_android_input_flags.h>
+#include <algorithm>
 #if defined(__ANDROID__)
 #include <gui/SurfaceComposerClient.h>
 #endif
+#include <input/InputFlags.h>
 #include <input/Keyboard.h>
 #include <input/PrintTools.h>
 #include <unordered_set>
@@ -33,37 +35,6 @@
 namespace android {
 
 namespace {
-
-bool isFromMouse(const NotifyMotionArgs& args) {
-    return isFromSource(args.source, AINPUT_SOURCE_MOUSE) &&
-            args.pointerProperties[0].toolType == ToolType::MOUSE;
-}
-
-bool isFromTouchpad(const NotifyMotionArgs& args) {
-    return isFromSource(args.source, AINPUT_SOURCE_MOUSE) &&
-            args.pointerProperties[0].toolType == ToolType::FINGER;
-}
-
-bool isFromDrawingTablet(const NotifyMotionArgs& args) {
-    return isFromSource(args.source, AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_STYLUS) &&
-            isStylusToolType(args.pointerProperties[0].toolType);
-}
-
-bool isHoverAction(int32_t action) {
-    return action == AMOTION_EVENT_ACTION_HOVER_ENTER ||
-            action == AMOTION_EVENT_ACTION_HOVER_MOVE || action == AMOTION_EVENT_ACTION_HOVER_EXIT;
-}
-
-bool isStylusHoverEvent(const NotifyMotionArgs& args) {
-    return isStylusEvent(args.source, args.pointerProperties) && isHoverAction(args.action);
-}
-
-bool isMouseOrTouchpad(uint32_t sources) {
-    // Check if this is a mouse or touchpad, but not a drawing tablet.
-    return isFromSource(sources, AINPUT_SOURCE_MOUSE_RELATIVE) ||
-            (isFromSource(sources, AINPUT_SOURCE_MOUSE) &&
-             !isFromSource(sources, AINPUT_SOURCE_STYLUS));
-}
 
 inline void notifyPointerDisplayChange(std::optional<std::tuple<ui::LogicalDisplayId, vec2>> change,
                                        PointerChoreographerPolicyInterface& policy) {
@@ -165,6 +136,7 @@ PointerChoreographer::PointerChoreographer(
         mNotifiedPointerDisplayId(ui::LogicalDisplayId::INVALID),
         mShowTouchesEnabled(false),
         mStylusPointerIconEnabled(false),
+        mPointerMotionFilterEnabled(false),
         mCurrentFocusedDisplay(ui::LogicalDisplayId::DEFAULT),
         mIsWindowInfoListenerRegistered(false),
         mWindowInfoListener(sp<PointerChoreographerDisplayInfoListener>::make(this)),
@@ -236,15 +208,16 @@ NotifyMotionArgs PointerChoreographer::processMotion(const NotifyMotionArgs& arg
     PointerDisplayChange pointerDisplayChange;
     { // acquire lock
         std::scoped_lock _l(getLock());
-        if (isFromMouse(args)) {
+        if (isFromMouse(args.source, args.pointerProperties[0].toolType)) {
             newArgs = processMouseEventLocked(args);
             pointerDisplayChange = calculatePointerDisplayChangeToNotify();
-        } else if (isFromTouchpad(args)) {
+        } else if (isFromTouchpad(args.source, args.pointerProperties[0].toolType)) {
             newArgs = processTouchpadEventLocked(args);
             pointerDisplayChange = calculatePointerDisplayChangeToNotify();
-        } else if (isFromDrawingTablet(args)) {
+        } else if (isFromDrawingTablet(args.source, args.pointerProperties[0].toolType)) {
             processDrawingTabletEventLocked(args);
-        } else if (mStylusPointerIconEnabled && isStylusHoverEvent(args)) {
+        } else if (mStylusPointerIconEnabled &&
+                   isStylusHoverEvent(args.source, args.pointerProperties, args.action)) {
             processStylusHoverEventLocked(args);
         } else if (isFromSource(args.source, AINPUT_SOURCE_TOUCHSCREEN)) {
             processTouchscreenAndStylusEventLocked(args);
@@ -322,9 +295,11 @@ void PointerChoreographer::processPointerDeviceMotionEventLocked(NotifyMotionArg
                                                                  PointerControllerInterface& pc) {
     const float deltaX = newArgs.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X);
     const float deltaY = newArgs.pointerCoords[0].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y);
-
-    vec2 unconsumedDelta = pc.move(deltaX, deltaY);
-    if (com::android::input::flags::connected_displays_cursor() &&
+    vec2 filteredDelta =
+            filterPointerMotionForAccessibilityLocked(pc.getPosition(), vec2{deltaX, deltaY},
+                                                      newArgs.displayId);
+    vec2 unconsumedDelta = pc.move(filteredDelta.x, filteredDelta.y);
+    if (InputFlags::connectedDisplaysCursorEnabled() &&
         (std::abs(unconsumedDelta.x) > 0 || std::abs(unconsumedDelta.y) > 0)) {
         handleUnconsumedDeltaLocked(pc, unconsumedDelta);
         // pointer may have moved to a different viewport
@@ -501,6 +476,14 @@ void PointerChoreographer::processStylusHoverEventLocked(const NotifyMotionArgs&
                      << args.dump();
     }
 
+    // Fade the mouse pointer on the display if there is one when the stylus starts hovering.
+    if (args.action == AMOTION_EVENT_ACTION_HOVER_ENTER) {
+        if (const auto it = mMousePointersByDisplay.find(args.displayId);
+            it != mMousePointersByDisplay.end()) {
+            it->second->fade(PointerControllerInterface::Transition::GRADUAL);
+        }
+    }
+
     // Get the stylus pointer controller for the device, or create one if it doesn't exist.
     auto [it, controllerAdded] =
             mStylusPointersByDevice.try_emplace(args.deviceId,
@@ -638,6 +621,8 @@ void PointerChoreographer::dump(std::string& dump) {
                          mShowTouchesEnabled ? "true" : "false");
     dump += StringPrintf(INDENT "Stylus PointerIcon Enabled: %s\n",
                          mStylusPointerIconEnabled ? "true" : "false");
+    dump += StringPrintf(INDENT "Accessibility Pointer Motion Filter Enabled: %s\n",
+                         mPointerMotionFilterEnabled ? "true" : "false");
 
     dump += INDENT "MousePointerControllers:\n";
     for (const auto& [displayId, mousePointerController] : mMousePointersByDisplay) {
@@ -973,6 +958,11 @@ void PointerChoreographer::setFocusedDisplay(ui::LogicalDisplayId displayId) {
     mCurrentFocusedDisplay = displayId;
 }
 
+void PointerChoreographer::setAccessibilityPointerMotionFilterEnabled(bool enabled) {
+    std::scoped_lock _l(getLock());
+    mPointerMotionFilterEnabled = enabled;
+}
+
 PointerChoreographer::ControllerConstructor PointerChoreographer::getMouseControllerConstructor(
         ui::LogicalDisplayId displayId) {
     std::function<std::shared_ptr<PointerControllerInterface>()> ctor =
@@ -1044,6 +1034,21 @@ PointerChoreographer::findDestinationDisplayLocked(const ui::LogicalDisplayId so
         }
     }
     return std::nullopt;
+}
+
+vec2 PointerChoreographer::filterPointerMotionForAccessibilityLocked(
+        const vec2& current, const vec2& delta, const ui::LogicalDisplayId& displayId) {
+    if (!mPointerMotionFilterEnabled) {
+        return delta;
+    }
+    std::optional<vec2> filterResult =
+            mPolicy.filterPointerMotionForAccessibility(current, delta, displayId);
+    if (!filterResult.has_value()) {
+        // Disable filter when there's any error.
+        mPointerMotionFilterEnabled = false;
+        return delta;
+    }
+    return *filterResult;
 }
 
 // --- PointerChoreographer::PointerChoreographerDisplayInfoListener ---

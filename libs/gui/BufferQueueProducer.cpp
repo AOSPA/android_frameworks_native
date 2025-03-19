@@ -107,11 +107,11 @@ BufferQueueProducer::BufferQueueProducer(const sp<BufferQueueCore>& core,
 // QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
     mDequeueWaitingForAllocation(false) {
 // QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
-// #ifdef QTI_DISPLAY_EXTENSION
-//     if (!mQtiBQPExtn) {
-//         mQtiBQPExtn = new libguiextension::QtiBufferQueueProducerExtension(this);
-//     }
-// #endif
+#ifdef QTI_DISPLAY_EXTENSION
+    if (!mQtiBQPExtn) {
+        mQtiBQPExtn = new libguiextension::QtiBufferQueueProducerExtension(this);
+    }
+#endif
 // QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 }
 // QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP

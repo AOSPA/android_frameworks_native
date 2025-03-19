@@ -621,6 +621,10 @@ void GraphicsEnv::setAngleInfo(const std::string& path, const bool shouldUseNati
         mShouldUseAngle = true;
     }
     mShouldUseNativeDriver = shouldUseNativeDriver;
+
+    if (mShouldUseAngle) {
+        updateAngleFeatureOverrides();
+    }
 }
 
 std::string& GraphicsEnv::getPackageName() {
@@ -630,6 +634,22 @@ std::string& GraphicsEnv::getPackageName() {
 // List of ANGLE features to enable, specified in the Global.Settings value "angle_egl_features".
 const std::vector<std::string>& GraphicsEnv::getAngleEglFeatures() {
     return mAngleEglFeatures;
+}
+
+// List of ANGLE features to override (enabled or disable).
+// The list of overrides is loaded and parsed by GpuService.
+void GraphicsEnv::updateAngleFeatureOverrides() {
+    if (!graphicsenv_flags::feature_overrides()) {
+        return;
+    }
+
+    const sp<IGpuService> gpuService = getGpuService();
+    if (!gpuService) {
+        ALOGE("No GPU service");
+        return;
+    }
+
+    mFeatureOverrides = gpuService->getFeatureOverrides();
 }
 
 void GraphicsEnv::getAngleFeatureOverrides(std::vector<const char*>& enabled,

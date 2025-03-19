@@ -36,6 +36,7 @@
 #include <ftl/expected.h>
 #include <ftl/future.h>
 #include <ui/DisplayIdentification.h>
+#include <ui/DisplayMap.h>
 #include <ui/FenceTime.h>
 #include <ui/PictureProfileHandle.h>
 
@@ -158,7 +159,7 @@ public:
     // supported by the HWC can be queried in advance, but allocation may fail for other reasons.
     virtual bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*) = 0;
 
-    virtual void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId,
+    virtual void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId, uint8_t port,
                                          std::optional<ui::Size> physicalSize) = 0;
 
     // Attempts to create a new layer on this display
@@ -376,7 +377,7 @@ public:
     bool allocateVirtualDisplay(HalVirtualDisplayId, ui::Size, ui::PixelFormat*) override;
 
     // Called from SurfaceFlinger, when the state for a new physical display needs to be recreated.
-    void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId,
+    void allocatePhysicalDisplay(hal::HWDisplayId, PhysicalDisplayId, uint8_t port,
                                  std::optional<ui::Size> physicalSize) override;
 
     // Attempts to create a new layer on this display
@@ -543,6 +544,7 @@ private:
 // QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     struct DisplayData {
         std::unique_ptr<HWC2::Display> hwcDisplay;
+        std::optional<uint8_t> port; // Set on hotplug for physical displays
 
         sp<Fence> lastPresentFence = Fence::NO_FENCE; // signals when the last set op retires
         nsecs_t lastPresentTimestamp = 0;
@@ -560,7 +562,8 @@ private:
 
     std::optional<DisplayIdentificationInfo> onHotplugConnect(hal::HWDisplayId);
     std::optional<DisplayIdentificationInfo> onHotplugDisconnect(hal::HWDisplayId);
-    bool shouldIgnoreHotplugConnect(hal::HWDisplayId, bool hasDisplayIdentificationData) const;
+    bool shouldIgnoreHotplugConnect(hal::HWDisplayId, uint8_t port,
+                                    bool hasDisplayIdentificationData) const;
 
     aidl::android::hardware::graphics::composer3::DisplayConfiguration::Dpi
     getEstimatedDotsPerInchFromSize(uint64_t hwcDisplayId, const HWCDisplayMode& hwcMode) const;
@@ -582,6 +585,7 @@ private:
     void loadHdrConversionCapabilities();
 
     std::unordered_map<HalDisplayId, DisplayData> mDisplayData;
+    ui::PhysicalDisplaySet<uint8_t> mActivePorts;
 
     std::unique_ptr<android::Hwc2::Composer> mComposer;
     std::unordered_set<aidl::android::hardware::graphics::composer3::Capability> mCapabilities;

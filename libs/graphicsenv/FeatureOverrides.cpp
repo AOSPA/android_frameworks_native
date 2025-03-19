@@ -14,13 +14,45 @@
  * limitations under the License.
  */
 
-#include <graphicsenv/FeatureOverrides.h>
+#include <cinttypes>
 
 #include <android-base/stringprintf.h>
+#include <binder/Parcel.h>
+#include <graphicsenv/FeatureOverrides.h>
 
 namespace android {
 
 using base::StringAppendF;
+
+status_t FeatureConfig::writeToParcel(Parcel* parcel) const {
+    status_t status;
+
+    status = parcel->writeUtf8AsUtf16(mFeatureName);
+    if (status != OK) {
+        return status;
+    }
+    status = parcel->writeBool(mEnabled);
+    if (status != OK) {
+        return status;
+    }
+
+    return OK;
+}
+
+status_t FeatureConfig::readFromParcel(const Parcel* parcel) {
+    status_t status;
+
+    status = parcel->readUtf8FromUtf16(&mFeatureName);
+    if (status != OK) {
+        return status;
+    }
+    status = parcel->readBool(&mEnabled);
+    if (status != OK) {
+        return status;
+    }
+
+    return OK;
+}
 
 std::string FeatureConfig::toString() const {
     std::string result;
@@ -28,6 +60,91 @@ std::string FeatureConfig::toString() const {
     StringAppendF(&result, "      Status: %s\n", mEnabled ? "enabled" : "disabled");
 
     return result;
+}
+
+status_t FeatureOverrides::writeToParcel(Parcel* parcel) const {
+    status_t status;
+    // Number of global feature configs.
+    status = parcel->writeVectorSize(mGlobalFeatures);
+    if (status != OK) {
+        return status;
+    }
+    // Global feature configs.
+    for (const auto& cfg : mGlobalFeatures) {
+        status = cfg.writeToParcel(parcel);
+        if (status != OK) {
+            return status;
+        }
+    }
+    // Number of package feature overrides.
+    status = parcel->writeInt32(static_cast<int32_t>(mPackageFeatures.size()));
+    if (status != OK) {
+        return status;
+    }
+    for (const auto& feature : mPackageFeatures) {
+        // Package name.
+        status = parcel->writeUtf8AsUtf16(feature.first);
+        if (status != OK) {
+            return status;
+        }
+        // Number of package feature configs.
+        status = parcel->writeVectorSize(feature.second);
+        if (status != OK) {
+            return status;
+        }
+        // Package feature configs.
+        for (const auto& cfg : feature.second) {
+            status = cfg.writeToParcel(parcel);
+            if (status != OK) {
+                return status;
+            }
+        }
+    }
+
+    return OK;
+}
+
+status_t FeatureOverrides::readFromParcel(const Parcel* parcel) {
+    status_t status;
+
+    // Number of global feature configs.
+    status = parcel->resizeOutVector(&mGlobalFeatures);
+    if (status != OK) {
+        return status;
+    }
+    // Global feature configs.
+    for (FeatureConfig& cfg : mGlobalFeatures) {
+        status = cfg.readFromParcel(parcel);
+        if (status != OK) {
+            return status;
+        }
+    }
+
+    // Number of package feature overrides.
+    int numPkgOverrides = parcel->readInt32();
+    for (int i = 0; i < numPkgOverrides; i++) {
+        // Package name.
+        std::string name;
+        status = parcel->readUtf8FromUtf16(&name);
+        if (status != OK) {
+            return status;
+        }
+        std::vector<FeatureConfig> cfgs;
+        // Number of package feature configs.
+        int numCfgs = parcel->readInt32();
+        // Package feature configs.
+        for (int j = 0; j < numCfgs; j++) {
+            FeatureConfig cfg;
+            status = cfg.readFromParcel(parcel);
+            if (status != OK) {
+                return status;
+            }
+            cfgs.emplace_back(cfg);
+        }
+        mPackageFeatures[name] = cfgs;
+    }
+
+    return OK;
 }
 
 std::string FeatureOverrides::toString() const {

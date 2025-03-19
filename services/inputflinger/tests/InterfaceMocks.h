@@ -191,6 +191,9 @@ public:
                 (ui::LogicalDisplayId displayId, const vec2& position), (override));
     MOCK_METHOD(bool, isInputMethodConnectionActive, (), (override));
     MOCK_METHOD(void, notifyMouseCursorFadedOnTyping, (), (override));
+    MOCK_METHOD(std::optional<vec2>, filterPointerMotionForAccessibility,
+                (const vec2& current, const vec2& delta, const ui::LogicalDisplayId& displayId),
+                (override));
 };
 
 class MockInputDevice : public InputDevice {

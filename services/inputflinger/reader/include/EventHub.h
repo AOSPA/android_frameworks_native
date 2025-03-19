@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -87,6 +88,7 @@ std::ostream& operator<<(std::ostream& out, const std::optional<RawAbsoluteAxisI
  * If any new classes are added, we need to add them in rust input side too.
  */
 enum class InputDeviceClass : uint32_t {
+    // LINT.IfChange
     /* The input device is a keyboard or has buttons. */
     KEYBOARD = android::os::IInputConstants::DEVICE_CLASS_KEYBOARD,
 
@@ -143,6 +145,7 @@ enum class InputDeviceClass : uint32_t {
 
     /* The input device is external (not built-in). */
     EXTERNAL = android::os::IInputConstants::DEVICE_CLASS_EXTERNAL,
+    // LINT.ThenChange(frameworks/native/services/inputflinger/tests/fuzzers/MapperHelpers.h)
 };
 
 enum class SysfsClass : uint32_t {
@@ -619,9 +622,12 @@ public:
 private:
     // Holds information about the sysfs device associated with the Device.
     struct AssociatedDevice {
-        AssociatedDevice(const std::filesystem::path& sysfsRootPath);
+        AssociatedDevice(const std::filesystem::path& sysfsRootPath,
+                         std::shared_ptr<PropertyMap> baseDevConfig);
         // The sysfs root path of the misc device.
         std::filesystem::path sysfsRootPath;
+        // The configuration of the base device.
+        std::shared_ptr<PropertyMap> baseDevConfig;
         std::unordered_map<int32_t /*batteryId*/, RawBatteryInfo> batteryInfos;
         std::unordered_map<int32_t /*lightId*/, RawLightInfo> lightInfos;
         std::optional<RawLayoutInfo> layoutInfo;
@@ -658,7 +664,7 @@ private:
         std::map<int /*axis*/, AxisState> absState;
 
         std::string configurationFile;
-        std::unique_ptr<PropertyMap> configuration;
+        std::shared_ptr<PropertyMap> configuration;
         std::unique_ptr<VirtualKeyMap> virtualKeyMap;
         KeyMap keyMap;
 
@@ -672,7 +678,7 @@ private:
         int32_t controllerNumber;
 
         Device(int fd, int32_t id, std::string path, InputDeviceIdentifier identifier,
-               std::shared_ptr<const AssociatedDevice> assocDev);
+               std::shared_ptr<PropertyMap> config);
         ~Device();
 
         void close();
@@ -692,7 +698,6 @@ private:
         void populateAbsoluteAxisStates();
         bool hasKeycodeLocked(int keycode) const;
         bool hasKeycodeInternalLocked(int keycode) const;
-        void loadConfigurationLocked();
         bool loadVirtualKeyMapLocked();
         status_t loadKeyMapLocked();
         bool isExternalDeviceLocked();
@@ -724,7 +729,8 @@ private:
     void addDeviceLocked(std::unique_ptr<Device> device) REQUIRES(mLock);
     void assignDescriptorLocked(InputDeviceIdentifier& identifier) REQUIRES(mLock);
     std::shared_ptr<const AssociatedDevice> obtainAssociatedDeviceLocked(
-            const std::filesystem::path& devicePath) const REQUIRES(mLock);
+            const std::filesystem::path& devicePath,
+            const std::shared_ptr<PropertyMap>& config) const REQUIRES(mLock);
 
     void closeDeviceByPathLocked(const std::string& devicePath) REQUIRES(mLock);
     void closeVideoDeviceByPathLocked(const std::string& devicePath) REQUIRES(mLock);
