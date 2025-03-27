@@ -69,6 +69,7 @@ cc_library_static {
     name: "libfeatureoverride",
     defaults: [
         "libfeatureoverride_deps",
+        "libvkjson_deps",
     ],
     srcs: [
         ":feature_config_proto_definitions",
@@ -84,6 +85,9 @@ cc_library_static {
     ],
     cppflags: [
         "-Wno-sign-compare",
+    ],
+    static_libs: [
+        "libvkjson",
     ],
     export_include_dirs: ["include"],
     proto: {

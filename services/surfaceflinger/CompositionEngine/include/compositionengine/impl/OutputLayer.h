@@ -104,7 +104,7 @@ private:
     void detectDisallowedCompositionTypeChange(
             aidl::android::hardware::graphics::composer3::Composition from,
             aidl::android::hardware::graphics::composer3::Composition to) const;
-    bool isClientCompositionForced(bool isPeekingThrough, bool isCached) const;
+    bool isClientCompositionForced(bool isPeekingThrough) const;
     void updateLuts(const LayerFECompositionState&,
                     const std::optional<std::vector<std::optional<LutProperties>>>& properties);
 };

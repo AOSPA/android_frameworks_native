@@ -439,11 +439,8 @@ Error Display::setActiveConfigWithConstraints(hal::HWConfigId configId,
     // FIXME (b/319505580): At least the first config set on an external display must be
     // `setActiveConfig`, so skip over the block that calls `setActiveConfigWithConstraints`
     // for simplicity.
-    const bool connected_display = FlagManager::getInstance().connected_display();
-
     if (isVsyncPeriodSwitchSupported() &&
-        (!connected_display ||
-         getConnectionType().value_opt() != ui::DisplayConnectionType::External)) {
+        getConnectionType().value_opt() != ui::DisplayConnectionType::External) {
         Hwc2::IComposerClient::VsyncPeriodChangeConstraints hwc2Constraints;
         hwc2Constraints.desiredTimeNanos = constraints.desiredTimeNanos;
         hwc2Constraints.seamlessRequired = constraints.seamlessRequired;

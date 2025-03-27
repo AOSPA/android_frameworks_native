@@ -50,6 +50,8 @@ namespace android {
 
 class MockInputReaderContext : public InputReaderContext {
 public:
+    std::string dump() override { return "(dump from MockInputReaderContext)"; }
+
     MOCK_METHOD(void, updateGlobalMetaState, (), (override));
     MOCK_METHOD(int32_t, getGlobalMetaState, (), (override));
 

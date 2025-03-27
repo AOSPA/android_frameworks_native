@@ -18,6 +18,7 @@
 
 #include <android-base/logging.h>
 #include <com_android_input_flags.h>
+#include <com_android_window_flags.h>
 #include <cutils/properties.h>
 
 #include <string>
@@ -25,6 +26,9 @@
 namespace android {
 
 bool InputFlags::connectedDisplaysCursorEnabled() {
+    if (!com::android::window::flags::enable_desktop_mode_through_dev_option()) {
+        return com::android::input::flags::connected_displays_cursor();
+    }
     static std::optional<bool> cachedDevOption;
     if (!cachedDevOption.has_value()) {
         char value[PROPERTY_VALUE_MAX];

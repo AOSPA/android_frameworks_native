@@ -29,6 +29,7 @@
 
 #include <ui/DisplayId.h>
 #include <ui/FenceTime.h>
+#include <ui/RingBuffer.h>
 #include <utils/Mutex.h>
 
 // FMQ library in IPower does questionable conversions
@@ -267,27 +268,6 @@ private:
         std::optional<GpuTimeline> estimateGpuTiming(std::optional<TimePoint> previousEndTime);
     };
 
-    template <class T, size_t N>
-    class RingBuffer {
-        std::array<T, N> elements = {};
-        size_t mIndex = 0;
-        size_t numElements = 0;
-
-    public:
-        void append(T item) {
-            mIndex = (mIndex + 1) % N;
-            numElements = std::min(N, numElements + 1);
-            elements[mIndex] = item;
-        }
-        bool isFull() const { return numElements == N; }
-        // Allows access like [0] == current, [-1] = previous, etc..
-        T& operator[](int offset) {
-            size_t positiveOffset =
-                    static_cast<size_t>((offset % static_cast<int>(N)) + static_cast<int>(N));
-            return elements[(mIndex + positiveOffset) % N];
-        }
-    };
-
     // Filter and sort the display ids by a given property
     std::vector<DisplayId> getOrderedDisplayIds(
             std::optional<TimePoint> DisplayTimingData::*sortBy);
@@ -307,9 +287,9 @@ private:
     // Last frame's post-composition duration
     Duration mLastPostcompDuration{0ns};
     // Buffer of recent commit start times
-    RingBuffer<TimePoint, 2> mCommitStartTimes;
+    ui::RingBuffer<TimePoint, 2> mCommitStartTimes;
     // Buffer of recent expected present times
-    RingBuffer<TimePoint, 2> mExpectedPresentTimes;
+    ui::RingBuffer<TimePoint, 2> mExpectedPresentTimes;
     // Most recent present fence time, provided by SF after composition engine finishes presenting
     TimePoint mLastPresentFenceTime;
     // Most recent composition engine present end time, returned with the present fence from SF

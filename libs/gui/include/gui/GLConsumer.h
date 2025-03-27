@@ -83,6 +83,20 @@ public:
     // If the constructor without the tex parameter is used, the GLConsumer is
     // created in a detached state, and attachToContext must be called before
     // calls to updateTexImage.
+    static std::tuple<sp<GLConsumer>, sp<Surface>> create(uint32_t tex, uint32_t textureTarget,
+                                                          bool useFenceSync,
+                                                          bool isControlledByApp);
+    static std::tuple<sp<GLConsumer>, sp<Surface>> create(uint32_t textureTarget, bool useFenceSync,
+                                                          bool isControlledByApp);
+    static sp<GLConsumer> create(const sp<IGraphicBufferConsumer>& bq, uint32_t tex,
+                                 uint32_t textureTarget, bool useFenceSync, bool isControlledByApp)
+            __attribute((deprecated(
+                    "Prefer create functions that create their own surface and consumer.")));
+    static sp<GLConsumer> create(const sp<IGraphicBufferConsumer>& bq, uint32_t textureTarget,
+                                 bool useFenceSync, bool isControlledByApp)
+            __attribute((deprecated(
+                    "Prefer create functions that create their own surface and consumer.")));
+
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
     GLConsumer(uint32_t tex, uint32_t textureTarget, bool useFenceSync, bool isControlledByApp);
 

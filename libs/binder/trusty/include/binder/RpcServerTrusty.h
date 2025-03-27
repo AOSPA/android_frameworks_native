@@ -94,9 +94,8 @@ private:
     static sp<RpcServer> makeRpcServer(std::unique_ptr<RpcTransportCtx> ctx) {
         auto rpcServer = sp<RpcServer>::make(std::move(ctx));
 
-        // TODO(b/266741352): follow-up to prevent needing this in the future
-        // Trusty needs to be set to the latest stable version that is in prebuilts there.
-        LOG_ALWAYS_FATAL_IF(!rpcServer->setProtocolVersion(0));
+        // By default we use the latest stable version.
+        LOG_ALWAYS_FATAL_IF(!rpcServer->setProtocolVersion(RPC_WIRE_PROTOCOL_VERSION));
 
         return rpcServer;
     }

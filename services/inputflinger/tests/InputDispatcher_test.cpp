@@ -5491,7 +5491,8 @@ TEST_F(InputDispatcherTest, InterceptKeyByPolicy) {
             generateKeyArgs(AKEY_EVENT_ACTION_DOWN, ui::LogicalDisplayId::DEFAULT);
     const std::chrono::milliseconds interceptKeyTimeout = 50ms;
     const nsecs_t injectTime = keyArgs.eventTime;
-    mFakePolicy->setInterceptKeyTimeout(interceptKeyTimeout);
+    mFakePolicy->setInterceptKeyBeforeDispatchingResult(
+            std::chrono::nanoseconds(interceptKeyTimeout).count());
     mDispatcher->notifyKey(keyArgs);
     // The dispatching time should be always greater than or equal to intercept key timeout.
     window->consumeKeyDown(ui::LogicalDisplayId::DEFAULT);
@@ -5519,7 +5520,7 @@ TEST_F(InputDispatcherTest, InterceptKeyIfKeyUp) {
 
     // Set a value that's significantly larger than the default consumption timeout. If the
     // implementation is correct, the actual value doesn't matter; it won't slow down the test.
-    mFakePolicy->setInterceptKeyTimeout(600ms);
+    mFakePolicy->setInterceptKeyBeforeDispatchingResult(std::chrono::nanoseconds(600ms).count());
     mDispatcher->notifyKey(generateKeyArgs(AKEY_EVENT_ACTION_UP, ui::LogicalDisplayId::DEFAULT));
     // Window should receive key event immediately when same key up.
     window->consumeKeyUp(ui::LogicalDisplayId::DEFAULT);
@@ -7438,7 +7439,8 @@ TEST_F(InputDispatcherTest, FocusedWindow_DoesNotReceivePolicyConsumedKey) {
 
     window->consumeFocusEvent(true);
 
-    mFakePolicy->setConsumeKeyBeforeDispatching(true);
+    mFakePolicy->setInterceptKeyBeforeDispatchingResult(
+            inputdispatcher::KeyEntry::InterceptKeyResult::SKIP);
 
     mDispatcher->notifyKey(
             KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
@@ -7464,7 +7466,8 @@ TEST_F(InputDispatcherTest, FocusedWindow_PolicyConsumedKeyIgnoresDisableUserAct
 
     window->consumeFocusEvent(true);
 
-    mFakePolicy->setConsumeKeyBeforeDispatching(true);
+    mFakePolicy->setInterceptKeyBeforeDispatchingResult(
+            inputdispatcher::KeyEntry::InterceptKeyResult::SKIP);
 
     mDispatcher->notifyKey(
             KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD).keyCode(AKEYCODE_A).build());
@@ -9305,6 +9308,24 @@ TEST_F(InputDispatcherKeyRepeatTest, FocusedWindow_StopsKeyRepeatAfterUp) {
     expectKeyRepeatOnce(/*repeatCount=*/1);
     sendAndConsumeKeyUp(/*deviceId=*/1);
     mWindow->assertNoEvents();
+}
+
+TEST_F(InputDispatcherKeyRepeatTest, FocusedWindow_StopsKeyRepeatAfterFocusedWindowChanged) {
+    sp<FakeWindowHandle> anotherWindow =
+            sp<FakeWindowHandle>::make(mApp, mDispatcher, "AnotherWindow",
+                                       ui::LogicalDisplayId::DEFAULT);
+    anotherWindow->setFocusable(true);
+    mDispatcher->onWindowInfosChanged({{*mWindow->getInfo(), *anotherWindow->getInfo()}, {}, 0, 0});
+
+    sendAndConsumeKeyDown(/*deviceId=*/1);
+    expectKeyRepeatOnce(/*repeatCount=*/1);
+    expectKeyRepeatOnce(/*repeatCount=*/2);
+    setFocusedWindow(anotherWindow);
+    anotherWindow->consumeFocusEvent(true);
+
+    // Window should receive key up event with cancel.
+    mWindow->consumeKeyUp(ui::LogicalDisplayId::DEFAULT, AKEY_EVENT_FLAG_CANCELED);
+    anotherWindow->assertNoEvents();
 }
 
 TEST_F(InputDispatcherKeyRepeatTest, FocusedWindow_KeyRepeatAfterStaleDeviceKeyUp) {

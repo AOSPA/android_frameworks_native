@@ -26,13 +26,6 @@ flag {
 }
 
 flag {
-  name: "remove_input_channel_from_windowstate"
-  namespace: "input"
-  description: "Do not store a copy of input channel inside WindowState."
-  bug: "323450804"
-}
-
-flag {
   name: "enable_input_event_tracing"
   namespace: "input"
   description: "Set to true to enable input event tracing, including always-on tracing on non-user builds"
@@ -58,13 +51,6 @@ flag {
   namespace: "accessibility"
   description: "Brings back fatal logging for inconsistent event streams originating from accessibility."
   bug: "299977100"
-}
-
-flag {
-  name: "enable_touchpad_typing_palm_rejection"
-  namespace: "input"
-  description: "Enabling additional touchpad palm rejection will disable the tap to click while the user is typing on a physical keyboard"
-  bug: "301055381"
 }
 
 flag {
@@ -127,13 +113,6 @@ flag {
 }
 
 flag {
-  name: "hide_pointer_indicators_for_secure_windows"
-  namespace: "input"
-  description: "Hide touch and pointer indicators if a secure window is present on display"
-  bug: "325252005"
-}
-
-flag {
   name: "enable_keyboard_classifier"
   namespace: "input"
   description: "Keyboard classifier that classifies all keyboards into alphabetic or non-alphabetic"
@@ -145,13 +124,6 @@ flag {
   namespace: "input"
   description: "Show touch and pointer indicators when mirroring a single task"
   bug: "310179437"
-}
-
-flag {
-  name: "include_relative_axis_values_for_captured_touchpads"
-  namespace: "input"
-  description: "Include AXIS_RELATIVE_X and AXIS_RELATIVE_Y values when reporting touches from captured touchpads."
-  bug: "330522990"
 }
 
 flag {

@@ -63,8 +63,11 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     metadata.merge(args.metadata);
     changes |= RequestedLayerState::Changes::Metadata;
     handleAlive = true;
-    // TODO: b/305254099 remove once we don't pass invisible windows to input
-    windowInfoHandle = nullptr;
+    // b/271132344 revisit this and see if we can always use the layers uid/pid
+    auto* windowInfo = editWindowInfo();
+    windowInfo->name = name;
+    windowInfo->ownerPid = ownerPid;
+    windowInfo->ownerUid = ownerUid;
     if (parentId != UNASSIGNED_LAYER_ID) {
         canBeRoot = false;
     }
@@ -105,7 +108,7 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     currentHdrSdrRatio = 1.f;
     dataspaceRequested = false;
     hdrMetadata.validTypes = 0;
-    surfaceDamageRegion = Region::INVALID_REGION;
+    mNotDefCmpState.surfaceDamageRegion = Region::INVALID_REGION;
     cornerRadius = 0.0f;
     clientDrawnCornerRadius = 0.0f;
     backgroundBlurRadius = 0;
@@ -278,7 +281,7 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
     if (clientState.what & layer_state_t::eReparent) {
         changes |= RequestedLayerState::Changes::Parent;
         parentId = resolvedComposerState.parentId;
-        parentSurfaceControlForChild = nullptr;
+        mNotDefCmpState.parentSurfaceControlForChild = nullptr;
         // Once a layer has be reparented, it cannot be placed at the root. It sounds odd
         // but thats the existing logic and until we make this behavior more explicit, we need
         // to maintain this logic.
@@ -288,7 +291,7 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
         changes |= RequestedLayerState::Changes::RelativeParent;
         relativeParentId = resolvedComposerState.relativeParentId;
         isRelativeOf = true;
-        relativeLayerSurfaceControl = nullptr;
+        mNotDefCmpState.relativeLayerSurfaceControl = nullptr;
     }
     if ((clientState.what & layer_state_t::eLayerChanged ||
          (clientState.what & layer_state_t::eReparent && parentId == UNASSIGNED_LAYER_ID)) &&
@@ -304,7 +307,7 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
     }
     if (clientState.what & layer_state_t::eInputInfoChanged) {
         touchCropId = resolvedComposerState.touchCropId;
-        windowInfoHandle->editInfo()->touchableRegionCropHandle.clear();
+        editWindowInfo()->touchableRegionCropHandle.clear();
     }
     if (clientState.what & layer_state_t::eStretchChanged) {
         stretchEffect.sanitize();
@@ -554,12 +557,9 @@ bool RequestedLayerState::hasValidRelativeParent() const {
 }
 
 bool RequestedLayerState::hasInputInfo() const {
-    if (!windowInfoHandle) {
-        return false;
-    }
-    const auto windowInfo = windowInfoHandle->getInfo();
-    return windowInfo->token != nullptr ||
-            windowInfo->inputConfig.test(gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL);
+    const auto& windowInfo = getWindowInfo();
+    return windowInfo.token != nullptr ||
+            windowInfo.inputConfig.test(gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL);
 }
 
 bool RequestedLayerState::needsInputInfo() const {
@@ -571,13 +571,9 @@ bool RequestedLayerState::needsInputInfo() const {
         return true;
     }
 
-    if (!windowInfoHandle) {
-        return false;
-    }
-
-    const auto windowInfo = windowInfoHandle->getInfo();
-    return windowInfo->token != nullptr ||
-            windowInfo->inputConfig.test(gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL);
+    const auto& windowInfo = getWindowInfo();
+    return windowInfo.token != nullptr ||
+            windowInfo.inputConfig.test(gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL);
 }
 
 bool RequestedLayerState::hasBufferOrSidebandStream() const {

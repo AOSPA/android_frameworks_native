@@ -994,7 +994,7 @@ std::shared_ptr<VsyncSchedule> Scheduler::promotePacesetterDisplayLocked(
     if (const auto pacesetterOpt = pacesetterDisplayLocked()) {
         const Display& pacesetter = *pacesetterOpt;
 
-        if (!FlagManager::getInstance().connected_display() || params.toggleIdleTimer) {
+        if (params.toggleIdleTimer) {
             pacesetter.selectorPtr->setIdleTimerCallbacks(
                     {.platform = {.onReset = [this] { idleTimerCallback(TimerState::Reset); },
                                   .onExpired = [this] { idleTimerCallback(TimerState::Expired); }},
@@ -1026,7 +1026,7 @@ void Scheduler::applyNewVsyncSchedule(std::shared_ptr<VsyncSchedule> vsyncSchedu
 }
 
 void Scheduler::demotePacesetterDisplay(PromotionParams params) {
-    if (!FlagManager::getInstance().connected_display() || params.toggleIdleTimer) {
+    if (params.toggleIdleTimer) {
         // No need to lock for reads on kMainThreadContext.
         if (const auto pacesetterPtr =
                     FTL_FAKE_GUARD(mDisplayLock, pacesetterSelectorPtrLocked())) {

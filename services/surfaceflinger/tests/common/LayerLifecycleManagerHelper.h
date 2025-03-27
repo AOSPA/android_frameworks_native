@@ -265,9 +265,8 @@ public:
 
         transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.windowInfoHandle =
-                sp<gui::WindowInfoHandle>::make();
-        auto inputInfo = transactions.back().states.front().state.windowInfoHandle->editInfo();
+        auto inputInfo = transactions.back().states.front().state.editWindowInfo();
+        *inputInfo = {};
         inputInfo->touchableRegion = region;
         inputInfo->token = sp<BBinder>::make();
         mLifecycleManager.applyTransactions(transactions);
@@ -280,9 +279,8 @@ public:
 
         transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.windowInfoHandle =
-                sp<gui::WindowInfoHandle>::make();
-        auto inputInfo = transactions.back().states.front().state.windowInfoHandle->editInfo();
+        auto inputInfo = transactions.back().states.front().state.editWindowInfo();
+        *inputInfo = {};
         if (!inputInfo->token) {
             inputInfo->token = sp<BBinder>::make();
         }
@@ -299,9 +297,8 @@ public:
 
         transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.windowInfoHandle =
-                sp<gui::WindowInfoHandle>::make();
-        auto inputInfo = transactions.back().states.front().state.windowInfoHandle->editInfo();
+        auto inputInfo = transactions.back().states.front().state.editWindowInfo();
+        *inputInfo = {};
         inputInfo->touchableRegion = region;
         inputInfo->replaceTouchableRegionWithCrop = replaceTouchableRegionWithCrop;
         transactions.back().states.front().touchCropId = touchCropId;
@@ -455,9 +452,8 @@ public:
         transactions.emplace_back();
         transactions.back().states.push_back({});
 
-        transactions.back().states.front().state.what = layer_state_t::eSurfaceDamageRegionChanged;
         transactions.back().states.front().layerId = id;
-        transactions.back().states.front().state.surfaceDamageRegion = damageRegion;
+        transactions.back().states.front().state.updateSurfaceDamageRegion(damageRegion);
         mLifecycleManager.applyTransactions(transactions);
     }
 

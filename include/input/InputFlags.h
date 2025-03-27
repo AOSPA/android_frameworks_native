@@ -22,7 +22,21 @@ class InputFlags {
 public:
     /**
      * Check if connected displays feature is enabled, either via the feature flag or settings
-     * override.
+     * override. Developer setting override allows enabling all the "desktop experiences" features
+     * including input related connected_displays_cursor flag.
+     *
+     * The developer settings override is prioritised over aconfig flags. Any tests that require
+     * applicable aconfig flags to be disabled with SCOPED_FLAG_OVERRIDE also need this developer
+     * option to be reset locally.
+     *
+     * Also note the developer setting override is only applicable to the desktop experiences
+     * related features.
+     *
+     * To enable only the input flag run:
+     *      adb shell aflags enable com.android.input.flags.connected_displays_cursor
+     * To override this flag and enable all "desktop experiences" features run:
+     *      adb shell aflags enable com.android.window.flags.enable_desktop_mode_through_dev_option
+     *      adb shell setprop persist.wm.debug.desktop_experience_devopts 1
      */
     static bool connectedDisplaysCursorEnabled();
 

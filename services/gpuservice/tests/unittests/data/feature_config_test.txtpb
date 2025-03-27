@@ -22,6 +22,22 @@ global_features [
     {
         feature_name: "globalOverrides1"
         enabled: False
+    },
+    {
+        feature_name: "globalOverrides2"
+        enabled: True
+        gpu_vendor_ids: [
+            VENDOR_ID_TEST, # Match every GPU Vendor ID, so the feature isn't dropped when parsed.
+            VENDOR_ID_ARM
+        ]
+    },
+    {
+        feature_name: "globalOverrides3"
+        enabled: True
+        gpu_vendor_ids: [
+            VENDOR_ID_TEST, # Match every GPU Vendor ID, so the feature isn't dropped when parsed.
+            VENDOR_ID_INTEL
+        ]
     }
 ]
 
@@ -34,6 +50,40 @@ package_features [
             {
                 feature_name: "packageOverrides1"
                 enabled: True
+            }
+        ]
+    },
+    {
+        package_name: "com.gpuservice_unittest.packageOverrides2"
+        feature_configs: [
+            {
+                feature_name: "packageOverrides2"
+                enabled: False
+                gpu_vendor_ids: [
+                    VENDOR_ID_TEST, # Match every GPU Vendor ID, so the feature isn't dropped when parsed.
+                    VENDOR_ID_INTEL
+                ]
+            }
+        ]
+    },
+    {
+        package_name: "com.gpuservice_unittest.packageOverrides3"
+        feature_configs: [
+            {
+                feature_name: "packageOverrides3_1"
+                enabled: False
+                gpu_vendor_ids: [
+                    VENDOR_ID_TEST, # Match every GPU Vendor ID, so the feature isn't dropped when parsed.
+                    VENDOR_ID_ARM
+                ]
+            },
+            {
+                feature_name: "packageOverrides3_2"
+                enabled: True
+                gpu_vendor_ids: [
+                    VENDOR_ID_TEST, # Match every GPU Vendor ID, so the feature isn't dropped when parsed.
+                    VENDOR_ID_INTEL
+                ]
             }
         ]
     }

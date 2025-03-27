@@ -37,6 +37,7 @@
 #include <gui/DebugEGLImageTracker.h>
 #include <gui/GLConsumer.h>
 #include <gui/ISurfaceComposer.h>
+#include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
 
 #include <private/gui/ComposerService.h>
@@ -99,6 +100,50 @@ static bool hasEglProtectedContent() {
     // function is called.
     static bool hasIt = hasEglProtectedContentImpl();
     return hasIt;
+}
+
+std::tuple<sp<GLConsumer>, sp<Surface>> GLConsumer::create(uint32_t tex, uint32_t textureTarget,
+                                                           bool useFenceSync,
+                                                           bool isControlledByApp) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+    sp<GLConsumer> consumer =
+            sp<GLConsumer>::make(tex, textureTarget, useFenceSync, isControlledByApp);
+    return {consumer, consumer->getSurface()};
+#else
+    sp<IGraphicBufferProducer> igbp;
+    sp<IGraphicBufferConsumer> igbc;
+    BufferQueue::createBufferQueue(&igbp, &igbc);
+
+    return {sp<GLConsumer>::make(igbc, tex, textureTarget, useFenceSync, isControlledByApp),
+            sp<Surface>::make(igbp, isControlledByApp)};
+#endif
+}
+
+std::tuple<sp<GLConsumer>, sp<Surface>> GLConsumer::create(uint32_t textureTarget,
+                                                           bool useFenceSync,
+                                                           bool isControlledByApp) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+    sp<GLConsumer> consumer = sp<GLConsumer>::make(textureTarget, useFenceSync, isControlledByApp);
+    return {consumer, consumer->getSurface()};
+#else
+    sp<IGraphicBufferProducer> igbp;
+    sp<IGraphicBufferConsumer> igbc;
+    BufferQueue::createBufferQueue(&igbp, &igbc);
+
+    return {sp<GLConsumer>::make(igbc, textureTarget, useFenceSync, isControlledByApp),
+            sp<Surface>::make(igbp, isControlledByApp)};
+#endif
+}
+
+sp<GLConsumer> GLConsumer::create(const sp<IGraphicBufferConsumer>& bq, uint32_t tex,
+                                  uint32_t textureTarget, bool useFenceSync,
+                                  bool isControlledByApp) {
+    return sp<GLConsumer>::make(bq, tex, textureTarget, useFenceSync, isControlledByApp);
+}
+
+sp<GLConsumer> GLConsumer::create(const sp<IGraphicBufferConsumer>& bq, uint32_t textureTarget,
+                                  bool useFenceSync, bool isControlledByApp) {
+    return sp<GLConsumer>::make(bq, textureTarget, useFenceSync, isControlledByApp);
 }
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)

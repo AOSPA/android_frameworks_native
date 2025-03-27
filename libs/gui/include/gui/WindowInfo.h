@@ -267,6 +267,7 @@ struct WindowInfo : public Parcelable {
     bool overlaps(const WindowInfo* other) const;
 
     bool operator==(const WindowInfo& inputChannel) const;
+    bool operator!=(const WindowInfo&) const = default;
 
     status_t writeToParcel(android::Parcel* parcel) const override;
 
@@ -317,6 +318,9 @@ public:
     // Not override since this class is not derrived from Parcelable.
     status_t readFromParcel(const android::Parcel* parcel);
     status_t writeToParcel(android::Parcel* parcel) const;
+
+    bool operator==(const WindowInfoHandle& rhs) const { return mInfo == rhs.mInfo; }
+    bool operator!=(const WindowInfoHandle&) const = default;
 
 protected:
     virtual ~WindowInfoHandle();

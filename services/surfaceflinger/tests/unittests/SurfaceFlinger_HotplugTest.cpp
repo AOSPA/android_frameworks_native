@@ -224,8 +224,6 @@ TEST_F(HotplugTest, ignoresDuplicateDisconnection) {
 }
 
 TEST_F(HotplugTest, rejectsHotplugIfFailedToLoadDisplayModes) {
-    SET_FLAG_FOR_TEST(flags::connected_display, true);
-
     // Inject a primary display.
     PrimaryDisplayVariant::injectHwcDisplay(this);
 
@@ -263,8 +261,6 @@ TEST_F(HotplugTest, rejectsHotplugIfFailedToLoadDisplayModes) {
 }
 
 TEST_F(HotplugTest, rejectsHotplugOnActivePortsDuplicate) {
-    SET_FLAG_FOR_TEST(flags::connected_display, true);
-
     // Inject a primary display.
     PrimaryDisplayVariant::injectHwcDisplay(this);
 

@@ -468,7 +468,7 @@ struct BaseLayerProperties {
         layer.externalTexture = buffer;
         layer.bufferData->acquireFence = Fence::NO_FENCE;
         layer.dataspace = ui::Dataspace::UNKNOWN;
-        layer.surfaceDamageRegion = Region(Rect(LayerProperties::HEIGHT, LayerProperties::WIDTH));
+        layer.setSurfaceDamageRegion(Region(Rect(LayerProperties::HEIGHT, LayerProperties::WIDTH)));
         Mock::VerifyAndClear(test->mRenderEngine);
     }
 

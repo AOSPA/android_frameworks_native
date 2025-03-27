@@ -1642,8 +1642,8 @@ TEST_F(LayerSnapshotTest, NonVisibleLayerWithInput) {
     transactions.back().states.push_back({});
     transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
     transactions.back().states.front().layerId = 3;
-    transactions.back().states.front().state.windowInfoHandle = sp<gui::WindowInfoHandle>::make();
-    auto inputInfo = transactions.back().states.front().state.windowInfoHandle->editInfo();
+    auto inputInfo = transactions.back().states.front().state.editWindowInfo();
+    *inputInfo = {};
     inputInfo->token = sp<BBinder>::make();
     mLifecycleManager.applyTransactions(transactions);
 
@@ -1671,8 +1671,8 @@ TEST_F(LayerSnapshotTest, NonVisibleLayerWithInputShouldNotBeIncluded) {
     transactions.back().states.push_back({});
     transactions.back().states.front().state.what = layer_state_t::eInputInfoChanged;
     transactions.back().states.front().layerId = 3;
-    transactions.back().states.front().state.windowInfoHandle = sp<gui::WindowInfoHandle>::make();
-    auto inputInfo = transactions.back().states.front().state.windowInfoHandle->editInfo();
+    auto inputInfo = transactions.back().states.front().state.editWindowInfo();
+    *inputInfo = {};
     inputInfo->token = sp<BBinder>::make();
     hideLayer(3);
     mLifecycleManager.applyTransactions(transactions);
@@ -1879,9 +1879,6 @@ TEST_F(LayerSnapshotTest, hideLayerWithNanMatrix) {
 }
 
 TEST_F(LayerSnapshotTest, edgeExtensionPropagatesInHierarchy) {
-    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
-        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
-    }
     setCrop(1, Rect(0, 0, 20, 20));
     setBuffer(1221,
               std::make_shared<renderengine::mock::FakeExternalTexture>(20 /* width */,
@@ -1920,9 +1917,6 @@ TEST_F(LayerSnapshotTest, edgeExtensionPropagatesInHierarchy) {
 
 TEST_F(LayerSnapshotTest, leftEdgeExtensionIncreaseBoundSizeWithinCrop) {
     // The left bound is extended when shifting to the right
-    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
-        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
-    }
     setCrop(1, Rect(0, 0, 20, 20));
     const int texSize = 10;
     setBuffer(1221,
@@ -1942,9 +1936,6 @@ TEST_F(LayerSnapshotTest, leftEdgeExtensionIncreaseBoundSizeWithinCrop) {
 
 TEST_F(LayerSnapshotTest, rightEdgeExtensionIncreaseBoundSizeWithinCrop) {
     // The right bound is extended when shifting to the left
-    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
-        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
-    }
     const int crop = 20;
     setCrop(1, Rect(0, 0, crop, crop));
     const int texSize = 10;
@@ -1965,9 +1956,6 @@ TEST_F(LayerSnapshotTest, rightEdgeExtensionIncreaseBoundSizeWithinCrop) {
 
 TEST_F(LayerSnapshotTest, topEdgeExtensionIncreaseBoundSizeWithinCrop) {
     // The top bound is extended when shifting to the bottom
-    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
-        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
-    }
     setCrop(1, Rect(0, 0, 20, 20));
     const int texSize = 10;
     setBuffer(1221,
@@ -1987,9 +1975,6 @@ TEST_F(LayerSnapshotTest, topEdgeExtensionIncreaseBoundSizeWithinCrop) {
 
 TEST_F(LayerSnapshotTest, bottomEdgeExtensionIncreaseBoundSizeWithinCrop) {
     // The bottom bound is extended when shifting to the top
-    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
-        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
-    }
     const int crop = 20;
     setCrop(1, Rect(0, 0, crop, crop));
     const int texSize = 10;
@@ -2010,9 +1995,6 @@ TEST_F(LayerSnapshotTest, bottomEdgeExtensionIncreaseBoundSizeWithinCrop) {
 
 TEST_F(LayerSnapshotTest, multipleEdgeExtensionIncreaseBoundSizeWithinCrop) {
     // The left bound is extended when shifting to the right
-    if (!com::android::graphics::libgui::flags::edge_extension_shader()) {
-        GTEST_SKIP() << "Skipping test because edge_extension_shader is off";
-    }
     const int crop = 20;
     setCrop(1, Rect(0, 0, crop, crop));
     const int texSize = 10;

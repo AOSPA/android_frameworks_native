@@ -21,6 +21,7 @@
 #include <utils/Mutex.h>
 
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -142,6 +143,7 @@ protected:
 
     public:
         explicit ContextImpl(InputReader* reader);
+        std::string dump() REQUIRES(mReader->mLock) override;
         // lock is already held by the input loop
         void updateGlobalMetaState() NO_THREAD_SAFETY_ANALYSIS override;
         int32_t getGlobalMetaState() NO_THREAD_SAFETY_ANALYSIS override;
@@ -215,6 +217,8 @@ private:
 
     // The input device that produced a new gesture most recently.
     DeviceId mLastUsedDeviceId GUARDED_BY(mLock){ReservedInputDeviceId::INVALID_INPUT_DEVICE_ID};
+
+    void dumpLocked(std::string& dump) REQUIRES(mLock);
 
     // low-level input event decoding and device management
     [[nodiscard]] std::list<NotifyArgs> processEventsLocked(const RawEvent* rawEvents, size_t count)
