@@ -97,9 +97,7 @@ auto DisplayModeController::setDesiredMode(PhysicalDisplayId displayId,
             const bool force = desiredModeOpt->force;
             desiredModeOpt = std::move(desiredMode);
             desiredModeOpt->emitEvent |= emitEvent;
-            if (FlagManager::getInstance().connected_display()) {
-                desiredModeOpt->force |= force;
-            }
+            desiredModeOpt->force |= force;
             return DesiredModeAction::None;
         }
 
@@ -191,7 +189,7 @@ auto DisplayModeController::initiateModeChange(
     // cleared until the next `SF::initiateDisplayModeChanges`. However, the desired mode has been
     // consumed at this point, so clear the `force` flag to prevent an endless loop of
     // `initiateModeChange`.
-    if (FlagManager::getInstance().connected_display()) {
+    {
         std::scoped_lock lock(displayPtr->desiredModeLock);
         if (displayPtr->desiredModeOpt) {
             displayPtr->desiredModeOpt->force = false;

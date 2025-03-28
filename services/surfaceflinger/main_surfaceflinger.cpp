@@ -77,7 +77,7 @@ static void startDisplayService() {
     }
 }
 
-int main(int, char**) {
+int main() {
     signal(SIGPIPE, SIG_IGN);
 
     hardware::configureRpcThreadpool(1 /* maxThreads */,
@@ -91,9 +91,7 @@ int main(int, char**) {
 
     // Set uclamp.min setting on all threads, maybe an overkill but we want
     // to cover important threads like RenderEngine.
-    if (SurfaceFlinger::setSchedAttr(true) != NO_ERROR) {
-        ALOGW("Failed to set uclamp.min during boot: %s", strerror(errno));
-    }
+    SurfaceFlinger::setSchedAttr(true, __func__);
 
     // The binder threadpool we start will inherit sched policy and priority
     // of (this) creating thread. We want the binder thread pool to have
@@ -160,14 +158,8 @@ int main(int, char**) {
 
     startDisplayService(); // dependency on SF getting registered above
 
-    if (SurfaceFlinger::setSchedFifo(true) != NO_ERROR) {
-        ALOGW("Failed to set SCHED_FIFO during boot: %s", strerror(errno));
-    }
-
-    // run surface flinger in this thread
+    SurfaceFlinger::setSchedFifo(true, __func__);
     flinger->run();
-
-    return 0;
 }
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues

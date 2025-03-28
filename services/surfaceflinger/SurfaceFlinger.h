@@ -237,11 +237,9 @@ public:
     SurfaceFlinger(surfaceflinger::Factory&, SkipInitializationTag) ANDROID_API;
     explicit SurfaceFlinger(surfaceflinger::Factory&) ANDROID_API;
 
-    // set main thread scheduling policy
-    static status_t setSchedFifo(bool enabled) ANDROID_API;
-
-    // set main thread scheduling attributes
-    static status_t setSchedAttr(bool enabled);
+    // Set scheduling policy and attributes of main thread.
+    static void setSchedFifo(bool enabled, const char* whence);
+    static void setSchedAttr(bool enabled, const char* whence);
 
     static char const* getServiceName() ANDROID_API { return "SurfaceFlinger"; }
 
@@ -265,6 +263,11 @@ public:
     // Controls the minimum acquired buffers SurfaceFlinger will suggest via
     // ISurfaceComposer.getMaxAcquiredBufferCount().
     static int64_t minAcquiredBuffers;
+
+    // Controls the maximum acquired buffers SurfaceFlinger will suggest via
+    // ISurfaceComposer.getMaxAcquiredBufferCount().
+    // Value is set through ro.surface_flinger.max_acquired_buffers.
+    static std::optional<int64_t> maxAcquiredBuffersOpt;
 
     // Controls the maximum width and height in pixels that the graphics pipeline can support for
     // GPU fallback composition. For example, 8k devices with 4k GPUs, or 4k devices with 2k GPUs.
@@ -568,6 +571,7 @@ private:
 
     // ISurfaceComposer implementation:
     sp<IBinder> createVirtualDisplay(const std::string& displayName, bool isSecure,
+                                     gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy,
                                      const std::string& uniqueId,
                                      float requestedRefreshRate = 0.0f);
     status_t destroyVirtualDisplay(const sp<IBinder>& displayToken);
@@ -766,7 +770,7 @@ private:
     void applyActiveMode(PhysicalDisplayId) REQUIRES(kMainThreadContext);
 
     // Called on the main thread in response to setPowerMode()
-    void setPowerModeInternal(const sp<DisplayDevice>& display, hal::PowerMode mode)
+    void setPhysicalDisplayPowerMode(const sp<DisplayDevice>& display, hal::PowerMode mode)
             REQUIRES(mStateLock, kMainThreadContext);
 
     // Returns the preferred mode for PhysicalDisplayId if the Scheduler has selected one for that
@@ -1106,7 +1110,8 @@ private:
     // Returns the active mode ID, or nullopt on hotplug failure.
     std::optional<DisplayModeId> processHotplugConnect(PhysicalDisplayId, hal::HWDisplayId,
                                                        DisplayIdentificationInfo&&,
-                                                       const char* displayString)
+                                                       const char* displayString,
+                                                       HWComposer::HotplugEvent event)
             REQUIRES(mStateLock, kMainThreadContext);
     void processHotplugDisconnect(PhysicalDisplayId, const char* displayString)
             REQUIRES(mStateLock, kMainThreadContext);
@@ -1615,9 +1620,11 @@ public:
             const sp<IBinder>& layerHandle,
             sp<gui::IDisplayEventConnection>* outConnection) override;
     binder::Status createConnection(sp<gui::ISurfaceComposerClient>* outClient) override;
-    binder::Status createVirtualDisplay(const std::string& displayName, bool isSecure,
-                                        const std::string& uniqueId, float requestedRefreshRate,
-                                        sp<IBinder>* outDisplay) override;
+    binder::Status createVirtualDisplay(
+            const std::string& displayName, bool isSecure,
+            gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy,
+            const std::string& uniqueId, float requestedRefreshRate,
+            sp<IBinder>* outDisplay) override;
     binder::Status destroyVirtualDisplay(const sp<IBinder>& displayToken) override;
     binder::Status getPhysicalDisplayIds(std::vector<int64_t>* outDisplayIds) override;
     binder::Status getPhysicalDisplayToken(int64_t displayId, sp<IBinder>* outDisplay) override;

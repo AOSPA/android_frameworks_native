@@ -145,7 +145,7 @@ std::optional<DisplayIdentificationInfo> HWComposer::onHotplug(hal::HWDisplayId 
         case HotplugEvent::Disconnected:
             return onHotplugDisconnect(hwcDisplayId);
         case HotplugEvent::LinkUnstable:
-            return {};
+            return onHotplugLinkTrainingFailure(hwcDisplayId);
     }
 }
 
@@ -1291,6 +1291,16 @@ std::optional<DisplayIdentificationInfo> HWComposer::onHotplugDisconnect(
     // it as disconnected.
     mDisplayData.at(*displayId).hwcDisplay->setConnected(false);
     mComposer->onHotplugDisconnect(hwcDisplayId);
+    return DisplayIdentificationInfo{.id = *displayId};
+}
+
+std::optional<DisplayIdentificationInfo> HWComposer::onHotplugLinkTrainingFailure(
+        hal::HWDisplayId hwcDisplayId) {
+    const auto displayId = toPhysicalDisplayId(hwcDisplayId);
+    if (!displayId) {
+        LOG_HWC_DISPLAY_ERROR(hwcDisplayId, "Invalid HWC display");
+        return {};
+    }
     return DisplayIdentificationInfo{.id = *displayId};
 }
 

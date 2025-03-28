@@ -535,9 +535,6 @@ void PointerChoreographer::processDeviceReset(const NotifyDeviceResetArgs& args)
 }
 
 void PointerChoreographer::onControllerAddedOrRemovedLocked() {
-    if (!com::android::input::flags::hide_pointer_indicators_for_secure_windows()) {
-        return;
-    }
     bool requireListener = !mTouchPointersByDevice.empty() || !mMousePointersByDisplay.empty() ||
             !mDrawingTabletPointersByDevice.empty() || !mStylusPointersByDevice.empty();
 
@@ -677,7 +674,13 @@ ui::LogicalDisplayId PointerChoreographer::getTargetMouseDisplayLocked(
         mTopology.graph.find(associatedDisplayId) == mTopology.graph.end()) {
         return associatedDisplayId;
     }
-    return mCurrentMouseDisplayId.isValid() ? mCurrentMouseDisplayId : mTopology.primaryDisplayId;
+    if (mCurrentMouseDisplayId.isValid()) {
+        return mCurrentMouseDisplayId;
+    }
+    if (mTopology.primaryDisplayId.isValid()) {
+        return mTopology.primaryDisplayId;
+    }
+    return ui::LogicalDisplayId::DEFAULT;
 }
 
 std::pair<ui::LogicalDisplayId, PointerControllerInterface&>
@@ -786,7 +789,8 @@ PointerChoreographer::PointerDisplayChange
 PointerChoreographer::calculatePointerDisplayChangeToNotify() {
     ui::LogicalDisplayId displayIdToNotify = ui::LogicalDisplayId::INVALID;
     vec2 cursorPosition = {0, 0};
-    if (const auto it = mMousePointersByDisplay.find(mCurrentMouseDisplayId);
+    if (const auto it =
+                mMousePointersByDisplay.find(getTargetMouseDisplayLocked(mCurrentMouseDisplayId));
         it != mMousePointersByDisplay.end()) {
         const auto& pointerController = it->second;
         // Use the displayId from the pointerController, because it accurately reflects whether

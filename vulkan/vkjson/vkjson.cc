@@ -986,6 +986,13 @@ inline bool Iterate(Visitor* visitor,
 
 template <typename Visitor>
 inline bool Iterate(Visitor* visitor,
+                    VkJsonExtImage2DViewOf3DFeatures* features) {
+  return visitor->Visit("image2DViewOf3DFeaturesEXT",
+                        &features->image_2D_view_of_3D_features_EXT);
+}
+
+template <typename Visitor>
+inline bool Iterate(Visitor* visitor,
                     VkJsonExtShaderFloat16Int8Features* features) {
   return visitor->Visit("shaderFloat16Int8FeaturesKHR",
                         &features->shader_float16_int8_features_khr);
@@ -1089,6 +1096,13 @@ inline bool Iterate(Visitor* visitor,
   return visitor->Visit("variablePointersStorageBuffer",
                         &features->variablePointersStorageBuffer) &&
          visitor->Visit("variablePointers", &features->variablePointers);
+}
+
+template <typename Visitor>
+inline bool Iterate(Visitor* visitor,
+                    VkPhysicalDeviceImage2DViewOf3DFeaturesEXT* features) {
+  return visitor->Visit("image2DViewOf3D", &features->image2DViewOf3D) &&
+         visitor->Visit("sampler2DViewOf3D", &features->sampler2DViewOf3D);
 }
 
 template <typename Visitor>
@@ -1240,6 +1254,10 @@ inline bool Iterate(Visitor* visitor, VkJsonDevice* device) {
       if (device->ext_variable_pointer_features.reported) {
         ret &= visitor->Visit("VK_KHR_variable_pointers",
                             &device->ext_variable_pointer_features);
+      }
+      if (device->ext_image_2d_view_of_3d_features.reported) {
+        ret &= visitor->Visit("VK_EXT_image_2d_view_of_3d",
+                              &device->ext_image_2d_view_of_3d_features);
       }
       if (device->ext_shader_float16_int8_features.reported) {
         ret &= visitor->Visit("VK_KHR_shader_float16_int8",

@@ -1090,7 +1090,7 @@ void LayerSnapshotBuilder::updateLayerBounds(LayerSnapshot& snapshot,
     snapshot.transformedBounds = snapshot.geomLayerTransform.transform(snapshot.geomLayerBounds);
     const Rect geomLayerBoundsWithoutTransparentRegion =
             RequestedLayerState::reduce(Rect(snapshot.geomLayerBounds),
-                                        requested.transparentRegion);
+                                        requested.getTransparentRegion());
     snapshot.transformedBoundsWithoutTransparentRegion =
             snapshot.geomLayerTransform.transform(geomLayerBoundsWithoutTransparentRegion);
     snapshot.parentTransform = parentSnapshot.geomLayerTransform;
@@ -1098,7 +1098,7 @@ void LayerSnapshotBuilder::updateLayerBounds(LayerSnapshot& snapshot,
     if (requested.potentialCursor) {
         // Subtract the transparent region and snap to the bounds
         const Rect bounds = RequestedLayerState::reduce(Rect(snapshot.croppedBufferSize),
-                                                        requested.transparentRegion);
+                                                        requested.getTransparentRegion());
         snapshot.cursorFrame = snapshot.geomLayerTransform.transform(bounds);
     }
 }
@@ -1132,22 +1132,14 @@ void LayerSnapshotBuilder::updateInput(LayerSnapshot& snapshot,
                                        const Args& args) {
     using InputConfig = gui::WindowInfo::InputConfig;
 
-    if (requested.windowInfoHandle) {
-        snapshot.inputInfo = *requested.windowInfoHandle->getInfo();
-    } else {
-        snapshot.inputInfo = {};
-        // b/271132344 revisit this and see if we can always use the layers uid/pid
-        snapshot.inputInfo.name = requested.name;
-        snapshot.inputInfo.ownerUid = gui::Uid{requested.ownerUid};
-        snapshot.inputInfo.ownerPid = gui::Pid{requested.ownerPid};
-    }
+    snapshot.inputInfo = requested.getWindowInfo();
     snapshot.touchCropId = requested.touchCropId;
 
     snapshot.inputInfo.id = static_cast<int32_t>(snapshot.uniqueSequence);
     snapshot.inputInfo.displayId =
             ui::LogicalDisplayId{static_cast<int32_t>(snapshot.outputFilter.layerStack.id)};
     snapshot.inputInfo.touchOcclusionMode = requested.hasInputInfo()
-            ? requested.windowInfoHandle->getInfo()->touchOcclusionMode
+            ? requested.getWindowInfo().touchOcclusionMode
             : parentSnapshot.inputInfo.touchOcclusionMode;
     snapshot.inputInfo.canOccludePresentation = parentSnapshot.inputInfo.canOccludePresentation ||
             (requested.flags & layer_state_t::eCanOccludePresentation);

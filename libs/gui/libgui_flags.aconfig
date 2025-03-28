@@ -77,14 +77,6 @@ flag {
 } # wb_stream_splitter
 
 flag {
-  name: "edge_extension_shader"
-  namespace: "windowing_frontend"
-  description: "Enable edge extension via shader"
-  bug: "322036393"
-  is_fixed_read_only: true
-} # edge_extension_shader
-
-flag {
   name: "buffer_release_channel"
   namespace: "window_surfaces"
   description: "Enable BufferReleaseChannel to optimize buffer releases"

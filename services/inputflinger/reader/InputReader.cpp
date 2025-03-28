@@ -32,6 +32,7 @@
 #include <unistd.h>
 #include <utils/Errors.h>
 #include <utils/Thread.h>
+#include <string>
 
 #include "InputDevice.h"
 #include "include/gestures.h"
@@ -945,7 +946,10 @@ bool InputReader::setKernelWakeEnabled(int32_t deviceId, bool enabled) {
 
 void InputReader::dump(std::string& dump) {
     std::scoped_lock _l(mLock);
+    dumpLocked(dump);
+}
 
+void InputReader::dumpLocked(std::string& dump) {
     mEventHub->dump(dump);
     dump += "\n";
 
@@ -1031,6 +1035,12 @@ void InputReader::monitor() {
 
 InputReader::ContextImpl::ContextImpl(InputReader* reader)
       : mReader(reader), mIdGenerator(IdGenerator::Source::INPUT_READER) {}
+
+std::string InputReader::ContextImpl::dump() {
+    std::string dump;
+    mReader->dumpLocked(dump);
+    return dump;
+}
 
 void InputReader::ContextImpl::updateGlobalMetaState() {
     // lock is already held by the input loop

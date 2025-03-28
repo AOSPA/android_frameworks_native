@@ -307,10 +307,8 @@ TEST_F(SurfaceTest, QueryConsumerUsage) {
 TEST_F(SurfaceTest, QueryDefaultBuffersDataSpace) {
     const android_dataspace TEST_DATASPACE = HAL_DATASPACE_V0_SRGB;
 
-    sp<CpuConsumer> cpuConsumer = new CpuConsumer(1);
+    auto [cpuConsumer, s] = CpuConsumer::create(1);
     cpuConsumer->setDefaultBufferDataSpace(TEST_DATASPACE);
-
-    sp<Surface> s = cpuConsumer->getSurface();
     sp<ANativeWindow> anw(s);
 
     android_dataspace dataSpace;
@@ -323,8 +321,7 @@ TEST_F(SurfaceTest, QueryDefaultBuffersDataSpace) {
 }
 
 TEST_F(SurfaceTest, SettingGenerationNumber) {
-    sp<CpuConsumer> cpuConsumer = new CpuConsumer(1);
-    sp<Surface> surface = cpuConsumer->getSurface();
+    auto [cpuConsumer, surface] = CpuConsumer::create(1);
     sp<ANativeWindow> window(surface);
 
     // Allocate a buffer with a generation number of 0
@@ -690,10 +687,11 @@ public:
         return binder::Status::ok();
     }
 
-    binder::Status createVirtualDisplay(const std::string& /*displayName*/, bool /*isSecure*/,
-                                        const std::string& /*uniqueId*/,
-                                        float /*requestedRefreshRate*/,
-                                        sp<IBinder>* /*outDisplay*/) override {
+    binder::Status createVirtualDisplay(
+            const std::string& /*displayName*/, bool /*isSecure*/,
+            gui::ISurfaceComposer::OptimizationPolicy /*optimizationPolicy*/,
+            const std::string& /*uniqueId*/, float /*requestedRefreshRate*/,
+            sp<IBinder>* /*outDisplay*/) override {
         return binder::Status::ok();
     }
 
@@ -2178,8 +2176,7 @@ TEST_F(SurfaceTest, BatchOperations) {
     const int BUFFER_COUNT = 16;
     const int BATCH_SIZE = 8;
 
-    sp<CpuConsumer> cpuConsumer = new CpuConsumer(1);
-    sp<Surface> surface = cpuConsumer->getSurface();
+    auto [cpuConsumer, surface] = CpuConsumer::create(1);
     sp<ANativeWindow> window(surface);
     sp<StubSurfaceListener> listener = new StubSurfaceListener();
 
@@ -2227,8 +2224,7 @@ TEST_F(SurfaceTest, BatchIllegalOperations) {
     const int BUFFER_COUNT = 16;
     const int BATCH_SIZE = 8;
 
-    sp<CpuConsumer> cpuConsumer = new CpuConsumer(1);
-    sp<Surface> surface = cpuConsumer->getSurface();
+    auto [cpuConsumer, surface] = CpuConsumer::create(1);
     sp<ANativeWindow> window(surface);
     sp<StubSurfaceListener> listener = new StubSurfaceListener();
 

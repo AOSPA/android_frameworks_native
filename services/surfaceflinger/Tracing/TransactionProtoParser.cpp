@@ -139,7 +139,8 @@ perfetto::protos::LayerState TransactionProtoParser::toProto(
         colorProto->set_b(layer.color.b);
     }
     if (layer.what & layer_state_t::eTransparentRegionChanged) {
-        LayerProtoHelper::writeToProto(layer.transparentRegion, proto.mutable_transparent_region());
+        LayerProtoHelper::writeToProto(layer.getTransparentRegion(),
+                                       proto.mutable_transparent_region());
     }
     if (layer.what & layer_state_t::eBufferTransformChanged) {
         proto.set_transform(layer.bufferTransform);
@@ -191,33 +192,30 @@ perfetto::protos::LayerState TransactionProtoParser::toProto(
     }
 
     if (layer.what & layer_state_t::eInputInfoChanged) {
-        if (layer.windowInfoHandle) {
-            const gui::WindowInfo* inputInfo = layer.windowInfoHandle->getInfo();
-            perfetto::protos::LayerState_WindowInfo* windowInfoProto =
-                    proto.mutable_window_info_handle();
-            windowInfoProto->set_layout_params_flags(inputInfo->layoutParamsFlags.get());
-            windowInfoProto->set_layout_params_type(
-                    static_cast<int32_t>(inputInfo->layoutParamsType));
-            windowInfoProto->set_input_config(inputInfo->inputConfig.get());
-            LayerProtoHelper::writeToProto(inputInfo->touchableRegion,
-                                           windowInfoProto->mutable_touchable_region());
-            windowInfoProto->set_surface_inset(inputInfo->surfaceInset);
-            windowInfoProto->set_focusable(
-                    !inputInfo->inputConfig.test(gui::WindowInfo::InputConfig::NOT_FOCUSABLE));
-            windowInfoProto->set_has_wallpaper(inputInfo->inputConfig.test(
-                    gui::WindowInfo::InputConfig::DUPLICATE_TOUCH_TO_WALLPAPER));
-            windowInfoProto->set_global_scale_factor(inputInfo->globalScaleFactor);
-            perfetto::protos::Transform* transformProto = windowInfoProto->mutable_transform();
-            transformProto->set_dsdx(inputInfo->transform.dsdx());
-            transformProto->set_dtdx(inputInfo->transform.dtdx());
-            transformProto->set_dtdy(inputInfo->transform.dtdy());
-            transformProto->set_dsdy(inputInfo->transform.dsdy());
-            transformProto->set_tx(inputInfo->transform.tx());
-            transformProto->set_ty(inputInfo->transform.ty());
-            windowInfoProto->set_replace_touchable_region_with_crop(
-                    inputInfo->replaceTouchableRegionWithCrop);
-            windowInfoProto->set_crop_layer_id(resolvedComposerState.touchCropId);
-        }
+        const gui::WindowInfo* inputInfo = &layer.getWindowInfo();
+        perfetto::protos::LayerState_WindowInfo* windowInfoProto =
+                proto.mutable_window_info_handle();
+        windowInfoProto->set_layout_params_flags(inputInfo->layoutParamsFlags.get());
+        windowInfoProto->set_layout_params_type(static_cast<int32_t>(inputInfo->layoutParamsType));
+        windowInfoProto->set_input_config(inputInfo->inputConfig.get());
+        LayerProtoHelper::writeToProto(inputInfo->touchableRegion,
+                                       windowInfoProto->mutable_touchable_region());
+        windowInfoProto->set_surface_inset(inputInfo->surfaceInset);
+        windowInfoProto->set_focusable(
+                !inputInfo->inputConfig.test(gui::WindowInfo::InputConfig::NOT_FOCUSABLE));
+        windowInfoProto->set_has_wallpaper(inputInfo->inputConfig.test(
+                gui::WindowInfo::InputConfig::DUPLICATE_TOUCH_TO_WALLPAPER));
+        windowInfoProto->set_global_scale_factor(inputInfo->globalScaleFactor);
+        perfetto::protos::Transform* transformProto = windowInfoProto->mutable_transform();
+        transformProto->set_dsdx(inputInfo->transform.dsdx());
+        transformProto->set_dtdx(inputInfo->transform.dtdx());
+        transformProto->set_dtdy(inputInfo->transform.dtdy());
+        transformProto->set_dsdy(inputInfo->transform.dsdy());
+        transformProto->set_tx(inputInfo->transform.tx());
+        transformProto->set_ty(inputInfo->transform.ty());
+        windowInfoProto->set_replace_touchable_region_with_crop(
+                inputInfo->replaceTouchableRegionWithCrop);
+        windowInfoProto->set_crop_layer_id(resolvedComposerState.touchCropId);
     }
     if (layer.what & layer_state_t::eBackgroundColorChanged) {
         proto.set_bg_color_alpha(layer.bgColor.a);
@@ -410,7 +408,9 @@ void TransactionProtoParser::fromProto(const perfetto::protos::LayerState& proto
         layer.color.b = colorProto.b();
     }
     if (proto.what() & layer_state_t::eTransparentRegionChanged) {
-        LayerProtoHelper::readFromProto(proto.transparent_region(), layer.transparentRegion);
+        Region transparentRegion;
+        LayerProtoHelper::readFromProto(proto.transparent_region(), transparentRegion);
+        layer.updateTransparentRegion(transparentRegion);
     }
     if (proto.what() & layer_state_t::eBufferTransformChanged) {
         layer.bufferTransform = proto.transform();
@@ -486,7 +486,7 @@ void TransactionProtoParser::fromProto(const perfetto::protos::LayerState& proto
                 windowInfoProto.replace_touchable_region_with_crop();
         resolvedComposerState.touchCropId = windowInfoProto.crop_layer_id();
 
-        layer.windowInfoHandle = sp<gui::WindowInfoHandle>::make(inputInfo);
+        *layer.editWindowInfo() = inputInfo;
     }
     if (proto.what() & layer_state_t::eBackgroundColorChanged) {
         layer.bgColor.a = proto.bg_color_alpha();

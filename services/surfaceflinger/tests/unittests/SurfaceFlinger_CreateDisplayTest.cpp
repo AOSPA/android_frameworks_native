@@ -141,7 +141,11 @@ TEST_F(CreateDisplayTest, createDisplaySetsCurrentStateForUniqueId) {
     // --------------------------------------------------------------------
     // Invocation
 
-    sp<IBinder> displayToken = mFlinger.createVirtualDisplay(kDisplayName, false, kUniqueId);
+    sp<IBinder> displayToken =
+            mFlinger.createVirtualDisplay(kDisplayName, false,
+                                          gui::ISurfaceComposer::OptimizationPolicy::
+                                                  optimizeForPower,
+                                          kUniqueId);
 
     // --------------------------------------------------------------------
     // Postconditions

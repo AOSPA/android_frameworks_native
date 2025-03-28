@@ -27,6 +27,13 @@ using android::RpcTransportCtxFactoryTipcTrusty;
 using android::sp;
 using android::wp;
 
+// The default behavior in trusty is to allow handles to be passed with tipc IPC.
+// We add mode NONE so that servers do not reject connections from clients who do
+// not change their default transport mode.
+static const std::vector<RpcSession::FileDescriptorTransportMode> TRUSTY_SERVER_SUPPORTED_FD_MODES =
+        {RpcSession::FileDescriptorTransportMode::TRUSTY,
+         RpcSession::FileDescriptorTransportMode::NONE};
+
 struct ARpcServerTrusty {
     sp<RpcServer> mRpcServer;
 
@@ -52,6 +59,8 @@ ARpcServerTrusty* ARpcServerTrusty_newPerSession(AIBinder* (*cb)(const void*, si
     if (rpcServer == nullptr) {
         return nullptr;
     }
+
+    rpcServer->setSupportedFileDescriptorTransportModes(TRUSTY_SERVER_SUPPORTED_FD_MODES);
 
     rpcServer->setPerSessionRootObject(
             [cb, cbArgSp](wp<RpcSession> /*session*/, const void* addrPtr, size_t len) {

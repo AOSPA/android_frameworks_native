@@ -410,7 +410,7 @@ private:
     // a deadlock where the main thread joins with the timer thread as the timer thread waits to
     // lock a mutex held by the main thread.
     struct PromotionParams {
-        // Whether to stop and start the idle timer. Ignored unless connected_display flag is set.
+        // Whether to stop and start the idle timer.
         bool toggleIdleTimer;
     };
 

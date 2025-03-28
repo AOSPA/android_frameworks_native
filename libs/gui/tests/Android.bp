@@ -90,6 +90,7 @@ cc_test {
         "testserver/TestServerClient.cpp",
         "testserver/TestServerHost.cpp",
         "TextureRenderer.cpp",
+        "TransactionState_test.cpp",
         "VsyncEventData_test.cpp",
         "WindowInfo_test.cpp",
     ],

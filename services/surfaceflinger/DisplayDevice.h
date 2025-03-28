@@ -111,6 +111,11 @@ public:
     bool isSecure() const;
     void setSecure(bool secure);
 
+    // The optimization policy influences whether this display is optimized for power or
+    // performance.
+    gui::ISurfaceComposer::OptimizationPolicy getOptimizationPolicy() const;
+    void setOptimizationPolicy(gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy);
+
     int getWidth() const;
     int getHeight() const;
     ui::Size getSize() const { return {getWidth(), getHeight()}; }
@@ -264,6 +269,9 @@ private:
     // TODO(b/182939859): Remove special cases for primary display.
     const bool mIsPrimary;
 
+    gui::ISurfaceComposer::OptimizationPolicy mOptimizationPolicy =
+            gui::ISurfaceComposer::OptimizationPolicy::optimizeForPerformance;
+
     uint32_t mFlags = 0;
 
     // Requested refresh rate in fps, supported only for virtual displays.
@@ -318,11 +326,16 @@ struct DisplayDeviceState {
     std::string displayName;
     std::string uniqueId;
     bool isSecure = false;
+
+    gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy =
+            gui::ISurfaceComposer::OptimizationPolicy::optimizeForPerformance;
     bool isProtected = false;
     // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
     Fps requestedRefreshRate;
     int32_t maxLayerPictureProfiles = 0;
     bool hasPictureProcessing = false;
+    hardware::graphics::composer::hal::PowerMode initialPowerMode{
+            hardware::graphics::composer::hal::PowerMode::OFF};
 
 private:
     static std::atomic<int32_t> sNextSequenceId;

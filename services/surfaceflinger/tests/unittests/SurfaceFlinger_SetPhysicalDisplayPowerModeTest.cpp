@@ -315,7 +315,7 @@ using ExternalDisplayPowerCase =
                          EventThreadNotSupportedVariant, DispSyncNotSupportedVariant,
                          TransitionVariant>;
 
-class SetPowerModeInternalTest : public DisplayTransactionTest {
+class SetPhysicalDisplayPowerModeTest : public DisplayTransactionTest {
 public:
     template <typename Case>
     void transitionDisplayCommon();
@@ -331,7 +331,7 @@ template <>
 struct PowerModeInitialVSyncEnabled<PowerMode::DOZE> : public std::true_type {};
 
 template <typename Case>
-void SetPowerModeInternalTest::transitionDisplayCommon() {
+void SetPhysicalDisplayPowerModeTest::transitionDisplayCommon() {
     // --------------------------------------------------------------------
     // Preconditions
 
@@ -353,7 +353,7 @@ void SetPowerModeInternalTest::transitionDisplayCommon() {
     // --------------------------------------------------------------------
     // Invocation
 
-    mFlinger.setPowerModeInternal(display, Case::Transition::TARGET_POWER_MODE);
+    mFlinger.setPhysicalDisplayPowerMode(display, Case::Transition::TARGET_POWER_MODE);
 
     // --------------------------------------------------------------------
     // Postconditions
@@ -361,7 +361,7 @@ void SetPowerModeInternalTest::transitionDisplayCommon() {
     Case::Transition::verifyPostconditions(this);
 }
 
-TEST_F(SetPowerModeInternalTest, setPowerModeInternalDoesNothingIfNoChange) {
+TEST_F(SetPhysicalDisplayPowerModeTest, setPhysicalDisplayPowerModeDoesNothingIfNoChange) {
     using Case = SimplePrimaryDisplayCase;
 
     // --------------------------------------------------------------------
@@ -378,7 +378,7 @@ TEST_F(SetPowerModeInternalTest, setPowerModeInternalDoesNothingIfNoChange) {
     // --------------------------------------------------------------------
     // Invocation
 
-    mFlinger.setPowerModeInternal(display.mutableDisplayDevice(), PowerMode::ON);
+    mFlinger.setPhysicalDisplayPowerMode(display.mutableDisplayDevice(), PowerMode::ON);
 
     // --------------------------------------------------------------------
     // Postconditions
@@ -386,7 +386,7 @@ TEST_F(SetPowerModeInternalTest, setPowerModeInternalDoesNothingIfNoChange) {
     EXPECT_EQ(PowerMode::ON, display.mutableDisplayDevice()->getPowerMode());
 }
 
-TEST_F(SetPowerModeInternalTest, setPowerModeInternalDoesNothingIfVirtualDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, setPhysicalDisplayPowerModeDoesNothingIfVirtualDisplay) {
     using Case = HwcVirtualDisplayCase;
 
     // --------------------------------------------------------------------
@@ -408,7 +408,7 @@ TEST_F(SetPowerModeInternalTest, setPowerModeInternalDoesNothingIfVirtualDisplay
     // --------------------------------------------------------------------
     // Invocation
 
-    mFlinger.setPowerModeInternal(display.mutableDisplayDevice(), PowerMode::OFF);
+    mFlinger.setPhysicalDisplayPowerMode(display.mutableDisplayDevice(), PowerMode::OFF);
 
     // --------------------------------------------------------------------
     // Postconditions
@@ -416,88 +416,88 @@ TEST_F(SetPowerModeInternalTest, setPowerModeInternalDoesNothingIfVirtualDisplay
     EXPECT_EQ(PowerMode::ON, display.mutableDisplayDevice()->getPowerMode());
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOffToOnPrimaryDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOffToOnPrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionOffToOnVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOffToDozeSuspendPrimaryDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOffToDozeSuspendPrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionOffToDozeSuspendVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOnToOffPrimaryDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOnToOffPrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionOnToOffVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromDozeSuspendToOffPrimaryDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromDozeSuspendToOffPrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionDozeSuspendToOffVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOnToDozePrimaryDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOnToDozePrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionOnToDozeVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromDozeSuspendToDozePrimaryDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromDozeSuspendToDozePrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionDozeSuspendToDozeVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromDozeToOnPrimaryDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromDozeToOnPrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionDozeToOnVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromDozeSuspendToOnPrimaryDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromDozeSuspendToOnPrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionDozeSuspendToOnVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOnToDozeSuspendPrimaryDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOnToDozeSuspendPrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionOnToDozeSuspendVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOnToUnknownPrimaryDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOnToUnknownPrimaryDisplay) {
     transitionDisplayCommon<PrimaryDisplayPowerCase<TransitionOnToUnknownVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOffToOnExternalDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOffToOnExternalDisplay) {
     SET_FLAG_FOR_TEST(flags::multithreaded_present, true);
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionOffToOnVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOffToDozeSuspendExternalDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOffToDozeSuspendExternalDisplay) {
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionOffToDozeSuspendVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOnToOffExternalDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOnToOffExternalDisplay) {
     SET_FLAG_FOR_TEST(flags::multithreaded_present, true);
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionOnToOffVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromDozeSuspendToOffExternalDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromDozeSuspendToOffExternalDisplay) {
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionDozeSuspendToOffVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOnToDozeExternalDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOnToDozeExternalDisplay) {
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionOnToDozeVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromDozeSuspendToDozeExternalDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromDozeSuspendToDozeExternalDisplay) {
     SET_FLAG_FOR_TEST(flags::multithreaded_present, true);
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionDozeSuspendToDozeVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromDozeToOnExternalDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromDozeToOnExternalDisplay) {
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionDozeToOnVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromDozeSuspendToOnExternalDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromDozeSuspendToOnExternalDisplay) {
     SET_FLAG_FOR_TEST(flags::multithreaded_present, true);
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionDozeSuspendToOnVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOnToDozeSuspendExternalDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOnToDozeSuspendExternalDisplay) {
     SET_FLAG_FOR_TEST(flags::multithreaded_present, true);
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionOnToDozeSuspendVariant>>();
 }
 
-TEST_F(SetPowerModeInternalTest, transitionsDisplayFromOnToUnknownExternalDisplay) {
+TEST_F(SetPhysicalDisplayPowerModeTest, transitionsDisplayFromOnToUnknownExternalDisplay) {
     transitionDisplayCommon<ExternalDisplayPowerCase<TransitionOnToUnknownVariant>>();
 }
 

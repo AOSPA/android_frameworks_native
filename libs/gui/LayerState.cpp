@@ -55,6 +55,28 @@ namespace android {
 using gui::FocusRequest;
 using gui::WindowInfoHandle;
 
+namespace {
+bool isSameWindowHandle(const sp<WindowInfoHandle>& lhs, const sp<WindowInfoHandle>& rhs) {
+    if (lhs == rhs) {
+        return true;
+    }
+
+    if (!lhs || !rhs) {
+        return false;
+    }
+
+    return *lhs->getInfo() == *rhs->getInfo();
+};
+
+bool isSameSurfaceControl(const sp<SurfaceControl>& lhs, const sp<SurfaceControl>& rhs) {
+    if (lhs == rhs) {
+        return true;
+    }
+
+    return SurfaceControl::isSameSurface(lhs, rhs);
+};
+} // namespace
+
 layer_state_t::layer_state_t()
       : surface(nullptr),
         layerId(-1),
@@ -73,7 +95,6 @@ layer_state_t::layer_state_t()
         transformToDisplayInverse(false),
         crop({0, 0, -1, -1}),
         dataspace(ui::Dataspace::UNKNOWN),
-        surfaceDamageRegion(),
         api(-1),
         colorTransform(mat4()),
         bgColor(0),
@@ -117,19 +138,21 @@ status_t layer_state_t::write(Parcel& output) const
     SAFE_PARCEL(output.writeFloat, crop.left);
     SAFE_PARCEL(output.writeFloat, crop.bottom);
     SAFE_PARCEL(output.writeFloat, crop.right);
-    SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output, relativeLayerSurfaceControl);
-    SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output, parentSurfaceControlForChild);
+    SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output,
+                mNotDefCmpState.relativeLayerSurfaceControl);
+    SAFE_PARCEL(SurfaceControl::writeNullableToParcel, output,
+                mNotDefCmpState.parentSurfaceControlForChild);
     SAFE_PARCEL(output.writeFloat, color.r);
     SAFE_PARCEL(output.writeFloat, color.g);
     SAFE_PARCEL(output.writeFloat, color.b);
     SAFE_PARCEL(output.writeFloat, color.a);
-    SAFE_PARCEL(windowInfoHandle->writeToParcel, &output);
-    SAFE_PARCEL(output.write, transparentRegion);
+    SAFE_PARCEL(mNotDefCmpState.windowInfoHandle->writeToParcel, &output);
+    SAFE_PARCEL(output.write, mNotDefCmpState.transparentRegion);
     SAFE_PARCEL(output.writeUint32, bufferTransform);
     SAFE_PARCEL(output.writeBool, transformToDisplayInverse);
     SAFE_PARCEL(output.writeUint32, static_cast<uint32_t>(dataspace));
     SAFE_PARCEL(output.write, hdrMetadata);
-    SAFE_PARCEL(output.write, surfaceDamageRegion);
+    SAFE_PARCEL(output.write, mNotDefCmpState.surfaceDamageRegion);
     SAFE_PARCEL(output.writeInt32, api);
 
     if (sidebandStream) {
@@ -241,8 +264,10 @@ status_t layer_state_t::read(const Parcel& input)
     SAFE_PARCEL(input.readFloat, &crop.bottom);
     SAFE_PARCEL(input.readFloat, &crop.right);
 
-    SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input, &relativeLayerSurfaceControl);
-    SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input, &parentSurfaceControlForChild);
+    SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input,
+                &mNotDefCmpState.relativeLayerSurfaceControl);
+    SAFE_PARCEL(SurfaceControl::readNullableFromParcel, input,
+                &mNotDefCmpState.parentSurfaceControlForChild);
 
     float tmpFloat = 0;
     SAFE_PARCEL(input.readFloat, &tmpFloat);
@@ -254,9 +279,9 @@ status_t layer_state_t::read(const Parcel& input)
     SAFE_PARCEL(input.readFloat, &tmpFloat);
     color.a = tmpFloat;
 
-    SAFE_PARCEL(windowInfoHandle->readFromParcel, &input);
+    SAFE_PARCEL(mNotDefCmpState.windowInfoHandle->readFromParcel, &input);
 
-    SAFE_PARCEL(input.read, transparentRegion);
+    SAFE_PARCEL(input.read, mNotDefCmpState.transparentRegion);
     SAFE_PARCEL(input.readUint32, &bufferTransform);
     SAFE_PARCEL(input.readBool, &transformToDisplayInverse);
 
@@ -265,7 +290,7 @@ status_t layer_state_t::read(const Parcel& input)
     dataspace = static_cast<ui::Dataspace>(tmpUint32);
 
     SAFE_PARCEL(input.read, hdrMetadata);
-    SAFE_PARCEL(input.read, surfaceDamageRegion);
+    SAFE_PARCEL(input.read, mNotDefCmpState.surfaceDamageRegion);
     SAFE_PARCEL(input.readInt32, &api);
 
     bool tmpBool = false;
@@ -583,7 +608,7 @@ void layer_state_t::merge(const layer_state_t& other) {
     }
     if (other.what & eTransparentRegionChanged) {
         what |= eTransparentRegionChanged;
-        transparentRegion = other.transparentRegion;
+        mNotDefCmpState.transparentRegion = other.mNotDefCmpState.transparentRegion;
     }
     if (other.what & eFlagsChanged) {
         what |= eFlagsChanged;
@@ -615,11 +640,13 @@ void layer_state_t::merge(const layer_state_t& other) {
         what |= eRelativeLayerChanged;
         what &= ~eLayerChanged;
         z = other.z;
-        relativeLayerSurfaceControl = other.relativeLayerSurfaceControl;
+        mNotDefCmpState.relativeLayerSurfaceControl =
+                other.mNotDefCmpState.relativeLayerSurfaceControl;
     }
     if (other.what & eReparent) {
         what |= eReparent;
-        parentSurfaceControlForChild = other.parentSurfaceControlForChild;
+        mNotDefCmpState.parentSurfaceControlForChild =
+                other.mNotDefCmpState.parentSurfaceControlForChild;
     }
     if (other.what & eBufferTransformChanged) {
         what |= eBufferTransformChanged;
@@ -665,7 +692,7 @@ void layer_state_t::merge(const layer_state_t& other) {
     }
     if (other.what & eSurfaceDamageRegionChanged) {
         what |= eSurfaceDamageRegionChanged;
-        surfaceDamageRegion = other.surfaceDamageRegion;
+        mNotDefCmpState.surfaceDamageRegion = other.mNotDefCmpState.surfaceDamageRegion;
     }
     if (other.what & eApiChanged) {
         what |= eApiChanged;
@@ -684,7 +711,8 @@ void layer_state_t::merge(const layer_state_t& other) {
     }
     if (other.what & eInputInfoChanged) {
         what |= eInputInfoChanged;
-        windowInfoHandle = sp<WindowInfoHandle>::make(*other.windowInfoHandle);
+        mNotDefCmpState.windowInfoHandle =
+                sp<WindowInfoHandle>::make(*other.mNotDefCmpState.windowInfoHandle);
     }
     if (other.what & eBackgroundColorChanged) {
         what |= eBackgroundColorChanged;
@@ -807,7 +835,8 @@ uint64_t layer_state_t::diff(const layer_state_t& other) const {
     CHECK_DIFF(diff, eAlphaChanged, other, color.a);
     CHECK_DIFF(diff, eMatrixChanged, other, matrix);
     if (other.what & eTransparentRegionChanged &&
-        (!transparentRegion.hasSameRects(other.transparentRegion))) {
+        (!mNotDefCmpState.transparentRegion.hasSameRects(
+                other.mNotDefCmpState.transparentRegion))) {
         diff |= eTransparentRegionChanged;
     }
     if (other.what & eFlagsChanged) {
@@ -824,8 +853,8 @@ uint64_t layer_state_t::diff(const layer_state_t& other) const {
         diff &= ~eLayerChanged;
     }
     if (other.what & eReparent &&
-        !SurfaceControl::isSameSurface(parentSurfaceControlForChild,
-                                       other.parentSurfaceControlForChild)) {
+        !SurfaceControl::isSameSurface(mNotDefCmpState.parentSurfaceControlForChild,
+                                       other.mNotDefCmpState.parentSurfaceControlForChild)) {
         diff |= eReparent;
     }
     CHECK_DIFF(diff, eBufferTransformChanged, other, bufferTransform);
@@ -839,7 +868,8 @@ uint64_t layer_state_t::diff(const layer_state_t& other) const {
     CHECK_DIFF(diff, eCachingHintChanged, other, cachingHint);
     CHECK_DIFF(diff, eHdrMetadataChanged, other, hdrMetadata);
     if (other.what & eSurfaceDamageRegionChanged &&
-        (!surfaceDamageRegion.hasSameRects(other.surfaceDamageRegion))) {
+        (!mNotDefCmpState.surfaceDamageRegion.hasSameRects(
+                other.mNotDefCmpState.surfaceDamageRegion))) {
         diff |= eSurfaceDamageRegionChanged;
     }
     CHECK_DIFF(diff, eApiChanged, other, api);
@@ -900,6 +930,38 @@ status_t layer_state_t::matrix22_t::read(const Parcel& input) {
     SAFE_PARCEL(input.readFloat, &dtdy);
     SAFE_PARCEL(input.readFloat, &dsdy);
     return NO_ERROR;
+}
+void layer_state_t::updateTransparentRegion(const Region& transparentRegion) {
+    what |= eTransparentRegionChanged;
+    mNotDefCmpState.transparentRegion = transparentRegion;
+}
+void layer_state_t::updateSurfaceDamageRegion(const Region& surfaceDamageRegion) {
+    what |= eSurfaceDamageRegionChanged;
+    mNotDefCmpState.surfaceDamageRegion = surfaceDamageRegion;
+}
+void layer_state_t::updateRelativeLayer(const sp<SurfaceControl>& relativeTo, int32_t z) {
+    what |= layer_state_t::eRelativeLayerChanged;
+    what &= ~layer_state_t::eLayerChanged;
+    mNotDefCmpState.relativeLayerSurfaceControl = relativeTo;
+    this->z = z;
+}
+void layer_state_t::updateParentLayer(const sp<SurfaceControl>& newParent) {
+    what |= layer_state_t::eReparent;
+    mNotDefCmpState.parentSurfaceControlForChild =
+            newParent ? newParent->getParentingLayer() : nullptr;
+}
+void layer_state_t::updateInputWindowInfo(sp<gui::WindowInfoHandle>&& info) {
+    what |= eInputInfoChanged;
+    mNotDefCmpState.windowInfoHandle = std::move(info);
+}
+
+bool layer_state_t::NotDefaultComparableState::operator==(
+        const NotDefaultComparableState& rhs) const {
+    return transparentRegion.hasSameRects(rhs.transparentRegion) &&
+            surfaceDamageRegion.hasSameRects(rhs.surfaceDamageRegion) &&
+            isSameWindowHandle(windowInfoHandle, rhs.windowInfoHandle) &&
+            isSameSurfaceControl(relativeLayerSurfaceControl, rhs.relativeLayerSurfaceControl) &&
+            isSameSurfaceControl(parentSurfaceControlForChild, rhs.parentSurfaceControlForChild);
 }
 
 // ------------------------------- InputWindowCommands ----------------------------------------
@@ -1034,8 +1096,8 @@ status_t BufferData::readFromParcel(const Parcel* input) {
 }
 
 status_t TrustedPresentationListener::writeToParcel(Parcel* parcel) const {
-    SAFE_PARCEL(parcel->writeStrongBinder, callbackInterface);
-    SAFE_PARCEL(parcel->writeInt32, callbackId);
+    SAFE_PARCEL(parcel->writeStrongBinder, mState.callbackInterface);
+    SAFE_PARCEL(parcel->writeInt32, mState.callbackId);
     return NO_ERROR;
 }
 
@@ -1043,9 +1105,9 @@ status_t TrustedPresentationListener::readFromParcel(const Parcel* parcel) {
     sp<IBinder> tmpBinder = nullptr;
     SAFE_PARCEL(parcel->readNullableStrongBinder, &tmpBinder);
     if (tmpBinder) {
-        callbackInterface = checked_interface_cast<ITransactionCompletedListener>(tmpBinder);
+        mState.callbackInterface = checked_interface_cast<ITransactionCompletedListener>(tmpBinder);
     }
-    SAFE_PARCEL(parcel->readInt32, &callbackId);
+    SAFE_PARCEL(parcel->readInt32, &mState.callbackId);
     return NO_ERROR;
 }
 

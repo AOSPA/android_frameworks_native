@@ -447,7 +447,7 @@ void LayerProtoHelper::writeSnapshotToProto(perfetto::protos::LayerProto* layerI
     }
     layerInfo->set_type("Layer");
 
-    LayerProtoHelper::writeToProto(requestedState.transparentRegion,
+    LayerProtoHelper::writeToProto(requestedState.getTransparentRegion(),
                                    [&]() { return layerInfo->mutable_transparent_region(); });
 
     layerInfo->set_layer_stack(snapshot.outputFilter.layerStack.id);

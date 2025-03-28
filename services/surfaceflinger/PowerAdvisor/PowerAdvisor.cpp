@@ -522,7 +522,7 @@ void PowerAdvisor::setRequiresRenderEngine(DisplayId displayId, bool requiresRen
 }
 
 void PowerAdvisor::setExpectedPresentTime(TimePoint expectedPresentTime) {
-    mExpectedPresentTimes.append(expectedPresentTime);
+    mExpectedPresentTimes.next() = expectedPresentTime;
 }
 
 void PowerAdvisor::setSfPresentTiming(TimePoint presentFenceTime, TimePoint presentEndTime) {
@@ -539,7 +539,7 @@ void PowerAdvisor::setHwcPresentDelayedTime(DisplayId displayId, TimePoint earli
 }
 
 void PowerAdvisor::setCommitStart(TimePoint commitStartTime) {
-    mCommitStartTimes.append(commitStartTime);
+    mCommitStartTimes.next() = commitStartTime;
 }
 
 void PowerAdvisor::setCompositeEnd(TimePoint compositeEndTime) {
@@ -586,7 +586,7 @@ std::optional<hal::WorkDuration> PowerAdvisor::estimateWorkDuration() {
     }
 
     // Tracks when we finish presenting to hwc
-    TimePoint estimatedHwcEndTime = mCommitStartTimes[0];
+    TimePoint estimatedHwcEndTime = mCommitStartTimes.back();
 
     // How long we spent this frame not doing anything, waiting for fences or vsync
     Duration idleDuration = 0ns;
@@ -650,13 +650,13 @@ std::optional<hal::WorkDuration> PowerAdvisor::estimateWorkDuration() {
     // Also add the frame delay duration since the target did not move while we were delayed
     Duration totalDuration = mFrameDelayDuration +
             std::max(estimatedHwcEndTime, estimatedGpuEndTime.value_or(TimePoint{0ns})) -
-            mCommitStartTimes[0];
+            mCommitStartTimes.back();
     Duration totalDurationWithoutGpu =
-            mFrameDelayDuration + estimatedHwcEndTime - mCommitStartTimes[0];
+            mFrameDelayDuration + estimatedHwcEndTime - mCommitStartTimes.back();
 
     // We finish SurfaceFlinger when post-composition finishes, so add that in here
     Duration flingerDuration =
-            estimatedFlingerEndTime + mLastPostcompDuration - mCommitStartTimes[0];
+            estimatedFlingerEndTime + mLastPostcompDuration - mCommitStartTimes.back();
     Duration estimatedGpuDuration = firstGpuTimeline.has_value()
             ? estimatedGpuEndTime.value_or(TimePoint{0ns}) - firstGpuTimeline->startTime
             : Duration::fromNs(0);
@@ -668,7 +668,7 @@ std::optional<hal::WorkDuration> PowerAdvisor::estimateWorkDuration() {
     hal::WorkDuration duration{
             .timeStampNanos = TimePoint::now().ns(),
             .durationNanos = combinedDuration.ns(),
-            .workPeriodStartTimestampNanos = mCommitStartTimes[0].ns(),
+            .workPeriodStartTimestampNanos = mCommitStartTimes.back().ns(),
             .cpuDurationNanos = supportsGpuReporting() ? cpuDuration.ns() : 0,
             .gpuDurationNanos = supportsGpuReporting() ? estimatedGpuDuration.ns() : 0,
     };

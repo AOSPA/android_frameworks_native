@@ -444,40 +444,8 @@ TEST_F(VSyncPredictorTest, idealModelPredictionsBeforeRegressionModelIsBuilt) {
     }
 }
 
-TEST_F(VSyncPredictorTest, doesNotPredictBeforeTimePointWithHigherIntercept_withPredictorRecovery) {
-    SET_FLAG_FOR_TEST(flags::vsync_predictor_recovery, true);
-    std::vector<nsecs_t> const simulatedVsyncs{
-            158929578733000,
-            158929306806205, // oldest TS in ringbuffer
-            158929650879052,
-            158929661969209,
-            158929684198847,
-            158929695268171,
-            158929706370359,
-    };
-    auto const idealPeriod = 11111111;
-    auto const expectedPeriod = 11079563;
-    auto const expectedIntercept = 1335662;
-
-    tracker.setDisplayModePtr(displayMode(idealPeriod));
-    for (auto const& timestamp : simulatedVsyncs) {
-        tracker.addVsyncTimestamp(timestamp);
-    }
-
-    auto [slope, intercept] = tracker.getVSyncPredictionModel();
-    EXPECT_THAT(slope, IsCloseTo(expectedPeriod, mMaxRoundingError));
-    EXPECT_THAT(intercept, IsCloseTo(expectedIntercept, mMaxRoundingError));
-
-    // (timePoint - oldestTS) % expectedPeriod works out to be: 894272
-    // (timePoint - oldestTS) / expectedPeriod works out to be: 38.08
-    auto const timePoint = 158929728723871;
-    auto const prediction = tracker.nextAnticipatedVSyncTimeFrom(timePoint);
-    EXPECT_THAT(prediction, Ge(timePoint));
-}
-
 // See b/145667109, and comment in prod code under test.
 TEST_F(VSyncPredictorTest, doesNotPredictBeforeTimePointWithHigherIntercept) {
-    SET_FLAG_FOR_TEST(flags::vsync_predictor_recovery, false);
     std::vector<nsecs_t> const simulatedVsyncs{
             158929578733000,
             158929306806205, // oldest TS in ringbuffer

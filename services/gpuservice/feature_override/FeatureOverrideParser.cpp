@@ -23,8 +23,10 @@
 #include <sys/stat.h>
 #include <vector>
 
+#include <android-base/macros.h>
 #include <graphicsenv/FeatureOverrides.h>
 #include <log/log.h>
+#include <vkjson.h>
 
 #include "feature_config.pb.h"
 
@@ -35,13 +37,53 @@ void resetFeatureOverrides(android::FeatureOverrides &featureOverrides) {
     featureOverrides.mPackageFeatures.clear();
 }
 
+bool
+gpuVendorIdMatches(const VkJsonInstance &vkJsonInstance,
+               const uint32_t &configVendorId) {
+    if (vkJsonInstance.devices.empty()) {
+        return false;
+    }
+
+    // Always match the TEST Vendor ID
+    if (configVendorId == feature_override::GpuVendorID::VENDOR_ID_TEST) {
+        return true;
+    }
+
+    // Always assume one GPU device.
+    uint32_t vendorID = vkJsonInstance.devices.front().properties.vendorID;
+
+    return vendorID == configVendorId;
+}
+
+bool
+conditionsMet(const VkJsonInstance &vkJsonInstance,
+              const android::FeatureConfig &featureConfig) {
+    bool gpuVendorIdMatch = false;
+
+    if (featureConfig.mGpuVendorIDs.empty()) {
+        gpuVendorIdMatch = true;
+    } else {
+        for (const auto &gpuVendorID: featureConfig.mGpuVendorIDs) {
+            if (gpuVendorIdMatches(vkJsonInstance, gpuVendorID)) {
+                gpuVendorIdMatch = true;
+                break;
+            }
+        }
+    }
+
+    return gpuVendorIdMatch;
+}
+
 void initFeatureConfig(android::FeatureConfig &featureConfig,
                        const feature_override::FeatureConfig &featureConfigProto) {
     featureConfig.mFeatureName = featureConfigProto.feature_name();
     featureConfig.mEnabled = featureConfigProto.enabled();
+    for (const auto &gpuVendorIdProto: featureConfigProto.gpu_vendor_ids()) {
+        featureConfig.mGpuVendorIDs.emplace_back(static_cast<uint32_t>(gpuVendorIdProto));
+    }
 }
 
-feature_override::FeatureOverrideProtos readFeatureConfigProtos(std::string configFilePath) {
+feature_override::FeatureOverrideProtos readFeatureConfigProtos(const std::string &configFilePath) {
     feature_override::FeatureOverrideProtos overridesProtos;
 
     std::ifstream protobufBinaryFile(configFilePath.c_str());
@@ -78,9 +120,15 @@ std::string FeatureOverrideParser::getFeatureOverrideFilePath() const {
 
 bool FeatureOverrideParser::shouldReloadFeatureOverrides() const {
     std::string configFilePath = getFeatureOverrideFilePath();
+
+    std::ifstream configFile(configFilePath);
+    if (!configFile.good()) {
+        return false;
+    }
+
     struct stat fileStat{};
-    if (stat(getFeatureOverrideFilePath().c_str(), &fileStat) != 0) {
-        ALOGE("Error getting file information for '%s': %s", getFeatureOverrideFilePath().c_str(),
+    if (stat(configFilePath.c_str(), &fileStat) != 0) {
+        ALOGE("Error getting file information for '%s': %s", configFilePath.c_str(),
               strerror(errno));
         // stat'ing the file failed, so return false since reading it will also likely fail.
         return false;
@@ -100,12 +148,22 @@ void FeatureOverrideParser::parseFeatureOverrides() {
     // Clear out the stale values before adding the newly parsed data.
     resetFeatureOverrides(mFeatureOverrides);
 
+    if (overridesProtos.global_features().empty() &&
+        overridesProtos.package_features().empty()) {
+        // No overrides to parse.
+        return;
+    }
+
+    const VkJsonInstance vkJsonInstance = VkJsonGetInstance();
+
     // Global feature overrides.
     for (const auto &featureConfigProto: overridesProtos.global_features()) {
         FeatureConfig featureConfig;
         initFeatureConfig(featureConfig, featureConfigProto);
 
-        mFeatureOverrides.mGlobalFeatures.emplace_back(featureConfig);
+        if (conditionsMet(vkJsonInstance, featureConfig)) {
+            mFeatureOverrides.mGlobalFeatures.emplace_back(featureConfig);
+        }
     }
 
     // App-specific feature overrides.
@@ -122,7 +180,9 @@ void FeatureOverrideParser::parseFeatureOverrides() {
             FeatureConfig featureConfig;
             initFeatureConfig(featureConfig, featureConfigProto);
 
-            featureConfigs.emplace_back(featureConfig);
+            if (conditionsMet(vkJsonInstance, featureConfig)) {
+                featureConfigs.emplace_back(featureConfig);
+            }
         }
 
         mFeatureOverrides.mPackageFeatures[packageName] = featureConfigs;

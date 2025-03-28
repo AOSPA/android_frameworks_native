@@ -345,8 +345,6 @@ public:
     static std::optional<aidl::android::hardware::graphics::common::DisplayDecorationSupport>
     getDisplayDecorationSupport(const sp<IBinder>& displayToken);
 
-    static bool flagEdgeExtensionEffectUseShader();
-
     /**
      * Returns how many picture profiles are supported by the display.
      *
@@ -396,6 +394,7 @@ public:
 
     static const std::string kEmpty;
     static sp<IBinder> createVirtualDisplay(const std::string& displayName, bool isSecure,
+                                            bool optimizeForPower = true,
                                             const std::string& uniqueId = kEmpty,
                                             float requestedRefreshRate = 0);
 

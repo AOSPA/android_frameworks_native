@@ -316,8 +316,6 @@ int ASystemHealth_getMaxCpuHeadroomTidsSize(size_t* _Nonnull outSize);
 /**
  * Gets the range of the calculation window size for CPU headroom.
  *
- * In API version 36, the range will be a superset of [50, 10000].
- *
  * Available since API level 36.
  *
  * @param outMinMillis Non-null output pointer to be set to the minimum window size in milliseconds.
@@ -331,8 +329,6 @@ __INTRODUCED_IN(36);
 
 /**
  * Gets the range of the calculation window size for GPU headroom.
- *
- * In API version 36, the range will be a superset of [50, 10000].
  *
  * Available since API level 36.
  *

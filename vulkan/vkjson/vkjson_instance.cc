@@ -103,6 +103,16 @@ VkJsonDevice VkJsonGetDevice(VkPhysicalDevice physical_device) {
     features.pNext =
         &device.ext_variable_pointer_features.variable_pointer_features_khr;
   }
+  if (HasExtension("VK_EXT_image_2d_view_of_3d", device.extensions)) {
+    device.ext_image_2d_view_of_3d_features.reported = true;
+    device.ext_image_2d_view_of_3d_features.image_2D_view_of_3D_features_EXT
+        .sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_2D_VIEW_OF_3D_FEATURES_EXT;
+    device.ext_image_2d_view_of_3d_features.image_2D_view_of_3D_features_EXT
+        .pNext = features.pNext;
+    features.pNext = &device.ext_image_2d_view_of_3d_features
+                          .image_2D_view_of_3D_features_EXT;
+  }
   if (HasExtension("VK_KHR_shader_float16_int8", device.extensions)) {
     device.ext_shader_float16_int8_features.reported = true;
     device.ext_shader_float16_int8_features.shader_float16_int8_features_khr

@@ -144,6 +144,17 @@ cc_test {
 }
 
 cc_test {
+    name: "RingBuffer_test",
+    test_suites: ["device-tests"],
+    shared_libs: ["libui"],
+    srcs: ["RingBuffer_test.cpp"],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+}
+
+cc_test {
     name: "Size_test",
     test_suites: ["device-tests"],
     shared_libs: ["libui"],
