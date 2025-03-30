@@ -25,6 +25,7 @@
 #include <common/FlagManager.h>
 #include <ftl/flags.h>
 #include <gui/LayerState.h>
+#include <gui/TransactionState.h>
 #include <system/window.h>
 
 namespace android {
@@ -50,33 +51,26 @@ public:
 struct QueuedTransactionState {
     QueuedTransactionState() = default;
 
-    QueuedTransactionState(const FrameTimelineInfo& frameTimelineInfo,
-                           std::vector<ResolvedComposerState>& composerStates,
-                           const Vector<DisplayState>& displayStates, uint32_t transactionFlags,
-                           const sp<IBinder>& applyToken,
-                           const InputWindowCommands& inputWindowCommands,
-                           int64_t desiredPresentTime, bool isAutoTimestamp,
-                           std::vector<uint64_t> uncacheBufferIds, int64_t postTime,
-                           bool hasListenerCallbacks,
-                           std::vector<ListenerCallbacks> listenerCallbacks, int originPid,
-                           int originUid, uint64_t transactionId,
-                           std::vector<uint64_t> mergedTransactionIds)
-          : frameTimelineInfo(frameTimelineInfo),
-            states(std::move(composerStates)),
-            displays(displayStates),
-            flags(transactionFlags),
-            applyToken(applyToken),
-            inputWindowCommands(inputWindowCommands),
-            desiredPresentTime(desiredPresentTime),
-            isAutoTimestamp(isAutoTimestamp),
+    QueuedTransactionState(TransactionState&& transactionState,
+                           std::vector<ResolvedComposerState>&& composerStates,
+                           std::vector<uint64_t>&& uncacheBufferIds, int64_t postTime,
+                           int originPid, int originUid)
+          : frameTimelineInfo(std::move(transactionState.mFrameTimelineInfo)),
+            states(composerStates),
+            displays(std::move(transactionState.mDisplayStates)),
+            flags(transactionState.mFlags),
+            applyToken(transactionState.mApplyToken),
+            inputWindowCommands(std::move(transactionState.mInputWindowCommands)),
+            desiredPresentTime(transactionState.mDesiredPresentTime),
+            isAutoTimestamp(transactionState.mIsAutoTimestamp),
             uncacheBufferIds(std::move(uncacheBufferIds)),
             postTime(postTime),
-            hasListenerCallbacks(hasListenerCallbacks),
-            listenerCallbacks(listenerCallbacks),
+            hasListenerCallbacks(transactionState.mHasListenerCallbacks),
+            listenerCallbacks(std::move(transactionState.mListenerCallbacks)),
             originPid(originPid),
             originUid(originUid),
-            id(transactionId),
-            mergedTransactionIds(std::move(mergedTransactionIds)) {}
+            id(transactionState.getId()),
+            mergedTransactionIds(std::move(transactionState.mMergedTransactionIds)) {}
 
     // Invokes `void(const layer_state_t&)` visitor for matching layers.
     template <typename Visitor>
@@ -135,7 +129,7 @@ struct QueuedTransactionState {
 
     FrameTimelineInfo frameTimelineInfo;
     std::vector<ResolvedComposerState> states;
-    Vector<DisplayState> displays;
+    std::vector<DisplayState> displays;
     uint32_t flags;
     sp<IBinder> applyToken;
     InputWindowCommands inputWindowCommands;

@@ -26,7 +26,8 @@ namespace android {
 class TransactionState {
 public:
     explicit TransactionState() = default;
-    TransactionState(TransactionState const& other) = default;
+    TransactionState(TransactionState&& other) = default;
+    TransactionState& operator=(TransactionState&& other) = default;
     status_t writeToParcel(Parcel* parcel) const;
     status_t readFromParcel(const Parcel* parcel);
     layer_state_t* getLayerState(const sp<SurfaceControl>& sc);
@@ -86,6 +87,9 @@ public:
     std::vector<ListenerCallbacks> mListenerCallbacks;
 
 private:
+    explicit TransactionState(TransactionState const& other) = default;
+    friend class TransactionApplicationTest;
+    friend class SurfaceComposerClient;
     // We keep track of the last MAX_MERGE_HISTORY_LENGTH merged transaction ids.
     // Ordered most recently merged to least recently merged.
     static constexpr size_t MAX_MERGE_HISTORY_LENGTH = 10u;

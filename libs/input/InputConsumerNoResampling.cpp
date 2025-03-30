@@ -171,11 +171,6 @@ InputMessage createTimelineMessage(int32_t inputEventId, nsecs_t gpuCompletedTim
     return msg;
 }
 
-std::ostream& operator<<(std::ostream& out, const InputMessage& msg) {
-    out << ftl::enum_string(msg.header.type);
-    return out;
-}
-
 } // namespace
 
 // --- InputConsumerNoResampling ---

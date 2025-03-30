@@ -144,28 +144,39 @@ public:
     // records it if so.
     void processGesture(const TouchpadInputMapper::MetricsIdentifier& id, const Gesture& gesture) {
         std::scoped_lock lock(mLock);
+        Counters& counters = mCounters[id];
         switch (gesture.type) {
             case kGestureTypeFling:
                 if (gesture.details.fling.fling_state == GESTURES_FLING_START) {
                     // Indicates the end of a two-finger scroll gesture.
-                    mCounters[id].twoFingerSwipeGestures++;
+                    counters.twoFingerSwipeGestures++;
                 }
                 break;
             case kGestureTypeSwipeLift:
-                mCounters[id].threeFingerSwipeGestures++;
+                // The Gestures library occasionally outputs two lift gestures in a row, which can
+                // cause inaccurate metrics reporting. To work around this, deduplicate successive
+                // lift gestures.
+                // TODO(b/404529050): fix the Gestures library, and remove this check.
+                if (counters.lastGestureType != kGestureTypeSwipeLift) {
+                    counters.threeFingerSwipeGestures++;
+                }
                 break;
             case kGestureTypeFourFingerSwipeLift:
-                mCounters[id].fourFingerSwipeGestures++;
+                // TODO(b/404529050): fix the Gestures library, and remove this check.
+                if (counters.lastGestureType != kGestureTypeFourFingerSwipeLift) {
+                    counters.fourFingerSwipeGestures++;
+                }
                 break;
             case kGestureTypePinch:
                 if (gesture.details.pinch.zoom_state == GESTURES_ZOOM_END) {
-                    mCounters[id].pinchGestures++;
+                    counters.pinchGestures++;
                 }
                 break;
             default:
                 // We're not interested in any other gestures.
                 break;
         }
+        counters.lastGestureType = gesture.type;
     }
 
 private:
@@ -214,6 +225,10 @@ private:
         int32_t threeFingerSwipeGestures = 0;
         int32_t fourFingerSwipeGestures = 0;
         int32_t pinchGestures = 0;
+
+        // Records the last type of gesture received for this device, for deduplication purposes.
+        // TODO(b/404529050): fix the Gestures library and remove this field.
+        GestureType lastGestureType = kGestureTypeContactInitiated;
     };
 
     // Metrics are aggregated by device model and version, so if two devices of the same model and

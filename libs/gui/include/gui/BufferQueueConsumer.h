@@ -122,7 +122,10 @@ public:
     // setMaxAcquiredBufferCount sets the maximum number of buffers that can
     // be acquired by the consumer at one time (default 1).  This call will
     // fail if a producer is connected to the BufferQueue.
-    virtual status_t setMaxAcquiredBufferCount(int maxAcquiredBuffers);
+    virtual status_t setMaxAcquiredBufferCount(int maxAcquiredBuffers) override;
+    virtual status_t setMaxAcquiredBufferCount(
+            int maxAcquiredBuffers,
+            std::optional<OnBufferReleasedCallback> onBuffersReleasedCallback) override;
 
     // setConsumerName sets the name used in logging
     status_t setConsumerName(const String8& name) override;

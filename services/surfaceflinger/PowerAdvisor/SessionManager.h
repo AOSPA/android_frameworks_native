@@ -68,7 +68,8 @@ private:
     bool isLayerRelevant(int32_t layerId);
 
     // The UID of whoever created our ISessionManager connection
-    const uid_t mUid;
+    // FIXME: This is set but is not used anywhere.
+    [[maybe_unused]] const uid_t mUid;
 
     // State owned by the main thread
 

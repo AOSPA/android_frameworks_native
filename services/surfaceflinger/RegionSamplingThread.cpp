@@ -348,7 +348,7 @@ void RegionSamplingThread::captureSample() {
 
     SurfaceFlinger::ScreenshotArgs screenshotArgs;
     screenshotArgs.captureTypeVariant = displayWeak;
-    screenshotArgs.displayId = std::nullopt;
+    screenshotArgs.displayIdVariant = std::nullopt;
     screenshotArgs.sourceCrop = sampledBounds.isEmpty() ? layerStackSpaceRect : sampledBounds;
     screenshotArgs.reqSize = sampledBounds.getSize();
     screenshotArgs.dataspace = ui::Dataspace::V0_SRGB;

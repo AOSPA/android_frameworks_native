@@ -261,6 +261,40 @@ TEST_F(LayerSnapshotTest, AlphaInheritedByChildren) {
     EXPECT_EQ(getSnapshot(1221)->alpha, 0.25f);
 }
 
+TEST_F(LayerSnapshotTest, AlphaInheritedByChildWhenParentIsHiddenByInvalidTransform) {
+    setMatrix(1, 0, 0, 0, 0);
+    update(mSnapshotBuilder);
+    mLifecycleManager.commitChanges();
+
+    setAlpha(1, 0.5);
+    update(mSnapshotBuilder);
+    mLifecycleManager.commitChanges();
+
+    setMatrix(1, 1, 0, 0, 1);
+    update(mSnapshotBuilder);
+    mLifecycleManager.commitChanges();
+
+    EXPECT_EQ(getSnapshot(1)->alpha, 0.5f);
+    EXPECT_EQ(getSnapshot(11)->alpha, 0.5f);
+}
+
+TEST_F(LayerSnapshotTest, AlphaInheritedByChildWhenParentIsHidden) {
+    hideLayer(1);
+    update(mSnapshotBuilder);
+    mLifecycleManager.commitChanges();
+
+    setAlpha(1, 0.5);
+    update(mSnapshotBuilder);
+    mLifecycleManager.commitChanges();
+
+    showLayer(1);
+    update(mSnapshotBuilder);
+    mLifecycleManager.commitChanges();
+
+    EXPECT_EQ(getSnapshot(1)->alpha, 0.5f);
+    EXPECT_EQ(getSnapshot(11)->alpha, 0.5f);
+}
+
 // Change states
 TEST_F(LayerSnapshotTest, UpdateClearsPreviousChangeStates) {
     setCrop(1, Rect(1, 2, 3, 4));
@@ -1510,6 +1544,14 @@ TEST_F(LayerSnapshotTest, setShadowRadius) {
     setShadowRadius(1, SHADOW_RADIUS);
     UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
     EXPECT_EQ(getSnapshot(1)->shadowSettings.length, SHADOW_RADIUS);
+}
+
+TEST_F(LayerSnapshotTest, setBorderSettings) {
+    gui::BorderSettings settings;
+    settings.strokeWidth = 5;
+    setBorderSettings(1, settings);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+    EXPECT_EQ(getSnapshot(1)->borderSettings.strokeWidth, settings.strokeWidth);
 }
 
 TEST_F(LayerSnapshotTest, setTrustedOverlayForNonVisibleInput) {

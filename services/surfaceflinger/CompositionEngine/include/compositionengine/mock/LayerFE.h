@@ -52,6 +52,7 @@ public:
 
     MOCK_METHOD0(createReleaseFenceFuture, ftl::Future<FenceResult>());
     MOCK_METHOD1(setReleaseFence, void(const FenceResult&));
+    MOCK_METHOD1(setReleasedBuffer, void(sp<GraphicBuffer>));
     MOCK_METHOD0(getReleaseFencePromiseStatus, LayerFE::ReleaseFencePromiseStatus());
     MOCK_CONST_METHOD0(getDebugName, const char*());
     MOCK_CONST_METHOD0(getSequence, int32_t());

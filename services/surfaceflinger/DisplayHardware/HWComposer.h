@@ -341,6 +341,8 @@ public:
     virtual int32_t getMaxLayerPictureProfiles(PhysicalDisplayId) = 0;
     virtual status_t setDisplayPictureProfileHandle(PhysicalDisplayId,
                                                     const PictureProfileHandle& handle) = 0;
+    virtual status_t startHdcpNegotiation(PhysicalDisplayId,
+                                          const aidl::android::hardware::drm::HdcpLevels&) = 0;
     virtual status_t getLuts(PhysicalDisplayId, const std::vector<sp<GraphicBuffer>>&,
                              std::vector<aidl::android::hardware::graphics::composer3::Luts>*) = 0;
 };
@@ -508,6 +510,8 @@ public:
     int32_t getMaxLayerPictureProfiles(PhysicalDisplayId) override;
     status_t setDisplayPictureProfileHandle(PhysicalDisplayId,
                                             const android::PictureProfileHandle& profile) override;
+    status_t startHdcpNegotiation(PhysicalDisplayId,
+                                  const aidl::android::hardware::drm::HdcpLevels&) override;
     status_t getLuts(PhysicalDisplayId, const std::vector<sp<GraphicBuffer>>&,
                      std::vector<aidl::android::hardware::graphics::composer3::Luts>*) override;
 

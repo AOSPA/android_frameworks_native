@@ -97,6 +97,15 @@ private:
         // By default we use the latest stable version.
         LOG_ALWAYS_FATAL_IF(!rpcServer->setProtocolVersion(RPC_WIRE_PROTOCOL_VERSION));
 
+        // The default behavior in trusty is to allow handles to be passed with tipc IPC.
+        // We add mode NONE so that servers do not reject connections from clients who do
+        // not change their default transport mode.
+        static const std::vector<RpcSession::FileDescriptorTransportMode>
+                TRUSTY_SERVER_SUPPORTED_FD_MODES = {RpcSession::FileDescriptorTransportMode::TRUSTY,
+                                                    RpcSession::FileDescriptorTransportMode::NONE};
+
+        rpcServer->setSupportedFileDescriptorTransportModes(TRUSTY_SERVER_SUPPORTED_FD_MODES);
+
         return rpcServer;
     }
 

@@ -222,8 +222,8 @@ public:
         ASSERT_EQ(InputEventType::MOTION, ev->getType());
         MotionEvent* mev = static_cast<MotionEvent*>(ev);
         EXPECT_EQ(AMOTION_EVENT_ACTION_DOWN, mev->getAction());
-        EXPECT_EQ(x, mev->getX(0));
-        EXPECT_EQ(y, mev->getY(0));
+        EXPECT_NEAR(x, mev->getX(0), EPSILON);
+        EXPECT_NEAR(y, mev->getY(0), EPSILON);
         EXPECT_EQ(flags, mev->getFlags() & flags);
 
         ev = consumeEvent();
@@ -241,8 +241,8 @@ public:
         MotionEvent* mev = static_cast<MotionEvent*>(ev);
         EXPECT_EQ(AMOTION_EVENT_ACTION_DOWN, mev->getAction());
         const PointerCoords& coords = *mev->getRawPointerCoords(0 /*pointerIndex*/);
-        EXPECT_EQ(displayX, coords.getX());
-        EXPECT_EQ(displayY, coords.getY());
+        EXPECT_NEAR(displayX, coords.getX(), EPSILON);
+        EXPECT_NEAR(displayY, coords.getY(), EPSILON);
         EXPECT_EQ(0, mev->getFlags() & VERIFIED_MOTION_EVENT_FLAGS);
 
         ev = consumeEvent();
@@ -398,7 +398,7 @@ public:
     InputSurfacesTest() { ProcessState::self()->startThreadPool(); }
 
     void SetUp() {
-        mComposerClient = new SurfaceComposerClient;
+        mComposerClient = sp<SurfaceComposerClient>::make();
         ASSERT_EQ(NO_ERROR, mComposerClient->initCheck());
         const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
         ASSERT_FALSE(ids.empty());

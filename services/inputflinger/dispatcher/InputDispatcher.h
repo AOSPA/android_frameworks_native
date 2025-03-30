@@ -127,7 +127,7 @@ public:
     void setMaximumObscuringOpacityForTouch(float opacity) override;
 
     bool transferTouchGesture(const sp<IBinder>& fromToken, const sp<IBinder>& toToken,
-                              bool isDragDrop = false) override;
+                              bool isDragDrop, bool transferEntireGesture) override;
     bool transferTouchOnDisplay(const sp<IBinder>& destChannelToken,
                                 ui::LogicalDisplayId displayId) override;
 
@@ -440,7 +440,8 @@ private:
         std::optional<
                 std::tuple<sp<gui::WindowInfoHandle>, DeviceId, std::vector<PointerProperties>,
                            std::list<CancellationArgs>, std::list<PointerDownArgs>>>
-        transferTouchGesture(const sp<IBinder>& fromToken, const sp<IBinder>& toToken);
+        transferTouchGesture(const sp<IBinder>& fromToken, const sp<IBinder>& toToken,
+                             bool transferEntireGesture);
 
         base::Result<std::list<CancellationArgs>, status_t> pilferPointers(
                 const sp<IBinder>& token, const Connection& requestingConnection);
@@ -918,10 +919,14 @@ private:
     std::unique_ptr<const KeyEntry> afterKeyEventLockedInterruptable(
             const std::shared_ptr<Connection>& connection, DispatchEntry* dispatchEntry,
             bool handled) REQUIRES(mLock);
+    void findAndDispatchFallbackEvent(nsecs_t currentTime, std::shared_ptr<const KeyEntry> entry,
+                                      std::vector<InputTarget>& inputTargets) REQUIRES(mLock);
 
     // Statistics gathering.
     nsecs_t mLastStatisticPushTime = 0;
     std::unique_ptr<InputEventTimelineProcessor> mInputEventTimelineProcessor GUARDED_BY(mLock);
+    // Must outlive `mLatencyTracker`.
+    std::vector<InputDeviceInfo> mInputDevices;
     LatencyTracker mLatencyTracker GUARDED_BY(mLock);
     void traceInboundQueueLengthLocked() REQUIRES(mLock);
     void traceOutboundQueueLength(const Connection& connection);

@@ -443,6 +443,9 @@ public:
     /* Get the Bluetooth address of an input device, if known. */
     virtual std::optional<std::string> getBluetoothAddress(int32_t deviceId) const = 0;
 
+    /* Gets the sysfs root path for this device. Returns an empty path if there is none. */
+    virtual std::filesystem::path getSysfsRootPath(int32_t deviceId) const = 0;
+
     /* Sysfs node change reported. Recreate device if required to incorporate the new sysfs nodes */
     virtual void sysfsNodeChanged(const std::string& sysfsNodePath) = 0;
 

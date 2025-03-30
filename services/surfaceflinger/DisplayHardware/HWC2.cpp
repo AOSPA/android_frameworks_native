@@ -683,6 +683,11 @@ Error Display::setPictureProfileHandle(const PictureProfileHandle& handle) {
     return static_cast<Error>(error);
 }
 
+Error Display::startHdcpNegotiation(const aidl::android::hardware::drm::HdcpLevels& levels) {
+    const auto error = mComposer.startHdcpNegotiation(mId, levels);
+    return static_cast<Error>(error);
+}
+
 Error Display::getLuts(const std::vector<sp<GraphicBuffer>>& buffers,
                        std::vector<aidl::android::hardware::graphics::composer3::Luts>* outLuts) {
     const auto error = mComposer.getLuts(mId, buffers, outLuts);

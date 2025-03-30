@@ -750,6 +750,10 @@ void Layer::callReleaseBufferCallback(const sp<ITransactionCompletedListener>& l
     uint32_t currentMaxAcquiredBufferCount =
             mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(mOwnerUid);
 
+    if (FlagManager::getInstance().monitor_buffer_fences()) {
+        buffer->getDependencyMonitor().addEgress(FenceTime::makeValid(fence), "Layer release");
+    }
+
     if (listener) {
         listener->onReleaseBuffer(callbackId, fence, currentMaxAcquiredBufferCount);
     }
@@ -976,6 +980,7 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
             std::max(mDrawingState.frameNumber, mDrawingState.barrierFrameNumber);
 
     mDrawingState.releaseBufferListener = bufferData.releaseBufferListener;
+    mDrawingState.previousBuffer = std::move(mDrawingState.buffer);
     mDrawingState.buffer = std::move(buffer);
     mDrawingState.acquireFence = bufferData.flags.test(BufferData::BufferDataChange::fenceChanged)
             ? bufferData.acquireFence
@@ -1158,6 +1163,7 @@ bool Layer::setTransactionCompletedListeners(const std::vector<sp<CallbackHandle
             handle->acquireTimeOrFence = mCallbackHandleAcquireTimeOrFence;
             handle->frameNumber = mDrawingState.frameNumber;
             handle->previousFrameNumber = mDrawingState.previousFrameNumber;
+            handle->previousBuffer = mDrawingState.previousBuffer;
             if (mPreviousReleaseBufferEndpoint == handle->listener) {
                 // Add fence from previous screenshot now so that it can be dispatched to the
                 // client.
@@ -1477,8 +1483,8 @@ void Layer::onCompositionPresented(const DisplayDevice* display,
                                                presentFence,
                                                FrameTracer::FrameEvent::PRESENT_FENCE);
             mDeprecatedFrameTracker.setActualPresentFence(std::shared_ptr<FenceTime>(presentFence));
-        } else if (const auto displayId = PhysicalDisplayId::tryCast(display->getId());
-                   displayId && mFlinger->getHwComposer().isConnected(*displayId)) {
+        } else if (const auto displayId = asPhysicalDisplayId(display->getDisplayIdVariant());
+                   displayId.has_value() && mFlinger->getHwComposer().isConnected(*displayId)) {
             // The HWC doesn't support present fences, so use the present timestamp instead.
             const nsecs_t presentTimestamp =
                     mFlinger->getHwComposer().getPresentTimestamp(*displayId);

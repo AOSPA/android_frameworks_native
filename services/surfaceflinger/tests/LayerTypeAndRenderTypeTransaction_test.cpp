@@ -662,6 +662,93 @@ TEST_P(LayerTypeAndRenderTypeTransactionTest, ParentCornerRadiusPrecedenceClient
     }
 }
 
+TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBorderSettings) {
+    sp<SurfaceControl> parent;
+    sp<SurfaceControl> child;
+    const uint32_t size = 64;
+    const uint32_t parentSize = size * 3;
+    ASSERT_NO_FATAL_FAILURE(parent = createLayer("parent", parentSize, parentSize));
+    ASSERT_NO_FATAL_FAILURE(fillLayerColor(parent, Color::RED, parentSize, parentSize));
+    ASSERT_NO_FATAL_FAILURE(child = createLayer("child", size, size));
+    ASSERT_NO_FATAL_FAILURE(fillLayerColor(child, Color::GREEN, size, size));
+
+    gui::BorderSettings outline;
+    outline.strokeWidth = 3;
+    outline.color = 0xff0000ff;
+    Transaction()
+            .setCrop(parent, Rect(0, 0, parentSize, parentSize))
+            .reparent(child, parent)
+            .setPosition(child, size, size)
+            .setCornerRadius(child, 20.0f)
+            .setBorderSettings(child, outline)
+            .apply(true);
+
+    {
+        auto shot = getScreenCapture();
+
+        shot->expectBufferMatchesImageFromFile(Rect(0, 0, parentSize, parentSize),
+                                               "testdata/SetBorderSettings_Opaque.png");
+    }
+
+    {
+        Transaction().setAlpha(child, 0.5f).apply(true);
+        auto shot = getScreenCapture();
+
+        shot->expectBufferMatchesImageFromFile(Rect(0, 0, parentSize, parentSize),
+                                               "testdata/SetBorderSettings_HalfAlpha.png");
+    }
+
+    {
+        Transaction().setAlpha(child, 0.0f).apply(true);
+
+        auto shot = getScreenCapture();
+
+        shot->expectBufferMatchesImageFromFile(Rect(0, 0, parentSize, parentSize),
+                                               "testdata/SetBorderSettings_ZeroAlpha.png");
+    }
+
+    {
+        Transaction()
+                .setAlpha(child, 1.0f)
+                .setCrop(parent, Rect(0, 0, parentSize / 2, parentSize))
+                .apply(true);
+
+        auto shot = getScreenCapture();
+
+        shot->expectBufferMatchesImageFromFile(Rect(0, 0, parentSize, parentSize),
+                                               "testdata/SetBorderSettings_Cropped.png");
+    }
+
+    {
+        outline.color = 0xff0000ff;
+        outline.strokeWidth = 1;
+        Transaction()
+                .setCrop(parent, Rect(0, 0, parentSize, parentSize))
+                .setBorderSettings(child, outline)
+                .apply(true);
+
+        auto shot = getScreenCapture();
+
+        shot->expectBufferMatchesImageFromFile(Rect(0, 0, parentSize, parentSize),
+                                               "testdata/SetBorderSettings_StrokeWidth1.png");
+    }
+
+    {
+        outline.color = 0x440000ff;
+        outline.strokeWidth = 3;
+        Transaction()
+                .setCrop(parent, Rect(0, 0, parentSize, parentSize))
+                .setBorderSettings(child, outline)
+                .apply(true);
+
+        auto shot = getScreenCapture();
+
+        shot->expectBufferMatchesImageFromFile(Rect(0, 0, parentSize, parentSize),
+                                               "testdata/"
+                                               "SetBorderSettings_StrokeColorWithAlpha.png");
+    }
+}
+
 TEST_P(LayerTypeAndRenderTypeTransactionTest, SetBackgroundBlurRadiusSimple) {
     if (!deviceSupportsBlurs()) GTEST_SKIP();
     if (!deviceUsesSkiaRenderEngine()) GTEST_SKIP();

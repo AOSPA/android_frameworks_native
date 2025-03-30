@@ -436,16 +436,29 @@ android::base::Result<InputMessage> InputChannel::receiveMessage() {
         if (error == EAGAIN || error == EWOULDBLOCK) {
             return android::base::Error(WOULD_BLOCK);
         }
-        if (error == EPIPE || error == ENOTCONN || error == ECONNREFUSED) {
-            return android::base::Error(DEAD_OBJECT);
+        if (error == EPIPE) {
+            return android::base::ResultError("Got EPIPE", DEAD_OBJECT);
+        }
+        if (error == ENOTCONN) {
+            return android::base::ResultError("Got ENOTCONN", DEAD_OBJECT);
+        }
+        if (error == ECONNREFUSED) {
+            return android::base::ResultError("Got ECONNREFUSED", DEAD_OBJECT);
+        }
+        if (error == ECONNRESET) {
+            // This means that the client has closed the channel while there was
+            // still some data in the buffer. In most cases, subsequent reads
+            // would result in more data. However, that is not guaranteed, so we
+            // should not return WOULD_BLOCK here to try again.
+            return android::base::ResultError("Got ECONNRESET", DEAD_OBJECT);
         }
         return android::base::Error(-error);
     }
 
     if (nRead == 0) { // check for EOF
-        ALOGD_IF(DEBUG_CHANNEL_MESSAGES,
-                 "channel '%s' ~ receive message failed because peer was closed", name.c_str());
-        return android::base::Error(DEAD_OBJECT);
+        LOG_IF(INFO, DEBUG_CHANNEL_MESSAGES)
+                << "channel '" << name << "' ~ receive message failed because peer was closed";
+        return android::base::ResultError("::recv returned 0", DEAD_OBJECT);
     }
 
     if (!msg.isValid(nRead)) {
@@ -764,6 +777,11 @@ android::base::Result<InputPublisher::ConsumerResponse> InputPublisher::receiveC
     ALOGE("channel '%s' publisher ~ Received unexpected %s message from consumer",
           mChannel->getName().c_str(), ftl::enum_string(msg.header.type).c_str());
     return android::base::Error(UNKNOWN_ERROR);
+}
+
+std::ostream& operator<<(std::ostream& out, const InputMessage& msg) {
+    out << ftl::enum_string(msg.header.type);
+    return out;
 }
 
 } // namespace android

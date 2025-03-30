@@ -148,20 +148,23 @@ struct OutputTest : public testing::Test {
         virtual void injectOutputLayerForTest(std::unique_ptr<compositionengine::OutputLayer>) = 0;
 
         virtual ftl::Optional<DisplayId> getDisplayId() const override { return mId; }
+        virtual ftl::Optional<DisplayIdVariant> getDisplayIdVariant() const override {
+            return DisplayIdVariant(mId);
+        }
 
         virtual bool hasPictureProcessing() const override { return mHasPictureProcessing; }
         virtual int32_t getMaxLayerPictureProfiles() const override {
             return mMaxLayerPictureProfiles;
         }
 
-        void setDisplayIdForTest(DisplayId value) { mId = value; }
+        void setDisplayIdForTest(PhysicalDisplayId value) { mId = value; }
 
         void setHasPictureProcessingForTest(bool value) { mHasPictureProcessing = value; }
 
         void setMaxLayerPictureProfilesForTest(int32_t value) { mMaxLayerPictureProfiles = value; }
 
     private:
-        ftl::Optional<DisplayId> mId;
+        PhysicalDisplayId mId;
         bool mHasPictureProcessing;
         int32_t mMaxLayerPictureProfiles;
     };
@@ -3311,6 +3314,17 @@ TEST_F(OutputPostFramebufferTest, releaseFencesAreSetInLayerFE) {
     sp<Fence> layer2Fence = sp<Fence>::make();
     sp<Fence> layer3Fence = sp<Fence>::make();
 
+    // Set up layerfe buffers
+    LayerFECompositionState layer1State;
+    layer1State.buffer = sp<GraphicBuffer>::make();
+    LayerFECompositionState layer2State;
+    layer2State.buffer = sp<GraphicBuffer>::make();
+    LayerFECompositionState layer3State;
+    layer3State.buffer = nullptr;
+    EXPECT_CALL(*mLayer1.layerFE, getCompositionState()).WillOnce(Return(&layer1State));
+    EXPECT_CALL(*mLayer2.layerFE, getCompositionState()).WillOnce(Return(&layer2State));
+    EXPECT_CALL(*mLayer3.layerFE, getCompositionState()).WillOnce(Return(&layer3State));
+
     Output::FrameFences frameFences;
     frameFences.layerFences.emplace(&mLayer1.hwc2Layer, layer1Fence);
     frameFences.layerFences.emplace(&mLayer2.hwc2Layer, layer2Fence);
@@ -3327,14 +3341,23 @@ TEST_F(OutputPostFramebufferTest, releaseFencesAreSetInLayerFE) {
             .WillOnce([&layer1Fence](FenceResult releaseFence) {
                 EXPECT_EQ(FenceResult(layer1Fence), releaseFence);
             });
+    EXPECT_CALL(*mLayer1.layerFE, setReleasedBuffer(_)).WillOnce([&](sp<GraphicBuffer> buffer) {
+        EXPECT_EQ(layer1State.buffer, buffer);
+    });
     EXPECT_CALL(*mLayer2.layerFE, setReleaseFence(_))
             .WillOnce([&layer2Fence](FenceResult releaseFence) {
                 EXPECT_EQ(FenceResult(layer2Fence), releaseFence);
             });
+    EXPECT_CALL(*mLayer2.layerFE, setReleasedBuffer(_)).WillOnce([&](sp<GraphicBuffer> buffer) {
+        EXPECT_EQ(layer2State.buffer, buffer);
+    });
     EXPECT_CALL(*mLayer3.layerFE, setReleaseFence(_))
             .WillOnce([&layer3Fence](FenceResult releaseFence) {
                 EXPECT_EQ(FenceResult(layer3Fence), releaseFence);
             });
+    EXPECT_CALL(*mLayer3.layerFE, setReleasedBuffer(_)).WillOnce([&](sp<GraphicBuffer> buffer) {
+        EXPECT_EQ(layer3State.buffer, buffer);
+    });
 
     constexpr bool kFlushEvenWhenDisabled = false;
     mOutput.presentFrameAndReleaseLayers(kFlushEvenWhenDisabled);
@@ -3350,6 +3373,17 @@ TEST_F(OutputPostFramebufferTest, setReleaseFencesIncludeClientTargetAcquireFenc
     frameFences.layerFences.emplace(&mLayer2.hwc2Layer, sp<Fence>::make());
     frameFences.layerFences.emplace(&mLayer3.hwc2Layer, sp<Fence>::make());
 
+    // Set up layerfe buffers
+    LayerFECompositionState layer1State;
+    layer1State.buffer = sp<GraphicBuffer>::make();
+    LayerFECompositionState layer2State;
+    layer2State.buffer = sp<GraphicBuffer>::make();
+    LayerFECompositionState layer3State;
+    layer3State.buffer = nullptr;
+    EXPECT_CALL(*mLayer1.layerFE, getCompositionState()).WillOnce(Return(&layer1State));
+    EXPECT_CALL(*mLayer2.layerFE, getCompositionState()).WillOnce(Return(&layer2State));
+    EXPECT_CALL(*mLayer3.layerFE, getCompositionState()).WillOnce(Return(&layer3State));
+
     EXPECT_CALL(mOutput, presentFrame()).WillOnce(Return(frameFences));
     EXPECT_CALL(*mRenderSurface, onPresentDisplayCompleted());
 
@@ -3359,6 +3393,15 @@ TEST_F(OutputPostFramebufferTest, setReleaseFencesIncludeClientTargetAcquireFenc
     EXPECT_CALL(*mLayer1.layerFE, setReleaseFence).WillOnce(Return());
     EXPECT_CALL(*mLayer2.layerFE, setReleaseFence).WillOnce(Return());
     EXPECT_CALL(*mLayer3.layerFE, setReleaseFence).WillOnce(Return());
+    EXPECT_CALL(*mLayer1.layerFE, setReleasedBuffer(_)).WillOnce([&](sp<GraphicBuffer> buffer) {
+        EXPECT_EQ(layer1State.buffer, buffer);
+    });
+    EXPECT_CALL(*mLayer2.layerFE, setReleasedBuffer(_)).WillOnce([&](sp<GraphicBuffer> buffer) {
+        EXPECT_EQ(layer2State.buffer, buffer);
+    });
+    EXPECT_CALL(*mLayer3.layerFE, setReleasedBuffer(_)).WillOnce([&](sp<GraphicBuffer> buffer) {
+        EXPECT_EQ(layer3State.buffer, buffer);
+    });
     constexpr bool kFlushEvenWhenDisabled = false;
     mOutput.presentFrameAndReleaseLayers(kFlushEvenWhenDisabled);
 }
@@ -3401,7 +3444,6 @@ TEST_F(OutputPostFramebufferTest, setReleasedLayersSentPresentFence) {
             .WillOnce([&presentFence](FenceResult fenceResult) {
                 EXPECT_EQ(FenceResult(presentFence), fenceResult);
             });
-
     constexpr bool kFlushEvenWhenDisabled = false;
     mOutput.presentFrameAndReleaseLayers(kFlushEvenWhenDisabled);
 

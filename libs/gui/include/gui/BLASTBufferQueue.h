@@ -328,7 +328,7 @@ private:
     std::function<void(SurfaceComposerClient::Transaction*)> mTransactionReadyCallback
             GUARDED_BY(mMutex);
     SurfaceComposerClient::Transaction* mSyncTransaction GUARDED_BY(mMutex);
-    std::vector<std::tuple<uint64_t /* framenumber */, SurfaceComposerClient::Transaction>>
+    std::vector<std::pair<uint64_t /* framenumber */, SurfaceComposerClient::Transaction>>
             mPendingTransactions GUARDED_BY(mMutex);
 
     std::queue<std::pair<uint64_t, FrameTimelineInfo>> mPendingFrameTimelines GUARDED_BY(mMutex);

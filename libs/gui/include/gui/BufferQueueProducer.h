@@ -59,8 +59,6 @@ public:
 #endif
 
 // QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
-    explicit BufferQueueProducer(const sp<BufferQueueCore>& core,
-                                 bool consumerIsSurfaceFlinger = false);
     ~BufferQueueProducer() override;
 
     // requestBuffer returns the GraphicBuffer for slot N.
@@ -242,6 +240,9 @@ public:
 #endif
 
 protected:
+    explicit BufferQueueProducer(const sp<BufferQueueCore>& core,
+                                 bool consumerIsSurfaceFlinger = false);
+    friend class sp<BufferQueueProducer>;
     // see IGraphicsBufferProducer::setMaxDequeuedBufferCount, but with the ability to retrieve the
     // total maximum buffer count for the buffer queue (dequeued AND acquired)
     status_t setMaxDequeuedBufferCount(int maxDequeuedBuffers, int* maxBufferCount);

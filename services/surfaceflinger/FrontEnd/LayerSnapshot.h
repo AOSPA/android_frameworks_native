@@ -149,6 +149,7 @@ struct LayerSnapshot : public compositionengine::LayerFECompositionState {
     bool hasBlur() const;
     bool hasBufferOrSidebandStream() const;
     bool hasEffect() const;
+    bool hasOutline() const;
     bool hasSomethingToDraw() const;
     bool isContentOpaque() const;
     bool isHiddenByPolicy() const;

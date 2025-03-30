@@ -256,24 +256,24 @@ bool QtiSurfaceFlingerExtension::qtiGetHwcDisplayId(const sp<DisplayDevice>& dis
         return false;
     }
 
-    const auto displayId = display->getId();
-    if (!displayId.value) {
+    const auto displayId = display->getDisplayIdVariant();
+    if (!display->getId().value) {
         return false;
     }
 
     if (display->isVirtual()) {
-        const auto virtualDisplayId = HalVirtualDisplayId::tryCast(displayId);
+        const auto virtualDisplayId = display->getId().value;
         if (!virtualDisplayId) {
             return false;
         }
         const auto halDisplayId =
-                mQtiHWComposerExtnIntf->qtiFromVirtualDisplayId(*virtualDisplayId);
+                mQtiHWComposerExtnIntf->qtiFromVirtualDisplayId(HalVirtualDisplayId::fromValue(virtualDisplayId));
         if (!halDisplayId) {
             return false;
         }
         *hwcDisplayId = static_cast<uint32_t>(*halDisplayId);
     } else {
-        const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId);
+        const auto physicalDisplayId = asPhysicalDisplayId(displayId);
         if (!physicalDisplayId) {
             return false;
         }
@@ -510,7 +510,7 @@ status_t QtiSurfaceFlingerExtension::qtiSetDisplayElapseTime(
 
         auto timeStamp =
                 std::chrono::time_point_cast<std::chrono::nanoseconds>(*earliestPresentTime);
-        const auto id = HalDisplayId::tryCast(display->getId());
+        const auto id = asHalDisplayId(display->getDisplayIdVariant());
         if (!id) {
             return BAD_VALUE;
         }
@@ -771,7 +771,7 @@ status_t QtiSurfaceFlingerExtension::qtiIsSupportedConfigSwitch(const sp<IBinder
 
     // Prioritize IDisplayConfig AIDL on Android U ++
     if (mQtiDisplayConfigAidl != nullptr && (mQtiFirstApiLevel >= __ANDROID_API_U__)) {
-        const auto displayId = PhysicalDisplayId::tryCast(display->getId());
+        const auto displayId = asPhysicalDisplayId(display->getDisplayIdVariant());
         const auto hwcDisplayId = mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*displayId);
         bool supported = false;
         mQtiDisplayConfigAidl->isSupportedConfigSwitch(static_cast<int>(*hwcDisplayId), config,
@@ -785,7 +785,7 @@ status_t QtiSurfaceFlingerExtension::qtiIsSupportedConfigSwitch(const sp<IBinder
         }
     }
     if (mQtiDisplayConfigHidl != nullptr) {
-        const auto displayId = PhysicalDisplayId::tryCast(display->getId());
+        const auto displayId = asPhysicalDisplayId(display->getDisplayIdVariant());
         const auto hwcDisplayId = mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*displayId);
         bool supported = false;
         mQtiDisplayConfigHidl->IsSupportedConfigSwitch(static_cast<uint32_t>(*hwcDisplayId),
@@ -955,8 +955,8 @@ void QtiSurfaceFlingerExtension::qtiSetPowerMode(const sp<IBinder>& displayToken
     }
 
     hal::PowerMode power_mode = static_cast<hal::PowerMode>(mode);
-    const auto displayId = display->getId();
-    const auto physicalDisplayId = PhysicalDisplayId::tryCast(displayId);
+    const auto displayId = display->getDisplayIdVariant();
+    const auto physicalDisplayId = asPhysicalDisplayId(displayId);
     if (!physicalDisplayId) {
         ALOGW("Attempt to set invalid displayId");
         return;
@@ -1001,7 +1001,7 @@ void QtiSurfaceFlingerExtension::qtiSetPowerMode(const sp<IBinder>& displayToken
 
 void QtiSurfaceFlingerExtension::qtiSetPowerModeOverrideConfig(sp<DisplayDevice> display) {
     bool supported = false;
-    const auto physicalDisplayId = PhysicalDisplayId::tryCast(display->getId());
+    const auto physicalDisplayId = asPhysicalDisplayId(display->getDisplayIdVariant());
     if (physicalDisplayId) {
         const auto hwcDisplayId =
                 mQtiFlinger->getHwComposer().fromPhysicalDisplayId(*physicalDisplayId);
@@ -1042,8 +1042,9 @@ void QtiSurfaceFlingerExtension::qtiSetLayerAsMask(uint32_t hwcDisplayId, uint64
 /*
  * Methods for Virtual, WiFi, and Secure Displays
  */
-std::optional<VirtualDisplayId> QtiSurfaceFlingerExtension::qtiAcquireVirtualDisplay(
-        ui::Size resolution, ui::PixelFormat format, const std::string& uniqueId, bool canAllocateHwcForVDS) {
+std::optional<android::VirtualDisplayIdVariant> QtiSurfaceFlingerExtension::qtiAcquireVirtualDisplay(
+        ui::Size resolution, ui::PixelFormat format, const std::string& uniqueId,
+        compositionengine::DisplayCreationArgsBuilder& builder, bool canAllocateHwcForVDS) {
     auto& generator = mQtiFlinger->mVirtualDisplayIdGenerators.hal;
     if (canAllocateHwcForVDS && generator) {
         if (const auto id = generator->generateId()) {
@@ -1610,7 +1611,7 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(
 
         const auto& schedule = mQtiFlinger->mScheduler->getVsyncSchedule();
         nsecs_t sfOffset =
-            mQtiFlinger->mScheduler->getVsyncConfiguration().getCurrentConfigs().late.sfOffset;
+            mQtiFlinger->mScheduler->getVsyncConfiguration_ptr()->getCurrentConfigs().late.sfOffset;
         const nsecs_t now = systemTime(SYSTEM_TIME_MONOTONIC);
         auto vsyncTime = schedule->getTracker().nextAnticipatedVSyncTimeFrom(now);
         nsecs_t sfVsyncTime = vsyncTime + sfOffset;
@@ -1734,7 +1735,7 @@ void QtiSurfaceFlingerExtension::qtiTryDrawMethod(sp<DisplayDevice> display) {
         return;
     }
 
-    const auto id = HalDisplayId::tryCast(display->getId());
+    const auto id = asHalDisplayId(display->getDisplayIdVariant());
     if (id) {
         uint32_t hwcDisplayId;
         if (!qtiGetHwcDisplayId(display, &hwcDisplayId)) {

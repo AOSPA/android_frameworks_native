@@ -135,6 +135,10 @@ ftl::Optional<DisplayId> Output::getDisplayId() const {
     return {};
 }
 
+ftl::Optional<DisplayIdVariant> Output::getDisplayIdVariant() const {
+    return {};
+}
+
 const std::string& Output::getName() const {
     return mName;
 }
@@ -453,8 +457,8 @@ void Output::prepare(const compositionengine::CompositionRefreshArgs& refreshArg
 ftl::Future<std::monostate> Output::present(
         const compositionengine::CompositionRefreshArgs& refreshArgs) {
     const auto stringifyExpectedPresentTime = [this, &refreshArgs]() -> std::string {
-        return getDisplayId()
-                .and_then(PhysicalDisplayId::tryCast)
+        return getDisplayIdVariant()
+                .and_then(asPhysicalDisplayId)
                 .and_then([&refreshArgs](PhysicalDisplayId id) {
                     return refreshArgs.frameTargets.get(id);
                 })
@@ -907,8 +911,8 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
         return;
     }
 
-    if (auto frameTargetPtrOpt = getDisplayId()
-                                         .and_then(PhysicalDisplayId::tryCast)
+    if (auto frameTargetPtrOpt = getDisplayIdVariant()
+                                         .and_then(asPhysicalDisplayId)
                                          .and_then([&refreshArgs](PhysicalDisplayId id) {
                                              return refreshArgs.frameTargets.get(id);
                                          })) {
@@ -1727,6 +1731,7 @@ void Output::presentFrameAndReleaseLayers(bool flushEvenWhenDisabled) {
                     Fence::merge("LayerRelease", releaseFence, frame.clientTargetAcquireFence);
         }
         layer->getLayerFE().setReleaseFence(releaseFence);
+        layer->getLayerFE().setReleasedBuffer(layer->getLayerFE().getCompositionState()->buffer);
     }
 
     // We've got a list of layers needing fences, that are disjoint with
@@ -1896,7 +1901,7 @@ void Output::applyPictureProfile() {
     if (!getDisplayId()) {
         return;
     }
-    if (auto displayId = PhysicalDisplayId::tryCast(*getDisplayId())) {
+    if (auto displayId = getDisplayIdVariant().and_then(asPhysicalDisplayId)) {
         auto& hwc = getCompositionEngine().getHwComposer();
         const status_t error =
                 hwc.setDisplayPictureProfileHandle(*displayId, getState().pictureProfileHandle);

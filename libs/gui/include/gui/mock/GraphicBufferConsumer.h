@@ -47,6 +47,7 @@ public:
     MOCK_METHOD2(setDefaultBufferSize, status_t(uint32_t, uint32_t));
     MOCK_METHOD1(setMaxBufferCount, status_t(int));
     MOCK_METHOD1(setMaxAcquiredBufferCount, status_t(int));
+    MOCK_METHOD2(setMaxAcquiredBufferCount, status_t(int, std::optional<OnBufferReleasedCallback>));
     MOCK_METHOD1(setConsumerName, status_t(const String8&));
     MOCK_METHOD1(setDefaultBufferFormat, status_t(PixelFormat));
     MOCK_METHOD1(setDefaultBufferDataSpace, status_t(android_dataspace));

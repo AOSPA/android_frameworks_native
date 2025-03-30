@@ -24,6 +24,7 @@
 #include <gui/Surface.h>
 #include <ui/BufferQueueDefs.h>
 #include <ui/GraphicBuffer.h>
+#include <utils/Errors.h>
 
 #include <unordered_set>
 
@@ -233,6 +234,38 @@ TEST_F(BufferItemConsumerTest, TriggerBufferFreed_DeleteBufferItemConsumer) {
     // Sleep to give some time for callbacks to happen.
     usleep(kFrameSleepUs);
     ASSERT_EQ(1, GetFreedBufferCount());
+}
+
+TEST_F(BufferItemConsumerTest, ResizeAcquireCount) {
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers + 1));
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers + 2));
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers - 1));
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers - 2));
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers + 1));
+    EXPECT_EQ(OK, mBIC->setMaxAcquiredBufferCount(kMaxLockedBuffers - 1));
+}
+
+TEST_F(BufferItemConsumerTest, AttachBuffer) {
+    ASSERT_EQ(OK, mBIC->setMaxAcquiredBufferCount(1));
+
+    int slot;
+    DequeueBuffer(&slot);
+    QueueBuffer(slot);
+    AcquireBuffer(&slot);
+
+    sp<GraphicBuffer> newBuffer1 = sp<GraphicBuffer>::make(kWidth, kHeight, kFormat, kUsage);
+    sp<GraphicBuffer> newBuffer2 = sp<GraphicBuffer>::make(kWidth, kHeight, kFormat, kUsage);
+
+    // For some reason, you can attach an extra buffer?
+    // b/400973991 to investigate
+    EXPECT_EQ(OK, mBIC->attachBuffer(newBuffer1));
+    EXPECT_EQ(INVALID_OPERATION, mBIC->attachBuffer(newBuffer2));
+
+    ReleaseBuffer(slot);
+
+    EXPECT_EQ(OK, mBIC->attachBuffer(newBuffer2));
+    EXPECT_EQ(OK, mBIC->releaseBuffer(newBuffer1, Fence::NO_FENCE));
+    EXPECT_EQ(OK, mBIC->releaseBuffer(newBuffer2, Fence::NO_FENCE));
 }
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)

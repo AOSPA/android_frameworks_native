@@ -504,6 +504,17 @@ public:
         mLifecycleManager.applyTransactions(transactions);
     }
 
+    void setBorderSettings(uint32_t id, gui::BorderSettings settings) {
+        std::vector<QueuedTransactionState> transactions;
+        transactions.emplace_back();
+        transactions.back().states.push_back({});
+
+        transactions.back().states.front().state.what = layer_state_t::eBorderSettingsChanged;
+        transactions.back().states.front().layerId = id;
+        transactions.back().states.front().state.borderSettings = settings;
+        mLifecycleManager.applyTransactions(transactions);
+    }
+
     void setTrustedOverlay(uint32_t id, gui::TrustedOverlay trustedOverlay) {
         std::vector<QueuedTransactionState> transactions;
         transactions.emplace_back();

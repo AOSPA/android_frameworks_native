@@ -150,6 +150,7 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
 }
 
 void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerState) {
+    bool transformWasValid = transformIsValid;
     const uint32_t oldFlags = flags;
     const half oldAlpha = color.a;
     const bool hadBuffer = externalTexture != nullptr;
@@ -356,6 +357,14 @@ void RequestedLayerState::merge(const ResolvedComposerState& resolvedComposerSta
     if (clientState.what & layer_state_t::eClientDrawnCornerRadiusChanged) {
         clientDrawnCornerRadius = clientState.clientDrawnCornerRadius;
         changes |= RequestedLayerState::Changes::Geometry;
+    }
+
+    // We can't just check requestedTransform here because LayerSnapshotBuilder uses
+    // getTransform which reads destinationFrame or buffer dimensions.
+    // Display rotation does not affect validity so just use ROT_0.
+    transformIsValid = LayerSnapshot::isTransformValid(getTransform(ui::Transform::ROT_0));
+    if (!transformWasValid && transformIsValid) {
+        changes |= RequestedLayerState::Changes::Visibility;
     }
 }
 

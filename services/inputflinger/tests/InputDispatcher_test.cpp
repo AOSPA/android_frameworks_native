@@ -37,6 +37,7 @@
 #include <input/BlockingQueue.h>
 #include <input/Input.h>
 #include <input/InputConsumer.h>
+#include <input/KeyCharacterMap.h>
 #include <input/PrintTools.h>
 #include <linux/input.h>
 #include <sys/epoll.h>
@@ -137,6 +138,30 @@ static KeyEvent getTestKeyEvent() {
                      ui::LogicalDisplayId::INVALID, INVALID_HMAC, AKEY_EVENT_ACTION_DOWN, 0,
                      AKEYCODE_A, KEY_A, AMETA_NONE, 0, ARBITRARY_TIME, ARBITRARY_TIME);
     return event;
+}
+
+InputDeviceInfo generateTestDeviceInfo(uint16_t vendorId, uint16_t productId, DeviceId deviceId) {
+    InputDeviceIdentifier identifier;
+    identifier.vendor = vendorId;
+    identifier.product = productId;
+    auto info = InputDeviceInfo();
+    info.initialize(deviceId, /*generation=*/1, /*controllerNumber=*/1, identifier, "Test Device",
+                    /*isExternal=*/false, /*hasMic=*/false, ui::LogicalDisplayId::INVALID);
+    return info;
+}
+
+std::unique_ptr<KeyCharacterMap> loadKeyCharacterMap(const char* name) {
+    InputDeviceIdentifier identifier;
+    identifier.name = name;
+    std::string path = getInputDeviceConfigurationFilePathByName(identifier.getCanonicalName(),
+                                                                 InputDeviceConfigurationFileType::
+                                                                         KEY_CHARACTER_MAP);
+
+    if (path.empty()) {
+        return nullptr;
+    }
+
+    return *KeyCharacterMap::load(path, KeyCharacterMap::Format::BASE);
 }
 
 } // namespace
@@ -1151,7 +1176,9 @@ TEST_F(InputDispatcherTest, MultiDeviceTouchTransferWithWallpaperWindows) {
 
     // Transfer touch from the middle window to the right window.
     ASSERT_TRUE(mDispatcher->transferTouchGesture(middleForegroundWindow->getToken(),
-                                                  rightForegroundWindow->getToken()));
+                                                  rightForegroundWindow->getToken(),
+                                                  /*isDragDrop=*/false,
+                                                  /*transferEntireGesture=*/false));
 
     middleForegroundWindow->consumeMotionEvent(
             AllOf(WithMotionAction(ACTION_CANCEL), WithDeviceId(deviceB)));
@@ -1180,6 +1207,148 @@ TEST_F(InputDispatcherTest, MultiDeviceTouchTransferWithWallpaperWindows) {
     rightWallpaperWindow->consumeMotionEvent(
             AllOf(WithMotionAction(ACTION_MOVE), WithDeviceId(deviceB),
                   WithFlags(EXPECTED_WALLPAPER_FLAGS | AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE)));
+}
+
+/**
+ * If a window has requested touch to be transferred, only the current pointers should be
+ * transferred.
+ *
+ * Subsequent pointers should still go through the normal hit testing.
+ *
+ * In this test, we are invoking 'transferTouchGesture' with the parameter 'transferEntireGesture'
+ * set to true, but that value doesn't make any difference, since the flag is disabled. This test
+ * will be removed once that flag is fully rolled out.
+ */
+TEST_F(InputDispatcherTest, TouchTransferDoesNotSendEntireGesture_legacy) {
+    SCOPED_FLAG_OVERRIDE(allow_transfer_of_entire_gesture, false);
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> topWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Top window",
+                                       ui::LogicalDisplayId::DEFAULT);
+
+    sp<FakeWindowHandle> bottomWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Bottom window",
+                                       ui::LogicalDisplayId::DEFAULT);
+
+    mDispatcher->onWindowInfosChanged(
+            {{*topWindow->getInfo(), *bottomWindow->getInfo()}, {}, 0, 0});
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .build());
+    topWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // Transfer touch from the top window to the bottom window.
+    // The actual value of parameter 'transferEntireGesture' doesn't matter, since the flag is off.
+    ASSERT_TRUE(mDispatcher->transferTouchGesture(topWindow->getToken(), bottomWindow->getToken(),
+                                                  /*isDragDrop=*/false,
+                                                  /*transferEntireGesture=*/true));
+    topWindow->consumeMotionEvent(WithMotionAction(ACTION_CANCEL));
+    bottomWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // When the second pointer goes down, it will hit the top window, and should be delivered there
+    // as a new pointer.
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(60).y(60))
+                                      .build());
+    topWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+    const std::map<int32_t, PointF> expectedPointers{{0, PointF{50, 50}}};
+    bottomWindow->consumeMotionEvent(
+            AllOf(WithMotionAction(ACTION_MOVE), WithPointers(expectedPointers)));
+    bottomWindow->assertNoEvents();
+}
+
+/**
+ * If a window has requested touch to be transferred, the current pointers should be transferred.
+ *
+ * If the window did not request the "entire gesture" to be transferred, subsequent pointers should
+ * still go through the normal hit testing.
+ */
+TEST_F(InputDispatcherTest, TouchTransferDoesNotSendEntireGesture) {
+    SCOPED_FLAG_OVERRIDE(allow_transfer_of_entire_gesture, true);
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> topWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Top window",
+                                       ui::LogicalDisplayId::DEFAULT);
+
+    sp<FakeWindowHandle> bottomWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Bottom window",
+                                       ui::LogicalDisplayId::DEFAULT);
+
+    mDispatcher->onWindowInfosChanged(
+            {{*topWindow->getInfo(), *bottomWindow->getInfo()}, {}, 0, 0});
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .build());
+    topWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // Transfer touch from the top window to the bottom window.
+    ASSERT_TRUE(mDispatcher->transferTouchGesture(topWindow->getToken(), bottomWindow->getToken(),
+                                                  /*isDragDrop=*/false,
+                                                  /*transferEntireGesture=*/false));
+    topWindow->consumeMotionEvent(WithMotionAction(ACTION_CANCEL));
+    bottomWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // When the second pointer goes down, it will hit the top window, and should be delivered there
+    // because "entire gesture" was not requested to be transferred when the original call to
+    // 'transferTouchGesture' was made.
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(60).y(60))
+                                      .build());
+    topWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+    const std::map<int32_t, PointF> expectedPointers{{0, PointF{50, 50}}};
+    bottomWindow->consumeMotionEvent(
+            AllOf(WithMotionAction(ACTION_MOVE), WithPointers(expectedPointers)));
+    bottomWindow->assertNoEvents();
+}
+
+/**
+ * If a window has requested touch to be transferred, all subsequent pointers from the same gesture
+ * should be transferred if 'transferEntireGesture' was set to 'true'.
+ *
+ * In this test, there are 2 windows - one above and one below.
+ * First pointer goes to the top window. Then top window calls 'transferTouch' upon receiving
+ * ACTION_DOWN and transfers touch to the bottom window.
+ * Subsequent pointers from the same gesture should still be forwarded to the bottom window,
+ * as long as they first land into the top window.
+ */
+TEST_F(InputDispatcherTest, TouchTransferSendsEntireGesture) {
+    SCOPED_FLAG_OVERRIDE(allow_transfer_of_entire_gesture, true);
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> topWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Top window",
+                                       ui::LogicalDisplayId::DEFAULT);
+
+    sp<FakeWindowHandle> bottomWindow =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Bottom window",
+                                       ui::LogicalDisplayId::DEFAULT);
+
+    mDispatcher->onWindowInfosChanged(
+            {{*topWindow->getInfo(), *bottomWindow->getInfo()}, {}, 0, 0});
+
+    mDispatcher->notifyMotion(MotionArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .build());
+    topWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // Transfer touch from the top window to the bottom window.
+    ASSERT_TRUE(mDispatcher->transferTouchGesture(topWindow->getToken(), bottomWindow->getToken(),
+                                                  /*isDragDrop=*/false,
+                                                  /*transferEntireGesture=*/true));
+    topWindow->consumeMotionEvent(WithMotionAction(ACTION_CANCEL));
+    bottomWindow->consumeMotionEvent(WithMotionAction(ACTION_DOWN));
+
+    // When the second pointer goes down, it will hit the top window, but since the top window has
+    // requested the whole gesture to be transferred, it should be redirected to the bottom window.
+    mDispatcher->notifyMotion(MotionArgsBuilder(POINTER_1_DOWN, AINPUT_SOURCE_TOUCHSCREEN)
+                                      .pointer(PointerBuilder(0, ToolType::FINGER).x(50).y(50))
+                                      .pointer(PointerBuilder(1, ToolType::FINGER).x(60).y(60))
+                                      .build());
+
+    bottomWindow->consumeMotionEvent(WithMotionAction(POINTER_1_DOWN));
 }
 
 /**
@@ -6583,7 +6752,8 @@ TEST_F(InputDispatcherDisplayProjectionTest, SynthesizeDownWithCorrectCoordinate
 
     // The pointer is transferred to the second window, and the second window receives it in the
     // correct coordinate space.
-    mDispatcher->transferTouchGesture(firstWindow->getToken(), secondWindow->getToken());
+    mDispatcher->transferTouchGesture(firstWindow->getToken(), secondWindow->getToken(),
+                                      /*isDragDrop=*/false, /*transferEntireGesture=*/false);
     firstWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_CANCEL), WithCoords(100, 400)));
     secondWindow->consumeMotionEvent(AllOf(WithMotionAction(ACTION_DOWN), WithCoords(-100, -400)));
 }
@@ -7119,7 +7289,8 @@ INSTANTIATE_TEST_SUITE_P(
                 [&](const std::unique_ptr<InputDispatcher>& dispatcher, sp<IBinder> from,
                     sp<IBinder> to) {
                     return dispatcher->transferTouchGesture(from, to,
-                                                            /*isDragAndDrop=*/false);
+                                                            /*isDragAndDrop=*/false,
+                                                            /*transferEntireGesture=*/false);
                 }));
 
 TEST_F(InputDispatcherTest, TransferTouch_TwoPointersSplitTouch) {
@@ -7159,7 +7330,8 @@ TEST_F(InputDispatcherTest, TransferTouch_TwoPointersSplitTouch) {
     secondWindow->consumeMotionDown();
 
     // Transfer touch to the second window
-    mDispatcher->transferTouchGesture(firstWindow->getToken(), secondWindow->getToken());
+    mDispatcher->transferTouchGesture(firstWindow->getToken(), secondWindow->getToken(),
+                                      /*isDragDrop=*/false, /*transferEntireGesture=*/false);
     // The first window gets cancel and the new gets pointer down (it already saw down)
     firstWindow->consumeMotionCancel();
     secondWindow->consumeMotionPointerDown(1, ui::LogicalDisplayId::DEFAULT,
@@ -7293,7 +7465,9 @@ TEST_F(InputDispatcherTest, TransferTouch_CloneSurface) {
 
     // Transfer touch
     ASSERT_TRUE(mDispatcher->transferTouchGesture(firstWindowInPrimary->getToken(),
-                                                  secondWindowInPrimary->getToken()));
+                                                  secondWindowInPrimary->getToken(),
+                                                  /*isDragDrop=*/false,
+                                                  /*transferEntireGesture=*/false));
     // The first window gets cancel.
     firstWindowInPrimary->consumeMotionCancel();
     secondWindowInPrimary->consumeMotionDown(ui::LogicalDisplayId::DEFAULT,
@@ -7478,6 +7652,50 @@ TEST_F(InputDispatcherTest, FocusedWindow_PolicyConsumedKeyIgnoresDisableUserAct
 
     // Should have poked user activity
     mFakePolicy->assertUserActivityPoked();
+}
+
+TEST_F(InputDispatcherTest, FocusedWindow_DoesNotReceivePolicyFallbackKey) {
+#if !defined(__ANDROID__)
+    GTEST_SKIP() << "b/253299089 Generic files are currently read directly from device.";
+#endif
+    InputDeviceInfo testDevice = generateTestDeviceInfo(/*vendorId=*/0,
+                                                        /*productId=*/0, /*deviceId=*/1);
+    std::unique_ptr<KeyCharacterMap> kcm = loadKeyCharacterMap("Generic");
+    ASSERT_NE(nullptr, kcm);
+
+    testDevice.setKeyCharacterMap(std::move(kcm));
+    mDispatcher->notifyInputDevicesChanged(NotifyInputDevicesChangedArgs(/*id=*/1, {testDevice}));
+
+    std::shared_ptr<FakeApplicationHandle> application = std::make_shared<FakeApplicationHandle>();
+    sp<FakeWindowHandle> window =
+            sp<FakeWindowHandle>::make(application, mDispatcher, "Fake Window",
+                                       ui::LogicalDisplayId::DEFAULT);
+
+    window->setFocusable(true);
+    mDispatcher->onWindowInfosChanged({{*window->getInfo()}, {}, 0, 0});
+    setFocusedWindow(window);
+
+    window->consumeFocusEvent(true);
+
+    mFakePolicy->setInterceptKeyBeforeDispatchingResult(
+            inputdispatcher::KeyEntry::InterceptKeyResult::FALLBACK);
+
+    // In the Generic KCM fallbacks, Meta + Space => SEARCH.
+    mDispatcher->notifyKey(KeyArgsBuilder(ACTION_DOWN, AINPUT_SOURCE_KEYBOARD)
+                                   .keyCode(AKEYCODE_SPACE)
+                                   .metaState(AMETA_META_ON)
+                                   .build());
+    mDispatcher->waitForIdle();
+
+    // Should have poked user activity
+    mFakePolicy->assertUserActivityPoked();
+
+    // Fallback is generated and sent instead.
+    std::unique_ptr<KeyEvent> consumedEvent = window->consumeKey(/*handled=*/false);
+    ASSERT_NE(nullptr, consumedEvent);
+    ASSERT_THAT(*consumedEvent,
+                AllOf(WithKeyAction(ACTION_DOWN), WithKeyCode(AKEYCODE_SEARCH),
+                      WithFlags(AKEY_EVENT_FLAG_FALLBACK)));
 }
 
 class DisableUserActivityInputDispatcherTest : public InputDispatcherTest,
@@ -12541,7 +12759,8 @@ protected:
         // Transfer touch focus to the drag window
         bool transferred =
                 mDispatcher->transferTouchGesture(targetWindow->getToken(), mDragWindow->getToken(),
-                                                  /*isDragDrop=*/true);
+                                                  /*isDragDrop=*/true,
+                                                  /*transferEntireGesture=*/false);
         if (transferred) {
             targetWindow->consumeMotionCancel(dragStartDisplay);
             mDragWindow->consumeMotionDown(dragStartDisplay, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
@@ -15113,7 +15332,9 @@ TEST_P(TransferOrDontTransferFixture, TouchDownAndMouseHover) {
     if (GetParam()) {
         // Call transferTouchGesture
         const bool transferred =
-                mDispatcher->transferTouchGesture(mFromWindow->getToken(), mToWindow->getToken());
+                mDispatcher->transferTouchGesture(mFromWindow->getToken(), mToWindow->getToken(),
+                                                  /*isDragDrop=*/false,
+                                                  /*transferEntireGesture=*/false);
         ASSERT_TRUE(transferred);
 
         mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_HOVER_EXIT));
@@ -15195,7 +15416,9 @@ TEST_P(TransferOrDontTransferFixture, MouseAndTouchTransferSimultaneousMultiDevi
     if (GetParam()) {
         // Call transferTouchGesture
         const bool transferred =
-                mDispatcher->transferTouchGesture(mFromWindow->getToken(), mToWindow->getToken());
+                mDispatcher->transferTouchGesture(mFromWindow->getToken(), mToWindow->getToken(),
+                                                  /*isDragDrop=*/false,
+                                                  /*transferEntireGesture=*/false);
         ASSERT_TRUE(transferred);
         mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_CANCEL));
         mFromWindow->consumeMotionEvent(WithMotionAction(ACTION_HOVER_EXIT));

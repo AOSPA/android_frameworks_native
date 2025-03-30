@@ -277,15 +277,6 @@ cc_defaults {
         "-fvisibility=hidden",
         "-DBUILDING_LIBBINDER",
     ],
-
-    target: {
-        vendor: {
-            // Trimming the exported symbols reveals a bug in vendor code, so
-            // disable it for the vendor variant for now. http://b/349657329
-            // TODO: Fix the issue and remove this override.
-            cflags: ["-fvisibility=default"],
-        },
-    },
 }
 
 cc_defaults {

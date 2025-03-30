@@ -464,6 +464,9 @@ public:
     status_t detachBuffer(const sp<GraphicBuffer>& buffer);
 #endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
 
+    // Sets outIsOwned to true if the given buffer is currently known to be owned by this Surface.
+    status_t isBufferOwned(const sp<GraphicBuffer>& buffer, bool* outIsOwned) const;
+
     // Batch version of dequeueBuffer, cancelBuffer and queueBuffer
     // Note that these batched operations are not supported when shared buffer mode is being used.
     struct BatchBuffer {

@@ -26,6 +26,7 @@
 
 #include <cstdint>
 
+#include <android/gui/BorderSettings.h>
 #include <android/gui/CachingHint.h>
 #include <gui/DisplayLuts.h>
 #include <gui/HdrMetadata.h>
@@ -148,6 +149,9 @@ struct LayerFECompositionState {
     FloatRect geomLayerCrop;
 
     ShadowSettings shadowSettings;
+
+    // The settings to configure the outline of a layer.
+    gui::BorderSettings borderSettings;
 
     // List of regions that require blur
     std::vector<BlurRegion> blurRegions;

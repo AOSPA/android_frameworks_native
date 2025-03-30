@@ -22,6 +22,7 @@ cc_defaults {
     ],
     static_libs: [
         "librenderengine_includes",
+        "libgui_window_info_static",
     ],
     srcs: [
         "FlagManager.cpp",

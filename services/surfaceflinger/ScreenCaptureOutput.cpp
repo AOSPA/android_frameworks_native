@@ -30,11 +30,12 @@ namespace android {
 std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutputArgs args) {
     std::shared_ptr<ScreenCaptureOutput> output = compositionengine::impl::createOutputTemplated<
             ScreenCaptureOutput, compositionengine::CompositionEngine,
-            /* sourceCrop */ const Rect, std::optional<DisplayId>,
+            /* sourceCrop */ const Rect, ftl::Optional<DisplayIdVariant>,
             const compositionengine::Output::ColorProfile&,
             /* layerAlpha */ float,
-            /* regionSampling */ bool>(args.compositionEngine, args.sourceCrop, args.displayId,
-                                       args.colorProfile, args.layerAlpha, args.regionSampling,
+            /* regionSampling */ bool>(args.compositionEngine, args.sourceCrop,
+                                       args.displayIdVariant, args.colorProfile, args.layerAlpha,
+                                       args.regionSampling,
                                        args.dimInGammaSpaceForEnhancedScreenshots,
                                        args.enableLocalTonemapping);
     output->editState().isSecure = args.isSecure;
@@ -59,8 +60,8 @@ std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutp
 
     {
         std::string name = args.regionSampling ? "RegionSampling" : "ScreenCaptureOutput";
-        if (args.displayId) {
-            base::StringAppendF(&name, " for %" PRIu64, args.displayId.value().value);
+        if (const auto id = args.displayIdVariant.and_then(asDisplayIdOfType<DisplayId>)) {
+            base::StringAppendF(&name, " for %" PRIu64, id->value);
         }
         output->setName(name);
     }
@@ -68,12 +69,12 @@ std::shared_ptr<ScreenCaptureOutput> createScreenCaptureOutput(ScreenCaptureOutp
 }
 
 ScreenCaptureOutput::ScreenCaptureOutput(
-        const Rect sourceCrop, std::optional<DisplayId> displayId,
+        const Rect sourceCrop, ftl::Optional<DisplayIdVariant> displayIdVariant,
         const compositionengine::Output::ColorProfile& colorProfile, float layerAlpha,
         bool regionSampling, bool dimInGammaSpaceForEnhancedScreenshots,
         bool enableLocalTonemapping)
       : mSourceCrop(sourceCrop),
-        mDisplayId(displayId),
+        mDisplayIdVariant(displayIdVariant),
         mColorProfile(colorProfile),
         mLayerAlpha(layerAlpha),
         mRegionSampling(regionSampling),
@@ -137,12 +138,9 @@ ScreenCaptureOutput::generateLuts() {
         }
 
         std::vector<aidl::android::hardware::graphics::composer3::Luts> luts;
-        if (mDisplayId) {
-            const auto id = PhysicalDisplayId::tryCast(mDisplayId.value());
-            if (id) {
-                auto& hwc = getCompositionEngine().getHwComposer();
-                hwc.getLuts(*id, buffers, &luts);
-            }
+        if (const auto physicalDisplayId = mDisplayIdVariant.and_then(asPhysicalDisplayId)) {
+            auto& hwc = getCompositionEngine().getHwComposer();
+            hwc.getLuts(*physicalDisplayId, buffers, &luts);
         }
 
         if (buffers.size() == luts.size()) {

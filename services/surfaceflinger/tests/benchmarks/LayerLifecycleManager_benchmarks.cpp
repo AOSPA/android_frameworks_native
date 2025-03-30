@@ -90,5 +90,46 @@ static void updateClientStatesNoChanges(benchmark::State& state) {
 }
 BENCHMARK(updateClientStatesNoChanges);
 
+static void propagateManyHiddenChildren(benchmark::State& state) {
+    LayerLifecycleManager lifecycleManager;
+    LayerLifecycleManagerHelper helper(lifecycleManager);
+
+    helper.createRootLayer(0);
+    for (uint32_t i = 1; i < 50; ++i) {
+        helper.createLayer(i, i - 1);
+    }
+
+    helper.hideLayer(0);
+
+    LayerHierarchyBuilder hierarchyBuilder;
+    DisplayInfo info;
+    info.info.logicalHeight = 100;
+    info.info.logicalWidth = 100;
+    DisplayInfos displayInfos;
+    displayInfos.emplace_or_replace(ui::LayerStack::fromValue(1), info);
+    ShadowSettings globalShadowSettings;
+
+    LayerSnapshotBuilder snapshotBuilder;
+
+    int i = 1;
+    for (auto _ : state) {
+        i++;
+        helper.setAlpha(0, (1 + (i % 255)) / 255.0f);
+
+        if (lifecycleManager.getGlobalChanges().test(RequestedLayerState::Changes::Hierarchy)) {
+            hierarchyBuilder.update(lifecycleManager);
+        }
+        LayerSnapshotBuilder::Args args{.root = hierarchyBuilder.getHierarchy(),
+                                        .layerLifecycleManager = lifecycleManager,
+                                        .displays = displayInfos,
+                                        .globalShadowSettings = globalShadowSettings,
+                                        .supportedLayerGenericMetadata = {},
+                                        .genericLayerMetadataKeyMap = {}};
+        snapshotBuilder.update(args);
+        lifecycleManager.commitChanges();
+    }
+}
+BENCHMARK(propagateManyHiddenChildren);
+
 } // namespace
 } // namespace android::surfaceflinger

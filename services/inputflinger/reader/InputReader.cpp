@@ -917,8 +917,19 @@ bool InputReader::canDispatchToDisplay(int32_t deviceId, ui::LogicalDisplayId di
     return *associatedDisplayId == displayId;
 }
 
+std::filesystem::path InputReader::getSysfsRootPath(int32_t deviceId) const {
+    std::scoped_lock _l(mLock);
+
+    const InputDevice* device = findInputDeviceLocked(deviceId);
+    if (!device) {
+        return {};
+    }
+    return device->getSysfsRootPath();
+}
+
 void InputReader::sysfsNodeChanged(const std::string& sysfsNodePath) {
     mEventHub->sysfsNodeChanged(sysfsNodePath);
+    mEventHub->wake();
 }
 
 DeviceId InputReader::getLastUsedInputDeviceId() {

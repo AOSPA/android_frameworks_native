@@ -225,6 +225,7 @@ cc_library {
     srcs: [
         "AccelerationCurve.cpp",
         "CoordinateFilter.cpp",
+        "DisplayTopologyGraph.cpp",
         "Input.cpp",
         "InputConsumer.cpp",
         "InputConsumerNoResampling.cpp",
