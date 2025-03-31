@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+// TODO(b/308452413): remove this file once android.os.vibrator.remove_hidl_support is removed
+
 #ifndef ANDROID_OS_VIBRATORHALWRAPPER_H
 #define ANDROID_OS_VIBRATORHALWRAPPER_H
 

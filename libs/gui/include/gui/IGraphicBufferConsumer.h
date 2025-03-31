@@ -243,6 +243,9 @@ public:
     // maxAcquiredBuffers must be (inclusive) between 1 and MAX_MAX_ACQUIRED_BUFFERS. It also cannot
     // cause the maxBufferCount value to be exceeded.
     //
+    // If called with onBuffersReleasedCallback, that call back will be called in lieu of
+    // IConsumerListener::onBuffersReleased.
+    //
     // Return of a value other than NO_ERROR means an error has occurred:
     // * NO_INIT - the BufferQueue has been abandoned
     // * BAD_VALUE - one of the below conditions occurred:
@@ -252,6 +255,11 @@ public:
     //                 this call
     // * INVALID_OPERATION - attempting to call this after a producer connected.
     virtual status_t setMaxAcquiredBufferCount(int maxAcquiredBuffers) = 0;
+
+    using OnBufferReleasedCallback = std::function<void(void)>;
+    virtual status_t setMaxAcquiredBufferCount(
+            int maxAcquiredBuffers,
+            std::optional<OnBufferReleasedCallback> onBuffersReleasedCallback) = 0;
 
     // setConsumerName sets the name used in logging
     virtual status_t setConsumerName(const String8& name) = 0;

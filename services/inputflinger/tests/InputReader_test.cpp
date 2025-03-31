@@ -611,8 +611,10 @@ protected:
     }
 
     void addDevice(int32_t eventHubId, const std::string& name,
-                   ftl::Flags<InputDeviceClass> classes, const PropertyMap* configuration) {
+                   ftl::Flags<InputDeviceClass> classes, const PropertyMap* configuration,
+                   std::string sysfsRootPath = "") {
         mFakeEventHub->addDevice(eventHubId, name, classes);
+        mFakeEventHub->setSysfsRootPath(eventHubId, sysfsRootPath);
 
         if (configuration) {
             mFakeEventHub->addConfigurationMap(eventHubId, configuration);
@@ -662,6 +664,18 @@ TEST_F(InputReaderTest, PolicyGetInputDevices) {
     ASSERT_EQ(AINPUT_KEYBOARD_TYPE_NON_ALPHABETIC, inputDevices[0].getKeyboardType());
     ASSERT_EQ(AINPUT_SOURCE_KEYBOARD, inputDevices[0].getSources());
     ASSERT_EQ(0U, inputDevices[0].getMotionRanges().size());
+}
+
+TEST_F(InputReaderTest, GetSysfsRootPath) {
+    constexpr std::string SYSFS_ROOT = "xyz";
+    ASSERT_NO_FATAL_FAILURE(
+            addDevice(1, "keyboard", InputDeviceClass::KEYBOARD, nullptr, SYSFS_ROOT));
+
+    // Should also have received a notification describing the new input device.
+    ASSERT_EQ(1U, mFakePolicy->getInputDevices().size());
+    InputDeviceInfo inputDevice = mFakePolicy->getInputDevices()[0];
+
+    ASSERT_EQ(SYSFS_ROOT, mReader->getSysfsRootPath(inputDevice.getId()).string());
 }
 
 TEST_F(InputReaderTest, InputDeviceRecreatedOnSysfsNodeChanged) {

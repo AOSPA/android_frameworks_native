@@ -167,7 +167,6 @@ TEST_F(FoldableTest, requestsHardwareVsyncForBothDisplays) {
 }
 
 TEST_F(FoldableTest, requestVsyncOnPowerOn) {
-    SET_FLAG_FOR_TEST(flags::multithreaded_present, true);
     EXPECT_CALL(mFlinger.scheduler()->mockRequestHardwareVsync, Call(kInnerDisplayId, true))
             .Times(1);
     EXPECT_CALL(mFlinger.scheduler()->mockRequestHardwareVsync, Call(kOuterDisplayId, true))
@@ -178,7 +177,6 @@ TEST_F(FoldableTest, requestVsyncOnPowerOn) {
 }
 
 TEST_F(FoldableTest, disableVsyncOnPowerOffPacesetter) {
-    SET_FLAG_FOR_TEST(flags::multithreaded_present, true);
     // When the device boots, the inner display should be the pacesetter.
     ASSERT_EQ(mFlinger.scheduler()->pacesetterDisplayId(), kInnerDisplayId);
 

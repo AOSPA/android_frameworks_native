@@ -1452,10 +1452,6 @@ TEST_F(BufferQueueTest, TestProducerConnectDisconnect) {
     ASSERT_EQ(NO_INIT, mProducer->disconnect(NATIVE_WINDOW_API_CPU));
 }
 
-TEST_F(BufferQueueTest, TestBqSetFrameRateFlagBuildTimeIsSet) {
-    ASSERT_EQ(flags::bq_setframerate(), COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_SETFRAMERATE));
-}
-
 struct BufferItemConsumerSetFrameRateListener : public BufferItemConsumer {
     BufferItemConsumerSetFrameRateListener() : BufferItemConsumer(GRALLOC_USAGE_SW_READ_OFTEN, 1) {}
 
@@ -1561,9 +1557,14 @@ TEST_F(BufferQueueTest, TestAdditionalOptions) {
             {.name = "android.hardware.graphics.common.Dataspace", ADATASPACE_DISPLAY_P3},
     }};
 
-    ASSERT_EQ(NO_INIT,
-              native_window_set_buffers_additional_options(surface.get(), extras.data(),
-                                                           extras.size()));
+    auto status = native_window_set_buffers_additional_options(surface.get(), extras.data(),
+                                                               extras.size());
+    if (flags::bq_extendedallocate()) {
+        ASSERT_EQ(NO_INIT, status);
+    } else {
+        ASSERT_EQ(INVALID_OPERATION, status);
+        GTEST_SKIP() << "Flag bq_extendedallocate not enabled";
+    }
 
     if (!IsCuttlefish()) {
         GTEST_SKIP() << "Not cuttlefish";

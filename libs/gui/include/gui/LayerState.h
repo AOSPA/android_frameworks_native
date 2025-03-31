@@ -21,6 +21,7 @@
 #include <sys/types.h>
 #include <span>
 
+#include <android/gui/BorderSettings.h>
 #include <android/gui/DisplayCaptureArgs.h>
 #include <android/gui/IWindowInfosReportedListener.h>
 #include <android/gui/LayerCaptureArgs.h>
@@ -253,6 +254,7 @@ struct layer_state_t {
         ePictureProfileHandleChanged = 0x80000'00000000,
         eAppContentPriorityChanged = 0x100000'00000000,
         eClientDrawnCornerRadiusChanged = 0x200000'00000000,
+        eBorderSettingsChanged = 0x400000'00000000,
     };
 
     layer_state_t();
@@ -296,8 +298,8 @@ struct layer_state_t {
             layer_state_t::eColorSpaceAgnosticChanged | layer_state_t::eColorTransformChanged |
             layer_state_t::eCornerRadiusChanged | layer_state_t::eDimmingEnabledChanged |
             layer_state_t::eHdrMetadataChanged | layer_state_t::eShadowRadiusChanged |
-            layer_state_t::eStretchChanged |
-            layer_state_t::ePictureProfileHandleChanged | layer_state_t::eAppContentPriorityChanged;
+            layer_state_t::eStretchChanged | layer_state_t::ePictureProfileHandleChanged |
+            layer_state_t::eAppContentPriorityChanged | layer_state_t::eBorderSettingsChanged;
 
     // Changes which invalidates the layer's visible region in CE.
     static constexpr uint64_t CONTENT_DIRTY = layer_state_t::CONTENT_CHANGES |
@@ -325,7 +327,8 @@ struct layer_state_t {
     // Changes that force GPU composition.
     static constexpr uint64_t COMPOSITION_EFFECTS = layer_state_t::eBackgroundBlurRadiusChanged |
             layer_state_t::eBlurRegionsChanged | layer_state_t::eCornerRadiusChanged |
-            layer_state_t::eShadowRadiusChanged | layer_state_t::eStretchChanged;
+            layer_state_t::eShadowRadiusChanged | layer_state_t::eStretchChanged |
+            layer_state_t::eBorderSettingsChanged;
 
     bool hasValidBuffer() const;
     void sanitize(int32_t permissions);
@@ -413,6 +416,9 @@ struct layer_state_t {
 
     // Draws a shadow around the surface.
     float shadowRadius;
+
+    // Draws an outline around the layer.
+    gui::BorderSettings borderSettings;
 
     // Priority of the layer assigned by Window Manager.
     int32_t frameRateSelectionPriority;

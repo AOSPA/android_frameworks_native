@@ -250,6 +250,16 @@ Rect OutputLayer::calculateOutputDisplayFrame() const {
         geomLayerBounds.bottom += outset;
     }
 
+    // Similar to above
+    if (layerState.forceClientComposition && layerState.borderSettings.strokeWidth > 0.0f) {
+        // Antialiasing should never add more than 2 pixels.
+        const auto outset = layerState.borderSettings.strokeWidth + 2;
+        geomLayerBounds.left -= outset;
+        geomLayerBounds.top -= outset;
+        geomLayerBounds.right += outset;
+        geomLayerBounds.bottom += outset;
+    }
+
     geomLayerBounds = layerTransform.transform(geomLayerBounds);
     FloatRect frame = reduce(geomLayerBounds, activeTransparentRegion);
     frame = frame.intersect(outputState.layerStackSpace.getContent().toFloatRect());

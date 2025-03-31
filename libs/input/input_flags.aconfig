@@ -113,6 +113,16 @@ flag {
 }
 
 flag {
+  name: "allow_transfer_of_entire_gesture"
+  namespace: "input"
+  description: "When calling 'transferTouchGesture', the entire gesture (including new POINTER_DOWN events from the same device) will be automatically transferred to the destination window"
+  bug: "397979572"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
   name: "enable_keyboard_classifier"
   namespace: "input"
   description: "Keyboard classifier that classifies all keyboards into alphabetic or non-alphabetic"
@@ -224,17 +234,20 @@ flag {
 }
 
 flag {
-  name: "deprecate_uiautomation_input_injection"
-  namespace: "input"
-  description: "Deprecate UiAutomation#injectInputEvent and UiAutomation#injectInputEventToInputFilter test/hidden APIs"
-  bug: "277261245"
-}
-
-flag {
   name: "prevent_merging_input_pointer_devices"
   namespace: "desktop_input"
   description: "Prevent merging input sub-devices that provide pointer input streams"
   bug: "389689566"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
+  name: "enable_display_topology_validation"
+  namespace: "input"
+  description: "Set to true to enable display topology validation"
+  bug: "401219231"
   metadata {
     purpose: PURPOSE_BUGFIX
   }

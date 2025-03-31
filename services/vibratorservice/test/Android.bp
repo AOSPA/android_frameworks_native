@@ -27,6 +27,7 @@ cc_test {
     test_suites: ["device-tests"],
     srcs: [
         "VibratorCallbackSchedulerTest.cpp",
+        "VibratorControllerTest.cpp",
         "VibratorHalControllerTest.cpp",
         "VibratorHalWrapperAidlTest.cpp",
         "VibratorManagerHalControllerTest.cpp",
@@ -39,12 +40,12 @@ cc_test {
         "-Wextra",
     ],
     shared_libs: [
+        "android.hardware.vibrator-V3-ndk",
         "libbase",
         "libbinder_ndk",
         "liblog",
-        "libvibratorservice",
         "libutils",
-        "android.hardware.vibrator-V3-ndk",
+        "libvibratorservice",
     ],
     static_libs: [
         "libgmock",

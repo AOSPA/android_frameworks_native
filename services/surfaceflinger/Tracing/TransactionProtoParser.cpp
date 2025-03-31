@@ -321,7 +321,7 @@ QueuedTransactionState TransactionProtoParser::fromProto(
     int32_t displayCount = proto.display_changes_size();
     t.displays.reserve(static_cast<size_t>(displayCount));
     for (int i = 0; i < displayCount; i++) {
-        t.displays.add(fromProto(proto.display_changes(i)));
+        t.displays.emplace_back(fromProto(proto.display_changes(i)));
     }
     return t;
 }

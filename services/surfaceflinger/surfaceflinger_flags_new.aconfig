@@ -190,6 +190,16 @@ flag {
 } # graphite_renderengine_preview_rollout
 
 flag {
+  name: "hdcp_negotiation"
+  namespace: "core_graphics"
+  description: "detect secure layers to start HDCP negotiation"
+  bug: "375340594"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+} # hdcp_negotiation
+
+flag {
   name: "increase_missed_frame_jank_threshold"
   namespace: "core_graphics"
   description: "Increase the jank threshold to 4 milliseconds"
@@ -214,6 +224,13 @@ flag {
   bug: "329464641"
   is_fixed_read_only: true
 } # local_tonemap_screenshots
+
+flag {
+  name: "monitor_buffer_fences"
+  namespace: "core_graphics"
+  description: "Monitors fences for each buffer"
+  bug: "360932099"
+} # monitor_buffer_fences
 
 flag {
   name: "no_vsyncs_on_screen_off"

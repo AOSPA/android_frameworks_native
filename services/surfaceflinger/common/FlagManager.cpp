@@ -129,6 +129,7 @@ void FlagManager::dump(std::string& result) const {
     DUMP_ACONFIG_FLAG(correct_virtual_display_power_state);
     DUMP_ACONFIG_FLAG(graphite_renderengine_preview_rollout);
     DUMP_ACONFIG_FLAG(increase_missed_frame_jank_threshold);
+    DUMP_ACONFIG_FLAG(monitor_buffer_fences);
     DUMP_ACONFIG_FLAG(refresh_rate_overlay_on_external_display);
     DUMP_ACONFIG_FLAG(vsync_predictor_recovery);
 
@@ -160,11 +161,11 @@ void FlagManager::dump(std::string& result) const {
     DUMP_ACONFIG_FLAG(game_default_frame_rate);
     DUMP_ACONFIG_FLAG(graphite_renderengine);
     DUMP_ACONFIG_FLAG(hdcp_level_hal);
+    DUMP_ACONFIG_FLAG(hdcp_negotiation);
     DUMP_ACONFIG_FLAG(idle_screen_refresh_rate_timeout);
     DUMP_ACONFIG_FLAG(latch_unsignaled_with_auto_refresh_changed);
     DUMP_ACONFIG_FLAG(local_tonemap_screenshots);
     DUMP_ACONFIG_FLAG(misc1);
-    DUMP_ACONFIG_FLAG(multithreaded_present);
     DUMP_ACONFIG_FLAG(no_vsyncs_on_screen_off);
     DUMP_ACONFIG_FLAG(override_trusted_overlay);
     DUMP_ACONFIG_FLAG(protected_if_client);
@@ -259,7 +260,7 @@ FLAG_MANAGER_ACONFIG_FLAG(frame_rate_category_mrr, "debug.sf.frame_rate_category
 FLAG_MANAGER_ACONFIG_FLAG(misc1, "")
 FLAG_MANAGER_ACONFIG_FLAG(vrr_config, "debug.sf.enable_vrr_config")
 FLAG_MANAGER_ACONFIG_FLAG(hdcp_level_hal, "")
-FLAG_MANAGER_ACONFIG_FLAG(multithreaded_present, "debug.sf.multithreaded_present")
+FLAG_MANAGER_ACONFIG_FLAG(hdcp_negotiation, "debug.sf.hdcp_negotiation");
 FLAG_MANAGER_ACONFIG_FLAG(add_sf_skipped_frames_to_trace, "")
 FLAG_MANAGER_ACONFIG_FLAG(use_known_refresh_rate_for_fps_consistency, "")
 FLAG_MANAGER_ACONFIG_FLAG(cache_when_source_crop_layer_only_moved,
@@ -305,6 +306,7 @@ FLAG_MANAGER_ACONFIG_FLAG(adpf_gpu_sf, "")
 FLAG_MANAGER_ACONFIG_FLAG(adpf_native_session_manager, "");
 FLAG_MANAGER_ACONFIG_FLAG(graphite_renderengine_preview_rollout, "");
 FLAG_MANAGER_ACONFIG_FLAG(increase_missed_frame_jank_threshold, "");
+FLAG_MANAGER_ACONFIG_FLAG(monitor_buffer_fences, "");
 FLAG_MANAGER_ACONFIG_FLAG(vsync_predictor_recovery, "");
 
 /// Trunk stable server (R/W) flags from outside SurfaceFlinger ///

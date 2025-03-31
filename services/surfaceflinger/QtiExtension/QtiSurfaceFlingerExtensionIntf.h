@@ -119,7 +119,8 @@ public:
     /*
      * Methods for Virtual, WiFi, and Secure Displays
      */
-    virtual std::optional<VirtualDisplayId> qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat, const std::string& uniqueId,
+    virtual std::optional<android::VirtualDisplayIdVariant> qtiAcquireVirtualDisplay(ui::Size, ui::PixelFormat, const std::string& uniqueId,
+                                                                     compositionengine::DisplayCreationArgsBuilder& builder,
                                                                      bool canAllocateHwcForVDS) = 0;
     virtual bool qtiCanAllocateHwcDisplayIdForVDS(const DisplayDeviceState& state) = 0;
     virtual bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) = 0;

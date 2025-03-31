@@ -90,7 +90,9 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithIdentificationData) {
     mFlinger.configure();
 
     EXPECT_TRUE(hasPhysicalHwcDisplay(PrimaryDisplay::HWC_DISPLAY_ID));
-    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(PrimaryDisplay::DISPLAY_ID::get()));
+    const auto primaryDisplayId = asPhysicalDisplayId(PrimaryDisplay::DISPLAY_ID::get());
+    ASSERT_TRUE(primaryDisplayId);
+    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(*primaryDisplayId));
     const auto primaryDisplayIdOpt =
             mFlinger.getHwComposer().toPhysicalDisplayId(PrimaryDisplay::HWC_DISPLAY_ID);
     ASSERT_TRUE(primaryDisplayIdOpt.has_value());
@@ -98,13 +100,15 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithIdentificationData) {
             mFlinger.physicalDisplays().get(primaryDisplayIdOpt.value());
     ASSERT_TRUE(primaryPhysicalDisplayOpt.has_value());
     const auto primaryDisplaySnapshotRef = primaryPhysicalDisplayOpt->get().snapshotRef();
-    EXPECT_EQ(PrimaryDisplay::DISPLAY_ID::get(), primaryDisplaySnapshotRef.get().displayId());
+    EXPECT_EQ(*primaryDisplayId, primaryDisplaySnapshotRef.get().displayId());
     EXPECT_EQ(PrimaryDisplay::PORT::value, primaryDisplaySnapshotRef.get().port());
     EXPECT_EQ(PrimaryDisplay::CONNECTION_TYPE::value,
               primaryDisplaySnapshotRef.get().connectionType());
 
     EXPECT_TRUE(hasPhysicalHwcDisplay(ExternalDisplay::HWC_DISPLAY_ID));
-    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(ExternalDisplay::DISPLAY_ID::get()));
+    const auto externalDisplayId = asPhysicalDisplayId(ExternalDisplay::DISPLAY_ID::get());
+    ASSERT_TRUE(externalDisplayId);
+    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(*externalDisplayId));
     const auto externalDisplayIdOpt =
             mFlinger.getHwComposer().toPhysicalDisplayId(ExternalDisplay::HWC_DISPLAY_ID);
     ASSERT_TRUE(externalDisplayIdOpt.has_value());
@@ -112,7 +116,7 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithIdentificationData) {
             mFlinger.physicalDisplays().get(externalDisplayIdOpt.value());
     ASSERT_TRUE(externalPhysicalDisplayOpt.has_value());
     const auto externalDisplaySnapshotRef = externalPhysicalDisplayOpt->get().snapshotRef();
-    EXPECT_EQ(ExternalDisplay::DISPLAY_ID::get(), externalDisplaySnapshotRef.get().displayId());
+    EXPECT_EQ(*externalDisplayId, externalDisplaySnapshotRef.get().displayId());
     EXPECT_EQ(ExternalDisplay::PORT::value, externalDisplaySnapshotRef.get().port());
     EXPECT_EQ(ExternalDisplay::CONNECTION_TYPE::value,
               externalDisplaySnapshotRef.get().connectionType());
@@ -154,8 +158,8 @@ TEST_F(HotplugTest, createsDisplaySnapshotsForDisplaysWithoutIdentificationData)
     constexpr PhysicalDisplayId primaryInternalDisplayId =
             PhysicalDisplayId::fromPort(primaryInternalDisplayPort);
     EXPECT_TRUE(hasPhysicalHwcDisplay(PrimaryDisplay::HWC_DISPLAY_ID));
-    ASSERT_EQ(primaryInternalDisplayId, PrimaryDisplay::DISPLAY_ID::get());
-    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(PrimaryDisplay::DISPLAY_ID::get()));
+    ASSERT_EQ(primaryInternalDisplayId, asPhysicalDisplayId(PrimaryDisplay::DISPLAY_ID::get()));
+    EXPECT_TRUE(mFlinger.getHwComposer().isConnected(primaryInternalDisplayId));
     const auto primaryDisplayIdOpt =
             mFlinger.getHwComposer().toPhysicalDisplayId(PrimaryDisplay::HWC_DISPLAY_ID);
     ASSERT_TRUE(primaryDisplayIdOpt.has_value());
@@ -220,7 +224,9 @@ TEST_F(HotplugTest, ignoresDuplicateDisconnection) {
     // The display should be scheduled for removal during the next commit. At this point, it should
     // still exist but be marked as disconnected.
     EXPECT_TRUE(hasPhysicalHwcDisplay(ExternalDisplay::HWC_DISPLAY_ID));
-    EXPECT_FALSE(mFlinger.getHwComposer().isConnected(ExternalDisplay::DISPLAY_ID::get()));
+    const auto externalDisplayId = asPhysicalDisplayId(ExternalDisplay::DISPLAY_ID::get());
+    ASSERT_TRUE(externalDisplayId);
+    EXPECT_FALSE(mFlinger.getHwComposer().isConnected(*externalDisplayId));
 }
 
 TEST_F(HotplugTest, rejectsHotplugIfFailedToLoadDisplayModes) {

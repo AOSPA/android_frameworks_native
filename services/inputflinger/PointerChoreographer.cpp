@@ -31,6 +31,7 @@
 #include "PointerChoreographer.h"
 
 #define INDENT "  "
+#define INDENT2 "    "
 
 namespace android {
 
@@ -647,6 +648,8 @@ void PointerChoreographer::dump(std::string& dump) {
         std::string pointerControllerDump = addLinePrefix(drawingTabletController->dump(), INDENT);
         dump += INDENT + std::to_string(deviceId) + " : " + pointerControllerDump;
     }
+    dump += INDENT "DisplayTopologyGraph:\n";
+    dump += addLinePrefix(mTopology.dump(), INDENT2);
     dump += "\n";
 }
 

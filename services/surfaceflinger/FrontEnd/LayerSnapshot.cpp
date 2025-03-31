@@ -179,8 +179,12 @@ bool LayerSnapshot::hasBlur() const {
     return backgroundBlurRadius > 0 || blurRegions.size() > 0;
 }
 
+bool LayerSnapshot::hasOutline() const {
+    return borderSettings.strokeWidth > 0;
+}
+
 bool LayerSnapshot::hasEffect() const {
-    return fillsColor() || drawShadows() || hasBlur();
+    return fillsColor() || drawShadows() || hasBlur() || hasOutline();
 }
 
 bool LayerSnapshot::hasSomethingToDraw() const {
@@ -253,6 +257,7 @@ std::string LayerSnapshot::getIsVisibleReason() const {
         reason << " buffer=" << externalTexture->getId() << " frame=" << frameNumber;
     if (fillsColor() || color.a > 0.0f) reason << " color{" << color << "}";
     if (drawShadows()) reason << " shadowSettings.length=" << shadowSettings.length;
+    if (hasOutline()) reason << "borderSettings=" << borderSettings.toString();
     if (backgroundBlurRadius > 0) reason << " backgroundBlurRadius=" << backgroundBlurRadius;
     if (blurRegions.size() > 0) reason << " blurRegions.size()=" << blurRegions.size();
     if (contentDirty) reason << " contentDirty";
@@ -410,7 +415,9 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
     if (forceUpdate || requested.what & layer_state_t::eShadowRadiusChanged) {
         shadowSettings.length = requested.shadowRadius;
     }
-
+    if (forceUpdate || requested.what & layer_state_t::eBorderSettingsChanged) {
+        borderSettings = requested.borderSettings;
+    }
     if (forceUpdate || requested.what & layer_state_t::eFrameRateSelectionPriority) {
         frameRateSelectionPriority = requested.frameRateSelectionPriority;
     }
@@ -508,9 +515,9 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
                 (layer_state_t::eBufferChanged | layer_state_t::eDataspaceChanged |
                  layer_state_t::eApiChanged | layer_state_t::eShadowRadiusChanged |
                  layer_state_t::eBlurRegionsChanged | layer_state_t::eStretchChanged |
-                 layer_state_t::eEdgeExtensionChanged)) {
+                 layer_state_t::eEdgeExtensionChanged | layer_state_t::eBorderSettingsChanged)) {
         forceClientComposition = shadowSettings.length > 0 || stretchEffect.hasEffect() ||
-                edgeExtensionEffect.hasEffect();
+                edgeExtensionEffect.hasEffect() || borderSettings.strokeWidth > 0;
     }
 
     if (forceUpdate ||

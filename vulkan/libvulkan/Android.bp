@@ -48,14 +48,9 @@ cc_aconfig_library {
     aconfig_declarations: "libvulkan_flags",
 }
 
-cc_library_shared {
-    name: "libvulkan",
-    llndk: {
-        symbol_file: "libvulkan.map.txt",
-        export_llndk_headers: [
-            "vulkan_headers",
-        ],
-    },
+cc_defaults {
+    name: "libvulkan_defaults",
+
     sanitize: {
         misc_undefined: ["integer"],
     },
@@ -88,6 +83,34 @@ cc_library_shared {
         "-Wno-global-constructors",
         "-Wno-zero-length-array",
     ],
+}
+
+cc_library {
+    name: "libvulkanallocator",
+    defaults: ["libvulkan_defaults"],
+    cflags: [
+        // This code uses malloc_usable_size(),
+        // and thus can't be built with _FORTIFY_SOURCE=3.
+        "-U_FORTIFY_SOURCE",
+        "-D_FORTIFY_SOURCE=2",
+    ],
+    srcs: [
+        "allocator.cpp",
+    ],
+    header_libs: [
+        "vulkan_headers",
+    ],
+}
+
+cc_library_shared {
+    name: "libvulkan",
+    defaults: ["libvulkan_defaults"],
+    llndk: {
+        symbol_file: "libvulkan.map.txt",
+        export_llndk_headers: [
+            "vulkan_headers",
+        ],
+    },
 
     srcs: [
         "api.cpp",
@@ -131,6 +154,7 @@ cc_library_shared {
     ],
     static_libs: [
         "libgrallocusage",
+        "libvulkanallocator",
         "libvulkanflags",
     ],
 }

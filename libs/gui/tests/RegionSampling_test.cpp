@@ -180,7 +180,7 @@ protected:
     }
 
     void SetUp() override {
-        mSurfaceComposerClient = new SurfaceComposerClient;
+        mSurfaceComposerClient = sp<SurfaceComposerClient>::make();
         ASSERT_EQ(NO_ERROR, mSurfaceComposerClient->initCheck());
 
         mBackgroundLayer =

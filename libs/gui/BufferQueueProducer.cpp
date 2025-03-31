@@ -393,8 +393,10 @@ status_t BufferQueueProducer::waitForFreeSlotThenRelock(FreeSlotCaller caller,
         // Producers are not allowed to dequeue more than
         // mMaxDequeuedBufferCount buffers.
         // This check is only done if a buffer has already been queued
-        if (mCore->mBufferHasBeenQueued &&
-                dequeuedCount >= mCore->mMaxDequeuedBufferCount) {
+        using namespace com::android::graphics::libgui::flags;
+        bool flagGatedBufferHasBeenQueued =
+                bq_always_use_max_dequeued_buffer_count() || mCore->mBufferHasBeenQueued;
+        if (flagGatedBufferHasBeenQueued && dequeuedCount >= mCore->mMaxDequeuedBufferCount) {
             // Supress error logs when timeout is non-negative.
             if (mDequeueTimeout < 0) {
                 BQ_LOGE("%s: attempting to exceed the max dequeued buffer "

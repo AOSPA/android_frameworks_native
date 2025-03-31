@@ -447,15 +447,14 @@ void LayerSnapshotBuilder::updateSnapshots(const Args& args) {
     if (args.root.getLayer()) {
         // The hierarchy can have a root layer when used for screenshots otherwise, it will have
         // multiple children.
-        LayerHierarchy::ScopedAddToTraversalPath addChildToPath(root, args.root.getLayer()->id,
-                                                                LayerHierarchy::Variant::Attached);
-        updateSnapshotsInHierarchy(args, args.root, root, rootSnapshot, /*depth=*/0);
+        LayerHierarchy::TraversalPath childPath =
+                root.makeChild(args.root.getLayer()->id, LayerHierarchy::Variant::Attached);
+        updateSnapshotsInHierarchy(args, args.root, childPath, rootSnapshot, /*depth=*/0);
     } else {
         for (auto& [childHierarchy, variant] : args.root.mChildren) {
-            LayerHierarchy::ScopedAddToTraversalPath addChildToPath(root,
-                                                                    childHierarchy->getLayer()->id,
-                                                                    variant);
-            updateSnapshotsInHierarchy(args, *childHierarchy, root, rootSnapshot, /*depth=*/0);
+            LayerHierarchy::TraversalPath childPath =
+                    root.makeChild(childHierarchy->getLayer()->id, variant);
+            updateSnapshotsInHierarchy(args, *childHierarchy, childPath, rootSnapshot, /*depth=*/0);
         }
     }
 
@@ -520,7 +519,7 @@ void LayerSnapshotBuilder::update(const Args& args) {
 
 const LayerSnapshot& LayerSnapshotBuilder::updateSnapshotsInHierarchy(
         const Args& args, const LayerHierarchy& hierarchy,
-        LayerHierarchy::TraversalPath& traversalPath, const LayerSnapshot& parentSnapshot,
+        const LayerHierarchy::TraversalPath& traversalPath, const LayerSnapshot& parentSnapshot,
         int depth) {
     LLOG_ALWAYS_FATAL_WITH_TRACE_IF(depth > 50,
                                     "Cycle detected in LayerSnapshotBuilder. See "
@@ -549,12 +548,10 @@ const LayerSnapshot& LayerSnapshotBuilder::updateSnapshotsInHierarchy(
 
     bool childHasValidFrameRate = false;
     for (auto& [childHierarchy, variant] : hierarchy.mChildren) {
-        LayerHierarchy::ScopedAddToTraversalPath addChildToPath(traversalPath,
-                                                                childHierarchy->getLayer()->id,
-                                                                variant);
+        LayerHierarchy::TraversalPath childPath =
+                traversalPath.makeChild(childHierarchy->getLayer()->id, variant);
         const LayerSnapshot& childSnapshot =
-                updateSnapshotsInHierarchy(args, *childHierarchy, traversalPath, *snapshot,
-                                           depth + 1);
+                updateSnapshotsInHierarchy(args, *childHierarchy, childPath, *snapshot, depth + 1);
         updateFrameRateFromChildSnapshot(*snapshot, childSnapshot, *childHierarchy->getLayer(),
                                          args, &childHasValidFrameRate);
     }
@@ -939,6 +936,18 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
     }
 
     if (forceUpdate ||
+        snapshot.clientChanges &
+                (layer_state_t::eBorderSettingsChanged | layer_state_t::eAlphaChanged)) {
+        snapshot.borderSettings = requested.borderSettings;
+
+        // Multiply outline alpha by snapshot alpha.
+        uint32_t c = static_cast<uint32_t>(snapshot.borderSettings.color);
+        float alpha = snapshot.alpha * (c >> 24) / 255.0f;
+        uint32_t a = static_cast<uint32_t>(alpha * 255 + 0.5f);
+        snapshot.borderSettings.color = static_cast<int32_t>((c & ~0xff000000) | (a << 24));
+    }
+
+    if (forceUpdate ||
         snapshot.changes.any(RequestedLayerState::Changes::Geometry |
                              RequestedLayerState::Changes::Input)) {
         updateInput(snapshot, requested, parentSnapshot, path, args);
@@ -946,7 +955,9 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
 
     // computed snapshot properties
     snapshot.forceClientComposition = snapshot.shadowSettings.length > 0 ||
-            snapshot.stretchEffect.hasEffect() || snapshot.edgeExtensionEffect.hasEffect();
+            snapshot.stretchEffect.hasEffect() || snapshot.edgeExtensionEffect.hasEffect() ||
+            snapshot.borderSettings.strokeWidth > 0;
+
     snapshot.contentOpaque = snapshot.isContentOpaque();
     snapshot.isOpaque = snapshot.contentOpaque && !snapshot.roundedCorner.hasRoundedCorners() &&
             snapshot.color.a == 1.f;

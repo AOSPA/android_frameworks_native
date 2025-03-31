@@ -241,7 +241,7 @@ bool GLHelper::createWindowSurface(uint32_t w, uint32_t h,
     status_t err;
 
     if (mSurfaceComposerClient == nullptr) {
-        mSurfaceComposerClient = new SurfaceComposerClient;
+        mSurfaceComposerClient = sp<SurfaceComposerClient>::make();
     }
     err = mSurfaceComposerClient->initCheck();
     if (err != NO_ERROR) {

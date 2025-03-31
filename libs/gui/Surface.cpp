@@ -2353,17 +2353,47 @@ int Surface::detachNextBuffer(sp<GraphicBuffer>* outBuffer,
     return NO_ERROR;
 }
 
+int Surface::isBufferOwned(const sp<GraphicBuffer>& buffer, bool* outIsOwned) const {
+    ATRACE_CALL();
+
+    if (buffer == nullptr) {
+        ALOGE("%s: Bad input, buffer was null", __FUNCTION__);
+        return BAD_VALUE;
+    }
+    if (outIsOwned == nullptr) {
+        ALOGE("%s: Bad input, output was null", __FUNCTION__);
+        return BAD_VALUE;
+    }
+
+    Mutex::Autolock lock(mMutex);
+
+    int slot = this->getSlotFromBufferLocked(buffer->getNativeBuffer());
+    if (slot == BAD_VALUE) {
+        ALOGV("%s: Buffer %" PRIu64 " is not owned", __FUNCTION__, buffer->getId());
+        *outIsOwned = false;
+        return NO_ERROR;
+    } else if (slot < 0) {
+        ALOGV("%s: Buffer %" PRIu64 " look up failed (%d)", __FUNCTION__, buffer->getId(), slot);
+        *outIsOwned = false;
+        return slot;
+    }
+
+    *outIsOwned = true;
+    return NO_ERROR;
+}
+
 int Surface::attachBuffer(ANativeWindowBuffer* buffer)
 {
     ATRACE_CALL();
-    ALOGV("Surface::attachBuffer");
+    sp<GraphicBuffer> graphicBuffer(static_cast<GraphicBuffer*>(buffer));
+
+    ALOGV("Surface::attachBuffer bufferId=%" PRIu64, graphicBuffer->getId());
 
     Mutex::Autolock lock(mMutex);
     if (mReportRemovedBuffers) {
         mRemovedBuffers.clear();
     }
 
-    sp<GraphicBuffer> graphicBuffer(static_cast<GraphicBuffer*>(buffer));
     uint32_t priorGeneration = graphicBuffer->mGenerationNumber;
     graphicBuffer->mGenerationNumber = mGenerationNumber;
     int32_t attachedSlot = -1;

@@ -26,6 +26,7 @@ cc_library_shared {
 
     srcs: [
         "VibratorCallbackScheduler.cpp",
+        "VibratorController.cpp",
         "VibratorHalController.cpp",
         "VibratorHalWrapper.cpp",
         "VibratorManagerHalController.cpp",
@@ -41,17 +42,17 @@ cc_library_shared {
     },
 
     shared_libs: [
+        "android.hardware.vibrator-V3-ndk",
         "libbinder_ndk",
         "liblog",
         "libutils",
-        "android.hardware.vibrator-V3-ndk",
     ],
 
     cflags: [
         "-Wall",
         "-Werror",
-        "-Wunused",
         "-Wunreachable-code",
+        "-Wunused",
     ],
 
     local_include_dirs: ["include"],

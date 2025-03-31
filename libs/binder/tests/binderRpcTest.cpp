@@ -382,7 +382,7 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
                 sockaddr_un addr_un{};
                 addr_un.sun_family = AF_UNIX;
                 strcpy(addr_un.sun_path, serverConfig.addr.c_str());
-                addr = *reinterpret_cast<sockaddr_storage*>(&addr_un);
+                std::memcpy(&addr, &addr_un, sizeof(sockaddr_un));
                 addrLen = sizeof(sockaddr_un);
 
                 status = session->setupPreconnectedClient({}, [=]() {
@@ -394,7 +394,7 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
                 sockaddr_un addr_un{};
                 addr_un.sun_family = AF_UNIX;
                 strcpy(addr_un.sun_path, serverConfig.addr.c_str());
-                addr = *reinterpret_cast<sockaddr_storage*>(&addr_un);
+                std::memcpy(&addr, &addr_un, sizeof(sockaddr_un));
                 addrLen = sizeof(sockaddr_un);
 
                 status = session->setupUnixDomainClient(serverConfig.addr.c_str());
@@ -409,7 +409,7 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
                         .svm_port = static_cast<unsigned int>(serverInfo.port),
                         .svm_cid = VMADDR_CID_LOCAL,
                 };
-                addr = *reinterpret_cast<sockaddr_storage*>(&addr_vm);
+                std::memcpy(&addr, &addr_vm, sizeof(sockaddr_vm));
                 addrLen = sizeof(sockaddr_vm);
 
                 status = session->setupVsockClient(VMADDR_CID_LOCAL, serverInfo.port);
@@ -420,7 +420,7 @@ std::unique_ptr<ProcessSession> BinderRpc::createRpcTestSocketServerProcessEtc(
                 addr_in.sin_family = AF_INET;
                 addr_in.sin_port = htons(serverInfo.port);
                 inet_aton(ip_addr.c_str(), &addr_in.sin_addr);
-                addr = *reinterpret_cast<sockaddr_storage*>(&addr_in);
+                std::memcpy(&addr, &addr_in, sizeof(sockaddr_in));
                 addrLen = sizeof(sockaddr_in);
 
                 status = session->setupInetClient(ip_addr.c_str(), serverInfo.port);

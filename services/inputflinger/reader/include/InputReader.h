@@ -118,6 +118,8 @@ public:
 
     std::optional<std::string> getBluetoothAddress(int32_t deviceId) const override;
 
+    std::filesystem::path getSysfsRootPath(int32_t deviceId) const override;
+
     void sysfsNodeChanged(const std::string& sysfsNodePath) override;
 
     DeviceId getLastUsedInputDeviceId() override;

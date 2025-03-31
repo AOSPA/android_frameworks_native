@@ -97,8 +97,8 @@ void QtiOutputExtension::qtiWriteLayerFlagToHWC(HWC2::Layer* layer, const Output
     }
 }
 
-void QtiOutputExtension::qtiSetLayerAsMask(DisplayId id, uint64_t layerId) {
-    const auto physicalDisplayId = PhysicalDisplayId::tryCast(id);
+void QtiOutputExtension::qtiSetLayerAsMask(DisplayIdVariant id, uint64_t layerId) {
+    const auto physicalDisplayId = asPhysicalDisplayId(id);
     auto ce =  QtiExtensionContext::instance().getCompositionEngine();
 
     if (ce && physicalDisplayId) {

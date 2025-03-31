@@ -30,7 +30,7 @@ struct ScreenCaptureOutputArgs {
     ui::LayerStack layerStack;
     Rect sourceCrop;
     std::shared_ptr<renderengine::ExternalTexture> buffer;
-    std::optional<DisplayId> displayId;
+    ftl::Optional<DisplayIdVariant> displayIdVariant;
     ui::Size reqBufferSize;
     float sdrWhitePointNits;
     float displayBrightnessNits;
@@ -51,7 +51,7 @@ struct ScreenCaptureOutputArgs {
 // SurfaceFlinger::captureLayers and SurfaceFlinger::captureDisplay.
 class ScreenCaptureOutput : public compositionengine::impl::Output {
 public:
-    ScreenCaptureOutput(const Rect sourceCrop, std::optional<DisplayId> displayId,
+    ScreenCaptureOutput(const Rect sourceCrop, ftl::Optional<DisplayIdVariant> displayIdVariant,
                         const compositionengine::Output::ColorProfile& colorProfile,
                         float layerAlpha, bool regionSampling,
                         bool dimInGammaSpaceForEnhancedScreenshots, bool enableLocalTonemapping);
@@ -70,7 +70,7 @@ protected:
 private:
     std::unordered_map<int32_t, aidl::android::hardware::graphics::composer3::Luts> generateLuts();
     const Rect mSourceCrop;
-    const std::optional<DisplayId> mDisplayId;
+    const ftl::Optional<DisplayIdVariant> mDisplayIdVariant;
     const compositionengine::Output::ColorProfile& mColorProfile;
     const float mLayerAlpha;
     const bool mRegionSampling;

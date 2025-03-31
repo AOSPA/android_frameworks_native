@@ -19,10 +19,13 @@
 #include "NotifyArgsBuilders.h"
 #include "android/input.h"
 
+#include <vector>
+
 #include <android-base/logging.h>
 #include <android-base/properties.h>
 #include <binder/Binder.h>
 #include <gtest/gtest.h>
+#include <input/InputDevice.h>
 #include <input/PrintTools.h>
 #include <inttypes.h>
 #include <linux/input.h>
@@ -49,11 +52,6 @@ static InputDeviceInfo generateTestDeviceInfo(uint16_t vendorId, uint16_t produc
     info.initialize(deviceId, /*generation=*/1, /*controllerNumber=*/1, identifier, "Test Device",
                     /*isExternal=*/false, /*hasMic=*/false, ui::LogicalDisplayId::INVALID);
     return info;
-}
-
-void setDefaultInputDeviceInfo(LatencyTracker& tracker) {
-    InputDeviceInfo deviceInfo = generateTestDeviceInfo(/*vendorId=*/0, /*productId=*/0, DEVICE_ID);
-    tracker.setInputDevices({deviceInfo});
 }
 
 const auto FIRST_TOUCH_POINTER = PointerBuilder(/*id=*/0, ToolType::FINGER).x(100).y(200);
@@ -120,13 +118,14 @@ protected:
     std::unique_ptr<LatencyTracker> mTracker;
     sp<IBinder> connection1;
     sp<IBinder> connection2;
+    std::vector<InputDeviceInfo> inputDevices;
 
     void SetUp() override {
         connection1 = sp<BBinder>::make();
         connection2 = sp<BBinder>::make();
 
-        mTracker = std::make_unique<LatencyTracker>(*this);
-        setDefaultInputDeviceInfo(*mTracker);
+        inputDevices.push_back(generateTestDeviceInfo(/*vendorId=*/0, /*productId=*/0, DEVICE_ID));
+        mTracker = std::make_unique<LatencyTracker>(*this, inputDevices);
     }
     void TearDown() override {}
 
@@ -139,6 +138,10 @@ protected:
      * what we expected.
      */
     void assertReceivedTimelines(const std::vector<InputEventTimeline>& timelines);
+
+    void updateInputDevices(const std::vector<InputDeviceInfo>& inputDevicesUpdated) {
+        inputDevices = inputDevicesUpdated;
+    }
 
 private:
     void processTimeline(const InputEventTimeline& timeline) override {
@@ -448,7 +451,7 @@ TEST_F(LatencyTrackerTest, TrackListenerCheck_DeviceInfoFieldsInputEventTimeline
     deviceInfo2.addSource(AINPUT_SOURCE_TOUCHSCREEN);
     deviceInfo2.addSource(AINPUT_SOURCE_STYLUS);
 
-    mTracker->setInputDevices({deviceInfo1, deviceInfo2});
+    updateInputDevices({deviceInfo1, deviceInfo2});
     mTracker->trackListener(
             MotionArgsBuilder(AMOTION_EVENT_ACTION_CANCEL,
                               AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_STYLUS, inputEventId)

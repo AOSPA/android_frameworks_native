@@ -93,6 +93,7 @@ filegroup {
         "android/gui/StalledTransactionInfo.aidl",
         "android/**/TouchOcclusionMode.aidl",
         "android/gui/TrustedOverlay.aidl",
+        "android/gui/BorderSettings.aidl",
     ],
 }
 
@@ -298,7 +299,6 @@ cc_defaults {
         "libgui_bufferqueue-defaults",
         "libguiextension_defaults",
     ],
-    srcs: [":libgui-sources"],
     static_libs: [
         "libgui_aidl_static",
         "libgui_window_info_static",
@@ -321,6 +321,10 @@ cc_library_shared {
 
     defaults: [
         "libgui-defaults",
+    ],
+
+    srcs: [
+        ":libgui-sources",
     ],
 
     export_static_lib_headers: [

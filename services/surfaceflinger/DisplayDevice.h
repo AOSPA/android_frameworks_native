@@ -31,6 +31,8 @@
 #include <android-base/thread_annotations.h>
 #include <android/native_window.h>
 #include <binder/IBinder.h>
+#include <compositionengine/Display.h>
+#include <compositionengine/DisplaySurface.h>
 #include <gui/LayerState.h>
 #include <math/mat4.h>
 #include <renderengine/RenderEngine.h>
@@ -69,11 +71,6 @@ class SurfaceFlinger;
 struct CompositionInfo;
 struct DisplayDeviceCreationArgs;
 
-namespace compositionengine {
-class Display;
-class DisplaySurface;
-} // namespace compositionengine
-
 namespace display {
 class DisplaySnapshot;
 } // namespace display
@@ -103,7 +100,7 @@ public:
         return mCompositionDisplay;
     }
 
-    bool isVirtual() const { return getId().isVirtual(); }
+    bool isVirtual() const;
     bool isPrimary() const { return mIsPrimary; }
 
     // isSecure indicates whether this display can be trusted to display
@@ -141,17 +138,30 @@ public:
 
     DisplayId getId() const;
 
+    DisplayIdVariant getDisplayIdVariant() const {
+        const auto idVariant = mCompositionDisplay->getDisplayIdVariant();
+        LOG_FATAL_IF(!idVariant);
+        return *idVariant;
+    }
+
+    std::optional<VirtualDisplayIdVariant> getVirtualDisplayIdVariant() const {
+        return ftl::match(
+                getDisplayIdVariant(),
+                [](PhysicalDisplayId) { return std::optional<VirtualDisplayIdVariant>(); },
+                [](auto id) { return std::optional<VirtualDisplayIdVariant>(id); });
+    }
+
     // Shorthand to upcast the ID of a display whose type is known as a precondition.
     PhysicalDisplayId getPhysicalId() const {
-        const auto id = PhysicalDisplayId::tryCast(getId());
-        LOG_FATAL_IF(!id);
-        return *id;
+        const auto physicalDisplayId = asPhysicalDisplayId(getDisplayIdVariant());
+        LOG_FATAL_IF(!physicalDisplayId);
+        return *physicalDisplayId;
     }
 
     VirtualDisplayId getVirtualId() const {
-        const auto id = VirtualDisplayId::tryCast(getId());
-        LOG_FATAL_IF(!id);
-        return *id;
+        const auto virtualDisplayId = asVirtualDisplayId(getDisplayIdVariant());
+        LOG_FATAL_IF(!virtualDisplayId);
+        return *virtualDisplayId;
     }
 
     const wp<IBinder>& getDisplayToken() const { return mDisplayToken; }

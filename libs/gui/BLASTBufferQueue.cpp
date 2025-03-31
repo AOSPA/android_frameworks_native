@@ -976,15 +976,22 @@ public:
           : Surface(igbp, controlledByApp, scHandle), mBbq(bbq) {}
 
     void allocateBuffers() override {
+        ATRACE_CALL();
         uint32_t reqWidth = mReqWidth ? mReqWidth : mUserWidth;
         uint32_t reqHeight = mReqHeight ? mReqHeight : mUserHeight;
         auto gbp = getIGraphicBufferProducer();
-        std::thread ([reqWidth, reqHeight, gbp=getIGraphicBufferProducer(),
-                      reqFormat=mReqFormat, reqUsage=mReqUsage] () {
+        std::thread allocateThread([reqWidth, reqHeight, gbp = getIGraphicBufferProducer(),
+                                    reqFormat = mReqFormat, reqUsage = mReqUsage]() {
+            if (com_android_graphics_libgui_flags_allocate_buffer_priority()) {
+                androidSetThreadName("allocateBuffers");
+                pid_t tid = gettid();
+                androidSetThreadPriority(tid, ANDROID_PRIORITY_DISPLAY);
+            }
+
             gbp->allocateBuffers(reqWidth, reqHeight,
                                  reqFormat, reqUsage);
-
-        }).detach();
+        });
+        allocateThread.detach();
     }
 
     status_t setFrameRate(float frameRate, int8_t compatibility,
@@ -1064,7 +1071,7 @@ void BLASTBufferQueue::mergeWithNextTransaction(SurfaceComposerClient::Transacti
         // Apply the transaction since we have already acquired the desired frame.
         t->setApplyToken(mApplyToken).apply();
     } else {
-        mPendingTransactions.emplace_back(frameNumber, *t);
+        mPendingTransactions.emplace_back(frameNumber, std::move(*t));
         // Clear the transaction so it can't be applied elsewhere.
         t->clear();
     }
@@ -1082,8 +1089,8 @@ void BLASTBufferQueue::applyPendingTransactions(uint64_t frameNumber) {
 void BLASTBufferQueue::mergePendingTransactions(SurfaceComposerClient::Transaction* t,
                                                 uint64_t frameNumber) {
     auto mergeTransaction =
-            [&t, currentFrameNumber = frameNumber](
-                    std::tuple<uint64_t, SurfaceComposerClient::Transaction> pendingTransaction) {
+            [t, currentFrameNumber = frameNumber](
+                    std::pair<uint64_t, SurfaceComposerClient::Transaction>& pendingTransaction) {
                 auto& [targetFrameNumber, transaction] = pendingTransaction;
                 if (currentFrameNumber < targetFrameNumber) {
                     return false;

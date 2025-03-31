@@ -191,6 +191,8 @@ protected:
 #endif
     virtual int getSlotForBufferLocked(const sp<GraphicBuffer>& buffer);
 
+    virtual void onBuffersReleasedLocked();
+
     virtual status_t detachBufferLocked(int slotIndex);
 
     // freeBufferLocked frees up the given buffer slot.  If the slot has been

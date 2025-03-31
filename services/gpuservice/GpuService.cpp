@@ -147,7 +147,7 @@ void GpuService::toggleAngleAsSystemDriver(bool enabled) {
 }
 
 FeatureOverrides GpuService::getFeatureOverrides() {
-    if (!graphicsenv_flags::feature_overrides()) {
+    if (!graphicsenv_flags::angle_feature_overrides()) {
         FeatureOverrides featureOverrides;
         return featureOverrides;
     }
@@ -183,7 +183,7 @@ status_t GpuService::shellCommand(int /*in*/, int out, int err, std::vector<Stri
         ALOGV("  arg[%zu]: '%s'", i, String8(args[i]).c_str());
 
     if (!args.empty()) {
-        if (graphicsenv_flags::feature_overrides()) {
+        if (graphicsenv_flags::angle_feature_overrides()) {
             if (args[0] == String16("featureOverrides"))
                 return cmdFeatureOverrides(out, err);
         }
@@ -267,7 +267,7 @@ status_t cmdHelp(int out) {
             "GPU Service commands:\n"
             "  vkjson      dump Vulkan properties as JSON\n"
             "  vkprofiles  print support for select Vulkan profiles\n");
-    if (graphicsenv_flags::feature_overrides()) {
+    if (graphicsenv_flags::angle_feature_overrides()) {
         fprintf(outs,
                 "  featureOverrides  update and output gpuservice's feature overrides\n");
     }

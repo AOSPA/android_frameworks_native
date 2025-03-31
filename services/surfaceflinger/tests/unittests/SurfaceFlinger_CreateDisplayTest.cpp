@@ -50,9 +50,9 @@ public:
         EXPECT_EQ(display.requestedRefreshRate, Fps::fromValue(requestedRefreshRate));
         EXPECT_EQ(name.c_str(), display.displayName);
 
-        const VirtualDisplayId vid = GpuVirtualDisplayId(baseId);
         sp<DisplayDevice> device =
-                mFlinger.createVirtualDisplayDevice(displayToken, vid, requestedRefreshRate);
+                mFlinger.createVirtualDisplayDevice(displayToken, GpuVirtualDisplayId(baseId),
+                                                    requestedRefreshRate);
 
         EXPECT_TRUE(device->isVirtual());
         device->adjustRefreshRate(Fps::fromValue(pacesetterDisplayRefreshRate));

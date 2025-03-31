@@ -152,6 +152,8 @@ public:
     MOCK_METHOD(int32_t, getMaxLayerPictureProfiles, (PhysicalDisplayId));
     MOCK_METHOD(status_t, setDisplayPictureProfileHandle,
                 (PhysicalDisplayId, const PictureProfileHandle&));
+    MOCK_METHOD(status_t, startHdcpNegotiation,
+                (PhysicalDisplayId, const aidl::android::hardware::drm::HdcpLevels&));
     MOCK_METHOD(status_t, getLuts,
                 (PhysicalDisplayId, const std::vector<sp<GraphicBuffer>>&,
                  std::vector<aidl::android::hardware::graphics::composer3::Luts>*));

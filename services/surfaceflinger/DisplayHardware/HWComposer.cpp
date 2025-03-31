@@ -873,8 +873,8 @@ mat4 HWComposer::getDataspaceSaturationMatrix(HalDisplayId displayId, ui::Datasp
     RETURN_IF_INVALID_DISPLAY(displayId, {});
 
     mat4 matrix;
-    auto error = mDisplayData[displayId].hwcDisplay->getDataspaceSaturationMatrix(dataspace,
-            &matrix);
+    auto error =
+            mDisplayData[displayId].hwcDisplay->getDataspaceSaturationMatrix(dataspace, &matrix);
     RETURN_IF_HWC_ERROR(error, displayId, {});
     return matrix;
 }
@@ -1100,6 +1100,15 @@ status_t HWComposer::setDisplayPictureProfileHandle(PhysicalDisplayId displayId,
     if (error != hal::Error::UNSUPPORTED) {
         RETURN_IF_HWC_ERROR(error, displayId, INVALID_OPERATION);
     }
+    return NO_ERROR;
+}
+
+status_t HWComposer::startHdcpNegotiation(PhysicalDisplayId displayId,
+                                          const aidl::android::hardware::drm::HdcpLevels& levels) {
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    auto& hwcDisplay = mDisplayData[displayId].hwcDisplay;
+    auto error = hwcDisplay->startHdcpNegotiation(levels);
+    RETURN_IF_HWC_ERROR(error, displayId, UNKNOWN_ERROR);
     return NO_ERROR;
 }
 
