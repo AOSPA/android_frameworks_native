@@ -1,4 +1,4 @@
-/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -142,6 +142,7 @@ public:
     bool qtiLatchMediaContent(sp<Layer> layer) override;
     void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) override;
     void qtiOnComposerHalRefresh() override;
+    bool qtiSupportsBackgroundBlur() override;
 
     /*
      * Methods that call the FeatureManager APIs.

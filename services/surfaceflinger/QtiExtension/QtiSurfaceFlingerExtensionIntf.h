@@ -1,4 +1,4 @@
-/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -41,6 +41,7 @@ enum QtiFeature {
     kWorkDurations,
     kSmomoOptimalRefreshRate,
     kIdleFallback,
+    kSupportsBackgroundBlur,
 };
 
 class QtiSurfaceFlingerExtensionIntf {
@@ -75,6 +76,7 @@ public:
     virtual bool qtiLatchMediaContent(sp<Layer> layer) = 0;
     virtual void qtiUpdateBufferData(bool qtiLatchMediaContent, const layer_state_t& s) = 0;
     virtual void qtiOnComposerHalRefresh() = 0;
+    virtual bool qtiSupportsBackgroundBlur() = 0;
 
     /*
      * Methods that call the FeatureManager APIs.

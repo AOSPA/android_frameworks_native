@@ -1,4 +1,4 @@
-/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -61,6 +61,7 @@ private:
     bool mQtiVsyncSourceReliableOnDoze = false;
     bool mQtiEnableSmomoOptimalRefreshRate = false;
     bool mQtiAllowIdleFallback = false;
+    bool mQtiSupportsBackgroundBlur = true;
 };
 
 } // namespace surfaceflingerextension

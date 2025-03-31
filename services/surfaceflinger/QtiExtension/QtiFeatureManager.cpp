@@ -1,4 +1,4 @@
-/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
@@ -92,6 +92,10 @@ void QtiFeatureManager::qtiInit() {
     propName = qtiGetPropName(kIdleFallback);
     mQtiAllowIdleFallback = base::GetBoolProperty(propName, false);
     ALOGI_IF(mQtiAllowIdleFallback, "Allow idle fallback");
+
+    propName = qtiGetPropName(kSupportsBackgroundBlur);
+    mQtiSupportsBackgroundBlur = base::GetBoolProperty(propName, true);
+    ALOGI_IF(mQtiSupportsBackgroundBlur, "Supports Background Blur");
 }
 
 void QtiFeatureManager::qtiSetIDisplayConfig(std::shared_ptr<IDisplayConfig> aidl) {
@@ -152,6 +156,8 @@ bool QtiFeatureManager::qtiIsExtensionFeatureEnabled(QtiFeature feature) {
             return mQtiEnableSmomoOptimalRefreshRate;
         case QtiFeature::kIdleFallback:
             return mQtiAllowIdleFallback;
+        case QtiFeature::kSupportsBackgroundBlur:
+            return mQtiSupportsBackgroundBlur;
         default:
             ALOGW("Queried unknown SF extension feature %d", feature);
             return false;
@@ -194,6 +200,8 @@ string QtiFeatureManager::qtiGetPropName(QtiFeature feature) {
             return "vendor.display.enable_optimal_refresh_rate";
         case QtiFeature::kIdleFallback:
             return "vendor.display.enable_allow_idle_fallback";
+        case QtiFeature::kSupportsBackgroundBlur:
+            return "vendor.display.supports_background_blur";
         default:
             ALOGW("Queried unknown SF extension feature %d", feature);
             return "";

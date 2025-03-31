@@ -16,7 +16,7 @@
 
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
- * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -546,6 +546,11 @@ SurfaceFlinger::SurfaceFlinger(Factory& factory) : SurfaceFlinger(factory, SkipI
     mQtiSFExtnIntf = surfaceflingerextension::qtiCreateSurfaceFlingerExtension(this);
     surfaceflingerextension::QtiExtensionContext::instance().setQtiSurfaceFlingerExtn(mQtiSFExtnIntf);
     mQtiSFExtnIntf->qtiInit(this);
+
+    bool qtiSupportsBlurs = mQtiSFExtnIntf->qtiSupportsBackgroundBlur();
+    mSupportsBlur = supportsBlurs /* QTI_BEGIN */ && qtiSupportsBlurs /* QTI_END */;
+    ALOGI_IF(!mSupportsBlur, "Disabling blur effects, they are not supported.");
+
     ALOGI("Created SF Extension %p", mQtiSFExtnIntf);
     /* QTI_END */
 
@@ -5620,7 +5625,7 @@ status_t SurfaceFlinger::setTransactionState(
             }
 
             /* QTI_BEGIN */
-            if (*layer->getPendingBufferCounter() > 0 &&
+            if ((layer != nullptr) && (*layer->getPendingBufferCounter() > 0) &&
                 mQtiSFExtnIntf->qtiIsSmomoOptimalRefreshActive() &&
                 lck.owns_lock()) {
                 lck.unlock();
