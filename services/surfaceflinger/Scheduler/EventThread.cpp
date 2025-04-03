@@ -768,6 +768,27 @@ void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
                                   event.vsync.vsyncData.preferredExpectedPresentationTime(),
                                   event.vsync.vsyncData.preferredDeadlineTimestamp());
         }
+	// QTI_BEGIN: 2023-04-19: Display: SF: Add retry to EventThread postEvent
+        bool qtiNeedsRetry = true;
+        for (uint8_t attempt = 0; qtiNeedsRetry && (attempt < num_attempts); attempt++) {
+            switch (consumer->postEvent(copy)) {
+                case NO_ERROR:
+                    qtiNeedsRetry = false;
+                    break;
+                case -EAGAIN:
+                    // TODO: Try again if pipe is full.
+                    ALOGW("Failed dispatching %s for %s", toString(event).c_str(),
+                          toString(*consumer).c_str());
+                    qtiNeedsRetry = true;
+                    break;
+
+                default:
+                    // Treat EPIPE and other errors as fatal.
+                    removeDisplayEventConnectionLocked(consumer);
+                    qtiNeedsRetry = false;
+            }
+	}
+	// QTI_END: 2023-04-19: Display: SF: Add retry to EventThread postEvent
     }
 
     if (event.header.type == DisplayEventType::DISPLAY_EVENT_VSYNC &&
