@@ -756,9 +756,6 @@ void EventThread::generateFrameTimeline(VsyncEventData& outVsyncEventData, nsecs
 
 void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
                                 const DisplayEventConsumers& consumers) {
-// QTI_BEGIN: 2023-04-19: Display: SF: Add retry to EventThread postEvent
-    const uint8_t num_attempts = 3;
-// QTI_END: 2023-04-19: Display: SF: Add retry to EventThread postEvent
     for (const auto& consumer : consumers) {
         DisplayEventReceiver::Event copy = event;
         if (event.header.type == DisplayEventType::DISPLAY_EVENT_VSYNC) {
@@ -767,6 +764,20 @@ void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
             generateFrameTimeline(copy.vsync.vsyncData, frameInterval.ns(), copy.header.timestamp,
                                   event.vsync.vsyncData.preferredExpectedPresentationTime(),
                                   event.vsync.vsyncData.preferredDeadlineTimestamp());
+        }
+        switch (consumer->postEvent(copy)) {
+            case NO_ERROR:
+                break;
+
+            case -EAGAIN:
+                // TODO: Try again if pipe is full.
+                ALOGW("Failed dispatching %s for %s", toString(event).c_str(),
+                      toString(*consumer).c_str());
+                break;
+
+            default:
+                // Treat EPIPE and other errors as fatal.
+                removeDisplayEventConnectionLocked(consumer);
         }
     }
 
