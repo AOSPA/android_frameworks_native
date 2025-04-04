@@ -1049,6 +1049,7 @@ std::optional<android::VirtualDisplayIdVariant> QtiSurfaceFlingerExtension::qtiA
     if (canAllocateHwcForVDS && generator) {
         if (const auto id = generator->generateId()) {
             if (mQtiFlinger->getHwComposer().allocateVirtualDisplay(*id, resolution, &format)) {
+                builder.setId(*id);
                 return *id;
             }
 
@@ -1065,6 +1066,7 @@ std::optional<android::VirtualDisplayIdVariant> QtiSurfaceFlingerExtension::qtiA
         ALOGE("Failed to generate ID for GPU virtual display");
         return std::nullopt;
     }
+    builder.setId(*id);
     return *id;
 }
 
