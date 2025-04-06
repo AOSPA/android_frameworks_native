@@ -1160,6 +1160,10 @@ void QtiSurfaceFlingerExtension::qtiCheckVirtualDisplayHint(const Vector<Display
         return;
     }
 
+    if (displays.size() == 0) {
+      return;
+    }
+
     bool createVirtualDisplay = false;
     int width = 0, height = 0, format = 0;
     {
