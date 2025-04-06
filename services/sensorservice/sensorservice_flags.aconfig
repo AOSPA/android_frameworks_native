@@ -38,3 +38,13 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 }
+
+flag {
+  name: "disable_vndk_forged_name"
+  namespace: "sensors"
+  description: "When this flag is enabled, sensor manager will not use forged name to determine if an access is from VNDK"
+  bug: "398253250"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}

@@ -91,13 +91,13 @@ nsecs_t CompositionEngine::getLastFrameRefreshTimestamp() const {
 
 namespace {
 void offloadOutputs(Outputs& outputs) {
-    if (!FlagManager::getInstance().multithreaded_present() || outputs.size() < 2) {
+    if (outputs.size() < 2) {
         return;
     }
 
     ui::PhysicalDisplayVector<compositionengine::Output*> outputsToOffload;
     for (const auto& output : outputs) {
-        if (!ftl::Optional(output->getDisplayId()).and_then(HalDisplayId::tryCast)) {
+        if (!output->getDisplayIdVariant().and_then(asHalDisplayId<DisplayIdVariant>)) {
             // Not HWC-enabled, so it is always client-composited. No need to offload.
             continue;
         }

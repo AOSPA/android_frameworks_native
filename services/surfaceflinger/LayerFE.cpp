@@ -113,6 +113,8 @@ std::optional<compositionengine::LayerFE::LayerSettings> LayerFE::prepareClientC
     // set the shadow for the layer if needed
     prepareShadowClientComposition(*layerSettings, targetSettings.viewport);
 
+    layerSettings->borderSettings = mSnapshot->borderSettings;
+
     return layerSettings;
 }
 
@@ -120,6 +122,7 @@ std::optional<compositionengine::LayerFE::LayerSettings> LayerFE::prepareClientC
         compositionengine::LayerFE::ClientCompositionTargetSettings& targetSettings) const {
     SFTRACE_CALL();
     compositionengine::LayerFE::LayerSettings layerSettings;
+    layerSettings.geometry.originalBounds = mSnapshot->geomLayerBounds;
     layerSettings.geometry.boundaries =
             reduce(mSnapshot->geomLayerBounds, mSnapshot->transparentRegionHint);
     layerSettings.geometry.positionTransform = mSnapshot->geomLayerTransform.asMatrix4();
@@ -205,7 +208,7 @@ void LayerFE::prepareEffectsClientComposition(
     if (targetSettings.realContentIsVisible && fillsColor()) {
         // Set color for color fill settings.
         layerSettings.source.solidColor = mSnapshot->color.rgb;
-    } else if (hasBlur() || drawShadows()) {
+    } else if (hasBlur() || drawShadows() || hasOutline()) {
         layerSettings.skipContentDraw = true;
     }
 }
@@ -392,6 +395,10 @@ bool LayerFE::hasBlur() const {
     return mSnapshot->backgroundBlurRadius > 0 || mSnapshot->blurRegions.size() > 0;
 }
 
+bool LayerFE::hasOutline() const {
+    return mSnapshot->borderSettings.strokeWidth > 0;
+}
+
 bool LayerFE::drawShadows() const {
     return mSnapshot->shadowSettings.length > 0.f &&
             (mSnapshot->shadowSettings.ambientColor.a > 0 ||
@@ -410,6 +417,15 @@ void LayerFE::setReleaseFence(const FenceResult& releaseFence) {
     if (mReleaseFencePromiseStatus == ReleaseFencePromiseStatus::FULFILLED) {
         return;
     }
+
+    if (releaseFence.has_value()) {
+        if (FlagManager::getInstance().monitor_buffer_fences()) {
+            if (auto strongBuffer = mReleasedBuffer.promote()) {
+                strongBuffer->getDependencyMonitor()
+                        .addAccessCompletion(FenceTime::makeValid(releaseFence.value()), "HWC");
+            }
+        }
+    }
     mReleaseFence.set_value(releaseFence);
     mReleaseFencePromiseStatus = ReleaseFencePromiseStatus::FULFILLED;
 }
@@ -426,6 +442,10 @@ ftl::Future<FenceResult> LayerFE::createReleaseFenceFuture() {
 
 LayerFE::ReleaseFencePromiseStatus LayerFE::getReleaseFencePromiseStatus() {
     return mReleaseFencePromiseStatus;
+}
+
+void LayerFE::setReleasedBuffer(sp<GraphicBuffer> buffer) {
+    mReleasedBuffer = std::move(buffer);
 }
 
 void LayerFE::setLastHwcState(const LayerFE::HwcLayerDebugState &state) {

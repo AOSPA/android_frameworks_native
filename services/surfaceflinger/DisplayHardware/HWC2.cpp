@@ -439,11 +439,8 @@ Error Display::setActiveConfigWithConstraints(hal::HWConfigId configId,
     // FIXME (b/319505580): At least the first config set on an external display must be
     // `setActiveConfig`, so skip over the block that calls `setActiveConfigWithConstraints`
     // for simplicity.
-    const bool connected_display = FlagManager::getInstance().connected_display();
-
     if (isVsyncPeriodSwitchSupported() &&
-        (!connected_display ||
-         getConnectionType().value_opt() != ui::DisplayConnectionType::External)) {
+        getConnectionType().value_opt() != ui::DisplayConnectionType::External) {
         Hwc2::IComposerClient::VsyncPeriodChangeConstraints hwc2Constraints;
         hwc2Constraints.desiredTimeNanos = constraints.desiredTimeNanos;
         hwc2Constraints.seamlessRequired = constraints.seamlessRequired;
@@ -647,7 +644,7 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
                                [](int32_t i, LutProperties j) { return std::make_pair(i, j); });
                 outLuts->emplace_or_replace(layer.get(), lutOffsetsAndProperties);
                 lutFileDescriptorMapper.emplace_or_replace(layer.get(),
-                                                           ndk::ScopedFileDescriptor(
+                                                           ::android::base::unique_fd(
                                                                    layerLut.luts.pfd.release()));
             } else {
                 ALOGE("getRequestedLuts: invalid luts on layer %" PRIu64 " found"
@@ -683,6 +680,11 @@ Error Display::getMaxLayerPictureProfiles(int32_t* outMaxProfiles) {
 
 Error Display::setPictureProfileHandle(const PictureProfileHandle& handle) {
     const auto error = mComposer.setDisplayPictureProfileId(mId, handle.getId());
+    return static_cast<Error>(error);
+}
+
+Error Display::startHdcpNegotiation(const aidl::android::hardware::drm::HdcpLevels& levels) {
+    const auto error = mComposer.startHdcpNegotiation(mId, levels);
     return static_cast<Error>(error);
 }
 

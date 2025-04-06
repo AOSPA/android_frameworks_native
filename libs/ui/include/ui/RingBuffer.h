@@ -19,7 +19,7 @@
 #include <stddef.h>
 #include <array>
 
-namespace android::utils {
+namespace android::ui {
 
 template <class T, size_t SIZE>
 class RingBuffer {
@@ -31,8 +31,8 @@ public:
     ~RingBuffer() = default;
 
     constexpr size_t capacity() const { return SIZE; }
-
     size_t size() const { return mCount; }
+    bool isFull() const { return size() == capacity(); }
 
     T& next() {
         mHead = static_cast<size_t>(mHead + 1) % SIZE;
@@ -67,4 +67,4 @@ private:
     size_t mCount = 0;
 };
 
-} // namespace android::utils
+} // namespace android::ui

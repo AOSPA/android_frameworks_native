@@ -235,7 +235,7 @@ void SetupNewDisplayDeviceInternalTest::setupNewDisplayDeviceInternalTest() {
 
     constexpr auto kConnectionTypeOpt = Case::Display::CONNECTION_TYPE::value;
     if constexpr (kConnectionTypeOpt) {
-        const auto displayId = PhysicalDisplayId::tryCast(Case::Display::DISPLAY_ID::get());
+        const auto displayId = asPhysicalDisplayId(Case::Display::DISPLAY_ID::get());
         ASSERT_TRUE(displayId);
         const auto hwcDisplayId = Case::Display::HWC_DISPLAY_ID_OPT::value;
         ASSERT_TRUE(hwcDisplayId);
@@ -282,7 +282,7 @@ void SetupNewDisplayDeviceInternalTest::setupNewDisplayDeviceInternalTest() {
     // Postconditions
 
     ASSERT_NE(nullptr, device);
-    EXPECT_EQ(Case::Display::DISPLAY_ID::get(), device->getId());
+    EXPECT_EQ(Case::Display::DISPLAY_ID::get(), device->getDisplayIdVariant());
     EXPECT_EQ(static_cast<bool>(Case::Display::VIRTUAL), device->isVirtual());
     EXPECT_EQ(static_cast<bool>(Case::Display::SECURE), device->isSecure());
     EXPECT_EQ(static_cast<bool>(Case::Display::PRIMARY), device->isPrimary());

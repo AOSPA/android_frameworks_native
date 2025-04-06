@@ -50,6 +50,8 @@ namespace android {
 
 class MockInputReaderContext : public InputReaderContext {
 public:
+    std::string dump() override { return "(dump from MockInputReaderContext)"; }
+
     MOCK_METHOD(void, updateGlobalMetaState, (), (override));
     MOCK_METHOD(int32_t, getGlobalMetaState, (), (override));
 
@@ -179,6 +181,7 @@ public:
     MOCK_METHOD(bool, isDeviceEnabled, (int32_t deviceId), (const, override));
     MOCK_METHOD(status_t, enableDevice, (int32_t deviceId), (override));
     MOCK_METHOD(status_t, disableDevice, (int32_t deviceId), (override));
+    MOCK_METHOD(std::filesystem::path, getSysfsRootPath, (int32_t deviceId), (const, override));
     MOCK_METHOD(void, sysfsNodeChanged, (const std::string& sysfsNodePath), (override));
     MOCK_METHOD(bool, setKernelWakeEnabled, (int32_t deviceId, bool enabled), (override));
 };

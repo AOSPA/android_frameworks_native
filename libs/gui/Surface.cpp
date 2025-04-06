@@ -570,7 +570,7 @@ int Surface::hook_dequeueBuffer_DEPRECATED(ANativeWindow* window,
     if (result != OK) {
         return result;
     }
-    sp<Fence> fence(new Fence(fenceFd));
+    sp<Fence> fence = sp<Fence>::make(fenceFd);
     int waitResult = fence->waitForever("dequeueBuffer_DEPRECATED");
     if (waitResult != OK) {
         ALOGE("dequeueBuffer_DEPRECATED: Fence::wait returned an error: %d",
@@ -1053,7 +1053,7 @@ int Surface::cancelBuffer(android_native_buffer_t* buffer,
         }
         return OK;
     }
-    sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
+    sp<Fence> fence(fenceFd >= 0 ? sp<Fence>::make(fenceFd) : Fence::NO_FENCE);
     mGraphicBufferProducer->cancelBuffer(i, fence);
 
     if (mSharedBufferMode && mAutoRefresh && mSharedBufferSlot == i) {
@@ -1091,7 +1091,7 @@ int Surface::cancelBuffers(const std::vector<BatchBuffer>& buffers) {
             ALOGE("%s: cannot find slot number for cancelled buffer", __FUNCTION__);
             badSlotResult = slot;
         } else {
-            sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
+            sp<Fence> fence(fenceFd >= 0 ? sp<Fence>::make(fenceFd) : Fence::NO_FENCE);
             cancelBufferInputs[numBuffersCancelled].slot = slot;
             cancelBufferInputs[numBuffersCancelled++].fence = fence;
         }
@@ -1152,7 +1152,7 @@ void Surface::getQueueBufferInputLocked(android_native_buffer_t* buffer, int fen
     Rect crop(Rect::EMPTY_RECT);
     mCrop.intersect(Rect(buffer->width, buffer->height), &crop);
 
-    sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
+    sp<Fence> fence(fenceFd >= 0 ? sp<Fence>::make(fenceFd) : Fence::NO_FENCE);
     IGraphicBufferProducer::QueueBufferInput input(timestamp, isAutoTimestamp,
             static_cast<android_dataspace>(mDataSpace), crop, mScalingMode,
             mTransform ^ mStickyTransform, fence, mStickyTransform,
@@ -2194,7 +2194,7 @@ bool Surface::transformToDisplayInverse() const {
 }
 
 int Surface::connect(int api) {
-    static sp<SurfaceListener> listener = new StubSurfaceListener();
+    static sp<SurfaceListener> listener = sp<StubSurfaceListener>::make();
     return connect(api, listener);
 }
 
@@ -2212,7 +2212,7 @@ int Surface::connect(int api, const sp<SurfaceListener>& listener, bool reportBu
 
 // QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
     if (listener != nullptr) {
-        mListenerProxy = new ProducerListenerProxy(this, listener);
+        mListenerProxy = sp<ProducerListenerProxy>::make(this, listener);
     }
 
     int err =
@@ -2353,17 +2353,47 @@ int Surface::detachNextBuffer(sp<GraphicBuffer>* outBuffer,
     return NO_ERROR;
 }
 
+int Surface::isBufferOwned(const sp<GraphicBuffer>& buffer, bool* outIsOwned) const {
+    ATRACE_CALL();
+
+    if (buffer == nullptr) {
+        ALOGE("%s: Bad input, buffer was null", __FUNCTION__);
+        return BAD_VALUE;
+    }
+    if (outIsOwned == nullptr) {
+        ALOGE("%s: Bad input, output was null", __FUNCTION__);
+        return BAD_VALUE;
+    }
+
+    Mutex::Autolock lock(mMutex);
+
+    int slot = this->getSlotFromBufferLocked(buffer->getNativeBuffer());
+    if (slot == BAD_VALUE) {
+        ALOGV("%s: Buffer %" PRIu64 " is not owned", __FUNCTION__, buffer->getId());
+        *outIsOwned = false;
+        return NO_ERROR;
+    } else if (slot < 0) {
+        ALOGV("%s: Buffer %" PRIu64 " look up failed (%d)", __FUNCTION__, buffer->getId(), slot);
+        *outIsOwned = false;
+        return slot;
+    }
+
+    *outIsOwned = true;
+    return NO_ERROR;
+}
+
 int Surface::attachBuffer(ANativeWindowBuffer* buffer)
 {
     ATRACE_CALL();
-    ALOGV("Surface::attachBuffer");
+    sp<GraphicBuffer> graphicBuffer(static_cast<GraphicBuffer*>(buffer));
+
+    ALOGV("Surface::attachBuffer bufferId=%" PRIu64, graphicBuffer->getId());
 
     Mutex::Autolock lock(mMutex);
     if (mReportRemovedBuffers) {
         mRemovedBuffers.clear();
     }
 
-    sp<GraphicBuffer> graphicBuffer(static_cast<GraphicBuffer*>(buffer));
     uint32_t priorGeneration = graphicBuffer->mGenerationNumber;
     graphicBuffer->mGenerationNumber = mGenerationNumber;
     int32_t attachedSlot = -1;

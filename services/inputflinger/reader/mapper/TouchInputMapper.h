@@ -348,6 +348,8 @@ protected:
         inline void clear() { *this = RawState(); }
     };
 
+    friend std::ostream& operator<<(std::ostream& out, const RawState& state);
+
     struct CookedState {
         // Cooked pointer sample data.
         CookedPointerData cookedPointerData{};

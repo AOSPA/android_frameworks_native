@@ -130,7 +130,13 @@ os::ServiceWithMetadata createServiceWithMetadata(const sp<IBinder>& service, bo
 
 bool BinderCacheWithInvalidation::isClientSideCachingEnabled(const std::string& serviceName) {
     sp<ProcessState> self = ProcessState::selfOrNull();
-    if (!self || self->getThreadPoolMaxTotalThreadCount() <= 0) {
+    // Should not cache if process state could not be found, or if thread pool
+    // max could is not greater than zero.
+    if (!self) {
+        ALOGW("Service retrieved before binder threads started. If they are to be started, "
+              "consider starting binder threads earlier.");
+        return false;
+    } else if (self->getThreadPoolMaxTotalThreadCount() <= 0) {
         ALOGW("Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be "
               "implemented. serviceName: %s",
               serviceName.c_str());

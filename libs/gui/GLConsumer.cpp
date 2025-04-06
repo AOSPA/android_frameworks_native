@@ -37,6 +37,7 @@
 #include <gui/DebugEGLImageTracker.h>
 #include <gui/GLConsumer.h>
 #include <gui/ISurfaceComposer.h>
+#include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
 
 #include <private/gui/ComposerService.h>
@@ -99,6 +100,50 @@ static bool hasEglProtectedContent() {
     // function is called.
     static bool hasIt = hasEglProtectedContentImpl();
     return hasIt;
+}
+
+std::tuple<sp<GLConsumer>, sp<Surface>> GLConsumer::create(uint32_t tex, uint32_t textureTarget,
+                                                           bool useFenceSync,
+                                                           bool isControlledByApp) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+    sp<GLConsumer> consumer =
+            sp<GLConsumer>::make(tex, textureTarget, useFenceSync, isControlledByApp);
+    return {consumer, consumer->getSurface()};
+#else
+    sp<IGraphicBufferProducer> igbp;
+    sp<IGraphicBufferConsumer> igbc;
+    BufferQueue::createBufferQueue(&igbp, &igbc);
+
+    return {sp<GLConsumer>::make(igbc, tex, textureTarget, useFenceSync, isControlledByApp),
+            sp<Surface>::make(igbp, isControlledByApp)};
+#endif
+}
+
+std::tuple<sp<GLConsumer>, sp<Surface>> GLConsumer::create(uint32_t textureTarget,
+                                                           bool useFenceSync,
+                                                           bool isControlledByApp) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+    sp<GLConsumer> consumer = sp<GLConsumer>::make(textureTarget, useFenceSync, isControlledByApp);
+    return {consumer, consumer->getSurface()};
+#else
+    sp<IGraphicBufferProducer> igbp;
+    sp<IGraphicBufferConsumer> igbc;
+    BufferQueue::createBufferQueue(&igbp, &igbc);
+
+    return {sp<GLConsumer>::make(igbc, textureTarget, useFenceSync, isControlledByApp),
+            sp<Surface>::make(igbp, isControlledByApp)};
+#endif
+}
+
+sp<GLConsumer> GLConsumer::create(const sp<IGraphicBufferConsumer>& bq, uint32_t tex,
+                                  uint32_t textureTarget, bool useFenceSync,
+                                  bool isControlledByApp) {
+    return sp<GLConsumer>::make(bq, tex, textureTarget, useFenceSync, isControlledByApp);
+}
+
+sp<GLConsumer> GLConsumer::create(const sp<IGraphicBufferConsumer>& bq, uint32_t textureTarget,
+                                  bool useFenceSync, bool isControlledByApp) {
+    return sp<GLConsumer>::make(bq, textureTarget, useFenceSync, isControlledByApp);
 }
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
@@ -333,7 +378,7 @@ status_t GLConsumer::releaseTexImage() {
         }
 
         if (mReleasedTexImage == nullptr) {
-            mReleasedTexImage = new EglImage(getDebugTexImageBuffer());
+            mReleasedTexImage = sp<EglImage>::make(getDebugTexImageBuffer());
         }
 
         mCurrentTexture = BufferQueue::INVALID_BUFFER_SLOT;
@@ -365,10 +410,10 @@ sp<GraphicBuffer> GLConsumer::getDebugTexImageBuffer() {
     if (CC_UNLIKELY(sReleasedTexImageBuffer == nullptr)) {
         // The first time, create the debug texture in case the application
         // continues to use it.
-        sp<GraphicBuffer> buffer = new GraphicBuffer(
-                kDebugData.width, kDebugData.height, PIXEL_FORMAT_RGBA_8888,
-                DEFAULT_USAGE_FLAGS | GraphicBuffer::USAGE_SW_WRITE_RARELY,
-                "[GLConsumer debug texture]");
+        sp<GraphicBuffer> buffer =
+                sp<GraphicBuffer>::make(kDebugData.width, kDebugData.height, PIXEL_FORMAT_RGBA_8888,
+                                        DEFAULT_USAGE_FLAGS | GraphicBuffer::USAGE_SW_WRITE_RARELY,
+                                        "[GLConsumer debug texture]");
         uint32_t* bits;
         buffer->lock(GraphicBuffer::USAGE_SW_WRITE_RARELY, reinterpret_cast<void**>(&bits));
         uint32_t stride = buffer->getStride();
@@ -400,7 +445,7 @@ status_t GLConsumer::acquireBufferLocked(BufferItem *item,
     // replaces any old EglImage with a new one (using the new buffer).
     if (item->mGraphicBuffer != nullptr) {
         int slot = item->mSlot;
-        mEglSlots[slot].mEglImage = new EglImage(item->mGraphicBuffer);
+        mEglSlots[slot].mEglImage = sp<EglImage>::make(item->mGraphicBuffer);
     }
 
     return NO_ERROR;
@@ -737,7 +782,7 @@ status_t GLConsumer::syncForReleaseLocked(EGLDisplay dpy) {
                         "fd: %#x", eglGetError());
                 return UNKNOWN_ERROR;
             }
-            sp<Fence> fence(new Fence(fenceFd));
+            sp<Fence> fence = sp<Fence>::make(fenceFd);
             status_t err = addReleaseFenceLocked(mCurrentTexture,
                     mCurrentTextureImage->graphicBuffer(), fence);
             if (err != OK) {

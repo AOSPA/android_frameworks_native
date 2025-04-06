@@ -26,8 +26,9 @@
 #include <server_configurable_flags/get_flags.h>
 #include <cinttypes>
 
-#include <android_os.h>
+#include <android_companion_virtualdevice_flags.h>
 #include <android_hardware_flags.h>
+#include <android_os.h>
 #include <com_android_graphics_libgui_flags.h>
 #include <com_android_graphics_surfaceflinger_flags.h>
 #include <com_android_server_display_feature_flags.h>
@@ -125,9 +126,12 @@ void FlagManager::dump(std::string& result) const {
     DUMP_ACONFIG_FLAG(adpf_gpu_sf);
     DUMP_ACONFIG_FLAG(adpf_native_session_manager);
     DUMP_ACONFIG_FLAG(adpf_use_fmq_channel);
+    DUMP_ACONFIG_FLAG(correct_virtual_display_power_state);
     DUMP_ACONFIG_FLAG(graphite_renderengine_preview_rollout);
     DUMP_ACONFIG_FLAG(increase_missed_frame_jank_threshold);
+    DUMP_ACONFIG_FLAG(monitor_buffer_fences);
     DUMP_ACONFIG_FLAG(refresh_rate_overlay_on_external_display);
+    DUMP_ACONFIG_FLAG(vsync_predictor_recovery);
 
     /// Trunk stable readonly flags ///
     /// IMPORTANT - please keep alphabetize to reduce merge conflicts
@@ -138,7 +142,6 @@ void FlagManager::dump(std::string& result) const {
     DUMP_ACONFIG_FLAG(begone_bright_hlg);
     DUMP_ACONFIG_FLAG(cache_when_source_crop_layer_only_moved);
     DUMP_ACONFIG_FLAG(commit_not_composited);
-    DUMP_ACONFIG_FLAG(connected_display);
     DUMP_ACONFIG_FLAG(connected_display_hdr);
     DUMP_ACONFIG_FLAG(correct_dpi_with_display_size);
     DUMP_ACONFIG_FLAG(deprecate_frame_tracker);
@@ -158,11 +161,11 @@ void FlagManager::dump(std::string& result) const {
     DUMP_ACONFIG_FLAG(game_default_frame_rate);
     DUMP_ACONFIG_FLAG(graphite_renderengine);
     DUMP_ACONFIG_FLAG(hdcp_level_hal);
+    DUMP_ACONFIG_FLAG(hdcp_negotiation);
     DUMP_ACONFIG_FLAG(idle_screen_refresh_rate_timeout);
     DUMP_ACONFIG_FLAG(latch_unsignaled_with_auto_refresh_changed);
     DUMP_ACONFIG_FLAG(local_tonemap_screenshots);
     DUMP_ACONFIG_FLAG(misc1);
-    DUMP_ACONFIG_FLAG(multithreaded_present);
     DUMP_ACONFIG_FLAG(no_vsyncs_on_screen_off);
     DUMP_ACONFIG_FLAG(override_trusted_overlay);
     DUMP_ACONFIG_FLAG(protected_if_client);
@@ -251,14 +254,13 @@ FLAG_MANAGER_LEGACY_SERVER_FLAG(use_skia_tracing, PROPERTY_SKIA_ATRACE_ENABLED,
 /// Trunk stable readonly flags ///
 FLAG_MANAGER_ACONFIG_FLAG(adpf_fmq_sf, "")
 FLAG_MANAGER_ACONFIG_FLAG(arr_setframerate_gte_enum, "debug.sf.arr_setframerate_gte_enum")
-FLAG_MANAGER_ACONFIG_FLAG(connected_display, "")
 FLAG_MANAGER_ACONFIG_FLAG(enable_small_area_detection, "")
 FLAG_MANAGER_ACONFIG_FLAG(stable_edid_ids, "debug.sf.stable_edid_ids")
 FLAG_MANAGER_ACONFIG_FLAG(frame_rate_category_mrr, "debug.sf.frame_rate_category_mrr")
 FLAG_MANAGER_ACONFIG_FLAG(misc1, "")
 FLAG_MANAGER_ACONFIG_FLAG(vrr_config, "debug.sf.enable_vrr_config")
 FLAG_MANAGER_ACONFIG_FLAG(hdcp_level_hal, "")
-FLAG_MANAGER_ACONFIG_FLAG(multithreaded_present, "debug.sf.multithreaded_present")
+FLAG_MANAGER_ACONFIG_FLAG(hdcp_negotiation, "debug.sf.hdcp_negotiation");
 FLAG_MANAGER_ACONFIG_FLAG(add_sf_skipped_frames_to_trace, "")
 FLAG_MANAGER_ACONFIG_FLAG(use_known_refresh_rate_for_fps_consistency, "")
 FLAG_MANAGER_ACONFIG_FLAG(cache_when_source_crop_layer_only_moved,
@@ -304,9 +306,13 @@ FLAG_MANAGER_ACONFIG_FLAG(adpf_gpu_sf, "")
 FLAG_MANAGER_ACONFIG_FLAG(adpf_native_session_manager, "");
 FLAG_MANAGER_ACONFIG_FLAG(graphite_renderengine_preview_rollout, "");
 FLAG_MANAGER_ACONFIG_FLAG(increase_missed_frame_jank_threshold, "");
+FLAG_MANAGER_ACONFIG_FLAG(monitor_buffer_fences, "");
+FLAG_MANAGER_ACONFIG_FLAG(vsync_predictor_recovery, "");
 
 /// Trunk stable server (R/W) flags from outside SurfaceFlinger ///
 FLAG_MANAGER_ACONFIG_FLAG_IMPORTED(adpf_use_fmq_channel, "", android::os)
+FLAG_MANAGER_ACONFIG_FLAG_IMPORTED(correct_virtual_display_power_state, "",
+                                   android::companion::virtualdevice::flags)
 
 /// Trunk stable readonly flags from outside SurfaceFlinger ///
 FLAG_MANAGER_ACONFIG_FLAG_IMPORTED(idle_screen_refresh_rate_timeout, "",

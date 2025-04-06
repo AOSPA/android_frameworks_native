@@ -172,6 +172,7 @@ class DisplaySurface;
 class OutputLayer;
 
 struct CompositionRefreshArgs;
+class DisplayCreationArgsBuilder;
 } // namespace compositionengine
 
 namespace renderengine {
@@ -237,11 +238,9 @@ public:
     SurfaceFlinger(surfaceflinger::Factory&, SkipInitializationTag) ANDROID_API;
     explicit SurfaceFlinger(surfaceflinger::Factory&) ANDROID_API;
 
-    // set main thread scheduling policy
-    static status_t setSchedFifo(bool enabled) ANDROID_API;
-
-    // set main thread scheduling attributes
-    static status_t setSchedAttr(bool enabled);
+    // Set scheduling policy and attributes of main thread.
+    static void setSchedFifo(bool enabled, const char* whence);
+    static void setSchedAttr(bool enabled, const char* whence);
 
     static char const* getServiceName() ANDROID_API { return "SurfaceFlinger"; }
 
@@ -265,6 +264,11 @@ public:
     // Controls the minimum acquired buffers SurfaceFlinger will suggest via
     // ISurfaceComposer.getMaxAcquiredBufferCount().
     static int64_t minAcquiredBuffers;
+
+    // Controls the maximum acquired buffers SurfaceFlinger will suggest via
+    // ISurfaceComposer.getMaxAcquiredBufferCount().
+    // Value is set through ro.surface_flinger.max_acquired_buffers.
+    static std::optional<int64_t> maxAcquiredBuffersOpt;
 
     // Controls the maximum width and height in pixels that the graphics pipeline can support for
     // GPU fallback composition. For example, 8k devices with 4k GPUs, or 4k devices with 2k GPUs.
@@ -568,6 +572,7 @@ private:
 
     // ISurfaceComposer implementation:
     sp<IBinder> createVirtualDisplay(const std::string& displayName, bool isSecure,
+                                     gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy,
                                      const std::string& uniqueId,
                                      float requestedRefreshRate = 0.0f);
     status_t destroyVirtualDisplay(const sp<IBinder>& displayToken);
@@ -577,13 +582,7 @@ private:
     }
 
     sp<IBinder> getPhysicalDisplayToken(PhysicalDisplayId displayId) const;
-    status_t setTransactionState(
-            const FrameTimelineInfo& frameTimelineInfo, Vector<ComposerState>& state,
-            Vector<DisplayState>& displays, uint32_t flags, const sp<IBinder>& applyToken,
-            InputWindowCommands inputWindowCommands, int64_t desiredPresentTime,
-            bool isAutoTimestamp, const std::vector<client_cache_t>& uncacheBuffers,
-            bool hasListenerCallbacks, const std::vector<ListenerCallbacks>& listenerCallbacks,
-            uint64_t transactionId, const std::vector<uint64_t>& mergedTransactionIds) override;
+    status_t setTransactionState(TransactionState&&) override;
     void bootFinished();
     status_t getSupportedFrameTimestamps(std::vector<FrameEvent>* outSupported) const;
     sp<IDisplayEventConnection> createDisplayEventConnection(
@@ -766,8 +765,24 @@ private:
     void applyActiveMode(PhysicalDisplayId) REQUIRES(kMainThreadContext);
 
     // Called on the main thread in response to setPowerMode()
-    void setPowerModeInternal(const sp<DisplayDevice>& display, hal::PowerMode mode)
+    void setPhysicalDisplayPowerMode(const sp<DisplayDevice>& display, hal::PowerMode mode)
             REQUIRES(mStateLock, kMainThreadContext);
+    void setVirtualDisplayPowerMode(const sp<DisplayDevice>& display, hal::PowerMode mode)
+            REQUIRES(mStateLock, kMainThreadContext);
+
+    // Returns whether to optimize globally for performance instead of power.
+    bool shouldOptimizeForPerformance() REQUIRES(mStateLock);
+
+    // Turns on power optimizations, for example when there are no displays to be optimized for
+    // performance.
+    static void enablePowerOptimizations(const char* whence);
+
+    // Turns off power optimizations.
+    static void disablePowerOptimizations(const char* whence);
+
+    // Enables or disables power optimizations depending on whether there are displays that should
+    // be optimized for performance.
+    void applyOptimizationPolicy(const char* whence) REQUIRES(mStateLock);
 
     // Returns the preferred mode for PhysicalDisplayId if the Scheduler has selected one for that
     // display. Falls back to the display's defaultModeId otherwise.
@@ -816,7 +831,7 @@ private:
      */
     bool applyTransactionState(const FrameTimelineInfo& info,
                                std::vector<ResolvedComposerState>& state,
-                               Vector<DisplayState>& displays, uint32_t flags,
+                               std::span<DisplayState> displays, uint32_t flags,
                                const InputWindowCommands& inputWindowCommands,
                                const int64_t desiredPresentTime, bool isAutoTimestamp,
                                const std::vector<uint64_t>& uncacheBufferIds,
@@ -910,7 +925,7 @@ private:
         std::variant<int32_t, wp<const DisplayDevice>> captureTypeVariant;
 
         // Display ID of the display the result will be on
-        std::optional<DisplayId> displayId{std::nullopt};
+        ftl::Optional<DisplayIdVariant> displayIdVariant{std::nullopt};
 
         // If true, transform is inverted from the parent layer snapshot
         bool childrenOnly{false};
@@ -1064,10 +1079,10 @@ private:
     // region of all screens presenting this layer stack.
     void invalidateLayerStack(const ui::LayerFilter& layerFilter, const Region& dirty);
 
-    ui::LayerFilter makeLayerFilterForDisplay(DisplayId displayId, ui::LayerStack layerStack)
+    ui::LayerFilter makeLayerFilterForDisplay(DisplayIdVariant displayId, ui::LayerStack layerStack)
             REQUIRES(mStateLock) {
         return {layerStack,
-                PhysicalDisplayId::tryCast(displayId)
+                asPhysicalDisplayId(displayId)
                         .and_then(display::getPhysicalDisplay(mPhysicalDisplays))
                         .transform(&display::PhysicalDisplay::isInternal)
                         .value_or(false)};
@@ -1106,7 +1121,8 @@ private:
     // Returns the active mode ID, or nullopt on hotplug failure.
     std::optional<DisplayModeId> processHotplugConnect(PhysicalDisplayId, hal::HWDisplayId,
                                                        DisplayIdentificationInfo&&,
-                                                       const char* displayString)
+                                                       const char* displayString,
+                                                       HWComposer::HotplugEvent event)
             REQUIRES(mStateLock, kMainThreadContext);
     void processHotplugDisconnect(PhysicalDisplayId, const char* displayString)
             REQUIRES(mStateLock, kMainThreadContext);
@@ -1163,8 +1179,10 @@ private:
     void enableHalVirtualDisplays(bool);
 
     // Virtual display lifecycle for ID generation and HAL allocation.
-    VirtualDisplayId acquireVirtualDisplay(ui::Size, ui::PixelFormat, const std::string& uniqueId)
-            REQUIRES(mStateLock);
+    std::optional<VirtualDisplayIdVariant> acquireVirtualDisplay(
+            ui::Size, ui::PixelFormat, const std::string& uniqueId,
+            compositionengine::DisplayCreationArgsBuilder&) REQUIRES(mStateLock);
+
     template <typename ID>
     void acquireVirtualDisplaySnapshot(ID displayId, const std::string& uniqueId) {
         std::lock_guard lock(mVirtualDisplaysMutex);
@@ -1175,7 +1193,7 @@ private:
         }
     }
 
-    void releaseVirtualDisplay(VirtualDisplayId);
+    void releaseVirtualDisplay(VirtualDisplayIdVariant displayId);
     void releaseVirtualDisplaySnapshot(VirtualDisplayId displayId);
 
     // Returns a display other than `mActiveDisplayId` that can be activated, if any.
@@ -1260,7 +1278,7 @@ private:
 
     bool isHdrLayer(const frontend::LayerSnapshot& snapshot) const;
 
-    ui::Rotation getPhysicalDisplayOrientation(DisplayId, bool isPrimary) const
+    ui::Rotation getPhysicalDisplayOrientation(PhysicalDisplayId, bool isPrimary) const
             REQUIRES(mStateLock);
     void traverseLegacyLayers(const LayerVector::Visitor& visitor) const
             REQUIRES(kMainThreadContext);
@@ -1363,8 +1381,6 @@ private:
         hal::HWDisplayId hwcDisplayId;
         HWComposer::HotplugEvent event;
     };
-
-    bool mIsHdcpViaNegVsync = false;
 
     std::mutex mHotplugMutex;
     std::vector<HotplugEvent> mPendingHotplugEvents GUARDED_BY(mHotplugMutex);
@@ -1483,8 +1499,6 @@ private:
     // Flag used to set override desired display mode from backdoor
     bool mDebugDisplayModeSetByBackdoor = false;
 
-    // Tracks the number of maximum queued buffers by layer owner Uid.
-    using BufferStuffingMap = ftl::SmallMap<uid_t, uint32_t, 10>;
     BufferCountTracker mBufferCountTracker;
 
     std::unordered_map<DisplayId, sp<HdrLayerInfoReporter>> mHdrLayerInfoListeners
@@ -1615,9 +1629,11 @@ public:
             const sp<IBinder>& layerHandle,
             sp<gui::IDisplayEventConnection>* outConnection) override;
     binder::Status createConnection(sp<gui::ISurfaceComposerClient>* outClient) override;
-    binder::Status createVirtualDisplay(const std::string& displayName, bool isSecure,
-                                        const std::string& uniqueId, float requestedRefreshRate,
-                                        sp<IBinder>* outDisplay) override;
+    binder::Status createVirtualDisplay(
+            const std::string& displayName, bool isSecure,
+            gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy,
+            const std::string& uniqueId, float requestedRefreshRate,
+            sp<IBinder>* outDisplay) override;
     binder::Status destroyVirtualDisplay(const sp<IBinder>& displayToken) override;
     binder::Status getPhysicalDisplayIds(std::vector<int64_t>* outDisplayIds) override;
     binder::Status getPhysicalDisplayToken(int64_t displayId, sp<IBinder>* outDisplay) override;

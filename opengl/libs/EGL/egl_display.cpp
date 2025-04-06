@@ -146,7 +146,7 @@ static EGLDisplay getPlatformDisplayAngle(EGLNativeDisplayType display, egl_conn
             }
         }
 
-        if (graphicsenv_flags::feature_overrides()) {
+        if (graphicsenv_flags::angle_feature_overrides()) {
             // Get the list of ANGLE features to enable from Global.Settings.
             const auto& eglFeatures = GraphicsEnv::getInstance().getAngleEglFeatures();
             for (const std::string& eglFeature : eglFeatures) {

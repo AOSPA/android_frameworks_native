@@ -65,7 +65,7 @@ AutomotiveDisplayProxyService::getIGraphicBufferProducer(uint64_t id) {
             std::swap(displayWidth, displayHeight);
         }
 
-        sp<android::SurfaceComposerClient> surfaceClient = new SurfaceComposerClient();
+        sp<android::SurfaceComposerClient> surfaceClient = sp<SurfaceComposerClient>::make();
         err = surfaceClient->initCheck();
         if (err != NO_ERROR) {
             ALOGE("SurfaceComposerClient::initCheck error: %#x", err);

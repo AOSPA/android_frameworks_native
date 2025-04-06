@@ -125,15 +125,16 @@ void BufferQueue::createBufferQueue(sp<IGraphicBufferProducer>* outProducer,
     LOG_ALWAYS_FATAL_IF(outConsumer == nullptr,
             "BufferQueue: outConsumer must not be NULL");
 
-    sp<BufferQueueCore> core(new BufferQueueCore());
+    sp<BufferQueueCore> core = sp<BufferQueueCore>::make();
     LOG_ALWAYS_FATAL_IF(core == nullptr,
             "BufferQueue: failed to create BufferQueueCore");
 
-    sp<IGraphicBufferProducer> producer(new BufferQueueProducer(core, consumerIsSurfaceFlinger));
+    sp<IGraphicBufferProducer> producer =
+            sp<BufferQueueProducer>::make(core, consumerIsSurfaceFlinger);
     LOG_ALWAYS_FATAL_IF(producer == nullptr,
             "BufferQueue: failed to create BufferQueueProducer");
 
-    sp<IGraphicBufferConsumer> consumer(new BufferQueueConsumer(core));
+    sp<IGraphicBufferConsumer> consumer = sp<BufferQueueConsumer>::make(core);
     LOG_ALWAYS_FATAL_IF(consumer == nullptr,
             "BufferQueue: failed to create BufferQueueConsumer");
 

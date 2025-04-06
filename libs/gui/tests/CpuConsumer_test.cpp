@@ -66,10 +66,9 @@ protected:
                 test_info->name(),
                 params.width, params.height,
                 params.maxLockedBuffers, params.format);
-        mCC = new CpuConsumer(params.maxLockedBuffers);
+        std::tie(mCC, mSTC) = CpuConsumer::create(params.maxLockedBuffers);
         String8 name("CpuConsumer_Under_Test");
         mCC->setName(name);
-        mSTC = mCC->getSurface();
         mANW = mSTC;
     }
 

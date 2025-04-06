@@ -114,8 +114,8 @@ private:
 class BLASTBufferQueueHelper {
 public:
     BLASTBufferQueueHelper(const sp<SurfaceControl>& sc, int width, int height) {
-        mBlastBufferQueueAdapter = new TestBLASTBufferQueue("TestBLASTBufferQueue", sc, width,
-                                                            height, PIXEL_FORMAT_RGBA_8888);
+        mBlastBufferQueueAdapter = sp<TestBLASTBufferQueue>::make("TestBLASTBufferQueue", sc, width,
+                                                                  height, PIXEL_FORMAT_RGBA_8888);
     }
 
     void update(const sp<SurfaceControl>& sc, int width, int height) {
@@ -201,7 +201,7 @@ public:
 protected:
     void SetUp() {
         mComposer = ComposerService::getComposerService();
-        mClient = new SurfaceComposerClient();
+        mClient = sp<SurfaceComposerClient>::make();
         const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
         ASSERT_FALSE(ids.empty());
         // display 0 is picked as this test is not much display depedent

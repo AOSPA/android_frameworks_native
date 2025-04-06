@@ -20,6 +20,7 @@
 #include <gui/Choreographer.h>
 #include <gui/TraceUtils.h>
 #include <jni.h>
+#include <utils/Looper.h>
 
 #undef LOG_TAG
 #define LOG_TAG "AChoreographer"
@@ -100,7 +101,7 @@ sp<Choreographer> Choreographer::getForThread() {
             return nullptr;
         }
     }
-    return gChoreographer.get();
+    return gChoreographer;
 }
 
 Choreographer::Choreographer(const sp<Looper>& looper, const sp<IBinder>& layerHandle)

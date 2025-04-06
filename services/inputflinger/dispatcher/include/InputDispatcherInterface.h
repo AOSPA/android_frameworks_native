@@ -148,7 +148,7 @@ public:
      * Returns true on success.  False if the window did not actually have an active touch gesture.
      */
     virtual bool transferTouchGesture(const sp<IBinder>& fromToken, const sp<IBinder>& toToken,
-                                      bool isDragDrop) = 0;
+                                      bool isDragDrop, bool transferEntireGesture) = 0;
 
     /**
      * Transfer a touch gesture to the provided channel, no matter where the current touch is.

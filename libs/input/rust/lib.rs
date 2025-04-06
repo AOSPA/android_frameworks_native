@@ -133,6 +133,12 @@ fn process_movement(
     flags: u32,
     button_state: u32,
 ) -> String {
+    let Some(converted_source) = Source::from_bits(source) else {
+        panic!(
+            "The conversion of source 0x{source:08x} failed, please check if some sources have not \
+             been added to Source."
+        );
+    };
     let Some(motion_flags) = MotionFlags::from_bits(flags) else {
         panic!(
             "The conversion of flags 0x{:08x} failed, please check if some flags have not been \
@@ -167,7 +173,7 @@ fn process_movement(
     }
     let result = verifier.process_movement(NotifyMotionArgs {
         device_id: DeviceId(device_id),
-        source: Source::from_bits(source).unwrap(),
+        source: converted_source,
         action: motion_action,
         pointer_properties,
         flags: motion_flags,

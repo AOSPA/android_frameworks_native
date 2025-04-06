@@ -17,6 +17,8 @@
 #undef LOG_TAG
 #define LOG_TAG "TransactionApplicationTest"
 
+#include <cstdint>
+
 #include <binder/Binder.h>
 #include <common/test/FlagUtils.h>
 #include <compositionengine/Display.h>
@@ -69,38 +71,32 @@ public:
     TestableSurfaceFlinger mFlinger;
     renderengine::mock::RenderEngine* mRenderEngine = new renderengine::mock::RenderEngine();
 
-    struct TransactionInfo {
-        Vector<ComposerState> states;
-        Vector<DisplayState> displays;
-        uint32_t flags = 0;
-        sp<IBinder> applyToken = IInterface::asBinder(TransactionCompletedListener::getIInstance());
-        InputWindowCommands inputWindowCommands;
-        int64_t desiredPresentTime = 0;
-        bool isAutoTimestamp = true;
-        FrameTimelineInfo frameTimelineInfo;
-        std::vector<client_cache_t> uncacheBuffers;
-        uint64_t id = static_cast<uint64_t>(-1);
-        std::vector<uint64_t> mergedTransactionIds;
-        static_assert(0xffffffffffffffff == static_cast<uint64_t>(-1));
+    struct TransactionInfo : public TransactionState {
+        TransactionInfo() {
+            mApplyToken = IInterface::asBinder(TransactionCompletedListener::getIInstance());
+            mId = static_cast<uint64_t>(-1);
+        }
     };
 
-    void checkEqual(TransactionInfo info, QueuedTransactionState state) {
-        EXPECT_EQ(0u, info.states.size());
+    void checkEqual(const TransactionInfo& info, const QueuedTransactionState& state) {
+        EXPECT_EQ(0u, info.mComposerStates.size());
         EXPECT_EQ(0u, state.states.size());
 
-        EXPECT_EQ(0u, info.displays.size());
+        EXPECT_EQ(0u, info.mDisplayStates.size());
         EXPECT_EQ(0u, state.displays.size());
-        EXPECT_EQ(info.flags, state.flags);
-        EXPECT_EQ(info.desiredPresentTime, state.desiredPresentTime);
+        EXPECT_EQ(info.mFlags, state.flags);
+        EXPECT_EQ(info.mDesiredPresentTime, state.desiredPresentTime);
     }
 
     void setupSingle(TransactionInfo& transaction, uint32_t flags, int64_t desiredPresentTime,
                      bool isAutoTimestamp, const FrameTimelineInfo& frameTimelineInfo) {
         mTransactionNumber++;
-        transaction.flags |= flags;
-        transaction.desiredPresentTime = desiredPresentTime;
-        transaction.isAutoTimestamp = isAutoTimestamp;
-        transaction.frameTimelineInfo = frameTimelineInfo;
+        transaction.mFlags |= flags;
+        transaction.mDesiredPresentTime = desiredPresentTime;
+        transaction.mIsAutoTimestamp = isAutoTimestamp;
+        transaction.mFrameTimelineInfo = frameTimelineInfo;
+        transaction.mHasListenerCallbacks = mHasListenerCallbacks;
+        transaction.mListenerCallbacks = mCallbacks;
     }
 
     void NotPlacedOnTransactionQueue(uint32_t flags) {
@@ -111,12 +107,7 @@ public:
                     /*desiredPresentTime*/ systemTime(), /*isAutoTimestamp*/ true,
                     FrameTimelineInfo{});
         nsecs_t applicationTime = systemTime();
-        mFlinger.setTransactionState(transaction.frameTimelineInfo, transaction.states,
-                                     transaction.displays, transaction.flags,
-                                     transaction.applyToken, transaction.inputWindowCommands,
-                                     transaction.desiredPresentTime, transaction.isAutoTimestamp,
-                                     transaction.uncacheBuffers, mHasListenerCallbacks, mCallbacks,
-                                     transaction.id, transaction.mergedTransactionIds);
+        mFlinger.setTransactionState(std::move(transaction));
 
         // If transaction is synchronous, SF applyTransactionState should time out (5s) wating for
         // SF to commit the transaction. If this is animation, it should not time out waiting.
@@ -138,12 +129,7 @@ public:
         setupSingle(transaction, flags, /*desiredPresentTime*/ time + s2ns(1), false,
                     FrameTimelineInfo{});
         nsecs_t applicationSentTime = systemTime();
-        mFlinger.setTransactionState(transaction.frameTimelineInfo, transaction.states,
-                                     transaction.displays, transaction.flags,
-                                     transaction.applyToken, transaction.inputWindowCommands,
-                                     transaction.desiredPresentTime, transaction.isAutoTimestamp,
-                                     transaction.uncacheBuffers, mHasListenerCallbacks, mCallbacks,
-                                     transaction.id, transaction.mergedTransactionIds);
+        mFlinger.setTransactionState(std::move(transaction));
 
         nsecs_t returnedTime = systemTime();
         EXPECT_LE(returnedTime, applicationSentTime + TRANSACTION_TIMEOUT);
@@ -169,12 +155,7 @@ public:
                     /*isAutoTimestamp*/ true, FrameTimelineInfo{});
 
         nsecs_t applicationSentTime = systemTime();
-        mFlinger.setTransactionState(transactionA.frameTimelineInfo, transactionA.states,
-                                     transactionA.displays, transactionA.flags,
-                                     transactionA.applyToken, transactionA.inputWindowCommands,
-                                     transactionA.desiredPresentTime, transactionA.isAutoTimestamp,
-                                     transactionA.uncacheBuffers, mHasListenerCallbacks, mCallbacks,
-                                     transactionA.id, transactionA.mergedTransactionIds);
+        mFlinger.setTransactionState(std::move(transactionA));
 
         // This thread should not have been blocked by the above transaction
         // (5s is the timeout period that applyTransactionState waits for SF to
@@ -184,12 +165,7 @@ public:
         mFlinger.flushTransactionQueues();
 
         applicationSentTime = systemTime();
-        mFlinger.setTransactionState(transactionB.frameTimelineInfo, transactionB.states,
-                                     transactionB.displays, transactionB.flags,
-                                     transactionB.applyToken, transactionB.inputWindowCommands,
-                                     transactionB.desiredPresentTime, transactionB.isAutoTimestamp,
-                                     transactionB.uncacheBuffers, mHasListenerCallbacks, mCallbacks,
-                                     transactionB.id, transactionB.mergedTransactionIds);
+        mFlinger.setTransactionState(std::move(transactionB));
 
         // this thread should have been blocked by the above transaction
         // if this is an animation, this thread should be blocked for 5s
@@ -222,12 +198,7 @@ TEST_F(TransactionApplicationTest, AddToPendingQueue) {
     TransactionInfo transactionA; // transaction to go on pending queue
     setupSingle(transactionA, /*flags*/ 0, /*desiredPresentTime*/ s2ns(1), false,
                 FrameTimelineInfo{});
-    mFlinger.setTransactionState(transactionA.frameTimelineInfo, transactionA.states,
-                                 transactionA.displays, transactionA.flags, transactionA.applyToken,
-                                 transactionA.inputWindowCommands, transactionA.desiredPresentTime,
-                                 transactionA.isAutoTimestamp, transactionA.uncacheBuffers,
-                                 mHasListenerCallbacks, mCallbacks, transactionA.id,
-                                 transactionA.mergedTransactionIds);
+    mFlinger.setTransactionState(std::move(transactionA));
 
     auto& transactionQueue = mFlinger.getTransactionQueue();
     ASSERT_FALSE(transactionQueue.isEmpty());
@@ -243,12 +214,7 @@ TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
     TransactionInfo transactionA; // transaction to go on pending queue
     setupSingle(transactionA, /*flags*/ 0, /*desiredPresentTime*/ s2ns(1), false,
                 FrameTimelineInfo{});
-    mFlinger.setTransactionState(transactionA.frameTimelineInfo, transactionA.states,
-                                 transactionA.displays, transactionA.flags, transactionA.applyToken,
-                                 transactionA.inputWindowCommands, transactionA.desiredPresentTime,
-                                 transactionA.isAutoTimestamp, transactionA.uncacheBuffers,
-                                 mHasListenerCallbacks, mCallbacks, transactionA.id,
-                                 transactionA.mergedTransactionIds);
+    mFlinger.setTransactionState(std::move(transactionA));
 
     auto& transactionQueue = mFlinger.getTransactionQueue();
     ASSERT_FALSE(transactionQueue.isEmpty());
@@ -257,12 +223,10 @@ TEST_F(TransactionApplicationTest, Flush_RemovesFromQueue) {
     // transaction here (sending a null applyToken to fake it as from a
     // different process) to re-query and reset the cached expected present time
     TransactionInfo empty;
-    empty.applyToken = sp<IBinder>();
-    mFlinger.setTransactionState(empty.frameTimelineInfo, empty.states, empty.displays, empty.flags,
-                                 empty.applyToken, empty.inputWindowCommands,
-                                 empty.desiredPresentTime, empty.isAutoTimestamp,
-                                 empty.uncacheBuffers, mHasListenerCallbacks, mCallbacks, empty.id,
-                                 empty.mergedTransactionIds);
+    empty.mApplyToken = sp<IBinder>();
+    empty.mHasListenerCallbacks = mHasListenerCallbacks;
+    empty.mListenerCallbacks = mCallbacks;
+    mFlinger.setTransactionState(std::move(empty));
 
     // flush transaction queue should flush as desiredPresentTime has
     // passed
@@ -406,9 +370,9 @@ public:
         const auto kFrameTimelineInfo = FrameTimelineInfo{};
 
         setupSingle(transaction, kFlags, kDesiredPresentTime, kIsAutoTimestamp, kFrameTimelineInfo);
-        transaction.applyToken = applyToken;
+        transaction.mApplyToken = applyToken;
         for (const auto& state : states) {
-            transaction.states.push_back(state);
+            transaction.mComposerStates.push_back(state);
         }
 
         return transaction;
@@ -419,8 +383,8 @@ public:
         EXPECT_TRUE(mFlinger.getTransactionQueue().isEmpty());
         EXPECT_EQ(0u, mFlinger.getPendingTransactionQueue().size());
         std::unordered_set<uint32_t> createdLayers;
-        for (auto transaction : transactions) {
-            for (auto& state : transaction.states) {
+        for (auto& transaction : transactions) {
+            for (auto& state : transaction.mComposerStates) {
                 auto layerId = static_cast<uint32_t>(state.state.layerId);
                 if (createdLayers.find(layerId) == createdLayers.end()) {
                     mFlinger.addLayer(layerId);
@@ -434,8 +398,8 @@ public:
 
         for (auto transaction : transactions) {
             std::vector<ResolvedComposerState> resolvedStates;
-            resolvedStates.reserve(transaction.states.size());
-            for (auto& state : transaction.states) {
+            resolvedStates.reserve(transaction.mComposerStates.size());
+            for (auto& state : transaction.mComposerStates) {
                 ResolvedComposerState resolvedState;
                 resolvedState.state = std::move(state.state);
                 resolvedState.externalTexture =
@@ -446,15 +410,9 @@ public:
                 resolvedStates.emplace_back(resolvedState);
             }
 
-            QueuedTransactionState transactionState(transaction.frameTimelineInfo, resolvedStates,
-                                                    transaction.displays, transaction.flags,
-                                                    transaction.applyToken,
-                                                    transaction.inputWindowCommands,
-                                                    transaction.desiredPresentTime,
-                                                    transaction.isAutoTimestamp, {}, systemTime(),
-                                                    mHasListenerCallbacks, mCallbacks, getpid(),
-                                                    static_cast<int>(getuid()), transaction.id,
-                                                    transaction.mergedTransactionIds);
+            QueuedTransactionState transactionState(std::move(transaction),
+                                                    std::move(resolvedStates), {}, systemTime(),
+                                                    getpid(), static_cast<int>(getuid()));
             mFlinger.setTransactionStateInternal(transactionState);
         }
         mFlinger.flushTransactionQueues();

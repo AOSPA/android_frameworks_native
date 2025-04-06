@@ -14,10 +14,6 @@
  * limitations under the License.
  */
 
-#include <inttypes.h>
-#include <pwd.h>
-#include <sys/types.h>
-
 #define LOG_TAG "BufferQueueConsumer"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
@@ -47,6 +43,11 @@
 #include <system/window.h>
 
 #include <com_android_graphics_libgui_flags.h>
+
+#include <inttypes.h>
+#include <pwd.h>
+#include <sys/types.h>
+#include <optional>
 
 namespace android {
 
@@ -767,11 +768,15 @@ status_t BufferQueueConsumer::setMaxBufferCount(int bufferCount) {
     return NO_ERROR;
 }
 
+status_t BufferQueueConsumer::setMaxAcquiredBufferCount(int maxAcquiredBuffers) {
+    return setMaxAcquiredBufferCount(maxAcquiredBuffers, std::nullopt);
+}
+
 status_t BufferQueueConsumer::setMaxAcquiredBufferCount(
-        int maxAcquiredBuffers) {
+        int maxAcquiredBuffers, std::optional<OnBufferReleasedCallback> onBuffersReleasedCallback) {
     ATRACE_FORMAT("%s(%d)", __func__, maxAcquiredBuffers);
 
-    sp<IConsumerListener> listener;
+    std::optional<OnBufferReleasedCallback> callback;
     { // Autolock scope
         std::unique_lock<std::mutex> lock(mCore->mMutex);
 
@@ -833,13 +838,20 @@ status_t BufferQueueConsumer::setMaxAcquiredBufferCount(
         BQ_LOGV("setMaxAcquiredBufferCount: %d", maxAcquiredBuffers);
         mCore->mMaxAcquiredBufferCount = maxAcquiredBuffers;
         VALIDATE_CONSISTENCY();
-        if (delta < 0 && mCore->mBufferReleasedCbEnabled) {
-            listener = mCore->mConsumerListener;
+        if (delta < 0) {
+            if (onBuffersReleasedCallback) {
+                callback = std::move(onBuffersReleasedCallback);
+            } else if (mCore->mBufferReleasedCbEnabled) {
+                callback = [listener = mCore->mConsumerListener]() {
+                    listener->onBuffersReleased();
+                };
+            }
         }
     }
+
     // Call back without lock held
-    if (listener != nullptr) {
-        listener->onBuffersReleased();
+    if (callback) {
+        (*callback)();
     }
 
     return NO_ERROR;

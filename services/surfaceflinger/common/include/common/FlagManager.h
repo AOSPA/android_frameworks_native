@@ -60,9 +60,12 @@ public:
     bool adpf_native_session_manager() const;
     bool adpf_use_fmq_channel() const;
     bool adpf_use_fmq_channel_fixed() const;
+    bool correct_virtual_display_power_state() const;
     bool graphite_renderengine_preview_rollout() const;
     bool increase_missed_frame_jank_threshold() const;
+    bool monitor_buffer_fences() const;
     bool refresh_rate_overlay_on_external_display() const;
+    bool vsync_predictor_recovery() const;
 
     /// Trunk stable readonly flags ///
     /// IMPORTANT - please keep alphabetize to reduce merge conflicts
@@ -73,7 +76,6 @@ public:
     bool begone_bright_hlg() const;
     bool cache_when_source_crop_layer_only_moved() const;
     bool commit_not_composited() const;
-    bool connected_display() const;
     bool connected_display_hdr() const;
     bool correct_dpi_with_display_size() const;
     bool deprecate_frame_tracker() const;
@@ -93,12 +95,12 @@ public:
     bool game_default_frame_rate() const;
     bool graphite_renderengine() const;
     bool hdcp_level_hal() const;
+    bool hdcp_negotiation() const;
     bool idle_screen_refresh_rate_timeout() const;
     bool latch_unsignaled_with_auto_refresh_changed() const;
     bool local_tonemap_screenshots() const;
     bool luts_api() const;
     bool misc1() const;
-    bool multithreaded_present() const;
     bool no_vsyncs_on_screen_off() const;
     bool override_trusted_overlay() const;
     bool protected_if_client() const;

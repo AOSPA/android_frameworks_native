@@ -145,7 +145,7 @@ public:
 
     // Applies a HWC device layer lut
     virtual void applyDeviceLayerLut(
-            ndk::ScopedFileDescriptor,
+            ::android::base::unique_fd,
             std::vector<std::pair<
                     int, aidl::android::hardware::graphics::composer3::LutProperties>>) = 0;
 

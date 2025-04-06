@@ -26,13 +26,6 @@ flag {
 }
 
 flag {
-  name: "remove_input_channel_from_windowstate"
-  namespace: "input"
-  description: "Do not store a copy of input channel inside WindowState."
-  bug: "323450804"
-}
-
-flag {
   name: "enable_input_event_tracing"
   namespace: "input"
   description: "Set to true to enable input event tracing, including always-on tracing on non-user builds"
@@ -58,13 +51,6 @@ flag {
   namespace: "accessibility"
   description: "Brings back fatal logging for inconsistent event streams originating from accessibility."
   bug: "299977100"
-}
-
-flag {
-  name: "enable_touchpad_typing_palm_rejection"
-  namespace: "input"
-  description: "Enabling additional touchpad palm rejection will disable the tap to click while the user is typing on a physical keyboard"
-  bug: "301055381"
 }
 
 flag {
@@ -127,10 +113,13 @@ flag {
 }
 
 flag {
-  name: "hide_pointer_indicators_for_secure_windows"
+  name: "allow_transfer_of_entire_gesture"
   namespace: "input"
-  description: "Hide touch and pointer indicators if a secure window is present on display"
-  bug: "325252005"
+  description: "When calling 'transferTouchGesture', the entire gesture (including new POINTER_DOWN events from the same device) will be automatically transferred to the destination window"
+  bug: "397979572"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
 }
 
 flag {
@@ -145,13 +134,6 @@ flag {
   namespace: "input"
   description: "Show touch and pointer indicators when mirroring a single task"
   bug: "310179437"
-}
-
-flag {
-  name: "include_relative_axis_values_for_captured_touchpads"
-  namespace: "input"
-  description: "Include AXIS_RELATIVE_X and AXIS_RELATIVE_Y values when reporting touches from captured touchpads."
-  bug: "330522990"
 }
 
 flag {
@@ -232,6 +214,16 @@ flag {
 }
 
 flag {
+  name: "connected_displays_associated_display_cursor_bugfix"
+  namespace: "lse_desktop_experience"
+  description: "Apply some rules to define associated display cursor behavior in connected displays"
+  bug: "396568321"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
   name: "use_cloned_screen_coordinates_as_raw"
   namespace: "input"
   description: "Use the cloned window's layer stack (screen) space as the raw coordinate space for input going to clones"
@@ -242,17 +234,20 @@ flag {
 }
 
 flag {
-  name: "deprecate_uiautomation_input_injection"
-  namespace: "input"
-  description: "Deprecate UiAutomation#injectInputEvent and UiAutomation#injectInputEventToInputFilter test/hidden APIs"
-  bug: "277261245"
-}
-
-flag {
   name: "prevent_merging_input_pointer_devices"
   namespace: "desktop_input"
   description: "Prevent merging input sub-devices that provide pointer input streams"
   bug: "389689566"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
+  name: "enable_display_topology_validation"
+  namespace: "input"
+  description: "Set to true to enable display topology validation"
+  bug: "401219231"
   metadata {
     purpose: PURPOSE_BUGFIX
   }

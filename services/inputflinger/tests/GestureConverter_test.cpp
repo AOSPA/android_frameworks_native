@@ -42,8 +42,6 @@ namespace input_flags = com::android::input::flags;
 
 namespace {
 
-const auto TOUCHPAD_PALM_REJECTION =
-        ACONFIG_FLAG(input_flags, enable_touchpad_typing_palm_rejection);
 const auto TOUCHPAD_PALM_REJECTION_V2 =
         ACONFIG_FLAG(input_flags, enable_v2_touchpad_typing_palm_rejection);
 
@@ -1461,7 +1459,6 @@ TEST_F(GestureConverterTest, Click) {
 }
 
 TEST_F_WITH_FLAGS(GestureConverterTest, TapWithTapToClickDisabled,
-                  REQUIRES_FLAGS_ENABLED(TOUCHPAD_PALM_REJECTION),
                   REQUIRES_FLAGS_DISABLED(TOUCHPAD_PALM_REJECTION_V2)) {
     nsecs_t currentTime = ARBITRARY_GESTURE_TIME;
 
@@ -1574,8 +1571,7 @@ TEST_F_WITH_FLAGS(GestureConverterTest, TapWithTapToClickDisabledWithDelay,
     ASSERT_THAT(args, Each(VariantWith<NotifyMotionArgs>(WithRelativeMotion(0.f, 0.f))));
 }
 
-TEST_F_WITH_FLAGS(GestureConverterTest, ClickWithTapToClickDisabled,
-                  REQUIRES_FLAGS_ENABLED(TOUCHPAD_PALM_REJECTION)) {
+TEST_F(GestureConverterTest, ClickWithTapToClickDisabled) {
     // Click should still produce button press/release events
     mReader->getContext()->setPreventingTouchpadTaps(true);
 
@@ -1644,8 +1640,7 @@ TEST_F_WITH_FLAGS(GestureConverterTest, ClickWithTapToClickDisabled,
     ASSERT_FALSE(mReader->getContext()->isPreventingTouchpadTaps());
 }
 
-TEST_F_WITH_FLAGS(GestureConverterTest, MoveEnablesTapToClick,
-                  REQUIRES_FLAGS_ENABLED(TOUCHPAD_PALM_REJECTION)) {
+TEST_F(GestureConverterTest, MoveEnablesTapToClick) {
     // initially disable tap-to-click
     mReader->getContext()->setPreventingTouchpadTaps(true);
 

@@ -355,6 +355,26 @@ TEST_F(OutputLayerDisplayFrameTest, shadowExpandsDisplayFrame_onlyIfForcingClien
     EXPECT_THAT(calculateOutputDisplayFrame(), expected);
 }
 
+TEST_F(OutputLayerDisplayFrameTest, outlineExpandsDisplayFrame) {
+    const int kStrokeWidth = 3;
+    mLayerFEState.borderSettings.strokeWidth = kStrokeWidth;
+    mLayerFEState.forceClientComposition = true;
+
+    mLayerFEState.geomLayerBounds = FloatRect{100.f, 100.f, 200.f, 200.f};
+    Rect expected{mLayerFEState.geomLayerBounds};
+    expected.inset(-kStrokeWidth - 2, -kStrokeWidth - 2, -kStrokeWidth - 2, -kStrokeWidth - 2);
+    EXPECT_THAT(calculateOutputDisplayFrame(), expected);
+}
+TEST_F(OutputLayerDisplayFrameTest, outlineExpandsDisplayFrame_onlyIfForcingClientComposition) {
+    const int kStrokeWidth = 3;
+    mLayerFEState.borderSettings.strokeWidth = kStrokeWidth;
+    mLayerFEState.forceClientComposition = false;
+
+    mLayerFEState.geomLayerBounds = FloatRect{100.f, 100.f, 200.f, 200.f};
+    Rect expected{mLayerFEState.geomLayerBounds};
+    EXPECT_THAT(calculateOutputDisplayFrame(), expected);
+}
+
 /*
  * OutputLayer::calculateOutputRelativeBufferTransform()
  */

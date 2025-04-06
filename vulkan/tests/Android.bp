@@ -27,6 +27,7 @@ cc_test {
 
     header_libs: [
         "hwvulkan_headers",
+        "libvulkanprivate_headers-testing",
         "vulkan_headers",
     ],
 

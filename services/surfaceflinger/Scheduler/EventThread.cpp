@@ -515,14 +515,6 @@ void EventThread::onModeRejected(PhysicalDisplayId displayId, DisplayModeId mode
     mCondition.notify_all();
 }
 
-// Merge lists of buffer stuffed Uids
-void EventThread::addBufferStuffedUids(BufferStuffingMap bufferStuffedUids) {
-    std::lock_guard<std::mutex> lock(mMutex);
-    for (auto& [uid, count] : bufferStuffedUids) {
-        mBufferStuffedUids.emplace_or_replace(uid, count);
-    }
-}
-
 void EventThread::threadMain(std::unique_lock<std::mutex>& lock) {
     DisplayEventConsumers consumers;
 
@@ -764,14 +756,6 @@ void EventThread::generateFrameTimeline(VsyncEventData& outVsyncEventData, nsecs
 
 void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
                                 const DisplayEventConsumers& consumers) {
-// QTI_BEGIN: 2023-04-19: Display: SF: Add retry to EventThread postEvent
-    const uint8_t num_attempts = 3;
-// QTI_END: 2023-04-19: Display: SF: Add retry to EventThread postEvent
-
-    // List of Uids that have been sent vsync data with queued buffer count.
-    // Used to keep track of which Uids can be removed from the map of
-    // buffer stuffed clients.
-    ftl::SmallVector<uid_t, 10> uidsPostedQueuedBuffers;
     for (const auto& consumer : consumers) {
         DisplayEventReceiver::Event copy = event;
         if (event.header.type == DisplayEventType::DISPLAY_EVENT_VSYNC) {
@@ -781,45 +765,22 @@ void EventThread::dispatchEvent(const DisplayEventReceiver::Event& event,
                                   event.vsync.vsyncData.preferredExpectedPresentationTime(),
                                   event.vsync.vsyncData.preferredDeadlineTimestamp());
         }
-        auto it = mBufferStuffedUids.find(consumer->mOwnerUid);
-        if (it != mBufferStuffedUids.end()) {
-            copy.vsync.vsyncData.numberQueuedBuffers = it->second;
-            uidsPostedQueuedBuffers.emplace_back(consumer->mOwnerUid);
-        } else {
-            copy.vsync.vsyncData.numberQueuedBuffers = 0;
+        switch (consumer->postEvent(copy)) {
+            case NO_ERROR:
+                break;
+
+            case -EAGAIN:
+                // TODO: Try again if pipe is full.
+                ALOGW("Failed dispatching %s for %s", toString(event).c_str(),
+                      toString(*consumer).c_str());
+                break;
+
+            default:
+                // Treat EPIPE and other errors as fatal.
+                removeDisplayEventConnectionLocked(consumer);
         }
-// QTI_BEGIN: 2023-04-19: Display: SF: Add retry to EventThread postEvent
-        bool qtiNeedsRetry = true;
-        for (uint8_t attempt = 0; qtiNeedsRetry && (attempt < num_attempts); attempt++) {
-            switch (consumer->postEvent(copy)) {
-                case NO_ERROR:
-                    qtiNeedsRetry = false;
-                    break;
-
-                case -EAGAIN:
-                    // TODO: Try again if pipe is full.
-                    ALOGW("Failed dispatching %s for %s", toString(event).c_str(),
-                          toString(*consumer).c_str());
-                    qtiNeedsRetry = true;
-                    break;
-
-                default:
-                    // Treat EPIPE and other errors as fatal.
-                    removeDisplayEventConnectionLocked(consumer);
-                    qtiNeedsRetry = false;
-            }
-// QTI_END: 2023-04-19: Display: SF: Add retry to EventThread postEvent
-        }
-// QTI_BEGIN: 2023-04-19: Display: SF: Add retry to EventThread postEvent
-
-// QTI_END: 2023-04-19: Display: SF: Add retry to EventThread postEvent
     }
-    // The clients that have already received the queued buffer count
-    // can be removed from the buffer stuffed Uid list to avoid
-    // being sent duplicate messages.
-    for (auto uid : uidsPostedQueuedBuffers) {
-        mBufferStuffedUids.erase(uid);
-    }
+
     if (event.header.type == DisplayEventType::DISPLAY_EVENT_VSYNC &&
         FlagManager::getInstance().vrr_config()) {
         mLastCommittedVsyncTime =

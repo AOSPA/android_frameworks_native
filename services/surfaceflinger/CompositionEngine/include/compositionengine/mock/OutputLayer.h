@@ -60,7 +60,7 @@ public:
     MOCK_CONST_METHOD0(needsFiltering, bool());
     MOCK_CONST_METHOD0(getOverrideCompositionSettings, std::optional<LayerFE::LayerSettings>());
     MOCK_METHOD(void, applyDeviceLayerLut,
-                (ndk::ScopedFileDescriptor,
+                (::android::base::unique_fd,
                  (std::vector<std::pair<
                           int, aidl::android::hardware::graphics::composer3::LutProperties>>)));
     MOCK_METHOD(int64_t, getPictureProfilePriority, (), (const));

@@ -20,6 +20,7 @@
 #include <ostream>
 #include <string>
 
+#include <ftl/match.h>
 #include <ftl/optional.h>
 
 namespace android {
@@ -36,7 +37,6 @@ struct DisplayId {
     DisplayId& operator=(const DisplayId&) = default;
 
     static constexpr DisplayId fromValue(uint64_t value) { return DisplayId(value); }
-    constexpr bool isVirtual() const { return value & FLAG_VIRTUAL; }
 
     uint64_t value;
 
@@ -66,13 +66,6 @@ struct PhysicalDisplayId : DisplayId {
     // TODO: b/162612135 - Remove default constructor.
     PhysicalDisplayId() = default;
 
-    static constexpr ftl::Optional<PhysicalDisplayId> tryCast(DisplayId id) {
-        if (id.isVirtual()) {
-            return std::nullopt;
-        }
-        return PhysicalDisplayId(id);
-    }
-
     // Returns a stable ID based on EDID and port information.
     static constexpr PhysicalDisplayId fromEdid(uint8_t port, uint16_t manufacturerId,
                                                 uint32_t modelHash) {
@@ -89,8 +82,6 @@ struct PhysicalDisplayId : DisplayId {
     static constexpr PhysicalDisplayId fromValue(uint64_t value) {
         return PhysicalDisplayId(value);
     }
-
-    constexpr uint8_t getPort() const { return static_cast<uint8_t>(value); }
 
 private:
     // Flag indicating that the ID is stable across reboots.
@@ -112,13 +103,6 @@ struct VirtualDisplayId : DisplayId {
     // Flag indicating that this virtual display is backed by the GPU.
     static constexpr uint64_t FLAG_GPU = 1ULL << 61;
 
-    static constexpr std::optional<VirtualDisplayId> tryCast(DisplayId id) {
-        if (id.isVirtual()) {
-            return VirtualDisplayId(id);
-        }
-        return std::nullopt;
-    }
-
     static constexpr VirtualDisplayId fromValue(uint64_t value) {
         return VirtualDisplayId(SkipVirtualFlag{}, value);
     }
@@ -134,13 +118,6 @@ protected:
 struct HalVirtualDisplayId : VirtualDisplayId {
     explicit constexpr HalVirtualDisplayId(BaseId baseId) : VirtualDisplayId(baseId) {}
 
-    static constexpr std::optional<HalVirtualDisplayId> tryCast(DisplayId id) {
-        if (id.isVirtual() && !(id.value & FLAG_GPU)) {
-            return HalVirtualDisplayId(id);
-        }
-        return std::nullopt;
-    }
-
     static constexpr HalVirtualDisplayId fromValue(uint64_t value) {
         return HalVirtualDisplayId(SkipVirtualFlag{}, value);
     }
@@ -151,13 +128,6 @@ private:
 
 struct GpuVirtualDisplayId : VirtualDisplayId {
     explicit constexpr GpuVirtualDisplayId(BaseId baseId) : VirtualDisplayId(FLAG_GPU | baseId) {}
-
-    static constexpr std::optional<GpuVirtualDisplayId> tryCast(DisplayId id) {
-        if (id.isVirtual() && (id.value & FLAG_GPU)) {
-            return GpuVirtualDisplayId(id);
-        }
-        return std::nullopt;
-    }
 
     static constexpr GpuVirtualDisplayId fromValue(uint64_t value) {
         return GpuVirtualDisplayId(SkipVirtualFlag{}, value);
@@ -172,20 +142,53 @@ private:
 struct HalDisplayId : DisplayId {
     constexpr HalDisplayId(HalVirtualDisplayId other) : DisplayId(other) {}
     constexpr HalDisplayId(PhysicalDisplayId other) : DisplayId(other) {}
-
-    static constexpr std::optional<HalDisplayId> tryCast(DisplayId id) {
-        if (GpuVirtualDisplayId::tryCast(id)) {
-            return std::nullopt;
-        }
-        return HalDisplayId(id);
-    }
-
     static constexpr HalDisplayId fromValue(uint64_t value) { return HalDisplayId(value); }
 
 private:
     using DisplayId::DisplayId;
     explicit constexpr HalDisplayId(DisplayId other) : DisplayId(other) {}
 };
+
+using DisplayIdVariant = std::variant<PhysicalDisplayId, GpuVirtualDisplayId, HalVirtualDisplayId>;
+using VirtualDisplayIdVariant = std::variant<GpuVirtualDisplayId, HalVirtualDisplayId>;
+
+template <typename DisplayIdType>
+inline auto asDisplayIdOfType(DisplayIdVariant variant) -> ftl::Optional<DisplayIdType> {
+    return ftl::match(
+            variant,
+            [](DisplayIdType id) -> ftl::Optional<DisplayIdType> { return ftl::Optional(id); },
+            [](auto) -> ftl::Optional<DisplayIdType> { return std::nullopt; });
+}
+
+template <typename Variant>
+inline auto asHalDisplayId(Variant variant) -> ftl::Optional<HalDisplayId> {
+    return ftl::match(
+            variant,
+            [](GpuVirtualDisplayId) -> ftl::Optional<HalDisplayId> { return std::nullopt; },
+            [](auto id) -> ftl::Optional<HalDisplayId> {
+                return ftl::Optional(static_cast<HalDisplayId>(id));
+            });
+}
+
+inline auto asPhysicalDisplayId(DisplayIdVariant variant) -> ftl::Optional<PhysicalDisplayId> {
+    return asDisplayIdOfType<PhysicalDisplayId>(variant);
+}
+
+inline auto asVirtualDisplayId(DisplayIdVariant variant) -> ftl::Optional<VirtualDisplayId> {
+    return ftl::match(
+            variant,
+            [](GpuVirtualDisplayId id) -> ftl::Optional<VirtualDisplayId> {
+                return ftl::Optional(static_cast<VirtualDisplayId>(id));
+            },
+            [](HalVirtualDisplayId id) -> ftl::Optional<VirtualDisplayId> {
+                return ftl::Optional(static_cast<VirtualDisplayId>(id));
+            },
+            [](auto) -> ftl::Optional<VirtualDisplayId> { return std::nullopt; });
+}
+
+inline auto asDisplayId(DisplayIdVariant variant) -> DisplayId {
+    return ftl::match(variant, [](auto id) -> DisplayId { return static_cast<DisplayId>(id); });
+}
 
 static_assert(sizeof(DisplayId) == sizeof(uint64_t));
 static_assert(sizeof(HalDisplayId) == sizeof(uint64_t));

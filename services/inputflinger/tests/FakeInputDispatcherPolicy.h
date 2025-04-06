@@ -96,10 +96,6 @@ public:
     void assertDropTargetEquals(const InputDispatcherInterface& dispatcher,
                                 const sp<IBinder>& targetToken);
     void assertNotifyInputChannelBrokenWasCalled(const sp<IBinder>& token);
-    /**
-     * Set policy timeout. A value of zero means next key will not be intercepted.
-     */
-    void setInterceptKeyTimeout(std::chrono::milliseconds timeout);
     std::chrono::nanoseconds getKeyWaitingForEventsTimeout() override;
     void setStaleEventTimeout(std::chrono::nanoseconds timeout);
     void assertUserActivityNotPoked();
@@ -116,7 +112,12 @@ public:
     void setUnhandledKeyHandler(std::function<std::optional<KeyEvent>(const KeyEvent&)> handler);
     void assertUnhandledKeyReported(int32_t keycode);
     void assertUnhandledKeyNotReported();
-    void setConsumeKeyBeforeDispatching(bool consumeKeyBeforeDispatching);
+    /**
+     * Set policy timeout or the interception result.
+     * A timeout value of zero means next key will not be intercepted.
+     */
+    void setInterceptKeyBeforeDispatchingResult(
+            std::variant<nsecs_t, inputdispatcher::KeyEntry::InterceptKeyResult> result);
     void assertFocusedDisplayNotified(ui::LogicalDisplayId expectedDisplay);
 
 private:
@@ -145,11 +146,10 @@ private:
     std::condition_variable mNotifyUserActivity;
     std::queue<UserActivityPokeEvent> mUserActivityPokeEvents;
 
-    std::chrono::milliseconds mInterceptKeyTimeout = 0ms;
-
     std::chrono::nanoseconds mStaleEventTimeout = 1000ms;
 
-    bool mConsumeKeyBeforeDispatching = false;
+    std::variant<nsecs_t, inputdispatcher::KeyEntry::InterceptKeyResult>
+            mInterceptKeyBeforeDispatchingResult;
 
     BlockingQueue<std::pair<int32_t /*deviceId*/, std::set<gui::Uid>>> mNotifiedInteractions;
 

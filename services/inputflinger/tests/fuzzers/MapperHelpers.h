@@ -296,6 +296,7 @@ public:
     bool isDeviceEnabled(int32_t deviceId) const override { return mFdp->ConsumeBool(); }
     status_t enableDevice(int32_t deviceId) override { return mFdp->ConsumeIntegral<status_t>(); }
     status_t disableDevice(int32_t deviceId) override { return mFdp->ConsumeIntegral<status_t>(); }
+    std::filesystem::path getSysfsRootPath(int32_t deviceId) const override { return {}; }
     void sysfsNodeChanged(const std::string& sysfsNodePath) override {}
     bool setKernelWakeEnabled(int32_t deviceId, bool enabled) override {
         return mFdp->ConsumeBool();
@@ -360,6 +361,7 @@ public:
                            std::shared_ptr<ThreadSafeFuzzedDataProvider> fdp)
           : mEventHub(eventHub), mPolicy(sp<FuzzInputReaderPolicy>::make(fdp)), mFdp(fdp) {}
     ~FuzzInputReaderContext() {}
+    std::string dump() { return "(dump from FuzzInputReaderContext)"; }
     void updateGlobalMetaState() override {}
     int32_t getGlobalMetaState() { return mFdp->ConsumeIntegral<int32_t>(); }
     void disableVirtualKeysUntil(nsecs_t time) override {}

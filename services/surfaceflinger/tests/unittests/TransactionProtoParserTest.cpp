@@ -66,7 +66,7 @@ TEST(TransactionProtoParserTest, parse) {
             display.token = nullptr;
         }
         display.width = 85;
-        t1.displays.add(display);
+        t1.displays.push_back(display);
     }
 
     class TestMapper : public TransactionProtoParser::FlingerDataMapper {

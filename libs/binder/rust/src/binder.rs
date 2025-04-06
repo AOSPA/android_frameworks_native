@@ -1160,6 +1160,12 @@ macro_rules! declare_binder_enum {
             pub const fn enum_values() -> [Self; $size] {
                 [$(Self::$name),*]
             }
+
+            #[inline(always)]
+            #[allow(missing_docs)]
+            pub const fn get(&self) -> $backing {
+                self.0
+            }
         }
 
         impl std::fmt::Debug for $enum {

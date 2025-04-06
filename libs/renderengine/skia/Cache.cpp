@@ -803,8 +803,7 @@ void Cache::primeShaderCache(SkiaRenderEngine* renderengine, PrimeCacheConfig co
                 drawClippedLayers(renderengine, display, dstTexture, texture);
             }
 
-            if (com::android::graphics::libgui::flags::edge_extension_shader() &&
-                config.cacheEdgeExtension) {
+            if (config.cacheEdgeExtension) {
                 SFTRACE_NAME("cacheEdgeExtension");
                 drawEdgeExtensionLayers(renderengine, display, dstTexture, texture);
                 drawEdgeExtensionLayers(renderengine, p3Display, dstTexture, texture);

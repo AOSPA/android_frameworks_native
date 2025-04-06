@@ -39,9 +39,6 @@ namespace android {
 
 namespace {
 
-// This will disable the tap to click while the user is typing on a physical keyboard
-const bool ENABLE_TOUCHPAD_PALM_REJECTION = input_flags::enable_touchpad_typing_palm_rejection();
-
 // In addition to v1, v2 will also cancel ongoing move gestures while typing and add delay in
 // re-enabling the tap to click.
 const bool ENABLE_TOUCHPAD_PALM_REJECTION_V2 =
@@ -226,8 +223,7 @@ std::list<NotifyArgs> GestureConverter::handleMove(nsecs_t when, nsecs_t readTim
     if (!mIsHoverCancelled) {
         // handleFling calls hoverMove with zero delta on FLING_TAP_DOWN. Don't enable tap to click
         // for this case as subsequent handleButtonsChange may choose to ignore this tap.
-        if ((ENABLE_TOUCHPAD_PALM_REJECTION || ENABLE_TOUCHPAD_PALM_REJECTION_V2) &&
-            (std::abs(deltaX) > 0 || std::abs(deltaY) > 0)) {
+        if (std::abs(deltaX) > 0 || std::abs(deltaY) > 0) {
             enableTapToClick(when);
         }
     }
@@ -278,7 +274,7 @@ std::list<NotifyArgs> GestureConverter::handleButtonsChange(nsecs_t when, nsecs_
             // return early to prevent this tap
             return out;
         }
-    } else if (ENABLE_TOUCHPAD_PALM_REJECTION && mReaderContext.isPreventingTouchpadTaps()) {
+    } else if (mReaderContext.isPreventingTouchpadTaps()) {
         enableTapToClick(when);
         if (gesture.details.buttons.is_tap) {
             // return early to prevent this tap

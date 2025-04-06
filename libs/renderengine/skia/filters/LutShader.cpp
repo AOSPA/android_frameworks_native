@@ -24,7 +24,6 @@
 #include <ui/ColorSpace.h>
 
 #include "include/core/SkColorSpace.h"
-#include "src/core/SkColorFilterPriv.h"
 
 using aidl::android::hardware::graphics::composer3::LutProperties;
 
@@ -116,7 +115,7 @@ static const SkString kShader = SkString(R"(
                 linear = mix(c0, c1, linear.b);
             }
         }
-        return float4(linear, rgba.a);
+        return float4(fromLinearSrgb(linear), rgba.a);
     })");
 
 // same as shader::toColorSpace function
@@ -289,9 +288,7 @@ sk_sp<SkShader> LutShader::lutShader(sk_sp<SkShader>& input,
                                       lutProperties[i].samplingKey, srcDataspace);
         }
 
-        auto colorXformLutToDst =
-                SkColorFilterPriv::MakeColorSpaceXform(lutMathColorSpace, outColorSpace);
-        input = input->makeWithColorFilter(colorXformLutToDst);
+        input = input->makeWithWorkingColorSpace(outColorSpace);
     }
     return input;
 }

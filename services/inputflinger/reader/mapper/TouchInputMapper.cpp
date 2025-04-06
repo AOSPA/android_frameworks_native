@@ -24,6 +24,8 @@
 #include <cinttypes>
 #include <cmath>
 #include <cstddef>
+#include <sstream>
+#include <string>
 #include <tuple>
 
 #include <math.h>
@@ -138,6 +140,40 @@ void RawPointerData::getCentroidOfTouchingPointers(float* outX, float* outY) con
     *outY = y;
 }
 
+std::ostream& operator<<(std::ostream& out, const RawPointerData::Pointer& p) {
+    out << "id=" << p.id << ", x=" << p.x << ", y=" << p.y << ", pressure=" << p.pressure
+        << ", touchMajor=" << p.touchMajor << ", touchMinor=" << p.touchMinor
+        << ", toolMajor=" << p.toolMajor << ", toolMinor=" << p.toolMinor
+        << ", orientation=" << p.orientation << ", tiltX=" << p.tiltX << ", tiltY=" << p.tiltY
+        << ", distance=" << p.distance << ", toolType=" << ftl::enum_string(p.toolType)
+        << ", isHovering=" << p.isHovering;
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, const RawPointerData& data) {
+    out << data.pointerCount << " pointers:\n";
+    for (uint32_t i = 0; i < data.pointerCount; i++) {
+        out << INDENT << "[" << i << "]: " << data.pointers[i] << std::endl;
+    }
+    out << "ID bits: hovering = 0x" << std::hex << std::setfill('0') << std::setw(8)
+        << data.hoveringIdBits.value << ", touching = 0x" << std::setfill('0') << std::setw(8)
+        << data.touchingIdBits.value << ", canceled = 0x" << std::setfill('0') << std::setw(8)
+        << data.canceledIdBits.value << std::dec;
+    return out;
+}
+
+// --- TouchInputMapper::RawState ---
+
+std::ostream& operator<<(std::ostream& out, const TouchInputMapper::RawState& state) {
+    out << "When: " << state.when << std::endl;
+    out << "Read time: " << state.readTime << std::endl;
+    out << "Button state: 0x" << std::setfill('0') << std::setw(8) << std::hex << state.buttonState
+        << std::dec << std::endl;
+    out << "Raw pointer data:" << std::endl;
+    out << addLinePrefix(streamableToString(state.rawPointerData), INDENT);
+    return out;
+}
+
 // --- TouchInputMapper ---
 
 TouchInputMapper::TouchInputMapper(InputDeviceContext& deviceContext,
@@ -232,20 +268,8 @@ void TouchInputMapper::dump(std::string& dump) {
     dump += StringPrintf(INDENT4 "TiltYScale: %0.3f\n", mTiltYScale);
 
     dump += StringPrintf(INDENT3 "Last Raw Button State: 0x%08x\n", mLastRawState.buttonState);
-    dump += StringPrintf(INDENT3 "Last Raw Touch: pointerCount=%d\n",
-                         mLastRawState.rawPointerData.pointerCount);
-    for (uint32_t i = 0; i < mLastRawState.rawPointerData.pointerCount; i++) {
-        const RawPointerData::Pointer& pointer = mLastRawState.rawPointerData.pointers[i];
-        dump += StringPrintf(INDENT4 "[%d]: id=%d, x=%d, y=%d, pressure=%d, "
-                                     "touchMajor=%d, touchMinor=%d, toolMajor=%d, toolMinor=%d, "
-                                     "orientation=%d, tiltX=%d, tiltY=%d, distance=%d, "
-                                     "toolType=%s, isHovering=%s\n",
-                             i, pointer.id, pointer.x, pointer.y, pointer.pressure,
-                             pointer.touchMajor, pointer.touchMinor, pointer.toolMajor,
-                             pointer.toolMinor, pointer.orientation, pointer.tiltX, pointer.tiltY,
-                             pointer.distance, ftl::enum_string(pointer.toolType).c_str(),
-                             toString(pointer.isHovering));
-    }
+    dump += INDENT3 "Last Raw Touch:\n";
+    dump += addLinePrefix(streamableToString(mLastRawState), INDENT4) + "\n";
 
     dump += StringPrintf(INDENT3 "Last Cooked Button State: 0x%08x\n",
                          mLastCookedState.buttonState);
@@ -1476,6 +1500,22 @@ std::list<NotifyArgs> TouchInputMapper::sync(nsecs_t when, nsecs_t readTime) {
              last.rawPointerData.touchingIdBits.value, next.rawPointerData.touchingIdBits.value,
              last.rawPointerData.hoveringIdBits.value, next.rawPointerData.hoveringIdBits.value,
              next.rawPointerData.canceledIdBits.value);
+    if (debugRawEvents() && last.rawPointerData.pointerCount == 0 &&
+        next.rawPointerData.pointerCount == 1) {
+        // Dump a bunch of info to try to debug b/396796958.
+        // TODO(b/396796958): remove this debug dump.
+        ALOGD("pointerCount went from 0 to 1. last:\n%s",
+              addLinePrefix(streamableToString(last), INDENT).c_str());
+        ALOGD("next:\n%s", addLinePrefix(streamableToString(next), INDENT).c_str());
+        ALOGD("InputReader dump:");
+        // The dump is too long to simply add as a format parameter in one log message, so we have
+        // to split it by line and log them individually.
+        std::istringstream stream(mDeviceContext.getContext()->dump());
+        std::string line;
+        while (std::getline(stream, line, '\n')) {
+            ALOGD(INDENT "%s", line.c_str());
+        }
+    }
 
     if (!next.rawPointerData.touchingIdBits.isEmpty() &&
         !next.rawPointerData.hoveringIdBits.isEmpty() &&

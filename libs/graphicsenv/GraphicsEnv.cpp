@@ -639,7 +639,7 @@ const std::vector<std::string>& GraphicsEnv::getAngleEglFeatures() {
 // List of ANGLE features to override (enabled or disable).
 // The list of overrides is loaded and parsed by GpuService.
 void GraphicsEnv::updateAngleFeatureOverrides() {
-    if (!graphicsenv_flags::feature_overrides()) {
+    if (!graphicsenv_flags::angle_feature_overrides()) {
         return;
     }
 
@@ -654,7 +654,7 @@ void GraphicsEnv::updateAngleFeatureOverrides() {
 
 void GraphicsEnv::getAngleFeatureOverrides(std::vector<const char*>& enabled,
                                            std::vector<const char*>& disabled) {
-    if (!graphicsenv_flags::feature_overrides()) {
+    if (!graphicsenv_flags::angle_feature_overrides()) {
         return;
     }
 

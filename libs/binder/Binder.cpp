@@ -445,6 +445,9 @@ status_t BBinder::linkToDeath(
     const sp<DeathRecipient>& /*recipient*/, void* /*cookie*/,
     uint32_t /*flags*/)
 {
+    // BBinder::linkToDeath is invalid because this process owns this binder.
+    // The DeathRecipient is called on BpBinders when the process owning the
+    // binder node dies.
     return INVALID_OPERATION;
 }
 
