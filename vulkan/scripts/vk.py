@@ -742,7 +742,7 @@ class VkPhysicalDeviceVulkan14Features:
   pipelineProtectedAccess: VkBool32
   pipelineRobustness: VkBool32
   hostImageCopy: VkBool32
-  # pushDescriptor: bool
+  pushDescriptor: VkBool32
 
 
 @dataclass
