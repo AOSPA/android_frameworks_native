@@ -439,6 +439,19 @@ VkResult CreateInfoWrapper::SanitizeApiVersion() {
     if (!is_instance_ || !instance_info_.pApplicationInfo)
         return VK_SUCCESS;
 
+    // certain 1.3 icds in the wild may misbehave if the app requests
+    // the 1.4 instance api. since there are no actual instance api
+    // differences between these versions, downgrade the instance api
+    // to 1.3 for such icds.
+    if (icd_api_version_ >= VK_API_VERSION_1_3 &&
+            icd_api_version_ < VK_API_VERSION_1_4 &&
+            instance_info_.pApplicationInfo->apiVersion >= VK_API_VERSION_1_4) {
+        application_info_ = *instance_info_.pApplicationInfo;
+        application_info_.apiVersion = icd_api_version_;
+        instance_info_.pApplicationInfo = &application_info_;
+        return VK_SUCCESS;
+    }
+
     if (icd_api_version_ > VK_API_VERSION_1_0 ||
         instance_info_.pApplicationInfo->apiVersion < VK_API_VERSION_1_1)
         return VK_SUCCESS;
