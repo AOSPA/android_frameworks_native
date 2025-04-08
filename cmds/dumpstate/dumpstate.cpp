@@ -1944,7 +1944,7 @@ Dumpstate::RunStatus Dumpstate::dumpstate() {
     // Add linker configuration directory
     ds.AddDir(LINKERCONFIG_DIR, true);
 
-    /* Dump frozen cgroupfs */
+    DumpFile("Cgroups", "/proc/cgroups");
     dump_frozen_cgroupfs();
 
     if (ds.dump_pool_) {
