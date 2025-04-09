@@ -1896,7 +1896,8 @@ inline bool Iterate(Visitor* visitor,
       visitor->Visit("pipelineProtectedAccess",
                      &features->pipelineProtectedAccess) &&
       visitor->Visit("pipelineRobustness", &features->pipelineRobustness) &&
-      visitor->Visit("hostImageCopy", &features->hostImageCopy);
+      visitor->Visit("hostImageCopy", &features->hostImageCopy) &&
+      visitor->Visit("pushDescriptor", &features->pushDescriptor);
 }
 
 template <typename Visitor>
