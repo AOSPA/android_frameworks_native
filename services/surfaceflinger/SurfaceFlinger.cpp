@@ -5388,14 +5388,10 @@ status_t SurfaceFlinger::setTransactionState(TransactionState&& transactionState
                     transactionState.mIsAutoTimestamp, transactionState.mDesiredPresentTime);
             }
 
-            // TODO(b/407153727) upstream refactor deleted most of the required
-            // parameters here. Removing these changes in favor of refactoring
-            // QC code.
-            /*
-            mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(layer, desiredPresentTime, isAutoTimestamp,
+            mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(layer, transactionState.mDesiredPresentTime,
+                                                    transactionState.mIsAutoTimestamp,
                                                     resolvedState.externalTexture,
                                                     *resolvedState.state.bufferData);
-            */
             /* QTI_END */
 
             mBufferCountTracker.increment(resolvedState.layerId);
