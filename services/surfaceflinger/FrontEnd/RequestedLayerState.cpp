@@ -594,6 +594,15 @@ bool RequestedLayerState::fillsColor() const {
             color.b >= 0.0_hf;
 }
 
+bool RequestedLayerState::hasBufferOrSidebandStream() const {
+    return ((sidebandStream != nullptr) || (externalTexture != nullptr));
+}
+
+bool RequestedLayerState::fillsColor() const {
+    return !hasBufferOrSidebandStream() && color.r >= 0.0_hf && color.g >= 0.0_hf &&
+            color.b >= 0.0_hf;
+}
+
 bool RequestedLayerState::hasBlur() const {
     return backgroundBlurRadius > 0 || blurRegions.size() > 0;
 }
