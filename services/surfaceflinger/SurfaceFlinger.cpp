@@ -5383,15 +5383,15 @@ status_t SurfaceFlinger::setTransactionState(TransactionState&& transactionState
                 lck.unlock();
             }
 
+            if (!(transactionState.mFlags & eOneWay)) {
+                mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str(),
+                    transactionState.mIsAutoTimestamp, transactionState.mDesiredPresentTime);
+            }
+
             // TODO(b/407153727) upstream refactor deleted most of the required
             // parameters here. Removing these changes in favor of refactoring
             // QC code.
             /*
-            if (!(transactionState.mFlags & eOneWay)) {
-                mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str(), isAutoTimestamp,
-                                                               desiredPresentTime);
-            }
-
             mQtiSFExtnIntf->qtiUpdateSmomoLayerInfo(layer, desiredPresentTime, isAutoTimestamp,
                                                     resolvedState.externalTexture,
                                                     *resolvedState.state.bufferData);
