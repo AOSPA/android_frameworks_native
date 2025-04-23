@@ -31,7 +31,6 @@
 #include <gui/BufferItem.h>
 #include <gui/BufferQueue.h>
 #include <gui/ConsumerBase.h>
-#include <gui/IConsumerListener.h>
 #include <gui/ISurfaceComposer.h>
 #include <gui/Surface.h>
 #include <gui/SurfaceComposerClient.h>
@@ -69,8 +68,8 @@ ConsumerBase::ConsumerBase(const sp<IGraphicBufferConsumer>& bufferQueue, bool c
 #endif
         mAbandoned(false),
         mConsumer(bufferQueue),
-        mPrevFinalReleaseFence(Fence::NO_FENCE),
-        mIsControlledByApp(controlledByApp) {
+        mPrevFinalReleaseFence(Fence::NO_FENCE) {
+    initialize(controlledByApp);
 }
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
@@ -80,11 +79,11 @@ ConsumerBase::ConsumerBase(bool controlledByApp, bool consumerIsSurfaceFlinger)
         mSlots(BufferQueueDefs::NUM_BUFFER_SLOTS),
 #endif
         mAbandoned(false),
-        mPrevFinalReleaseFence(Fence::NO_FENCE),
-        mIsControlledByApp(controlledByApp) {
+        mPrevFinalReleaseFence(Fence::NO_FENCE) {
     sp<IGraphicBufferProducer> producer;
     BufferQueue::createBufferQueue(&producer, &mConsumer, consumerIsSurfaceFlinger);
     mSurface = sp<Surface>::make(producer, controlledByApp);
+    initialize(controlledByApp);
 }
 
 ConsumerBase::ConsumerBase(const sp<IGraphicBufferProducer>& producer,
@@ -96,27 +95,24 @@ ConsumerBase::ConsumerBase(const sp<IGraphicBufferProducer>& producer,
         mAbandoned(false),
         mConsumer(consumer),
         mSurface(sp<Surface>::make(producer, controlledByApp)),
-        mPrevFinalReleaseFence(Fence::NO_FENCE),
-        mIsControlledByApp(controlledByApp) {
+        mPrevFinalReleaseFence(Fence::NO_FENCE) {
+    initialize(controlledByApp);
 }
 
 #endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
 
-void ConsumerBase::onFirstRef() {
-    ConsumerListener::onFirstRef();
-    initialize();
-}
-
-void ConsumerBase::initialize() {
+void ConsumerBase::initialize(bool controlledByApp) {
     // Choose a name using the PID and a process-unique ID.
     mName = String8::format("unnamed-%d-%d", getpid(), createProcessUniqueId());
 
-    // Here we depend on an sp/wp having been created for `this`.  For this
-    // reason, initialize() cannot be called from a ctor.
-    wp<ConsumerListener> listener = wp<ConsumerListener>::fromExisting(this);
-    sp<IConsumerListener> proxy = sp<BufferQueue::ProxyConsumerListener>::make(listener);
+    // Note that we can't create an sp<...>(this) in a ctor that will not keep a
+    // reference once the ctor ends, as that would cause the refcount of 'this'
+    // dropping to 0 at the end of the ctor.  Since all we need is a wp<...>
+    // that's what we create.
+    wp<ConsumerListener> listener = static_cast<ConsumerListener*>(this);
+    sp<IConsumerListener> proxy = new BufferQueue::ProxyConsumerListener(listener);
 
-    status_t err = mConsumer->consumerConnect(proxy, mIsControlledByApp);
+    status_t err = mConsumer->consumerConnect(proxy, controlledByApp);
     if (err != NO_ERROR) {
         CB_LOGE("ConsumerBase: error connecting to BufferQueue: %s (%d)",
                 strerror(-err), err);
