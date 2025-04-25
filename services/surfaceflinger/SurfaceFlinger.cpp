@@ -9357,9 +9357,7 @@ binder::Status SurfaceComposerAIDL::setPowerMode(const sp<IBinder>& display, int
     if (status != OK) {
         return binderStatusFromStatusT(status);
     }
-    /* QTI_BEGIN */
-    mFlinger->mQtiSFExtnIntf->qtiSetPowerMode(display, mode);
-    /* QTI_END */
+    mFlinger->setPowerMode(display, mode);
     return binder::Status::ok();
 }
 
