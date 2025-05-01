@@ -139,8 +139,7 @@ private:
     ConsumerBase(const ConsumerBase&);
     void operator=(const ConsumerBase&);
 
-    // Requires `this` to be sp/wp so must not be called from ctor.
-    void initialize();
+    void initialize(bool controlledByApp);
 
 protected:
     // ConsumerBase constructs a new ConsumerBase object to consume image
@@ -255,10 +254,6 @@ protected:
             const sp<GraphicBuffer> graphicBuffer,
             EGLDisplay display = EGL_NO_DISPLAY, EGLSyncKHR eglFence = EGL_NO_SYNC_KHR);
 #endif
-    // Required to complete initialization, so `final` lest overrides forget to
-    // delegate.
-    void onFirstRef() override final;
-
     // returns true iff the slot still has the graphicBuffer in it.
     bool stillTracking(int slot, const sp<GraphicBuffer> graphicBuffer);
 
@@ -333,8 +328,6 @@ protected:
     // The final release fence of the most recent buffer released by
     // releaseBufferLocked.
     sp<Fence> mPrevFinalReleaseFence;
-
-    const bool mIsControlledByApp;
 
     // mMutex is the mutex used to prevent concurrent access to the member
     // variables of ConsumerBase objects. It must be locked whenever the
