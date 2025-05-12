@@ -1102,13 +1102,36 @@ void SkiaRenderEngine::drawLayersInternal(
 
             sk_sp<SkShader> shader;
 
+            /* QTI_BEGIN */
+            const auto& targetBuffer = layer.source.buffer.buffer;
+            const auto graphicBuffer = targetBuffer ? targetBuffer->getBuffer() : nullptr;
+            /* QTI_END */
             if (layer.source.buffer.useTextureFiltering) {
+              /* QTI_BEGIN */
+              if (graphicBuffer && layer.luts) {
+                shader = image->makeRawShader(SkTileMode::kClamp, SkTileMode::kClamp,
+                                              SkSamplingOptions(
+                                                   {SkFilterMode::kLinear, SkMipmapMode::kNone}),
+                                           &matrix);
+              } else {
+              /* QTI_END */
                 shader = image->makeShader(SkTileMode::kClamp, SkTileMode::kClamp,
                                            SkSamplingOptions(
                                                    {SkFilterMode::kLinear, SkMipmapMode::kNone}),
                                            &matrix);
+              /* QTI_BEGIN */
+              }
+              /* QTI_END */
             } else {
+              /* QTI_BEGIN */
+              if (graphicBuffer && layer.luts) {
+                shader = image->makeRawShader(SkSamplingOptions(), matrix);
+              } else {
+              /* QTI_END */
                 shader = image->makeShader(SkSamplingOptions(), matrix);
+              /* QTI_BEGIN */
+              }
+              /* QTI_END */
             }
 
             if (useIsOpaqueWorkaround) {
