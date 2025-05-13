@@ -22,6 +22,12 @@
 
 #include <ui/Fence.h>
 
+// QTI_BEGIN: 2025-05-13: Performance: native: detect GPU big jank
+namespace android::libguiextension {
+class QtiFenceMonitorExtension;
+}
+// QTI_END: 2025-05-13: Performance: native: detect GPU big jank
+
 namespace android::gui {
 
 class FenceMonitor {
@@ -39,6 +45,9 @@ private:
     std::deque<sp<Fence>> mQueue;
     std::condition_variable mCondition;
     std::mutex mMutex;
+    // QTI_BEGIN: 2025-05-13: Performance: native: detect GPU big jank
+    android::libguiextension::QtiFenceMonitorExtension* mQtiFenceMonitorExtn = nullptr;
+    // QTI_END: 2025-05-13: Performance: native: detect GPU big jank
 };
 
 } // namespace android::gui
