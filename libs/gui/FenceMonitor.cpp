@@ -22,9 +22,20 @@
 
 #include <thread>
 
+// QTI_BEGIN: 2025-05-13: Performance: native: detect GPU big jank
+#include "QtiExtension/QtiFenceMonitorExtension.h"
+
+#define GPU_NAME "GPU completion"
+// QTI_END: 2025-05-13: Performance: native: detect GPU big jank
+
 namespace android::gui {
 
 FenceMonitor::FenceMonitor(const char* name) : mName(name), mFencesQueued(0), mFencesSignaled(0) {
+    // QTI_BEGIN: 2025-05-13: Performance: native: detect GPU big jank
+    if (strcmp(name, GPU_NAME) == 0) {
+        mQtiFenceMonitorExtn = libguiextension::QtiFenceMonitorExtension::qtiGetInstance(this);
+    }
+    // QTI_END: 2025-05-13: Performance: native: detect GPU big jank
     std::thread thread(&FenceMonitor::loop, this);
     pthread_setname_np(thread.native_handle(), mName);
     thread.detach();
@@ -73,7 +84,17 @@ void FenceMonitor::threadLoop() {
         snprintf(message, sizeof(message), "waiting for %s %u", mName, fenceNum);
         ATRACE_NAME(message);
 
+        // QTI_BEGIN: 2025-05-13: Performance: native: detect GPU big jank
+        if (mQtiFenceMonitorExtn) {
+            mQtiFenceMonitorExtn->qtiQueueFence(true);
+        }
+        // QTI_END: 2025-05-13: Performance: native: detect GPU big jank
         status_t result = fence->waitForever(message);
+        // QTI_BEGIN: 2025-05-13: Performance: native: detect GPU big jank
+        if (mQtiFenceMonitorExtn) {
+            mQtiFenceMonitorExtn->qtiQueueFence(false);
+        }
+        // QTI_END: 2025-05-13: Performance: native: detect GPU big jank
         if (result != OK) {
             ALOGE("Error waiting for fence: %d", result);
         }
