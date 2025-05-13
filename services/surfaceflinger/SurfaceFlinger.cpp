@@ -4197,7 +4197,8 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         LOG_FATAL_IF(!virtualDisplayIdVariantOpt);
         auto surface = sp<VirtualDisplaySurface>::make(getHwComposer(), *virtualDisplayIdVariantOpt,
                                                        state.surface, bqProducer, bqConsumer,
-                                                       state.displayName);
+                                                       state.displayName,
+                                                /* QTI_BEGIN */ state.isSecure /* QTI_END */);
         displaySurface = surface;
         producer = std::move(surface);
     } else {
