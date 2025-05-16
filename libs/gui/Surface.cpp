@@ -62,6 +62,10 @@
 
 #include <com_android_graphics_libgui_flags.h>
 
+// QTI_BEGIN: 2025-05-13: Performance: native: detect GPU big jank
+#include "QtiExtension/QtiFenceMonitorExtension.h"
+// QTI_END: 2025-05-13: Performance: native: detect GPU big jank
+
 // QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 #include <cutils/properties.h>
 
@@ -1293,7 +1297,10 @@ void Surface::onBufferQueuedLocked(int slot, sp<Fence> fence,
 
     mQueueBufferCondition.broadcast();
 
-    if (CC_UNLIKELY(atrace_is_tag_enabled(ATRACE_TAG_GRAPHICS))) {
+    if (CC_UNLIKELY(atrace_is_tag_enabled(ATRACE_TAG_GRAPHICS))
+             /* QTI_BEGIN: 2025-05-13: Performance: native: detect GPU big jank */
+             || libguiextension::QtiFenceMonitorExtension::qtiGetGPUBigJankEnabled()
+             /* QTI_END: 2025-05-13: Performance: native: detect GPU big jank */) {
         static gui::FenceMonitor gpuCompletionThread("GPU completion");
         gpuCompletionThread.queueFence(fence);
     }
