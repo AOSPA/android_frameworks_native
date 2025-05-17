@@ -63,10 +63,6 @@ on late-init
     chmod 0666 /sys/kernel/tracing/events/cpuhp/cpuhp_exit/enable
     chmod 0666 /sys/kernel/debug/tracing/events/cpuhp/cpuhp_pause/enable
     chmod 0666 /sys/kernel/tracing/events/cpuhp/cpuhp_pause/enable
-    chmod 0666 /sys/kernel/debug/tracing/events/power/gpu_frequency/enable
-    chmod 0666 /sys/kernel/tracing/events/power/gpu_frequency/enable
-    chmod 0666 /sys/kernel/debug/tracing/events/power/gpu_work_period/enable
-    chmod 0666 /sys/kernel/tracing/events/power/gpu_work_period/enable
     chmod 0666 /sys/kernel/debug/tracing/events/power/suspend_resume/enable
     chmod 0666 /sys/kernel/tracing/events/power/suspend_resume/enable
     chmod 0666 /sys/kernel/debug/tracing/events/cpufreq_interactive/enable
@@ -438,6 +434,13 @@ on late-init && property:ro.boot.hypervisor.vm.supported=1
     chmod 0440 /sys/kernel/tracing/hyp/events/hyp/host_mem_abort/format
     chmod 0440 /sys/kernel/debug/tracing/hyp/events/hyp/host_mem_abort/id
     chmod 0440 /sys/kernel/tracing/hyp/events/hyp/host_mem_abort/id
+
+# Ensure correct permissions on GPU related events
+on late-fs
+    chmod 0666 /sys/kernel/debug/tracing/events/power/gpu_frequency/enable
+    chmod 0666 /sys/kernel/tracing/events/power/gpu_frequency/enable
+    chmod 0666 /sys/kernel/debug/tracing/events/power/gpu_work_period/enable
+    chmod 0666 /sys/kernel/tracing/events/power/gpu_work_period/enable
 
 on property:persist.debug.atrace.boottrace=1
     start boottrace
