@@ -92,6 +92,7 @@ public:
     bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) override;
     void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) override;
     void qtiCreateVirtualDisplay(int width, int height, int format) override;
+    void qtiSetDisplayCount(int displayCount) override;
     void qtiHasProtectedLayer(bool* hasProtectedLayer) override;
     bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) override;
     bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) override;

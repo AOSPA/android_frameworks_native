@@ -195,6 +195,7 @@ public:
     bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) override;
     void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) override;
     void qtiCreateVirtualDisplay(int width, int height, int format) override;
+    void qtiSetDisplayCount(int displayCount) override;
     void qtiHasProtectedLayer(bool* hasProtectedLayer) override;
     bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) override;
     bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) override;
@@ -296,6 +297,7 @@ private:
     bool mQtiAllowThermalFpsChange = false;
     bool mQtiRequestedContentFps = false;
     int mQtiFailedAttempts = 0;
+    int mQtiDisplayCount = 0;
     std::set<uint32_t> mQtiHasScreenshotSet;
 
     std::shared_ptr<IDisplayConfig> mQtiDisplayConfigAidl = nullptr;
@@ -308,6 +310,7 @@ private:
     std::list<sp<DisplayDevice>> mQtiDisplaysList = {};
     std::mutex mQtiEarlyWakeUpMutex;
     std::mutex mQtiSetDisplayElapseTimeMutex;
+    std::mutex mQtiDisplayCountMutex;
     std::unordered_map<float, int64_t> mQtiAdvancedSfOffsets;
     std::unordered_map<float, std::pair<int64_t, int64_t>> mQtiWorkDurationConfigsMap;
 
