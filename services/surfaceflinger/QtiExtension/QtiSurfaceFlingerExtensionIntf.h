@@ -126,6 +126,7 @@ public:
     virtual bool qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) = 0;
     virtual void qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) = 0;
     virtual void qtiCreateVirtualDisplay(int width, int height, int format) = 0;
+    virtual void qtiSetDisplayCount(int displayCount) = 0;
     virtual void qtiHasProtectedLayer(bool* hasProtectedLayer) = 0;
     virtual bool qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) = 0;
     virtual bool qtiIsSecureCamera(sp<const GraphicBuffer> buffer) = 0;
