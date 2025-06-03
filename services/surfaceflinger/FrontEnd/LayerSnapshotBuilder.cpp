@@ -279,24 +279,6 @@ void updateVisibility(LayerSnapshot& snapshot, bool visible) {
           snapshot.getDebugString().c_str());
 }
 
-bool needsInputInfo(const LayerSnapshot& snapshot, const RequestedLayerState& requested) {
-    if (requested.potentialCursor) {
-        return false;
-    }
-
-    if (snapshot.inputInfo.token != nullptr) {
-        return true;
-    }
-
-    if (snapshot.hasBufferOrSidebandStream()) {
-        return true;
-    }
-
-    return requested.windowInfoHandle &&
-            requested.windowInfoHandle->getInfo()->inputConfig.test(
-                    gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL);
-}
-
 void updateMetadata(LayerSnapshot& snapshot, const RequestedLayerState& requested,
                     const LayerSnapshotBuilder::Args& args) {
     snapshot.metadata.clear();
@@ -1084,7 +1066,7 @@ void LayerSnapshotBuilder::updateInput(LayerSnapshot& snapshot,
     }
 
     updateVisibility(snapshot, snapshot.isVisible);
-    if (!needsInputInfo(snapshot, requested)) {
+    if (!requested.needsInputInfo()) {
         return;
     }
 
@@ -1094,8 +1076,8 @@ void LayerSnapshotBuilder::updateInput(LayerSnapshot& snapshot,
     bool noValidDisplay = !displayInfoOpt.has_value();
     auto displayInfo = displayInfoOpt.value_or(sDefaultInfo);
 
-    if (!requested.windowInfoHandle) {
-        snapshot.inputInfo.inputConfig = InputConfig::NO_INPUT_CHANNEL;
+    if (!requested.hasInputInfo()) {
+        snapshot.inputInfo.inputConfig |= InputConfig::NO_INPUT_CHANNEL;
     }
     fillInputFrameInfo(snapshot.inputInfo, displayInfo.transform, snapshot);
 
