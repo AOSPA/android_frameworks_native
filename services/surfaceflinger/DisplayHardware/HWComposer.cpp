@@ -707,6 +707,10 @@ status_t HWComposer::presentAndGetReleaseFences(
 }
 
 status_t HWComposer::executeCommands(HalDisplayId displayId) {
+    /* QTI_BEGIN */
+    RETURN_IF_INVALID_DISPLAY(displayId, BAD_INDEX);
+    /* QTI_END */
+
     auto& hwcDisplay = mDisplayData[displayId].hwcDisplay;
     auto error = static_cast<hal::Error>(mComposer->executeCommands(hwcDisplay->getId()));
     RETURN_IF_HWC_ERROR_FOR("executeCommands", error, displayId, UNKNOWN_ERROR);
