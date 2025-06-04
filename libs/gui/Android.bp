@@ -573,6 +573,7 @@ qtidisplayextension_cc_library_static {
 // QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
         "QtiExtension/QtiSurfaceExtension.cpp",
 // QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+        "QtiExtension/QtiSurfaceUtils.cpp",
 // QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
         "QtiExtension/QtiSurfaceExtensionGPP.cpp",
 // QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.

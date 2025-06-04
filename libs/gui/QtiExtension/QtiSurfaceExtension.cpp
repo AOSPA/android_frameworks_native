@@ -1,4 +1,4 @@
-/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
@@ -16,6 +16,7 @@
 
 #include "QtiGralloc.h"
 #include "QtiSurfaceExtension.h"
+#include "QtiSurfaceUtils.h"
 
 #define SNAP_TYPE_BUFFER_DEQUEUE_DURATION 10045
 #define TID_CHECK_WINDOW 200
@@ -31,7 +32,6 @@ namespace android::libguiextension {
 typedef AIMapper_Error (*AIMapper_loadIMapperFn)(AIMapper *_Nullable *_Nonnull outImplementation);
 constexpr const char *_Nonnull VENDOR_QTI_METADATA_NAME = "QTI";
 static AIMapper *sMapper5 = nullptr;
-static sp<IBinder> sPerfService = nullptr;
 static pid_t sGameGfxTid = -1;
 static int64_t sTimestamp = 0;
 
@@ -143,8 +143,7 @@ bool QtiSurfaceExtension::isGame(std::string layerName) {
 
     mQtiLayerName = layerName;
     mQtiIsGame = false;
-    sp<IServiceManager> sm = defaultServiceManager();
-    sPerfService = sm->checkService(String16("vendor.perfservice"));
+    sp<IBinder> sPerfService = getPerfService();
     if (sPerfService == nullptr) {
         ALOGE("Cannot find perfservice");
         return false;
@@ -183,6 +182,7 @@ bool QtiSurfaceExtension::isGame(std::string layerName) {
 }
 
 void QtiSurfaceExtension::qtiSendGfxTid() {
+    sp<IBinder> sPerfService = getPerfService();
     if (sPerfService == nullptr) return;
     String16 ifName = sPerfService->getInterfaceDescriptor();
     if (ifName.size() > 0) {
