@@ -167,10 +167,6 @@ void Display::setColorProfile(const ColorProfile& colorProfile) {
         return;
     }
 
-    if (isVirtual()) {
-        ALOGW("%s: Invalid operation on virtual display", __func__);
-        return;
-    }
 
     Output::setColorProfile(colorProfile);
 
@@ -186,6 +182,19 @@ void Display::setColorProfile(const ColorProfile& colorProfile) {
     mQtiColorProfile.renderIntent = colorProfile.renderIntent;
 
 // QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+
+// QTI_BEGIN: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
+    if (isVirtual()) {
+        auto qtiHalId = getDisplayIdVariant().and_then(asHalDisplayId<DisplayIdVariant>);
+        DisplayId qtiDisplayId = *qtiHalId;
+        uint64_t value = qtiDisplayId.value;
+        const auto qtiPhysId = PhysicalDisplayId::fromValue(value);
+        getCompositionEngine().getHwComposer().setActiveColorMode(qtiPhysId, colorProfile.mode,
+                                                                  colorProfile.renderIntent);
+        return;
+    }
+// QTI_END: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
+
     const auto physicalId = getDisplayIdVariant().and_then(asPhysicalDisplayId);
     LOG_FATAL_IF(!physicalId);
     getCompositionEngine().getHwComposer().setActiveColorMode(*physicalId, colorProfile.mode,

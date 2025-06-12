@@ -90,6 +90,9 @@ VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc,
         mOutputFence(Fence::NO_FENCE),
         mFbProducerSlot(BufferQueue::INVALID_BUFFER_SLOT),
         mOutputProducerSlot(BufferQueue::INVALID_BUFFER_SLOT),
+// QTI_BEGIN: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
+        mQtiVdsDataSpace(ui::Dataspace::UNKNOWN),
+// QTI_END: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
         mForceHwcCopy(SurfaceFlinger::useHwcForRgbToYuv) {
     mSource[SOURCE_SINK] = sink;
     mSource[SOURCE_SCRATCH] = bqProducer;
@@ -274,8 +277,11 @@ status_t VirtualDisplaySurface::advanceFrame(float hdrSdrRatio) {
             hwcBuffer = fbBuffer; // HWC hasn't previously seen this buffer in this slot
         }
         // TODO: Correctly propagate the dataspace from GL composition
+
+// QTI_BEGIN: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
         result = mHwc.setClientTarget(*halVirtualDisplayId, mFbProducerSlot, mFbFence, hwcBuffer,
-                                      ui::Dataspace::UNKNOWN, hdrSdrRatio);
+                                      mQtiVdsDataSpace, hdrSdrRatio);
+// QTI_END: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
     }
 
     return result;
@@ -546,6 +552,9 @@ status_t VirtualDisplaySurface::queueBuffer(int pslot,
                     item.mSlot, sslot);
         mFbProducerSlot = mapSource2ProducerSlot(SOURCE_SCRATCH, item.mSlot);
         mFbFence = mSlots[item.mSlot].mFence;
+// QTI_BEGIN: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
+        mQtiVdsDataSpace = static_cast<ui::Dataspace>(item.mDataSpace);
+// QTI_END: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
 
     } else {
         LOG_FATAL_IF(mCompositionType != CompositionType::Gpu,
@@ -674,6 +683,9 @@ void VirtualDisplaySurface::resetPerFrameState() {
     mOutputFence = Fence::NO_FENCE;
     mOutputProducerSlot = -1;
     mFbProducerSlot = -1;
+// QTI_BEGIN: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
+    mQtiVdsDataSpace = ui::Dataspace::UNKNOWN;
+// QTI_END: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
 }
 
 status_t VirtualDisplaySurface::refreshOutputBuffer() {
