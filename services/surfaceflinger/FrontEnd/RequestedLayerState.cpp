@@ -62,6 +62,8 @@ RequestedLayerState::RequestedLayerState(const LayerCreationArgs& args)
     metadata.merge(args.metadata);
     changes |= RequestedLayerState::Changes::Metadata;
     handleAlive = true;
+    // TODO: b/305254099 remove once we don't pass invisible windows to input
+    windowInfoHandle = nullptr;
     if (parentId != UNASSIGNED_LAYER_ID) {
         canBeRoot = false;
     }
@@ -550,6 +552,33 @@ bool RequestedLayerState::hasInputInfo() const {
     const auto windowInfo = windowInfoHandle->getInfo();
     return windowInfo->token != nullptr ||
             windowInfo->inputConfig.test(gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL);
+}
+
+bool RequestedLayerState::needsInputInfo() const {
+    if (potentialCursor) {
+        return false;
+    }
+
+    if (hasBufferOrSidebandStream() || fillsColor()) {
+        return true;
+    }
+
+    if (!windowInfoHandle) {
+        return false;
+    }
+
+    const auto windowInfo = windowInfoHandle->getInfo();
+    return windowInfo->token != nullptr ||
+            windowInfo->inputConfig.test(gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL);
+}
+
+bool RequestedLayerState::hasBufferOrSidebandStream() const {
+    return ((sidebandStream != nullptr) || (externalTexture != nullptr));
+}
+
+bool RequestedLayerState::fillsColor() const {
+    return !hasBufferOrSidebandStream() && color.r >= 0.0_hf && color.g >= 0.0_hf &&
+            color.b >= 0.0_hf;
 }
 
 bool RequestedLayerState::hasBlur() const {
