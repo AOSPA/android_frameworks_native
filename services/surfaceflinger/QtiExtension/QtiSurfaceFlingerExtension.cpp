@@ -1217,12 +1217,18 @@ void QtiSurfaceFlingerExtension::qtiCreateVirtualDisplay(int width, int height, 
     }
 }
 
+void QtiSurfaceFlingerExtension::qtiSetDisplayCount(int displayCount) {
+    std::lock_guard lock(mQtiDisplayCountMutex);
+    mQtiDisplayCount = displayCount;
+}
+
 void QtiSurfaceFlingerExtension::qtiHasProtectedLayer(bool* hasProtectedLayer) {
     // Surface flinger captures individual screen shot for each display
     // This will lead consumption of high GPU secure memory in case
     // of secure video use cases and cause out of memory.
-    Mutex::Autolock lock(mQtiFlinger->mStateLock);
-    if (mQtiFlinger->mDisplays.size() > 1) {
+
+    std::lock_guard lock(mQtiDisplayCountMutex);
+    if (mQtiDisplayCount > 1) {
         *hasProtectedLayer = false;
     }
 }

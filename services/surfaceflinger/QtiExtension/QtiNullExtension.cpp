@@ -127,6 +127,7 @@ bool QtiNullExtension::qtiCanAllocateHwcDisplayIdForVDS(uint64_t usage) {
 }
 void QtiNullExtension::qtiCheckVirtualDisplayHint(const Vector<DisplayState>& displays) {}
 void QtiNullExtension::qtiCreateVirtualDisplay(int width, int height, int format) {}
+void QtiNullExtension::qtiSetDisplayCount(int displayCount) {}
 void QtiNullExtension::qtiHasProtectedLayer(bool* hasProtectedLayer) {}
 bool QtiNullExtension::qtiIsSecureDisplay(sp<const GraphicBuffer> buffer) {
     return false;

@@ -16,7 +16,7 @@
 
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
- * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -2717,12 +2717,6 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
         frontend::LayerSnapshot* snapshot = mLayerSnapshotBuilder.getSnapshot(it->second->sequence);
         gui::GameMode gameMode = (snapshot) ? snapshot->gameMode : gui::GameMode::Unsupported;
         mLayersWithQueuedFrames.emplace(it->second, gameMode);
-
-        /* QTI_BEGIN */
-        if (snapshot) {
-            snapshot->qtiLayerClass = it->second->qtiGetLayerClass();
-        }
-        /* QTI_END */
     }
 
     updateLayerHistory(latchTime);
@@ -4272,6 +4266,7 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
 
     mDisplays.try_emplace(displayToken, std::move(display));
     /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSetDisplayCount(mDisplays.size());
     mQtiSFExtnIntf->qtiCreateSmomoInstance(state);
     /* QTI_END */
 
@@ -4318,6 +4313,9 @@ void SurfaceFlinger::processDisplayRemoved(const wp<IBinder>& displayToken) {
     }
 
     mDisplays.erase(displayToken);
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiSetDisplayCount(mDisplays.size());
+    /* QTI_END */
 
     if (display && display->isVirtual()) {
         static_cast<void>(mScheduler->schedule([display = std::move(display)] {
@@ -4366,6 +4364,9 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
         }
 
         mDisplays.erase(displayToken);
+        /* QTI_BEGIN */
+        mQtiSFExtnIntf->qtiSetDisplayCount(mDisplays.size());
+        /* QTI_END */
 
         if (const auto& physical = currentState.physical) {
             getHwComposer().allocatePhysicalDisplay(physical->hwcDisplayId, physical->id,
@@ -9057,6 +9058,7 @@ std::vector<std::pair<Layer*, LayerFE*>> SurfaceFlinger::moveSnapshotsToComposit
                 sp<LayerFE> layerFE = legacyLayer->getCompositionEngineLayerFE(snapshot->path);
                 snapshot->fps = getLayerFramerate(currentTime, snapshot->sequence);
                 /* QTI_BEGIN */
+                snapshot->qtiLayerClass = legacyLayer->qtiGetLayerClass();
                 snapshot->qtiIsSecureDisplay =  legacyLayer->qtiIsSecureDisplay();
                 snapshot->qtiIsSecureCamera = legacyLayer->qtiIsSecureCamera();
                 /* QTI_END */
