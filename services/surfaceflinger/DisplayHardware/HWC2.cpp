@@ -635,9 +635,9 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
         auto layer = getLayerById(layerIds[i]);
         if (layer) {
             auto& layerLut = tmpLuts[i];
+            std::vector<std::pair<int32_t, LutProperties>> lutOffsetsAndProperties;
             if (layerLut.luts.pfd.get() >= 0 && layerLut.luts.offsets.has_value()) {
                 const auto& offsets = layerLut.luts.offsets.value();
-                std::vector<std::pair<int32_t, LutProperties>> lutOffsetsAndProperties;
                 lutOffsetsAndProperties.reserve(offsets.size());
                 std::transform(offsets.begin(), offsets.end(), layerLut.luts.lutProperties.begin(),
                                std::back_inserter(lutOffsetsAndProperties),
@@ -646,8 +646,12 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
                 lutFileDescriptorMapper.emplace_or_replace(layer.get(),
                                                            ::android::base::unique_fd(
                                                                    layerLut.luts.pfd.release()));
+            } else if (layerLut.luts.pfd.get() < 0) {
+                outLuts->emplace_or_replace(layer.get(), lutOffsetsAndProperties);
+                lutFileDescriptorMapper.emplace_or_replace(layer.get(),
+                                                           ::android::base::unique_fd());
             } else {
-                ALOGE("getRequestedLuts: invalid luts on layer %" PRIu64 " found"
+                ALOGE("getRequestedLuts: invalid luts offsets on layer %" PRIu64 " found"
                       " on display %" PRIu64 ". pfd.get()=%d, offsets.has_value()=%d",
                       layerIds[i], mId, layerLut.luts.pfd.get(), layerLut.luts.offsets.has_value());
             }

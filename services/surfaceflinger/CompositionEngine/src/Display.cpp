@@ -443,8 +443,13 @@ void Display::applyLayerLutsToLayers(const LayerLuts& layerLuts) {
 
         if (auto lutsIt = layerLuts.find(hwcLayer); lutsIt != layerLuts.end()) {
             if (auto mapperIt = mapper.find(hwcLayer); mapperIt != mapper.end()) {
-                layer->applyDeviceLayerLut(::android::base::unique_fd(mapperIt->second.release()),
-                                           lutsIt->second);
+                if (mapperIt->second.ok()) {
+                    layer->applyDeviceLayerLut(::android::base::unique_fd(
+                                                       mapperIt->second.release()),
+                                               lutsIt->second);
+                } else {
+                    layer->applyDeviceLayerLut(::android::base::unique_fd(), lutsIt->second);
+                }
             }
         }
     }
