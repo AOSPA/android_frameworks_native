@@ -1046,23 +1046,27 @@ void OutputLayer::applyDeviceLayerLut(
     auto& state = editState();
     LOG_FATAL_IF(!state.hwc);
     auto& hwcState = *state.hwc;
-    std::vector<int32_t> offsets;
-    std::vector<int32_t> dimensions;
-    std::vector<int32_t> sizes;
-    std::vector<int32_t> samplingKeys;
-    for (const auto& [offset, properties] : lutOffsetsAndProperties) {
-        // The Lut(s) that comes back through CommandResultPayload should be
-        // only one sampling key.
-        if (properties.samplingKeys.size() == 1) {
-            offsets.emplace_back(offset);
-            dimensions.emplace_back(static_cast<int32_t>(properties.dimension));
-            sizes.emplace_back(static_cast<int32_t>(properties.size));
-            samplingKeys.emplace_back(static_cast<int32_t>(properties.samplingKeys[0]));
+    if (lutFd.ok()) {
+        std::vector<int32_t> offsets;
+        std::vector<int32_t> dimensions;
+        std::vector<int32_t> sizes;
+        std::vector<int32_t> samplingKeys;
+        for (const auto& [offset, properties] : lutOffsetsAndProperties) {
+            // The Lut(s) that comes back through CommandResultPayload should be
+            // only one sampling key.
+            if (properties.samplingKeys.size() == 1) {
+                offsets.emplace_back(offset);
+                dimensions.emplace_back(static_cast<int32_t>(properties.dimension));
+                sizes.emplace_back(static_cast<int32_t>(properties.size));
+                samplingKeys.emplace_back(static_cast<int32_t>(properties.samplingKeys[0]));
+            }
         }
+        hwcState.luts = std::make_shared<gui::DisplayLuts>(std::move(lutFd), std::move(offsets),
+                                                           std::move(dimensions), std::move(sizes),
+                                                           std::move(samplingKeys));
+    } else {
+        hwcState.luts = nullptr;
     }
-    hwcState.luts = std::make_shared<gui::DisplayLuts>(std::move(lutFd), std::move(offsets),
-                                                       std::move(dimensions), std::move(sizes),
-                                                       std::move(samplingKeys));
 }
 
 bool OutputLayer::needsFiltering() const {
