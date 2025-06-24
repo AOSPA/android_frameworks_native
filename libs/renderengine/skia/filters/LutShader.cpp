@@ -31,12 +31,20 @@ namespace android {
 namespace renderengine {
 namespace skia {
 
+/* QTI_BEGIN */
+// 0 - trilinear, 1 - tetrahedral
+#define INTERPOLATION_METHOD 0
+/* QTI_END */
+
 static const SkString kShader = SkString(R"(
     uniform shader image;
     uniform shader lut;
     uniform int size;
     uniform int key;
     uniform int dimension;
+    /* QTI_BEGIN */
+    uniform int interpolation;
+    /* QTI_END */
     uniform vec3 luminanceCoefficients; // for CIE_Y
     // for hlg/pq transfer function, we need normalize it to [0.0, 1.0]
     // we use `normalizeScalar` to do so
@@ -44,7 +52,10 @@ static const SkString kShader = SkString(R"(
 
     vec4 main(vec2 xy) {
         float4 rgba = image.eval(xy);
-        float3 linear = toLinearSrgb(rgba.rgb) * normalizeScalar;
+        /* QTI_BEGIN */
+        // float3 linear = toLinearSrgb(rgba.rgb) * normalizeScalar;
+        float3 linear = rgba.rgb;
+        /* QTI_END */
         if (dimension == 1) {
             // RGB
             if (key == 0) {
@@ -70,52 +81,132 @@ static const SkString kShader = SkString(R"(
             }
         } else if (dimension == 3) {
             if (key == 0) {
-                float tx = linear.r * float(size - 1);
-                float ty = linear.g * float(size - 1);
-                float tz = linear.b * float(size - 1);
+        /* QTI_BEGIN */
+                // float tx = linear.r * float(size - 1);
+                // float ty = linear.g * float(size - 1);
+                // float tz = linear.b * float(size - 1);
 
                 // calculate lower and upper bounds for each dimension
-                int x = int(tx);
-                int y = int(ty);
-                int z = int(tz);
+                // int x = int(tx);
+                // int y = int(ty);
+                // int z = int(tz);
 
-                int i000 = x + y * size + z * size * size;
-                int i100 = i000 + 1;
-                int i010 = i000 + size;
-                int i110 = i000 + size + 1;
-                int i001 = i000 + size * size;
-                int i101 = i000 + size * size + 1;
-                int i011 = i000 + size * size + size;
-                int i111 = i000 + size * size + size + 1;
+                // int i000 = x + y * size + z * size * size;
+                // int i100 = i000 + 1;
+                // int i010 = i000 + size;
+                // int i110 = i000 + size + 1;
+                // int i001 = i000 + size * size;
+                // int i101 = i000 + size * size + 1;
+                // int i011 = i000 + size * size + size;
+                // int i111 = i000 + size * size + size + 1;
 
                 // get 1d normalized indices
-                float c000 = float(i000) / float(size * size * size);
-                float c100 = float(i100) / float(size * size * size);
-                float c010 = float(i010) / float(size * size * size);
-                float c110 = float(i110) / float(size * size * size);
-                float c001 = float(i001) / float(size * size * size);
-                float c101 = float(i101) / float(size * size * size);
-                float c011 = float(i011) / float(size * size * size);
-                float c111 = float(i111) / float(size * size * size);
+                // float c000 = float(i000) / float(size * size * size);
+                // float c100 = float(i100) / float(size * size * size);
+                // float c010 = float(i010) / float(size * size * size);
+                // float c110 = float(i110) / float(size * size * size);
+                // float c001 = float(i001) / float(size * size * size);
+                // float c101 = float(i101) / float(size * size * size);
+                // float c011 = float(i011) / float(size * size * size);
+                // float c111 = float(i111) / float(size * size * size);
 
                 //TODO(b/377984618): support Tetrahedral interpolation
                 // perform trilinear interpolation
-                float3 c00 = mix(lut.eval(vec2(c000, 0.0) + 0.5).rgb,
-                                 lut.eval(vec2(c100, 0.0) + 0.5).rgb, linear.r);
-                float3 c01 = mix(lut.eval(vec2(c001, 0.0) + 0.5).rgb,
-                                 lut.eval(vec2(c101, 0.0) + 0.5).rgb, linear.r);
-                float3 c10 = mix(lut.eval(vec2(c010, 0.0) + 0.5).rgb,
-                                 lut.eval(vec2(c110, 0.0) + 0.5).rgb, linear.r);
-                float3 c11 = mix(lut.eval(vec2(c011, 0.0) + 0.5).rgb,
-                                 lut.eval(vec2(c111, 0.0) + 0.5).rgb, linear.r);
+                // float3 c00 = mix(lut.eval(vec2(c000, 0.0) + 0.5).rgb,
+                //                  lut.eval(vec2(c100, 0.0) + 0.5).rgb, linear.r);
+                // float3 c01 = mix(lut.eval(vec2(c001, 0.0) + 0.5).rgb,
+                //                  lut.eval(vec2(c101, 0.0) + 0.5).rgb, linear.r);
+                // float3 c10 = mix(lut.eval(vec2(c010, 0.0) + 0.5).rgb,
+                //                  lut.eval(vec2(c110, 0.0) + 0.5).rgb, linear.r);
+                // float3 c11 = mix(lut.eval(vec2(c011, 0.0) + 0.5).rgb,
+                //                  lut.eval(vec2(c111, 0.0) + 0.5).rgb, linear.r);
 
-                float3 c0 = mix(c00, c10, linear.g);
-                float3 c1 = mix(c01, c11, linear.g);
+                // float3 c0 = mix(c00, c10, linear.g);
+                // float3 c1 = mix(c01, c11, linear.g);
 
-                linear = mix(c0, c1, linear.b);
+                // linear = mix(c0, c1, linear.b);
+            // }
+        // }
+        // return float4(fromLinearSrgb(linear), rgba.a);
+
+                // index
+                float x = linear.r * float(size - 1);
+                float y = linear.g * float(size - 1);
+                float z = linear.b * float(size - 1);
+
+                // lower bound
+                float x0 = floor(x);
+                float y0 = floor(y);
+                float z0 = floor(z);
+
+                // upper bound
+                float x1 = min(x0 + 1.0, float(size - 1));
+                float y1 = min(y0 + 1.0, float(size - 1));
+                float z1 = min(z0 + 1.0, float(size - 1));
+
+                // weight
+                // if the value reaches to upper bound, x1 == x0, then weight is 0
+                // if no, x1 - x0 should always be 1.0
+                float tx = (x1 == x0) ? 0 : (x - x0);
+                float ty = (y1 == y0) ? 0 : (y - y0);
+                float tz = (z1 == z0) ? 0 : (z - z0);
+
+                // indices
+                float i000 = x0 + (y0 * float(size)) + (z0 * float(size) * float(size));
+                float i001 = x0 + (y0 * float(size)) + (z1 * float(size) * float(size));
+                float i010 = x0 + (y1 * float(size)) + (z0 * float(size) * float(size));
+                float i011 = x0 + (y1 * float(size)) + (z1 * float(size) * float(size));
+                float i100 = x1 + (y0 * float(size)) + (z0 * float(size) * float(size));
+                float i101 = x1 + (y0 * float(size)) + (z1 * float(size) * float(size));
+                float i110 = x1 + (y1 * float(size)) + (z0 * float(size) * float(size));
+                float i111 = x1 + (y1 * float(size)) + (z1 * float(size) * float(size));
+
+                // TODO(b/377984618): support Tetrahedral interpolation
+                // perform trilinear interpolation
+                // see https://en.wikipedia.org/wiki/Trilinear_interpolation
+                float3 c000 = lut.eval(vec2(i000, 0.0) + 0.5).rgb;
+                float3 c001 = lut.eval(vec2(i001, 0.0) + 0.5).rgb;
+                float3 c010 = lut.eval(vec2(i010, 0.0) + 0.5).rgb;
+                float3 c011 = lut.eval(vec2(i011, 0.0) + 0.5).rgb;
+                float3 c100 = lut.eval(vec2(i100, 0.0) + 0.5).rgb;
+                float3 c101 = lut.eval(vec2(i101, 0.0) + 0.5).rgb;
+                float3 c110 = lut.eval(vec2(i110, 0.0) + 0.5).rgb;
+                float3 c111 = lut.eval(vec2(i111, 0.0) + 0.5).rgb;
+
+                if (interpolation == 1) {
+                  // TODO(user): add correct weights by calculating tetrahedron volume ratios
+                  if(tx >= ty && ty >= tz) {
+                    linear = (1.0 - tx) * c000 + (tx - ty) * c100 + (ty - tz) * c110 + tz * c111;
+                  } else if(tx >= linear.b && linear.b >= ty) {
+                    linear = (1.0 - tx) * c000 + (tx - tz) * c100 + (tz - ty) * c101 + ty * c111;
+                  } else if(tz >= tx && tx >= ty) {
+                    linear = (1.0 - tz) * c000 + (tz - tx) * c001 + (tx - ty) * c101 + ty * c111;
+                  } else if(ty >= tx && tx >= tz) {
+                    linear = (1.0 - ty) * c000 + (ty - tx) * c010 + (tx - tz) * c110 + tz * c111;
+                  } else if(ty >= tz && tz >= tx) {
+                    linear = (1.0 - ty) * c000 + (ty - tz) * c010 + (tz - tx) * c011 + tx * c111;
+                  } else if(tz >= ty && ty >= tx) {
+                    linear = (1.0 - tz) * c000 + (tz - ty) * c001 + (ty - tx) * c011 + tx * c111;
+                  }
+                } else {
+                  // mix(x, y, a) = x * (1 - a) + y * a
+                  // interpolate along the b channel
+                  float3 c00 = mix(c000, c001, tz);
+                  float3 c01 = mix(c010, c011, tz);
+                  float3 c10 = mix(c100, c101, tz);
+                  float3 c11 = mix(c110, c111, tz);
+
+                  // interpolate along the g channel
+                  float3 c0 = mix(c00, c01, ty);
+                  float3 c1 = mix(c10, c11, ty);
+
+                  // interpolate along the r channel
+                  linear = mix(c0, c1, tx);
+                }
             }
         }
-        return float4(fromLinearSrgb(linear), rgba.a);
+        return float4(linear, rgba.a);
+        /* QTI_END */
     })");
 
 // same as shader::toColorSpace function
@@ -217,6 +308,9 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
     const int uSize = static_cast<int>(size);
     const int uKey = static_cast<int>(samplingKey);
     const int uDimension = static_cast<int>(dimension);
+    /* QTI_BEGIN */
+    const int uInterpolation = static_cast<int>(INTERPOLATION_METHOD);
+    /* QTI_END */
     const float uNormalizeScalar = static_cast<float>(normalizeScalar);
 
     if (static_cast<LutProperties::SamplingKey>(samplingKey) == LutProperties::SamplingKey::CIE_Y) {
@@ -230,6 +324,9 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
     mBuilder->uniform("size") = uSize;
     mBuilder->uniform("key") = uKey;
     mBuilder->uniform("dimension") = uDimension;
+    /* QTI_BEGIN */
+    mBuilder->uniform("interpolation") = uInterpolation;
+    /* QTI_END */
     mBuilder->uniform("normalizeScalar") = uNormalizeScalar;
     return mBuilder->makeShader();
 }
@@ -245,13 +342,15 @@ sk_sp<SkShader> LutShader::lutShader(sk_sp<SkShader>& input,
 
     auto& fd = displayLuts->getLutFileDescriptor();
     if (fd.ok()) {
+        /* QTI_BEGIN */
         // de-gamma the image without changing the primaries
-        SkImage* baseImage = input->isAImage((SkMatrix*)nullptr, (SkTileMode*)nullptr);
-        sk_sp<SkColorSpace> baseColorSpace = baseImage && baseImage->colorSpace()
-                ? baseImage->refColorSpace()
-                : SkColorSpace::MakeSRGB();
-        sk_sp<SkColorSpace> lutMathColorSpace = baseColorSpace->makeLinearGamma();
-        input = input->makeWithWorkingColorSpace(lutMathColorSpace);
+        // SkImage* baseImage = input->isAImage((SkMatrix*)nullptr, (SkTileMode*)nullptr);
+        // sk_sp<SkColorSpace> baseColorSpace = baseImage && baseImage->colorSpace()
+        //         ? baseImage->refColorSpace()
+        //         : SkColorSpace::MakeSRGB();
+        // sk_sp<SkColorSpace> lutMathColorSpace = baseColorSpace->makeLinearGamma();
+        // input = input->makeWithWorkingColorSpace(lutMathColorSpace);
+        /* QTI_END */
 
         auto& offsets = displayLuts->offsets;
         auto& lutProperties = displayLuts->lutProperties;
