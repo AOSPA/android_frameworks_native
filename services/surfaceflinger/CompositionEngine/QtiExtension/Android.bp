@@ -12,9 +12,13 @@ qtidisplayextension_cc_library_static {
     srcs: [
         "QtiOutputExtension.cpp",
         "QtiRenderSurfaceExtension.cpp",
+        "QtiHwcBufferCacheExtension.cpp",
     ],
     cflags: [
         "-Wno-macro-redefined"
+    ],
+    header_libs: [
+        "display_intf_headers",
     ],
     soong_config_variables: {
         displayextension: {
