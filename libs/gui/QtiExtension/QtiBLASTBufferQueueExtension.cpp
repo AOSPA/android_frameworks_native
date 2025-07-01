@@ -1,9 +1,10 @@
-/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
 #include "QtiBLASTBufferQueueExtension.h"
 #include "QtiDolphinWrapper.h"
+#include "QtiSurfaceUtils.h"
 
 #include <pthread.h>
 #include <regex>
@@ -12,15 +13,13 @@
 
 namespace android::libguiextension {
 
-static sp<IBinder> sPerfService = nullptr;
 static bool sQtiIsGame = false;
 static QtiDolphinWrapper* sQtiDolphinWrapper = nullptr;
 static bool sQtiSmartTouchActive = false;
 static std::string sQtiLayerName = "";
 static pthread_once_t sQtiCheckAppTypeOnce = PTHREAD_ONCE_INIT;
 static void qtiInitAppType() {
-    sp<IServiceManager> sm = defaultServiceManager();
-    sPerfService = sm->checkService(String16("vendor.perfservice"));
+    sp<IBinder> sPerfService = getPerfService();
     if (sPerfService == nullptr) {
         ALOGE("Cannot find perfservice");
         return;
