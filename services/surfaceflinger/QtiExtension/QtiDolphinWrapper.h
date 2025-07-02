@@ -21,6 +21,7 @@ public:
     void (*qtiDolphinTrackBufferDecrement)(const char* name, int counter) = nullptr;
     void (*qtiDolphinTrackVsyncSignal)() = nullptr;
     void (*qtiDolphinUnblockPendingBuffer)() = nullptr;
+    bool (*qtiDolphinIsTargetFpsActive)() = nullptr;
 
 private:
     void *mQtiDolphinHandle = nullptr;
