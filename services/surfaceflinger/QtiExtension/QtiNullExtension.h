@@ -138,6 +138,7 @@ public:
                                         nsecs_t desiredPresentTime);
     void qtiDolphinTrackBufferDecrement(const char *name, int count);
     void qtiDolphinTrackVsyncSignal();
+    bool qtiDolphinIsTargetFpsActive() override;
 
     bool qtiIsFpsDeferNeeded(float newFpsRequest) override;
     void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
