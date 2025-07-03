@@ -4073,6 +4073,21 @@ sp<DisplayDevice> SurfaceFlinger::setupNewDisplayDeviceInternal(
 
     creationArgs.requestedRefreshRate = state.requestedRefreshRate;
 
+    /* QTI_BEGIN */
+    if (state.isVirtual()) {
+        const auto qtiHalId = compositionDisplay->getDisplayIdVariant().and_then(
+                asHalDisplayId<DisplayIdVariant>);
+        DisplayId qtiDisplayId = *qtiHalId;
+        uint64_t value = qtiDisplayId.value;
+        const auto qtiPhysId = PhysicalDisplayId::fromValue(value);
+        ui::ColorModes qtiColorModes = getHwComposer().getColorModes(qtiPhysId);
+        for (const auto mode : qtiColorModes) {
+            creationArgs.hasWideColorGamut |= ui::isWideColorMode(mode);
+            creationArgs.hwcColorModes.emplace(mode, getHwComposer().getRenderIntents(qtiPhysId, mode));
+        }
+    }
+    /* QTI_END */
+
     sp<DisplayDevice> display = getFactory().createDisplayDevice(creationArgs);
 
     nativeWindowSurface->preallocateBuffers();

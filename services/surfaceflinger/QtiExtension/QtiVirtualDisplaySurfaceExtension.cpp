@@ -64,7 +64,7 @@ int QtiVirtualDisplaySurfaceExtension::getClientTargetCurrentSlot() {
 }
 
 ui::Dataspace QtiVirtualDisplaySurfaceExtension::getClientTargetCurrentDataspace() {
-    return ui::Dataspace::UNKNOWN;
+    return mQtiVDS->mQtiVdsDataSpace;
 }
 
 } // namespace android::surfaceflingerextension

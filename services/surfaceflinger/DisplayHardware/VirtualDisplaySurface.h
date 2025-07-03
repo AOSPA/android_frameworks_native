@@ -259,6 +259,13 @@ private:
     int mFbProducerSlot;
     int mOutputProducerSlot;
 
+// QTI_BEGIN: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
+    // mDataSpace is the dataspace of the current composition buffer for
+    // this VirtualDisplaySurface. It will be 0 when HWC is doing the
+    // compositing.
+    ui::Dataspace mQtiVdsDataSpace;
+// QTI_END: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
+
     // Debug only -- track the sequence of events in each frame so we can make
     // sure they happen in the order we expect. This class implicitly models
     // a state machine; this enum/variable makes it explicit.
