@@ -28,9 +28,12 @@ QtiDolphinWrapper::QtiDolphinWrapper() {
                 "dolphinTrackVsyncSignal");
         qtiDolphinUnblockPendingBuffer = (void (*) ())dlsym(mQtiDolphinHandle,
                 "dolphinUnblockPendingBuffer");
+        qtiDolphinIsTargetFpsActive = (bool (*) ())dlsym(mQtiDolphinHandle,
+                "dolphinIsTargetFpsActive");
         bool functionsFound = qtiDolphinInit && qtiDolphinSetVsyncPeriod &&
                               qtiDolphinTrackBufferIncrement && qtiDolphinTrackBufferDecrement &&
-                              qtiDolphinTrackVsyncSignal && qtiDolphinUnblockPendingBuffer;
+                              qtiDolphinTrackVsyncSignal && qtiDolphinUnblockPendingBuffer &&
+                              qtiDolphinIsTargetFpsActive;
         if (functionsFound) {
             qtiDolphinInit();
         } else {
@@ -42,6 +45,7 @@ QtiDolphinWrapper::QtiDolphinWrapper() {
             qtiDolphinTrackBufferDecrement = nullptr;
             qtiDolphinTrackVsyncSignal = nullptr;
             qtiDolphinUnblockPendingBuffer = nullptr;
+            qtiDolphinIsTargetFpsActive = nullptr;
         }
     }
 }

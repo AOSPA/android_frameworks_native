@@ -236,6 +236,7 @@ public:
     void qtiDolphinTrackBufferDecrement(const char *name, int count);
     void qtiDolphinTrackVsyncSignal();
     void qtiDolphinUnblockPendingBuffer();
+    bool qtiDolphinIsTargetFpsActive();
 
     /*
      * Methods for speculative fence
