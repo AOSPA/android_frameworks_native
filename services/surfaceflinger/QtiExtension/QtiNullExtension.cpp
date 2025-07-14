@@ -190,6 +190,9 @@ void QtiNullExtension::qtiDolphinTrackBufferIncrement(const char *name, bool isA
 void QtiNullExtension::qtiDolphinTrackBufferDecrement(const char *name, int count) {}
 void QtiNullExtension::qtiDolphinUnblockPendingBuffer() {}
 void QtiNullExtension::qtiDolphinTrackVsyncSignal() {}
+bool QtiNullExtension::qtiDolphinIsTargetFpsActive() {
+    return false;
+}
 
 bool QtiNullExtension::qtiIsFpsDeferNeeded(float newFpsRequest) {
     return false;

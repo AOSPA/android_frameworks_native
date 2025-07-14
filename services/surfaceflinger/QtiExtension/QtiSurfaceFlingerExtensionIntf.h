@@ -169,6 +169,7 @@ public:
     virtual void qtiDolphinTrackBufferDecrement(const char *name, int count);
     virtual void qtiDolphinTrackVsyncSignal();
     virtual void qtiDolphinUnblockPendingBuffer();
+    virtual bool qtiDolphinIsTargetFpsActive() = 0;
 
     /*
      * Methods for speculative fence

@@ -1643,6 +1643,10 @@ void QtiSurfaceFlingerExtension::qtiUpdateSmomoLayerInfo(
 }
 
 void QtiSurfaceFlingerExtension::qtiScheduleCompositeImmed() {
+    // If target fps is active, no need to schedule the composite
+    if (qtiDolphinIsTargetFpsActive()) {
+        return;
+    }
     mQtiFlinger->mMustComposite = true;
     mQtiFlinger->mScheduler->resetIdleTimer();
     qtiNotifyDisplayUpdateImminent();
@@ -1799,6 +1803,13 @@ void QtiSurfaceFlingerExtension::qtiDolphinUnblockPendingBuffer() {
     if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinUnblockPendingBuffer) {
         mQtiDolphinWrapper->qtiDolphinUnblockPendingBuffer();
     }
+}
+
+bool QtiSurfaceFlingerExtension::qtiDolphinIsTargetFpsActive() {
+    if (mQtiDolphinWrapper && mQtiDolphinWrapper->qtiDolphinIsTargetFpsActive) {
+        return mQtiDolphinWrapper->qtiDolphinIsTargetFpsActive();
+    }
+    return false;
 }
 
 /*
