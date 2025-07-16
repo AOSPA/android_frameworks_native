@@ -19,6 +19,11 @@
 #include <gui/BufferQueue.h>
 #include <ui/GraphicBuffer.h>
 
+/* QTI_BEGIN : Reduce max free slots for 8k buffers */
+#include "QtiExtension/QtiHwcBufferCacheExtension.h"
+using android::compositionengineextension::QtiHwcBufferCacheExtension;
+/* QTI_END */
+
 namespace android::compositionengine::impl {
 
 HwcBufferCache::HwcBufferCache() {
@@ -28,6 +33,11 @@ HwcBufferCache::HwcBufferCache() {
 }
 
 HwcSlotAndBuffer HwcBufferCache::getHwcSlotAndBuffer(const sp<GraphicBuffer>& buffer) {
+    // QTI_BEGIN: Reduce max free slots for 8k buffers
+    if (!mSlotsSetForWideVideo) {
+        QtiHwcBufferCacheExtension::Instance().ResetFreeSlotsForWideVideo(buffer, this);
+    }
+    // QTI_END
     if (auto i = mCacheByBufferId.find(buffer->getId()); i != mCacheByBufferId.end()) {
         Cache& cache = i->second;
         // mark this cache slot as more recently used so it won't get evicted anytime soon

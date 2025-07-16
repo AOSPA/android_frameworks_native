@@ -92,6 +92,10 @@ void QtiFeatureManager::qtiInit() {
     propName = qtiGetPropName(kIdleFallback);
     mQtiAllowIdleFallback = base::GetBoolProperty(propName, false);
     ALOGI_IF(mQtiAllowIdleFallback, "Allow idle fallback");
+
+    propName = qtiGetPropName(kReduceSlotsForWideVideo);
+    mQtiReduceSlotsForWideVideo = base::GetBoolProperty(propName, true);
+    ALOGI_IF(mQtiReduceSlotsForWideVideo, "Reduce Slots For Wide Video");
 }
 
 void QtiFeatureManager::qtiSetIDisplayConfig(std::shared_ptr<IDisplayConfig> aidl) {
@@ -152,6 +156,8 @@ bool QtiFeatureManager::qtiIsExtensionFeatureEnabled(QtiFeature feature) {
             return mQtiEnableSmomoOptimalRefreshRate;
         case QtiFeature::kIdleFallback:
             return mQtiAllowIdleFallback;
+        case QtiFeature::kReduceSlotsForWideVideo:
+            return mQtiReduceSlotsForWideVideo;
         default:
             ALOGW("Queried unknown SF extension feature %d", feature);
             return false;
@@ -194,6 +200,8 @@ string QtiFeatureManager::qtiGetPropName(QtiFeature feature) {
             return "vendor.display.enable_optimal_refresh_rate";
         case QtiFeature::kIdleFallback:
             return "vendor.display.enable_allow_idle_fallback";
+        case QtiFeature::kReduceSlotsForWideVideo:
+            return "vendor.display.reduce_slots_for_wide_video";
         default:
             ALOGW("Queried unknown SF extension feature %d", feature);
             return "";
