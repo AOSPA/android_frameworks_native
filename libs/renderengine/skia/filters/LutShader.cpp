@@ -44,6 +44,7 @@ static const SkString kShader = SkString(R"(
     uniform int dimension;
     /* QTI_BEGIN */
     uniform int interpolation;
+    uniform int lutSourceIsHwc;
     /* QTI_END */
     uniform vec3 luminanceCoefficients; // for CIE_Y
     // for hlg/pq transfer function, we need normalize it to [0.0, 1.0]
@@ -52,9 +53,11 @@ static const SkString kShader = SkString(R"(
 
     vec4 main(vec2 xy) {
         float4 rgba = image.eval(xy);
+        float3 linear = toLinearSrgb(rgba.rgb) * normalizeScalar;
         /* QTI_BEGIN */
-        // float3 linear = toLinearSrgb(rgba.rgb) * normalizeScalar;
-        float3 linear = rgba.rgb;
+        if (lutSourceIsHwc == 1) {
+          linear = rgba.rgb;
+        }
         /* QTI_END */
         if (dimension == 1) {
             // RGB
@@ -125,9 +128,6 @@ static const SkString kShader = SkString(R"(
                 // float3 c1 = mix(c01, c11, linear.g);
 
                 // linear = mix(c0, c1, linear.b);
-            // }
-        // }
-        // return float4(fromLinearSrgb(linear), rgba.a);
 
                 // index
                 float x = linear.r * float(size - 1);
@@ -205,8 +205,12 @@ static const SkString kShader = SkString(R"(
                 }
             }
         }
-        return float4(linear, rgba.a);
+
+        if (lutSourceIsHwc == 1) {
+          return float4(linear, rgba.a);
+        }
         /* QTI_END */
+        return float4(fromLinearSrgb(linear), rgba.a);
     })");
 
 // same as shader::toColorSpace function
@@ -238,8 +242,8 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
                                              const std::vector<float>& buffers,
                                              const int32_t offset, const int32_t length,
                                              const int32_t dimension, const int32_t size,
-                                             const int32_t samplingKey,
-                                             ui::Dataspace srcDataspace) {
+                                             const int32_t samplingKey, ui::Dataspace srcDataspace,
+                                             bool lutSourceIsHwc) {
     SFTRACE_NAME("lut shader");
     std::vector<half> buffer(length * 4); // 4 is for RGBA
     auto d = static_cast<LutProperties::Dimension>(dimension);
@@ -310,6 +314,7 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
     const int uDimension = static_cast<int>(dimension);
     /* QTI_BEGIN */
     const int uInterpolation = static_cast<int>(INTERPOLATION_METHOD);
+    const int ulutSourceIsHwc = lutSourceIsHwc ? 1 : 0;
     /* QTI_END */
     const float uNormalizeScalar = static_cast<float>(normalizeScalar);
 
@@ -326,6 +331,7 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
     mBuilder->uniform("dimension") = uDimension;
     /* QTI_BEGIN */
     mBuilder->uniform("interpolation") = uInterpolation;
+    mBuilder->uniform("lutSourceIsHwc") = ulutSourceIsHwc;
     /* QTI_END */
     mBuilder->uniform("normalizeScalar") = uNormalizeScalar;
     return mBuilder->makeShader();
@@ -333,8 +339,8 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
 
 sk_sp<SkShader> LutShader::lutShader(sk_sp<SkShader>& input,
                                      std::shared_ptr<gui::DisplayLuts> displayLuts,
-                                     ui::Dataspace srcDataspace,
-                                     sk_sp<SkColorSpace> outColorSpace) {
+                                     ui::Dataspace srcDataspace, sk_sp<SkColorSpace> outColorSpace,
+                                     bool lutSourceIsHwc) {
     if (mBuilder == nullptr) {
         const static SkRuntimeEffect::Result instance = SkRuntimeEffect::MakeForShader(kShader);
         mBuilder = std::make_unique<SkRuntimeShaderBuilder>(instance.effect);
@@ -384,7 +390,7 @@ sk_sp<SkShader> LutShader::lutShader(sk_sp<SkShader>& input,
             }
             input = generateLutShader(input, buffers, offsets[i], bufferSizePerLut,
                                       lutProperties[i].dimension, lutProperties[i].size,
-                                      lutProperties[i].samplingKey, srcDataspace);
+                                      lutProperties[i].samplingKey, srcDataspace, lutSourceIsHwc);
         }
 
         input = input->makeWithWorkingColorSpace(outColorSpace);
