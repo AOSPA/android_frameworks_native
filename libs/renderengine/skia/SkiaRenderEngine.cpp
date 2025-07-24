@@ -547,7 +547,8 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
     if (graphicBuffer && parameters.layer.luts) {
         shader = mLutShader.lutShader(shader, parameters.layer.luts,
                                       parameters.layer.sourceDataspace,
-                                      toSkColorSpace(parameters.outputDataSpace));
+                                      toSkColorSpace(parameters.outputDataSpace),
+                                      parameters.layer.lutSourceIsHwc);
     }
 
     if (parameters.requiresLinearEffect) {
@@ -1102,36 +1103,26 @@ void SkiaRenderEngine::drawLayersInternal(
 
             sk_sp<SkShader> shader;
 
-            /* QTI_BEGIN */
-            const auto& targetBuffer = layer.source.buffer.buffer;
-            const auto graphicBuffer = targetBuffer ? targetBuffer->getBuffer() : nullptr;
-            /* QTI_END */
+            bool useRawShader = layer.source.buffer.buffer && layer.luts && layer.lutSourceIsHwc;
+
             if (layer.source.buffer.useTextureFiltering) {
-              /* QTI_BEGIN */
-              if (graphicBuffer && layer.luts) {
-                shader = image->makeRawShader(SkTileMode::kClamp, SkTileMode::kClamp,
-                                              SkSamplingOptions(
-                                                   {SkFilterMode::kLinear, SkMipmapMode::kNone}),
-                                           &matrix);
-              } else {
-              /* QTI_END */
-                shader = image->makeShader(SkTileMode::kClamp, SkTileMode::kClamp,
-                                           SkSamplingOptions(
-                                                   {SkFilterMode::kLinear, SkMipmapMode::kNone}),
-                                           &matrix);
-              /* QTI_BEGIN */
-              }
-              /* QTI_END */
+                if (useRawShader) {
+                    shader = image->makeRawShader(SkTileMode::kClamp, SkTileMode::kClamp,
+                                                  SkSamplingOptions({SkFilterMode::kLinear,
+                                                                     SkMipmapMode::kNone}),
+                                                  &matrix);
+                } else {
+                    shader = image->makeShader(SkTileMode::kClamp, SkTileMode::kClamp,
+                                               SkSamplingOptions({SkFilterMode::kLinear,
+                                                                  SkMipmapMode::kNone}),
+                                               &matrix);
+                }
             } else {
-              /* QTI_BEGIN */
-              if (graphicBuffer && layer.luts) {
-                shader = image->makeRawShader(SkSamplingOptions(), matrix);
-              } else {
-              /* QTI_END */
-                shader = image->makeShader(SkSamplingOptions(), matrix);
-              /* QTI_BEGIN */
-              }
-              /* QTI_END */
+                if (useRawShader) {
+                    shader = image->makeRawShader(SkSamplingOptions(), matrix);
+                } else {
+                    shader = image->makeShader(SkSamplingOptions(), matrix);
+                }
             }
 
             if (useIsOpaqueWorkaround) {

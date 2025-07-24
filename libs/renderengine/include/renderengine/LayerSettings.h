@@ -155,6 +155,8 @@ struct LayerSettings {
     float whitePointNits = -1.f;
 
     std::shared_ptr<gui::DisplayLuts> luts;
+
+    bool lutSourceIsHwc = false;
 };
 
 // Keep in sync with custom comparison function in
