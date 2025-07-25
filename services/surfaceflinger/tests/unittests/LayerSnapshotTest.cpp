@@ -1435,4 +1435,18 @@ TEST_F(LayerSnapshotTest, doNotOverrideParentTrustedOverlayState) {
             gui::WindowInfo::InputConfig::TRUSTED_OVERLAY));
 }
 
+TEST_F(LayerSnapshotTest, shouldUpdateInputWhenNoInputInfo) {
+    // If a layer has no buffer or no color, it doesn't have an input info
+    setColor(111, {-1._hf, -1._hf, -1._hf});
+    UPDATE_AND_VERIFY(mSnapshotBuilder, {1, 11, 12, 121, 122, 1221, 13, 2});
+    EXPECT_FALSE(getSnapshot(111)->hasInputInfo());
+
+    setBuffer(111);
+    UPDATE_AND_VERIFY(mSnapshotBuilder, STARTING_ZORDER);
+
+    EXPECT_TRUE(getSnapshot(111)->hasInputInfo());
+    EXPECT_TRUE(getSnapshot(111)->inputInfo.inputConfig.test(
+            gui::WindowInfo::InputConfig::NO_INPUT_CHANNEL));
+}
+
 } // namespace android::surfaceflinger::frontend
