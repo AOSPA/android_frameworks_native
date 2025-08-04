@@ -30,13 +30,15 @@ namespace skia {
 class LutShader {
 public:
     sk_sp<SkShader> lutShader(sk_sp<SkShader>& input, std::shared_ptr<gui::DisplayLuts> displayLuts,
-                              ui::Dataspace srcDataspace, sk_sp<SkColorSpace> outColorSpace);
+                              ui::Dataspace srcDataspace, sk_sp<SkColorSpace> outColorSpace,
+                              bool lutSourceIsHwc);
 
 private:
     sk_sp<SkShader> generateLutShader(sk_sp<SkShader> input, const std::vector<float>& buffers,
                                       const int32_t offset, const int32_t length,
                                       const int32_t dimension, const int32_t size,
-                                      const int32_t samplingKey, ui::Dataspace srcDataspace);
+                                      const int32_t samplingKey, ui::Dataspace srcDataspace,
+                                      bool lutSourceIsHwc);
     std::unique_ptr<SkRuntimeShaderBuilder> mBuilder;
 };
 
