@@ -527,12 +527,22 @@ cc_defaults {
 }
 
 cc_defaults {
+    name: "libbinder_fix_double_derefs_flag_default",
+    cflags: select(release_flag("RELEASE_LIBBINDER_FIX_RECURSIVE_DOUBLE_DEREFS"), {
+        true: ["-DLIBBINDER_FIX_RECURSIVE_DOUBLE_DEREFS"],
+        false: ["-DNO_LIBBINDER_FIX_RECURSIVE_DOUBLE_DEREFS"],
+        default: ["-DNO_LIBBINDER_FIX_RECURSIVE_DOUBLE_DEREFS"],
+    }),
+}
+
+cc_defaults {
     name: "libbinder_kernel_defaults",
     defaults: [
         "libbinder_client_cache_flag",
         "libbinder_defer_bc_request_freeze_notification_flag_default",
         "libbinder_addservice_cache_flag",
         "libbinder_remove_cache_static_list_flag",
+        "libbinder_fix_double_derefs_flag_default",
     ],
     srcs: [
         "BufferedTextOutput.cpp",

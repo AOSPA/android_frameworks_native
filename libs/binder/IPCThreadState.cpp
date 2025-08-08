@@ -69,6 +69,16 @@ namespace android {
 
 using namespace std::chrono_literals;
 
+namespace {
+    bool fixRecursiveDoubleDerefs() {
+#if defined(LIBBINDER_FIX_RECURSIVE_DOUBLE_DEREFS)
+        return true;
+#else
+        return false;
+#endif
+    }
+}
+
 // Static const and functions will be optimized out if not used,
 // when LOG_NDEBUG and references in IF_LOG_COMMANDS() are optimized out.
 static const char* kReturnStrings[] = {
@@ -772,6 +782,12 @@ void IPCThreadState::processPendingDerefs()
 
 void IPCThreadState::processPostWriteDerefs()
 {
+    if (fixRecursiveDoubleDerefs()) {
+        LOG_ALWAYS_FATAL_IF(mIsProcessingPostWriteDerefs,
+                    "processPostWriteDerefs is called recursively.");
+        mIsProcessingPostWriteDerefs = true;
+    }
+
     for (size_t i = 0; i < mPostWriteWeakDerefs.size(); i++) {
         RefBase::weakref_type* refs = mPostWriteWeakDerefs[i];
         refs->decWeak(mProcess.get());
@@ -783,6 +799,10 @@ void IPCThreadState::processPostWriteDerefs()
         obj->decStrong(mProcess.get());
     }
     mPostWriteStrongDerefs.clear();
+
+    if (fixRecursiveDoubleDerefs()) {
+        mIsProcessingPostWriteDerefs = false;
+    }
 }
 
 void IPCThreadState::joinThreadPool(bool isMain)
@@ -1047,6 +1067,7 @@ IPCThreadState::IPCThreadState()
         mPropagateWorkSource(false),
         mIsLooper(false),
         mIsFlushing(false),
+        mIsProcessingPostWriteDerefs(false),
         mStrictModePolicy(0),
         mLastTransactionBinderFlags(0),
         mCallRestriction(mProcess->mCallRestriction) {
