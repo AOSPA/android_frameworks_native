@@ -782,6 +782,7 @@ protected:
     std::unordered_set<int> mDequeuedSlots;
 // QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
+    friend class libguiextension::QtiSurfaceExtensionGPP;
     std::shared_ptr<libguiextension::QtiSurfaceExtensionGPP> mQtiSurfaceGPPExtn = nullptr;
 // QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 };
