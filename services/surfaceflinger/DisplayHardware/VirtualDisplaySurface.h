@@ -259,13 +259,13 @@ private:
     int mFbProducerSlot;
     int mOutputProducerSlot;
 
-// QTI_BEGIN: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
+// QTI_BEGIN: 2025-06-29: Display: sf: Add FBT WCG blending space support for WFD
     // mDataSpace is the dataspace of the current composition buffer for
     // this VirtualDisplaySurface. It will be 0 when HWC is doing the
     // compositing.
     ui::Dataspace mQtiVdsDataSpace;
-// QTI_END: 2025-05-28: Display: sf: Add FBT WCG blending space support for WFD
 
+// QTI_END: 2025-06-29: Display: sf: Add FBT WCG blending space support for WFD
     // Debug only -- track the sequence of events in each frame so we can make
     // sure they happen in the order we expect. This class implicitly models
     // a state machine; this enum/variable makes it explicit.
@@ -307,9 +307,7 @@ private:
     bool mMustRecompose = false;
 
     bool mForceHwcCopy;
-// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
 
-// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 // QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     friend class android::surfaceflingerextension::QtiVirtualDisplaySurfaceExtension;
 // QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.

@@ -34,11 +34,9 @@
 
 namespace android {
 
-/* QTI_BEGIN */
 namespace compositionengineextension {
 class QtiHwcBufferCacheExtension;
 } // namespace compositionengineextension
-/* QTI_END */
 
 class GraphicBuffer;
 
@@ -115,7 +113,6 @@ private:
     std::stack<uint32_t> mFreeSlots;
     uint64_t mLeastRecentlyUsedCounter;
 
-// QTI_BEGIN: Reduce max free slots for 8k buffers
     // boolean flag to depict that Max FreeSlots reset done for Wide Video layer
     bool mSlotsSetForWideVideo = false;
     friend class android::compositionengineextension::QtiHwcBufferCacheExtension;

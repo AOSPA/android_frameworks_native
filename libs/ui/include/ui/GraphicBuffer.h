@@ -33,9 +33,9 @@
 #include <ui/Rect.h>
 #include <utils/Flattenable.h>
 #include <utils/RefBase.h>
-// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+// QTI_BEGIN: 2024-02-27: Display: nativedisplay: fix video call flicker issue
 #include <ui/GraphicTypes.h>
-// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+// QTI_END: 2024-02-27: Display: nativedisplay: fix video call flicker issue
 
 #include <nativebase/nativebase.h>
 
@@ -171,12 +171,12 @@ public:
     Rect getBounds() const              { return Rect(width, height); }
     uint64_t getId() const              { return mId; }
 
-// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+// QTI_BEGIN: 2024-02-27: Display: nativedisplay: fix video call flicker issue
     status_t qtiGetDataspace(ui::Dataspace* outDataspace){
         return mBufferMapper.getDataspace(handle, outDataspace);
     }
 
-// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+// QTI_END: 2024-02-27: Display: nativedisplay: fix video call flicker issue
     uint32_t getGenerationNumber() const { return mGenerationNumber; }
     void setGenerationNumber(uint32_t generation) {
         mGenerationNumber = generation;

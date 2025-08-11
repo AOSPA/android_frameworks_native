@@ -1046,6 +1046,7 @@ void OutputLayer::applyDeviceLayerLut(
     auto& state = editState();
     LOG_FATAL_IF(!state.hwc);
     auto& hwcState = *state.hwc;
+// QTI_BEGIN: 2025-06-19: Display: [Lut] clear out the lut if an invalud lut is provided.
     if (lutFd.ok()) {
         std::vector<int32_t> offsets;
         std::vector<int32_t> dimensions;
@@ -1060,12 +1061,15 @@ void OutputLayer::applyDeviceLayerLut(
                 sizes.emplace_back(static_cast<int32_t>(properties.size));
                 samplingKeys.emplace_back(static_cast<int32_t>(properties.samplingKeys[0]));
             }
+// QTI_END: 2025-06-19: Display: [Lut] clear out the lut if an invalud lut is provided.
         }
+// QTI_BEGIN: 2025-06-19: Display: [Lut] clear out the lut if an invalud lut is provided.
         hwcState.luts = std::make_shared<gui::DisplayLuts>(std::move(lutFd), std::move(offsets),
                                                            std::move(dimensions), std::move(sizes),
                                                            std::move(samplingKeys));
     } else {
         hwcState.luts = nullptr;
+// QTI_END: 2025-06-19: Display: [Lut] clear out the lut if an invalud lut is provided.
     }
 }
 

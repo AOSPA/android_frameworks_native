@@ -14,14 +14,12 @@
  * limitations under the License.
  */
 
-// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause-Center
  */
 
-// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #include <inttypes.h>
 
 #define LOG_TAG "BufferQueueProducer"
@@ -54,12 +52,10 @@
 
 #include <system/window.h>
 
-// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #ifdef QTI_DISPLAY_EXTENSION
 #include "QtiExtension/QtiBufferQueueProducerExtension.h"
 #endif
 
-// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #include <com_android_graphics_libgui_flags.h>
 
 namespace android {
@@ -104,17 +100,13 @@ BufferQueueProducer::BufferQueueProducer(const sp<BufferQueueCore>& core,
     mCurrentCallbackTicket(0),
     mCallbackCondition(),
     mDequeueTimeout(-1),
-// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
     mDequeueWaitingForAllocation(false) {
-// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #ifdef QTI_DISPLAY_EXTENSION
     if (!mQtiBQPExtn) {
         mQtiBQPExtn = new libguiextension::QtiBufferQueueProducerExtension(this);
     }
 #endif
-// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 }
-// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 
 BufferQueueProducer::~BufferQueueProducer() {}
 
@@ -235,19 +227,15 @@ status_t BufferQueueProducer::setMaxDequeuedBufferCount(int maxDequeuedBuffers,
             return BAD_VALUE;
         }
 
-// QTI_BEGIN: 2023-05-08: Video: libgui: reset buffer count to max slots instead of returning BAD_VALUE.
         int minUndequedBufferCount = mCore->getMinUndequeuedBufferCountLocked();
         int bufferCount = minUndequedBufferCount + maxDequeuedBuffers;
-// QTI_END: 2023-05-08: Video: libgui: reset buffer count to max slots instead of returning BAD_VALUE.
 
         if (bufferCount > mCore->getTotalSlotCountLocked()) {
             BQ_LOGE("setMaxDequeuedBufferCount: bufferCount %d too large "
                     "(max %d)",
                     bufferCount, mCore->getTotalSlotCountLocked());
-// QTI_BEGIN: 2023-05-08: Video: libgui: reset buffer count to max slots instead of returning BAD_VALUE.
             bufferCount = BufferQueueDefs::NUM_BUFFER_SLOTS;
             maxDequeuedBuffers = bufferCount - minUndequedBufferCount;
-// QTI_END: 2023-05-08: Video: libgui: reset buffer count to max slots instead of returning BAD_VALUE.
         }
 
         const int minBufferSlots = mCore->getMinMaxBufferCountLocked();
@@ -1047,7 +1035,6 @@ status_t BufferQueueProducer::queueBuffer(int slot,
             return BAD_VALUE;
     }
 
-// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #ifdef QTI_DISPLAY_EXTENSION
     if (mQtiBQPExtn) {
         mQtiBQPExtn->qtiQueueBuffer(isAutoTimestamp, requestedPresentTimestamp,
@@ -1055,7 +1042,6 @@ status_t BufferQueueProducer::queueBuffer(int slot,
     }
 #endif
 
-// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
     sp<IConsumerListener> frameAvailableListener;
     sp<IConsumerListener> frameReplacedListener;
     int callbackTicket = 0;

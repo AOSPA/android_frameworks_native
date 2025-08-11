@@ -457,9 +457,7 @@ const LayerFE::HwcLayerDebugState& LayerFE::getLastHwcState() const {
     return mLastHwcState;
 };
 
-// QTI_BEGIN: 2024-07-26: Display: sf: use layer id instead of unique sequence
 int32_t LayerFE::getLayerId() const {
     return static_cast<int32_t>(mSnapshot->sequence);
 }
-// QTI_END: 2024-07-26: Display: sf: use layer id instead of unique sequence
 } // namespace android
