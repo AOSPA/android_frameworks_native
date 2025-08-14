@@ -635,7 +635,9 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
         auto layer = getLayerById(layerIds[i]);
         if (layer) {
             auto& layerLut = tmpLuts[i];
+// QTI_BEGIN: 2025-06-19: Display: [Lut] clear out the lut if an invalud lut is provided.
             std::vector<std::pair<int32_t, LutProperties>> lutOffsetsAndProperties;
+// QTI_END: 2025-06-19: Display: [Lut] clear out the lut if an invalud lut is provided.
             if (layerLut.luts.pfd.get() >= 0 && layerLut.luts.offsets.has_value()) {
                 const auto& offsets = layerLut.luts.offsets.value();
                 lutOffsetsAndProperties.reserve(offsets.size());
@@ -646,12 +648,16 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
                 lutFileDescriptorMapper.emplace_or_replace(layer.get(),
                                                            ::android::base::unique_fd(
                                                                    layerLut.luts.pfd.release()));
+// QTI_BEGIN: 2025-06-19: Display: [Lut] clear out the lut if an invalud lut is provided.
             } else if (layerLut.luts.pfd.get() < 0) {
                 outLuts->emplace_or_replace(layer.get(), lutOffsetsAndProperties);
                 lutFileDescriptorMapper.emplace_or_replace(layer.get(),
                                                            ::android::base::unique_fd());
+// QTI_END: 2025-06-19: Display: [Lut] clear out the lut if an invalud lut is provided.
             } else {
+// QTI_BEGIN: 2025-06-19: Display: [Lut] clear out the lut if an invalud lut is provided.
                 ALOGE("getRequestedLuts: invalid luts offsets on layer %" PRIu64 " found"
+// QTI_END: 2025-06-19: Display: [Lut] clear out the lut if an invalud lut is provided.
                       " on display %" PRIu64 ". pfd.get()=%d, offsets.has_value()=%d",
                       layerIds[i], mId, layerLut.luts.pfd.get(), layerLut.luts.offsets.has_value());
             }

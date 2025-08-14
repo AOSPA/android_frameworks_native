@@ -50,12 +50,12 @@ cc_library_shared {
         "include-private",
     ],
 
-// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+// QTI_BEGIN: 2024-02-27: Display: nativedisplay: fix video call flicker issue
     defaults: [
         "libqtinativedisplayextension_defaults",
     ],
 
-// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+// QTI_END: 2024-02-27: Display: nativedisplay: fix video call flicker issue
     cflags: [
         "-Wall",
         "-Werror",
@@ -86,11 +86,11 @@ cc_library_shared {
         "libGLESv2",
     ],
 
-// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+// QTI_BEGIN: 2024-02-27: Display: nativedisplay: fix video call flicker issue
     static_libs: ["libguiflags",
                   "libqtinativedisplayextension",
     ],
-// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+// QTI_END: 2024-02-27: Display: nativedisplay: fix video call flicker issue
 
     export_header_lib_headers: ["jni_headers"],
 
@@ -100,7 +100,7 @@ cc_library_shared {
         "libnativehelper_header_only",
     ],
 }
-// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+// QTI_BEGIN: 2024-02-27: Display: nativedisplay: fix video call flicker issue
 
 soong_config_module_type_import {
 from: "frameworks/native/services/surfaceflinger/QtiExtension/Android.bp",
@@ -160,4 +160,4 @@ name: "libqtinativedisplayextension_defaults",
         "qtinativedisplayextension_defaults",
     ],
 }
-// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+// QTI_END: 2024-02-27: Display: nativedisplay: fix video call flicker issue
