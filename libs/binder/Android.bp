@@ -536,6 +536,14 @@ cc_defaults {
 }
 
 cc_defaults {
+    name: "libbinder_freeze_use_flush_eagerly_flag_default",
+    cflags: select(release_flag("RELEASE_LIBBINDER_FREEZE_USE_FLUSH_EAGERLY"), {
+        true: ["-DLIBBINDER_FREEZE_USE_FLUSH_EAGERLY"],
+        default: [],
+    }),
+}
+
+cc_defaults {
     name: "libbinder_kernel_defaults",
     defaults: [
         "libbinder_client_cache_flag",
@@ -543,6 +551,7 @@ cc_defaults {
         "libbinder_addservice_cache_flag",
         "libbinder_remove_cache_static_list_flag",
         "libbinder_fix_double_derefs_flag_default",
+        "libbinder_freeze_use_flush_eagerly_flag_default",
     ],
     srcs: [
         "BufferedTextOutput.cpp",
