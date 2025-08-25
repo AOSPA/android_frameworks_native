@@ -8859,6 +8859,10 @@ void SurfaceFlinger::onActiveDisplayChangedLocked(const DisplayDevice* inactiveD
 
     mScheduler->setPacesetterDisplay(mActiveDisplayId);
 
+    /* QTI_BEGIN */
+    mQtiSFExtnIntf->qtiUpdateVsyncConfiguration();
+    /* QTI_END */
+
     onActiveDisplaySizeChanged(activeDisplay);
     mActiveDisplayTransformHint = activeDisplay.getTransformHint();
     sActiveDisplayRotationFlags = ui::Transform::toRotationFlags(activeDisplay.getOrientation());
