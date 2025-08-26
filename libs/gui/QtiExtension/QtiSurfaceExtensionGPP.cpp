@@ -1,12 +1,16 @@
-/* Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) 2024-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * SPDX-License-Indentifier: BSD-3-Clause-Clear
  */
 
+#undef LOG_TAG
+#define LOG_TAG "SurfaceExtension-GPP"
+// #define LOG_NDEBUG 0
 #include "dlfcn.h"
-#include <cutils/misc.h>           // FIRST_APPLICATION_UID
+#include <cutils/misc.h>
 #include <cutils/properties.h>
 #include "QtiSurfaceExtensionGPP.h"
-
+#include <com_android_graphics_libgui_flags.h>
+#include <unordered_map>
 
 using ::android::IGraphicBufferProducer;
 using ::android::sp;
@@ -18,9 +22,12 @@ typedef void (*DeinitFunc_t)(const sp<IBinder>&);
 static constexpr uint32_t BQ_LAYER_COUNT = 1;
 
 namespace android::libguiextension {
-QtiSurfaceExtensionGPP::QtiSurfaceExtensionGPP(const sp<IBinder> handle,
+QtiSurfaceExtensionGPP::QtiSurfaceExtensionGPP(
+        Surface* surface,
+        const sp<IBinder> handle,
         sp<IGraphicBufferProducer>* gbp)
-    : mIsEnable(false),
+    : mSurface(surface),
+      mIsEnable(false),
       mIsSupported(true),
       mConnectedToGpu(false),
       mOriginalGbp(*gbp),
@@ -29,7 +36,9 @@ QtiSurfaceExtensionGPP::QtiSurfaceExtensionGPP(const sp<IBinder> handle,
       mLibHandler(nullptr),
       mFuncInit(nullptr),
       mFuncDeinit(nullptr),
-      mConnectedProducerListener() {
+      mConnectedProducerListener(),
+      mClientSetBufferCount(0),
+      mLastQueuedBufferSlot(-1) {
     // FIRST_APPLICATION_UID / AID_APP_START is first uid for 3rd party application.
     // The system application will not enter this logic.
     mUID = getuid();
@@ -92,6 +101,10 @@ void QtiSurfaceExtensionGPP::DisableGPPinternal(sp<IGraphicBufferProducer>* gbp)
     mLibHandler = nullptr;
     mGbp = nullptr;
     if (mOriginalGbp != nullptr) {
+        if (static_cast<uint32_t>(mFrameRate) != 0) {
+            ALOGI("Change back to App set FrameRate %.1f", mFrameRate);
+            mOriginalGbp->setFrameRate(mFrameRate, mCompatibility, mChangeFrameRateStrategy);
+        }
         *gbp = mOriginalGbp;
         SetGraphicBufferProducer(*gbp);
         mIsEnable = false;
@@ -122,6 +135,11 @@ bool QtiSurfaceExtensionGPP::DynamicEnableInternal(sp<IGraphicBufferProducer>* g
                     mIsEnable = true;
                     mIsSupported = true;
                     mGbp = *gbp;
+                    if (static_cast<uint32_t>(mFrameRate) != 0 && mOriginalGbp) {
+                        ALOGI("App set FrameRate %.1f, overwrite with 0.0 after GPP enabled",
+                            mFrameRate);
+                        mOriginalGbp->setFrameRate(0.0f, mCompatibility, mChangeFrameRateStrategy);
+                    }
                 } else {
                     mIsEnable = false;
                     if (err == NAME_NOT_FOUND || err == INVALID_OPERATION) {
@@ -136,12 +154,11 @@ bool QtiSurfaceExtensionGPP::DynamicEnableInternal(sp<IGraphicBufferProducer>* g
                 ALOGV("Disabling GPP feather");
                 DisableGPPinternal(gbp);
             }
-
             if (needReconnect && mIsEnable == enable && nullptr != *gbp && nullptr != mConnectedProducerListener) {
                IGraphicBufferProducer::QueueBufferOutput output;
                (*gbp)->connect(mConnectedProducerListener, mAPI, mReportBufferRemoval, &output);
+               TransferBuffersToNewQueue(gbp);
             }
-
             if (mIsEnable == enable) {
                 ALOGV("GPP dynamic On/Off succeeded, mIsEnable = %d", mIsEnable);
                 return true;
@@ -224,6 +241,101 @@ QtiSurfaceExtensionGPP::~QtiSurfaceExtensionGPP() {
     }
     mLibHandler = nullptr;
     ALOGV("~QtiSurfaceExtensionGPP()");
+}
+
+void QtiSurfaceExtensionGPP::TransferBuffersToNewQueue(sp<IGraphicBufferProducer>* gbp) {
+    if (mSurface == nullptr) {
+        ALOGE("NULL Surface");
+        return;
+    }
+    int count = 0;
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    for (int slot = 0; slot < (int)mSurface->mSlots.size(); ++slot) {
+#else
+    for (int slot = 0; slot < Surface::NUM_BUFFER_SLOTS; ++slot) {
+#endif
+        if (mSurface->mSlots[slot].buffer != nullptr) {
+            count++;
+        }
+    }
+    int minUndequeuedBuffers = 0;
+    int maxDequeuedBufferCount = 0;
+    if (mClientSetBufferCount == 0) {
+        maxDequeuedBufferCount = 1;
+    } else {
+        if ((*gbp)->query(
+            NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS, &minUndequeuedBuffers) == NO_ERROR) {
+            maxDequeuedBufferCount = mClientSetBufferCount - minUndequeuedBuffers;
+        } else {
+            maxDequeuedBufferCount = 2;
+        }
+    }
+    ALOGI("Min undequeued count %d, max dequeued count %d",
+        minUndequeuedBuffers, maxDequeuedBufferCount);
+    if ((count == 0) || (count != mClientSetBufferCount)) {
+        ALOGI("Free buffer count %d mismatch client set buffer count %d",
+            count, mClientSetBufferCount);
+        (*gbp)->allowAllocation(true);
+        (*gbp)->setMaxDequeuedBufferCount(maxDequeuedBufferCount);
+        return;
+    }
+    // App should only uses existing buffers rather than dequeue any new
+    // slot and request new buffers for dynamic ON/OFF case
+    (*gbp)->allowAllocation(false);
+    (*gbp)->setMaxDequeuedBufferCount(maxDequeuedBufferCount);
+    ALOGI("DisAllow dequeue new slots and set max dequeued buffer count %d",
+        maxDequeuedBufferCount);
+
+    std::unordered_map<int, sp<GraphicBuffer>> newSlotsToBuffersMapping {};
+    // TODO: Check if we need acquire lock when operate on mSlots
+	int lastQueuedBufferSlot = -1;
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    for (int slot = 0; slot < (int)mSurface->mSlots.size(); ++slot) {
+#else
+    for (int slot = 0; slot < Surface::NUM_BUFFER_SLOTS; ++slot) {
+#endif
+        if (mSurface->mSlots[slot].buffer != nullptr) {
+            if (slot == mLastQueuedBufferSlot) {
+                lastQueuedBufferSlot = mLastQueuedBufferSlot;
+                ALOGI("mLastQueuedBufferSlot: %d", mLastQueuedBufferSlot);
+                continue;
+            }
+            int newSlot = -1;
+            status_t result = (*gbp)->attachBuffer(&newSlot, mSurface->mSlots[slot].buffer);
+            if (result == NO_ERROR && newSlot != -1) {
+                newSlotsToBuffersMapping.emplace(newSlot, std::move(mSurface->mSlots[slot].buffer));
+                ALOGI("Same buffer %p is mapped from old slot=%d to new slot=%d",
+                    &(mSurface->mSlots[slot].buffer), slot, newSlot);
+                (*gbp)->cancelBuffer(newSlot, Fence::NO_FENCE);
+            }
+        }
+    }
+
+    if (lastQueuedBufferSlot >= 0) {
+        int slot = lastQueuedBufferSlot;
+        int newSlot = -1;
+        status_t result = (*gbp)->attachBuffer(&newSlot, mSurface->mSlots[slot].buffer);
+        if (result == NO_ERROR && newSlot != -1) {
+            newSlotsToBuffersMapping.emplace(newSlot, std::move(mSurface->mSlots[slot].buffer));
+            ALOGI("Same buffer %p is mapped from old slot=%d to new slot=%d",
+                &(mSurface->mSlots[slot].buffer), slot, newSlot);
+            (*gbp)->cancelBuffer(newSlot, Fence::NO_FENCE);
+        }
+    }
+
+    for (auto& [newSlot, buffer] : newSlotsToBuffersMapping) {
+        mSurface->mSlots[newSlot].buffer = std::move(buffer);
+    }
+    newSlotsToBuffersMapping.clear();
+}
+
+void QtiSurfaceExtensionGPP::setFrameRate(float frameRate, int8_t compatibility,
+    int8_t changeFrameRateStrategy) {
+    ALOGI("FrameRate %.1f, compatibility %d changeFrameRateStrategy %d",
+        frameRate, compatibility, changeFrameRateStrategy);
+    mFrameRate = frameRate;
+    mCompatibility = compatibility;
+    mChangeFrameRateStrategy = changeFrameRateStrategy;
 }
 
 } //namespace android::libguiextension

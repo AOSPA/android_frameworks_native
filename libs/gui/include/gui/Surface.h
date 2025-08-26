@@ -769,6 +769,7 @@ protected:
     // Buffers that are successfully dequeued/attached and handed to clients
     std::unordered_set<int> mDequeuedSlots;
 
+    friend class libguiextension::QtiSurfaceExtensionGPP;
     std::shared_ptr<libguiextension::QtiSurfaceExtensionGPP> mQtiSurfaceGPPExtn = nullptr;
 };
 
