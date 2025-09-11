@@ -52,6 +52,7 @@ static const SkString kShader = SkString(R"(
         float3 linear = toLinearSrgb(rgba.rgb) * normalizeScalar;
         if (lutSourceIsHwc == 1) {
           linear = rgba.rgb;
+          linear = clamp(linear,float3(0.0),float3(1.0));
         }
         if (dimension == 1) {
             // RGB
