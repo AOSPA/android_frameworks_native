@@ -64,9 +64,7 @@ using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
 using vendor::qti::hardware::display::composer::V3_1::IQtiComposer;
 #endif
 // QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
-// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
 
-// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
 namespace android::Hwc2 {
 
 namespace types = hardware::graphics::common;
@@ -410,8 +408,6 @@ private:
         void qtiSetClientTarget_3_1(int32_t slot, int acquireFence, Dataspace dataspace);
         void qtiSetLayerFlag(uint32_t type);
 // QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
-// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
-// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
     };
 
     void registerCallback(const sp<IComposerCallback>& callback);

@@ -17,9 +17,7 @@
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
 // QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
-// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
  * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
-// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
 // QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
@@ -372,11 +370,9 @@ public:
         return sActiveDisplayRotationFlags;
     }
 
-// QTI_BEGIN: 2024-02-28: Display: sf: Add check to acquire mStateLock in qtiCheckVirtualDisplayHint
     bool mRequestDisplayModeFlag = false;
     std::thread::id mFlagThread = std::this_thread::get_id();
 
-// QTI_END: 2024-02-28: Display: sf: Add check to acquire mStateLock in qtiCheckVirtualDisplayHint
 protected:
     // We're reference counted, never destroy SurfaceFlinger directly
     virtual ~SurfaceFlinger();
@@ -1566,9 +1562,7 @@ private:
 // QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
     surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* mQtiSFExtnIntf = nullptr;
 // QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
-// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
     std::mutex mSmomoMutex;
-// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
 
 
     TransactionHandler mTransactionHandler GUARDED_BY(kMainThreadContext);

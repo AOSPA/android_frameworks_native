@@ -216,9 +216,9 @@ void RenderSurface::queueBuffer(base::unique_fd readyFence, float hdrSdrRatio) {
 // QTI_BEGIN: 2024-04-09: Display: sf: extensions: Fix flickers seen with FB Scaling enabled
     bool qtiFlipClientTarget = mQtiRSExtnIntf->qtiFlipClientTarget();
 
+// QTI_END: 2024-04-09: Display: sf: extensions: Fix flickers seen with FB Scaling enabled
     if (state.usesClientComposition || state.flipClientTarget||
         qtiFlipClientTarget) {
-// QTI_END: 2024-04-09: Display: sf: extensions: Fix flickers seen with FB Scaling enabled
         // hasFlipClientTargetRequest could return true even if we haven't
         // dequeued a buffer before. Try dequeueing one if we don't have a
         // buffer ready.
@@ -242,8 +242,8 @@ void RenderSurface::queueBuffer(base::unique_fd readyFence, float hdrSdrRatio) {
                     mNativeWindow->queueBuffer(mNativeWindow.get(),
                                                mTexture->getBuffer()->getNativeBuffer(),
                                                qtiFlipClientTarget ? -1
-                                                                   : dup(readyFence));
 // QTI_END: 2024-04-09: Display: sf: extensions: Fix flickers seen with FB Scaling enabled
+                                                                   : dup(readyFence));
             if (result != NO_ERROR) {
                 ALOGE("Error when queueing buffer for display [%s]: %d", mDisplay.getName().c_str(),
                       result);
@@ -257,8 +257,8 @@ void RenderSurface::queueBuffer(base::unique_fd readyFence, float hdrSdrRatio) {
 // QTI_BEGIN: 2024-04-09: Display: sf: extensions: Fix flickers seen with FB Scaling enabled
                                                 qtiFlipClientTarget
                                                         ? -1
-                                                        : dup(readyFence));
 // QTI_END: 2024-04-09: Display: sf: extensions: Fix flickers seen with FB Scaling enabled
+                                                        : dup(readyFence));
                 }
             }
 
