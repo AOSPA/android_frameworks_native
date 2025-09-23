@@ -236,6 +236,7 @@ cc_defaults {
 
     defaults: [
         "libbinder_defer_bc_request_freeze_notification_flag_default",
+        "libbinder_bpbinder_decstrong_last_flag_default",
     ],
 
     srcs: [
@@ -539,6 +540,14 @@ cc_defaults {
     name: "libbinder_freeze_use_flush_eagerly_flag_default",
     cflags: select(release_flag("RELEASE_LIBBINDER_FREEZE_USE_FLUSH_EAGERLY"), {
         true: ["-DLIBBINDER_FREEZE_USE_FLUSH_EAGERLY"],
+        default: [],
+    }),
+}
+
+cc_defaults {
+    name: "libbinder_bpbinder_decstrong_last_flag_default",
+    cflags: select(release_flag("RELEASE_LIBBINDER_BPBINDER_DECSTRONG_LAST"), {
+        true: ["-DLIBBINDER_BPBINDER_DECSTRONG_LAST"],
         default: [],
     }),
 }
