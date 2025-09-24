@@ -415,13 +415,19 @@ public:
     // Check if the damage region is a small dirty.
     void setIsSmallDirty(frontend::LayerSnapshot* snapshot);
 
+// QTI_BEGIN: 2024-07-19: Display: sf: use correct layer stack id in smomo
     void qtiSetSmomoLayerStackId(uint32_t id);
+// QTI_END: 2024-07-19: Display: sf: use correct layer stack id in smomo
 // QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     uint32_t qtiGetSmomoLayerStackId();
 // QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2024-01-29: Display: sf: enable layerext in Android V
     uint32_t qtiGetLayerClass() { return mQtiLayerClass; };
+// QTI_END: 2024-01-29: Display: sf: enable layerext in Android V
+// QTI_BEGIN: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
     bool qtiIsSecureDisplay() { return mQtiIsSecureDisplay; };
     bool qtiIsSecureCamera() { return mQtiIsSecureCamera; };
+// QTI_END: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
 
 protected:
     // For unit tests
@@ -462,8 +468,10 @@ protected:
 // QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     uint32_t mQtiLayerClass{0};
 // QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
     bool mQtiIsSecureDisplay = false;
     bool mQtiIsSecureCamera = false;
+// QTI_END: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
     // main thread
     sp<NativeHandle> mSidebandStream;
 

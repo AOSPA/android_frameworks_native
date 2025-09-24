@@ -18,7 +18,9 @@
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
 // QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check for unknown dataspace
  * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// QTI_END: 2024-02-28: Display: sf: Add check for unknown dataspace
 // QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
@@ -605,7 +607,9 @@ void Layer::miniDump(std::string& result, const frontend::LayerSnapshot& snapsho
     StringAppendF(&result, "  %10zu | ", snapshot.globalZ);
     StringAppendF(&result, "  %10d | ",
                   snapshot.layerMetadata.getInt32(gui::METADATA_WINDOW_TYPE, 0));
+// QTI_BEGIN: 2024-01-29: Display: sf: enable layerext in Android V
     StringAppendF(&result, "  %10d | ", mQtiLayerClass);
+// QTI_END: 2024-01-29: Display: sf: enable layerext in Android V
     StringAppendF(&result, "%10s | ", toString(getCompositionType(outputLayer)).c_str());
     const auto& outputLayerState = outputLayer->getState();
     StringAppendF(&result, "%10s | ", toString(outputLayerState.bufferTransform).c_str());
@@ -1331,20 +1335,30 @@ void Layer::gatherBufferInfo() {
         {
             SFTRACE_NAME("getDataspace");
             err = mapper.getDataspace(mBufferInfo.mBuffer->getBuffer()->handle, &dataspace);
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check for unknown dataspace
             if (dataspace == ui::Dataspace::UNKNOWN) {
+// QTI_END: 2024-02-28: Display: sf: Add check for unknown dataspace
+// QTI_BEGIN: 2024-12-24: Display: SF: Reduce unknown dataspace log priority
               ALOGV("%s: Received unknown dataspace from gralloc", __func__);
+// QTI_END: 2024-12-24: Display: SF: Reduce unknown dataspace log priority
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check for unknown dataspace
             }
+// QTI_END: 2024-02-28: Display: sf: Add check for unknown dataspace
         }
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check for unknown dataspace
         if ((err != OK || dataspace != mBufferInfo.mDataspace)
             && dataspace != ui::Dataspace::UNKNOWN) {
+// QTI_END: 2024-02-28: Display: sf: Add check for unknown dataspace
             {
                 SFTRACE_NAME("setDataspace");
                 err = mapper.setDataspace(mBufferInfo.mBuffer->getBuffer()->handle,
                                           static_cast<ui::Dataspace>(mBufferInfo.mDataspace));
             }
+// QTI_BEGIN: 2024-02-28: Display: sf: upsert RenderEngine's caches
             // GPU drivers cache gralloc metadata which means before we composite we need
             // to upsert RenderEngine's cache.
             mBufferInfo.mBuffer->remapBuffer();
+// QTI_END: 2024-02-28: Display: sf: upsert RenderEngine's caches
         }
     }
     if (lastDataspace != mBufferInfo.mDataspace ||
@@ -1397,6 +1411,7 @@ sp<LayerFE> Layer::getCompositionEngineLayerFE(
     }
     auto layerFE = mFlinger->getFactory().createLayerFE(mName, this);
     mLayerFEs.emplace_back(path, layerFE);
+// QTI_BEGIN: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
 
     if (getBuffer()) {
         mQtiIsSecureDisplay = mFlinger->mQtiSFExtnIntf->qtiIsSecureDisplay(
@@ -1404,6 +1419,7 @@ sp<LayerFE> Layer::getCompositionEngineLayerFE(
         mQtiIsSecureCamera = mFlinger->mQtiSFExtnIntf->qtiIsSecureCamera(
                 static_cast<sp<const GraphicBuffer>>(getBuffer()));
     }
+// QTI_END: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
     return layerFE;
 }
 
@@ -1554,7 +1570,9 @@ bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bo
             recomputeVisibleRegions = true;
         }
     }
+// QTI_BEGIN: 2024-07-19: Display: sf: use correct layer stack id in smomo
     mFlinger->mQtiSFExtnIntf->qtiSetPresentTime(qtiGetSmomoLayerStackId(), getSequence(),
+// QTI_END: 2024-07-19: Display: sf: use correct layer stack id in smomo
 // QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
                                                 mBufferInfo.mDesiredPresentTime);
 
@@ -1661,8 +1679,10 @@ void Layer::setIsSmallDirty(frontend::LayerSnapshot* snapshot) {
                                                    bounds.getWidth() * bounds.getHeight());
 }
 
+// QTI_BEGIN: 2024-07-19: Display: sf: use correct layer stack id in smomo
 void Layer::qtiSetSmomoLayerStackId(uint32_t id) {
     qtiSmomoLayerStackId = id;
+// QTI_END: 2024-07-19: Display: sf: use correct layer stack id in smomo
 // QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 }
 

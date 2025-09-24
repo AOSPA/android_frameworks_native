@@ -547,8 +547,10 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
     if (graphicBuffer && parameters.layer.luts) {
         shader = mLutShader.lutShader(shader, parameters.layer.luts,
                                       parameters.layer.sourceDataspace,
+// QTI_BEGIN: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
                                       toSkColorSpace(parameters.outputDataSpace),
                                       parameters.layer.lutSourceIsHwc);
+// QTI_END: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
     }
 
     if (parameters.requiresLinearEffect) {
@@ -1017,8 +1019,10 @@ void SkiaRenderEngine::drawLayersInternal(
                 (display.outputDataspace & ui::Dataspace::TRANSFER_MASK) ==
                         static_cast<int32_t>(ui::Dataspace::TRANSFER_SRGB);
 
+// QTI_BEGIN: 2025-06-22: Display: [Lut] Fix the issue that HDR videos are too dark in adaptive mode.
         const bool useFakeOutputDataspaceForRuntimeEffect =
                 !dimInLinearSpace && (isExtendedHdr || layer.luts);
+// QTI_END: 2025-06-22: Display: [Lut] Fix the issue that HDR videos are too dark in adaptive mode.
 
         const ui::Dataspace fakeDataspace = useFakeOutputDataspaceForRuntimeEffect
                 ? static_cast<ui::Dataspace>(
@@ -1038,7 +1042,9 @@ void SkiaRenderEngine::drawLayersInternal(
         const bool requiresLinearEffect = layer.colorTransform != mat4() ||
                 (needsToneMapping(layer.sourceDataspace, display.outputDataspace)) ||
                 (dimInLinearSpace && !equalsWithinMargin(1.f, layerDimmingRatio)) ||
+// QTI_BEGIN: 2025-06-22: Display: [Lut] Fix the issue that HDR videos are too dark in adaptive mode.
                 useFakeOutputDataspaceForRuntimeEffect;
+// QTI_END: 2025-06-22: Display: [Lut] Fix the issue that HDR videos are too dark in adaptive mode.
 
         // quick abort from drawing the remaining portion of the layer
         if (layer.skipContentDraw ||
@@ -1103,9 +1109,12 @@ void SkiaRenderEngine::drawLayersInternal(
 
             sk_sp<SkShader> shader;
 
+// QTI_BEGIN: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
             bool useRawShader = layer.source.buffer.buffer && layer.luts && layer.lutSourceIsHwc;
 
+// QTI_END: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
             if (layer.source.buffer.useTextureFiltering) {
+// QTI_BEGIN: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
                 if (useRawShader) {
                     shader = image->makeRawShader(SkTileMode::kClamp, SkTileMode::kClamp,
                                                   SkSamplingOptions({SkFilterMode::kLinear,
@@ -1117,12 +1126,15 @@ void SkiaRenderEngine::drawLayersInternal(
                                                                   SkMipmapMode::kNone}),
                                                &matrix);
                 }
+// QTI_END: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
             } else {
+// QTI_BEGIN: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
                 if (useRawShader) {
                     shader = image->makeRawShader(SkSamplingOptions(), matrix);
                 } else {
                     shader = image->makeShader(SkSamplingOptions(), matrix);
                 }
+// QTI_END: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
             }
 
             if (useIsOpaqueWorkaround) {
