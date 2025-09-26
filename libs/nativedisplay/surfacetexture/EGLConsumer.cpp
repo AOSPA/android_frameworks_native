@@ -32,10 +32,10 @@
 #include <utils/String8.h>
 #include <utils/Trace.h>
 
-// QTI_BEGIN: 2024-02-27: Display: nativedisplay: fix video call flicker issue
+// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
 #include "../QtiExtension/QtiEglConsumerExtension.h"
 
-// QTI_END: 2024-02-27: Display: nativedisplay: fix video call flicker issue
+// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
 #define PROT_CONTENT_EXT_STR "EGL_EXT_protected_content"
 #define EGL_PROTECTED_CONTENT_EXT 0x32C0
 
@@ -620,11 +620,11 @@ void EGLConsumer::onAbandonLocked() {
 }
 
 EGLConsumer::EglImage::EglImage(sp<GraphicBuffer> graphicBuffer)
-// QTI_BEGIN: 2024-02-27: Display: nativedisplay: fix video call flicker issue
+// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
       : mGraphicBuffer(graphicBuffer), mEglImage(EGL_NO_IMAGE_KHR), mEglDisplay(EGL_NO_DISPLAY) {
     mQtiEglImageExtn = std::make_shared<android::libnativedisplay::QtiEglImageExtension>(this);
 }
-// QTI_END: 2024-02-27: Display: nativedisplay: fix video call flicker issue
+// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
 
 EGLConsumer::EglImage::~EglImage() {
     if (mEglImage != EGL_NO_IMAGE_KHR) {
@@ -639,11 +639,11 @@ status_t EGLConsumer::EglImage::createIfNeeded(EGLDisplay eglDisplay, bool force
     // If there's an image and it's no longer valid, destroy it.
     bool haveImage = mEglImage != EGL_NO_IMAGE_KHR;
     bool displayInvalid = mEglDisplay != eglDisplay;
-// QTI_BEGIN: 2024-02-27: Display: nativedisplay: fix video call flicker issue
+// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
 
     bool qtiDataSpaceChanged = mQtiEglImageExtn->dataSpaceChanged();
 
-// QTI_END: 2024-02-27: Display: nativedisplay: fix video call flicker issue
+// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
     if (haveImage && (displayInvalid || forceCreation ||
             qtiDataSpaceChanged)) {
         if (!eglDestroyImageKHR(mEglDisplay, mEglImage)) {
@@ -670,12 +670,12 @@ status_t EGLConsumer::EglImage::createIfNeeded(EGLDisplay eglDisplay, bool force
         return UNKNOWN_ERROR;
     }
 
-// QTI_BEGIN: 2024-02-27: Display: nativedisplay: fix video call flicker issue
+// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
     if (qtiDataSpaceChanged) {
         mQtiEglImageExtn->setDataSpace();
     }
 
-// QTI_END: 2024-02-27: Display: nativedisplay: fix video call flicker issue
+// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
     return OK;
 }
 

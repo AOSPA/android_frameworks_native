@@ -155,8 +155,10 @@ struct LayerSettings {
     float whitePointNits = -1.f;
 
     std::shared_ptr<gui::DisplayLuts> luts;
+// QTI_BEGIN: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
 
     bool lutSourceIsHwc = false;
+// QTI_END: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
 };
 
 // Keep in sync with custom comparison function in

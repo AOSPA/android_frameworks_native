@@ -34,10 +34,12 @@
 
 namespace android {
 
+// QTI_BEGIN: 2025-06-24: Display: CompositionEngine: Restrict slots for wide video buffers
 namespace compositionengineextension {
 class QtiHwcBufferCacheExtension;
 } // namespace compositionengineextension
 
+// QTI_END: 2025-06-24: Display: CompositionEngine: Restrict slots for wide video buffers
 class GraphicBuffer;
 
 namespace compositionengine::impl {
@@ -112,11 +114,13 @@ private:
     sp<GraphicBuffer> mLastOverrideBuffer;
     std::stack<uint32_t> mFreeSlots;
     uint64_t mLeastRecentlyUsedCounter;
+// QTI_BEGIN: 2025-06-24: Display: CompositionEngine: Restrict slots for wide video buffers
 
     // boolean flag to depict that Max FreeSlots reset done for Wide Video layer
     bool mSlotsSetForWideVideo = false;
     friend class android::compositionengineextension::QtiHwcBufferCacheExtension;
 // QTI_END
+// QTI_END: 2025-06-24: Display: CompositionEngine: Restrict slots for wide video buffers
 };
 
 } // namespace compositionengine::impl
