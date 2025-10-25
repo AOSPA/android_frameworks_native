@@ -1430,10 +1430,8 @@ void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest&& desiredMode) {
     const bool emitEvent = desiredMode.emitEvent;
 
     if (mQtiSFExtnIntf->qtiIsFpsDeferNeeded(mode.fps.getValue())) {
-// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
         return;
     }
-// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
     using DesiredModeAction = display::DisplayModeController::DesiredModeAction;
 
     switch (mDisplayModeController.setDesiredMode(displayId, std::move(desiredMode))) {
@@ -4280,9 +4278,7 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
     mQtiSFExtnIntf->qtiSetPowerModeOverrideConfig(display);
 
 // QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
-// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
     if (!display->isVirtual()) {
-// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
 // QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
         mQtiSFExtnIntf->qtiSetPowerModeOverrideConfig(display);
 // QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
@@ -4293,17 +4289,13 @@ void SurfaceFlinger::processDisplayAdded(const wp<IBinder>& displayToken,
         mQtiSFExtnIntf->qtiTryDrawMethod(display);
 // QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 
-// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
         if (mScheduler) {
-// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
             // For hotplug reconnect, renew the registration since display modes have been
             // reloaded.
             mScheduler->registerDisplay(display->getPhysicalId(), display->holdRefreshRateSelector(),
                                         mActiveDisplayId);
-// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
         }
     }
-// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
 
     if (display->isVirtual()) {
         display->adjustRefreshRate(mScheduler->getPacesetterRefreshRate());
