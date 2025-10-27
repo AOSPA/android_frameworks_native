@@ -64,8 +64,10 @@ public:
     MOCK_METHOD0(supportsBackgroundBlur, bool());
     MOCK_METHOD1(onActiveDisplaySizeChanged, void(ui::Size));
 
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
     MOCK_METHOD2(setViewportAndProjection, void(Rect, Rect));
 
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
 protected:
     // mock renderengine still needs to implement these, but callers should never need to call them.
     void mapExternalTextureBuffer(const sp<GraphicBuffer>&, bool) {}

@@ -250,7 +250,9 @@ cc_library {
         "VelocityTracker.cpp",
         "VirtualInputDevice.cpp",
         "VirtualKeyMap.cpp",
+// QTI_BEGIN: 2024-05-15: Performance: native: smart touch consuming
         "QtiExtension/QtiInputDolphinWrapper.cpp",
+// QTI_END: 2024-05-15: Performance: native: smart touch consuming
     ],
 
     header_libs: [

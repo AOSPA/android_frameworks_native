@@ -66,8 +66,10 @@ public:
     void setLastHwcState(const HwcLayerDebugState &state) override;
     const HwcLayerDebugState &getLastHwcState() const override;
 
+// QTI_BEGIN: 2024-07-26: Display: sf: use layer id instead of unique sequence
     int32_t getLayerId() const override;
 
+// QTI_END: 2024-07-26: Display: sf: use layer id instead of unique sequence
     std::unique_ptr<surfaceflinger::frontend::LayerSnapshot> mSnapshot;
 
 private:

@@ -33,7 +33,9 @@ cc_defaults {
         "-Wextra",
         "-Wformat",
         "-Wthread-safety",
+// QTI_BEGIN: 2023-04-25: Display: sf: extensions: Fix for thread safety
         "-Wthread-safety-analysis",
+// QTI_END: 2023-04-25: Display: sf: extensions: Fix for thread safety
         "-Wunreachable-code",
         "-Wunused",
     ],

@@ -177,7 +177,9 @@ std::optional<compositionengine::LayerFE::LayerSettings> LayerFE::prepareClientC
     // Record the name of the layer for debugging further down the stack.
     layerSettings.name = mSnapshot->name;
     layerSettings.luts = mSnapshot->luts ? mSnapshot->luts : targetSettings.luts;
+// QTI_BEGIN: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
     layerSettings.lutSourceIsHwc = mSnapshot->luts == nullptr;
+// QTI_END: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
 
     if (hasEffect() && !hasBufferOrSidebandStream()) {
         prepareEffectsClientComposition(layerSettings, targetSettings);
@@ -457,7 +459,9 @@ const LayerFE::HwcLayerDebugState& LayerFE::getLastHwcState() const {
     return mLastHwcState;
 };
 
+// QTI_BEGIN: 2024-07-26: Display: sf: use layer id instead of unique sequence
 int32_t LayerFE::getLayerId() const {
     return static_cast<int32_t>(mSnapshot->sequence);
 }
+// QTI_END: 2024-07-26: Display: sf: use layer id instead of unique sequence
 } // namespace android
