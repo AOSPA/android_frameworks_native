@@ -55,9 +55,7 @@ static uint32_t gNPolicies = 0;
 static uint32_t gNCpus = 0;
 static std::vector<std::vector<uint32_t>> gPolicyFreqs;
 static std::vector<std::vector<uint32_t>> gPolicyCpus;
-// QTI_BEGIN: 2023-05-19: Power: Use cpu_number to index mapping
 static std::vector<uint32_t> gCpuIndexMap;
-// QTI_END: 2023-05-19: Power: Use cpu_number to index mapping
 static std::set<uint32_t> gAllFreqs;
 static unique_fd gTisTotalMapFd;
 static unique_fd gTisMapFd;
@@ -111,9 +109,7 @@ static bool initGlobals() {
         free(dirlist[i]);
     }
     free(dirlist);
-// QTI_BEGIN: 2023-05-19: Power: Use cpu_number to index mapping
     uint32_t max_cpu_number = 0;
-// QTI_END: 2023-05-19: Power: Use cpu_number to index mapping
     for (const auto &policy : policyFileNames) {
         std::vector<uint32_t> freqs;
         for (const auto &name : {"available", "boost"}) {
@@ -132,15 +128,12 @@ static bool initGlobals() {
         std::string path = StringPrintf("%s/%s/%s", basepath, policy.c_str(), "related_cpus");
         auto cpus = readNumbersFromFile(path);
         if (!cpus) return false;
-// QTI_BEGIN: 2023-05-19: Power: Use cpu_number to index mapping
         for (auto cpu : *cpus) {
             if(cpu > max_cpu_number)
                 max_cpu_number = cpu;
         }
-// QTI_END: 2023-05-19: Power: Use cpu_number to index mapping
         gPolicyCpus.emplace_back(*cpus);
     }
-// QTI_BEGIN: 2023-05-19: Power: Use cpu_number to index mapping
     gCpuIndexMap = std::vector<uint32_t>(max_cpu_number+1, -1);
     uint32_t cpuorder = 0;
     for (const auto &cpuList : gPolicyCpus) {
@@ -148,7 +141,6 @@ static bool initGlobals() {
             gCpuIndexMap[cpu] = cpuorder++;
         }
     }
-// QTI_END: 2023-05-19: Power: Use cpu_number to index mapping
 
     gTisTotalMapFd =
             unique_fd{bpf_obj_get(BPF_FS_PATH "map_timeInState_total_time_in_state_map")};
@@ -297,9 +289,7 @@ std::optional<std::vector<std::vector<uint64_t>>> getTotalCpuFreqTimes() {
         for (uint32_t policyIdx = 0; policyIdx < gNPolicies; ++policyIdx) {
             if (freqIdx >= gPolicyFreqs[policyIdx].size()) continue;
             for (const auto &cpu : gPolicyCpus[policyIdx]) {
-// QTI_BEGIN: 2023-05-19: Power: Use cpu_number to index mapping
                 out[policyIdx][freqIdx] += vals[gCpuIndexMap[cpu]];
-// QTI_END: 2023-05-19: Power: Use cpu_number to index mapping
             }
         }
     }
@@ -338,10 +328,8 @@ std::optional<std::vector<std::vector<uint64_t>>> getUidCpuFreqTimes(uint32_t ui
             auto end = nextOffset < gPolicyFreqs[j].size() ? begin + FREQS_PER_ENTRY : out[j].end();
 
             for (const auto &cpu : gPolicyCpus[j]) {
-// QTI_BEGIN: 2023-05-19: Power: Use cpu_number to index mapping
                 std::transform(begin, end, std::begin(vals[gCpuIndexMap[cpu]].ar), begin,
                                std::plus<uint64_t>());
-// QTI_END: 2023-05-19: Power: Use cpu_number to index mapping
             }
         }
     }
@@ -407,10 +395,8 @@ getUidsUpdatedCpuFreqTimes(uint64_t *lastUpdate) {
             auto end = nextOffset < gPolicyFreqs[i].size() ? begin + FREQS_PER_ENTRY :
                 map[key.uid][i].end();
             for (const auto &cpu : gPolicyCpus[i]) {
-// QTI_BEGIN: 2023-05-19: Power: Use cpu_number to index mapping
                 std::transform(begin, end, std::begin(vals[gCpuIndexMap[cpu]].ar), begin,
                                std::plus<uint64_t>());
-// QTI_END: 2023-05-19: Power: Use cpu_number to index mapping
             }
         }
         prevKey = key;
@@ -465,10 +451,8 @@ std::optional<concurrent_time_t> getUidConcurrentTimes(uint32_t uid, bool retry)
                                                                      : ret.policy[policy].end();
 
             for (const auto &cpu : gPolicyCpus[policy]) {
-// QTI_BEGIN: 2023-05-19: Power: Use cpu_number to index mapping
                 std::transform(policyBegin, policyEnd, std::begin(vals[gCpuIndexMap[cpu]].policy),
                                policyBegin, std::plus<uint64_t>());
-// QTI_END: 2023-05-19: Power: Use cpu_number to index mapping
             }
         }
     }
@@ -536,10 +520,8 @@ std::optional<std::unordered_map<uint32_t, concurrent_time_t>> getUidsUpdatedCon
                                                                 : ret[key.uid].policy[policy].end();
 
             for (const auto &cpu : gPolicyCpus[policy]) {
-// QTI_BEGIN: 2023-05-19: Power: Use cpu_number to index mapping
                 std::transform(policyBegin, policyEnd, std::begin(vals[gCpuIndexMap[cpu]].policy),
                                policyBegin, std::plus<uint64_t>());
-// QTI_END: 2023-05-19: Power: Use cpu_number to index mapping
             }
         }
     } while (prevKey = key, !getNextMapKey(gConcurrentMapFd, &prevKey, &key));
@@ -672,9 +654,7 @@ getAggregatedTaskCpuFreqTimes(pid_t tgid, const std::vector<uint16_t> &aggregati
                 auto end = nextOffset < gPolicyFreqs[j].size() ? begin + FREQS_PER_ENTRY
                                                                : map[key.aggregation_key][j].end();
                 for (const auto &cpu : gPolicyCpus[j]) {
-// QTI_BEGIN: 2023-05-19: Power: Use cpu_number to index mapping
                     std::transform(begin, end, std::begin(vals[gCpuIndexMap[cpu]].ar), begin,
-// QTI_END: 2023-05-19: Power: Use cpu_number to index mapping
                                    std::plus<uint64_t>());
                 }
             }

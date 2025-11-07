@@ -31,10 +31,8 @@ namespace android {
 namespace renderengine {
 namespace skia {
 
-/* QTI_BEGIN */
 // 0 - trilinear, 1 - tetrahedral
 #define INTERPOLATION_METHOD 0
-/* QTI_END */
 
 static const SkString kShader = SkString(R"(
     uniform shader image;
@@ -42,10 +40,8 @@ static const SkString kShader = SkString(R"(
     uniform int size;
     uniform int key;
     uniform int dimension;
-    /* QTI_BEGIN */
     uniform int interpolation;
     uniform int lutSourceIsHwc;
-    /* QTI_END */
     uniform vec3 luminanceCoefficients; // for CIE_Y
     // for hlg/pq transfer function, we need normalize it to [0.0, 1.0]
     // we use `normalizeScalar` to do so
@@ -54,11 +50,10 @@ static const SkString kShader = SkString(R"(
     vec4 main(vec2 xy) {
         float4 rgba = image.eval(xy);
         float3 linear = toLinearSrgb(rgba.rgb) * normalizeScalar;
-        /* QTI_BEGIN */
         if (lutSourceIsHwc == 1) {
           linear = rgba.rgb;
+          linear = clamp(linear,float3(0.0),float3(1.0));
         }
-        /* QTI_END */
         if (dimension == 1) {
             // RGB
             if (key == 0) {
@@ -84,7 +79,6 @@ static const SkString kShader = SkString(R"(
             }
         } else if (dimension == 3) {
             if (key == 0) {
-        /* QTI_BEGIN */
                 // float tx = linear.r * float(size - 1);
                 // float ty = linear.g * float(size - 1);
                 // float tz = linear.b * float(size - 1);
@@ -209,7 +203,6 @@ static const SkString kShader = SkString(R"(
         if (lutSourceIsHwc == 1) {
           return float4(linear, rgba.a);
         }
-        /* QTI_END */
         return float4(fromLinearSrgb(linear), rgba.a);
     })");
 
@@ -312,10 +305,8 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
     const int uSize = static_cast<int>(size);
     const int uKey = static_cast<int>(samplingKey);
     const int uDimension = static_cast<int>(dimension);
-    /* QTI_BEGIN */
     const int uInterpolation = static_cast<int>(INTERPOLATION_METHOD);
     const int ulutSourceIsHwc = lutSourceIsHwc ? 1 : 0;
-    /* QTI_END */
     const float uNormalizeScalar = static_cast<float>(normalizeScalar);
 
     if (static_cast<LutProperties::SamplingKey>(samplingKey) == LutProperties::SamplingKey::CIE_Y) {
@@ -329,10 +320,8 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
     mBuilder->uniform("size") = uSize;
     mBuilder->uniform("key") = uKey;
     mBuilder->uniform("dimension") = uDimension;
-    /* QTI_BEGIN */
     mBuilder->uniform("interpolation") = uInterpolation;
     mBuilder->uniform("lutSourceIsHwc") = ulutSourceIsHwc;
-    /* QTI_END */
     mBuilder->uniform("normalizeScalar") = uNormalizeScalar;
     return mBuilder->makeShader();
 }
@@ -348,7 +337,6 @@ sk_sp<SkShader> LutShader::lutShader(sk_sp<SkShader>& input,
 
     auto& fd = displayLuts->getLutFileDescriptor();
     if (fd.ok()) {
-        /* QTI_BEGIN */
         // de-gamma the image without changing the primaries
         // SkImage* baseImage = input->isAImage((SkMatrix*)nullptr, (SkTileMode*)nullptr);
         // sk_sp<SkColorSpace> baseColorSpace = baseImage && baseImage->colorSpace()
@@ -356,7 +344,6 @@ sk_sp<SkShader> LutShader::lutShader(sk_sp<SkShader>& input,
         //         : SkColorSpace::MakeSRGB();
         // sk_sp<SkColorSpace> lutMathColorSpace = baseColorSpace->makeLinearGamma();
         // input = input->makeWithWorkingColorSpace(lutMathColorSpace);
-        /* QTI_END */
 
         auto& offsets = displayLuts->offsets;
         auto& lutProperties = displayLuts->lutProperties;

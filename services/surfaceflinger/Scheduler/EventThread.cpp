@@ -217,10 +217,8 @@ EventThreadConnection::EventThreadConnection(EventThread* eventThread, uid_t cal
       : mOwnerUid(callingUid),
         mEventRegistration(eventRegistration),
         mEventThread(eventThread),
-// QTI_BEGIN: 2023-04-19: Display: SF: Add retry to EventThread postEvent
         mChannel(gui::BitTube(
                 8 * 1024 /* default size is 4KB, double it */)) {}
-// QTI_END: 2023-04-19: Display: SF: Add retry to EventThread postEvent
 
 EventThreadConnection::~EventThreadConnection() {
     // do nothing here -- clean-up will happen automatically

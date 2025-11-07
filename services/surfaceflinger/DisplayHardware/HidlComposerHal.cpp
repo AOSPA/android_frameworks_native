@@ -284,9 +284,7 @@ void HidlComposer::CommandWriter::qtiSetLayerFlag(uint32_t type) {
 #endif
 }
 // QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
-// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
 
-// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
 HidlComposer::HidlComposer(const std::string& serviceName)
       : mClearSlotBuffer(allocateClearSlotBuffer()), mWriter(kWriterInitialSize) {
     mComposer = V2_1::IComposer::getService(serviceName);

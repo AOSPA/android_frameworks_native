@@ -280,8 +280,8 @@ private:
     // Ensures serviceName is fully qualified.
     static std::string ensureFullyQualifiedName(std::string_view serviceName);
 
-// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
     ftl::Optional<std::reference_wrapper< QtiAidlCommandWriter >>
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
             getWriter(Display) REQUIRES_SHARED(mMutex);
 // QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
     ftl::Optional<std::reference_wrapper<ComposerClientReader>> getReader(Display)

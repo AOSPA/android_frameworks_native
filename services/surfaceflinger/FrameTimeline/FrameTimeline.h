@@ -218,9 +218,7 @@ public:
     void dump(std::string& result, const std::string& indent, nsecs_t baseTime) const;
     // Dumps only the layer, token, is buffer, jank metadata, prediction and present states.
     std::string miniDump() const;
-// QTI_BEGIN: 2024-03-18: Performance: SF: Add one dump option to print present time only
     void dumpPresentTime(std::string& result) const;
-// QTI_END: 2024-03-18: Performance: SF: Add one dump option to print present time only
     // Emits a packet for perfetto tracing. The function body will be executed only if tracing is
     // enabled. The displayFrameToken is needed to link the SurfaceFrame to the corresponding
     // DisplayFrame at the trace processor side. monoBootOffset is the difference
@@ -407,9 +405,7 @@ public:
         // Dumpsys interface - dumps only if the DisplayFrame itself is janky or is at least one
         // SurfaceFrame is janky.
         void dumpJank(std::string& result, nsecs_t baseTime, int displayFrameCount) const;
-// QTI_BEGIN: 2024-03-18: Performance: SF: Add one dump option to print present time only
         void dumpPresentTime(std::string& result) const;
-// QTI_END: 2024-03-18: Performance: SF: Add one dump option to print present time only
         // Dumpsys interface - dumps all data irrespective of jank
         void dumpAll(std::string& result, nsecs_t baseTime) const;
         // Emits a packet for perfetto tracing. The function body will be executed only if tracing
@@ -538,9 +534,7 @@ private:
     void finalizeCurrentDisplayFrame() REQUIRES(mMutex);
     void dumpAll(std::string& result);
     void dumpJank(std::string& result);
-// QTI_BEGIN: 2024-03-18: Performance: SF: Add one dump option to print present time only
     void dumpPresentTime(std::string& result);
-// QTI_END: 2024-03-18: Performance: SF: Add one dump option to print present time only
 
     // Sliding window of display frames. TODO(b/168072834): compare perf with fixed size array
     std::deque<std::shared_ptr<DisplayFrame>> mDisplayFrames GUARDED_BY(mMutex);
