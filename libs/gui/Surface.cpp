@@ -174,16 +174,8 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
 // QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     int intValue = 0;
 // QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
-// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
-    property_get("vendor.display.enable_optimal_refresh_rate", value, "0");
-// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+    if (!mQtiSurfaceExtn) {
 // QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
-    intValue = atoi(value);
-    bool enableOptimalRefreshRate = (intValue == 1) ? true : false;
-// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
-
-// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
-    if (!mQtiSurfaceExtn && enableOptimalRefreshRate) {
         mQtiSurfaceExtn = new libguiextension::QtiSurfaceExtension(this);
 // QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
 // QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data

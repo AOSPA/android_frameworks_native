@@ -89,7 +89,7 @@ void QtiSurfaceExtension::qtiSetBufferDequeueDuration(std::string layerName,
         return;
     }
 
-    if (!mEnableOptimalRefreshRate || !isGame(layerName)) {
+    if (!isGame(layerName) || !mEnableOptimalRefreshRate) {
         return;
     }
 
