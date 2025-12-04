@@ -5444,10 +5444,8 @@ status_t SurfaceFlinger::setTransactionState(TransactionState&& transactionState
 
 // QTI_END: 2024-06-10: Display: sf: reduce scope of mSmomoMutex
 // QTI_BEGIN: 2025-04-12: Performance: Add dolphin required hook back
-            if (!(transactionState.mFlags & eOneWay)) {
-                mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str(),
-                    transactionState.mIsAutoTimestamp, transactionState.mDesiredPresentTime);
-            }
+            mQtiSFExtnIntf->qtiDolphinTrackBufferIncrement(layerName.c_str(),
+                transactionState.mIsAutoTimestamp, transactionState.mDesiredPresentTime);
 
 // QTI_END: 2025-04-12: Performance: Add dolphin required hook back
 // QTI_BEGIN: 2025-04-22: Display: sf: add smomo hook back
