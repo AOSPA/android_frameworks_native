@@ -261,7 +261,7 @@ void QtiSurfaceExtensionGPP::TransferBuffersToNewQueue(sp<IGraphicBufferProducer
     int minUndequeuedBuffers = 0;
     int maxDequeuedBufferCount = 0;
     if (mClientSetBufferCount == 0) {
-        maxDequeuedBufferCount = 1;
+        maxDequeuedBufferCount = 2;
     } else {
         if ((*gbp)->query(
             NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS, &minUndequeuedBuffers) == NO_ERROR) {

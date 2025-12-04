@@ -118,13 +118,23 @@ public:
     sp<Surface> getSurface(bool includeSurfaceControlHandle);
     bool isSameSurfaceControl(const sp<SurfaceControl>& surfaceControl) const;
 
+// QTI_BEGIN: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
     void qtiSetUndequeuedBufferCount(int count) {
+// QTI_END: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
+// QTI_BEGIN: 2023-04-24: Performance: gui: Fix for thread safety
         mQtiNumUndequeued = count;
+// QTI_END: 2023-04-24: Performance: gui: Fix for thread safety
+// QTI_BEGIN: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
     }
 
     int qtiGetUndequeuedBufferCount() const {
+// QTI_END: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
+// QTI_BEGIN: 2023-04-24: Performance: gui: Fix for thread safety
         return mQtiNumUndequeued;
+// QTI_END: 2023-04-24: Performance: gui: Fix for thread safety
+// QTI_BEGIN: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
     }
+// QTI_END: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
     void onFrameReplaced(const BufferItem& item) override;
     void onFrameAvailable(const BufferItem& item) override;
     void onFrameDequeued(const uint64_t) override;
@@ -233,7 +243,9 @@ private:
     // BufferQueue internally allows 1 more than
     // the max to be acquired
     int32_t mMaxAcquiredBuffers GUARDED_BY(mMutex) = 1;
+// QTI_BEGIN: 2023-04-24: Performance: gui: Fix for thread safety
     int mQtiNumUndequeued = 0;
+// QTI_END: 2023-04-24: Performance: gui: Fix for thread safety
     int32_t mNumFrameAvailable GUARDED_BY(mMutex) = 0;
     int32_t mNumAcquired GUARDED_BY(mMutex) = 0;
 

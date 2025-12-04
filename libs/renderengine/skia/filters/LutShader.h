@@ -30,15 +30,19 @@ namespace skia {
 class LutShader {
 public:
     sk_sp<SkShader> lutShader(sk_sp<SkShader>& input, std::shared_ptr<gui::DisplayLuts> displayLuts,
+// QTI_BEGIN: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
                               ui::Dataspace srcDataspace, sk_sp<SkColorSpace> outColorSpace,
                               bool lutSourceIsHwc);
+// QTI_END: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
 
 private:
     sk_sp<SkShader> generateLutShader(sk_sp<SkShader> input, const std::vector<float>& buffers,
                                       const int32_t offset, const int32_t length,
                                       const int32_t dimension, const int32_t size,
+// QTI_BEGIN: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
                                       const int32_t samplingKey, ui::Dataspace srcDataspace,
                                       bool lutSourceIsHwc);
+// QTI_END: 2025-07-28: Display: [Lut] Bypass eotf when using hwc lut
     std::unique_ptr<SkRuntimeShaderBuilder> mBuilder;
 };
 

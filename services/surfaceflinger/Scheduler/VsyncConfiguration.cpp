@@ -145,8 +145,10 @@ VsyncConfigSet PhaseOffsets::constructOffsets(nsecs_t vsyncDuration) const {
 namespace {
 std::chrono::nanoseconds sfOffsetToDuration(nsecs_t sfOffset, nsecs_t vsyncDuration) {
     return std::chrono::nanoseconds(vsyncDuration - sfOffset);
+// QTI_BEGIN: 2020-03-19: Display: sf: Construct Phase Offsets for unknown fps
 }
 
+// QTI_END: 2020-03-19: Display: sf: Construct Phase Offsets for unknown fps
 std::chrono::nanoseconds appOffsetToDuration(nsecs_t appOffset, nsecs_t sfOffset,
                                              nsecs_t vsyncDuration) {
     auto duration = vsyncDuration + (sfOffset - appOffset);

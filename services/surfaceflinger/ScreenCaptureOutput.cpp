@@ -183,7 +183,9 @@ ScreenCaptureOutput::generateClientCompositionRequests(
                             static_cast<int32_t>(aidlLuts.lutProperties[j].samplingKeys[0]));
                 }
                 layer.luts = std::make_shared<gui::DisplayLuts>(base::unique_fd(
+// QTI_BEGIN: 2025-06-22: Display: [Lut screenshot] release the fd to gui::DisplayLuts instance.
                                                                         aidlLuts.pfd.release()),
+// QTI_END: 2025-06-22: Display: [Lut screenshot] release the fd to gui::DisplayLuts instance.
                                                                 offsets, dimensions, sizes, keys);
             }
         }

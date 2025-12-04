@@ -14,11 +14,17 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
  * Copyright (c) 2024-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+// QTI_END: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
 
 #pragma once
 
@@ -97,11 +103,17 @@ public:
 
     bool isSmallDirtyArea(uint32_t dirtyArea, float threshold) const;
 
+// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
     void qtiUpdateThermalFps(float fps) { mQtiThermalFps = fps; }
+// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
     void qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes) {
       refresh_rate_votes_ = refresh_rate_votes;
     }
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
     bool isGameFrameRateOverridePresent();
+// QTI_END: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
 
     // Updates the frame rate override set by game mode intervention
     void updateGameModeFrameRateOverride(FrameRateOverride frameRateOverride) EXCLUDES(mLock);
@@ -165,11 +177,17 @@ private:
 
     // Whether a mode change is in progress or not
     std::atomic<bool> mModeChangePending = false;
+// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
 
     // If Thermal mitigation enabled, limit to thermal Fps
     float mQtiThermalFps = 0.0f;
+// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
     std::map<int, int> refresh_rate_votes_;
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
     bool mQtiGameFrameRateOverridePresent = false;
+// QTI_END: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
 
     // A list to look up the game frame rate overrides
     // Each entry includes:

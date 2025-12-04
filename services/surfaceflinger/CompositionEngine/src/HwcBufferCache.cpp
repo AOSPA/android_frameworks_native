@@ -19,10 +19,12 @@
 #include <gui/BufferQueue.h>
 #include <ui/GraphicBuffer.h>
 
+// QTI_BEGIN: 2025-06-24: Display: CompositionEngine: Restrict slots for wide video buffers
 /* QTI_BEGIN : Reduce max free slots for 8k buffers */
 #include "QtiExtension/QtiHwcBufferCacheExtension.h"
 using android::compositionengineextension::QtiHwcBufferCacheExtension;
 
+// QTI_END: 2025-06-24: Display: CompositionEngine: Restrict slots for wide video buffers
 namespace android::compositionengine::impl {
 
 HwcBufferCache::HwcBufferCache() {
@@ -32,10 +34,12 @@ HwcBufferCache::HwcBufferCache() {
 }
 
 HwcSlotAndBuffer HwcBufferCache::getHwcSlotAndBuffer(const sp<GraphicBuffer>& buffer) {
+// QTI_BEGIN: 2025-06-24: Display: CompositionEngine: Restrict slots for wide video buffers
     if (!mSlotsSetForWideVideo) {
         QtiHwcBufferCacheExtension::Instance().ResetFreeSlotsForWideVideo(buffer, this);
     }
     // QTI_END
+// QTI_END: 2025-06-24: Display: CompositionEngine: Restrict slots for wide video buffers
     if (auto i = mCacheByBufferId.find(buffer->getId()); i != mCacheByBufferId.end()) {
         Cache& cache = i->second;
         // mark this cache slot as more recently used so it won't get evicted anytime soon
