@@ -687,7 +687,13 @@ status_t RpcState::waitForReply(const sp<RpcSession::RpcConnection>& connection,
     memset(&rpcReply, 0, sizeof(RpcWireReply)); // zero because of potential short read
 
     CommandData data(command.bodySize - rpcReplyWireSize);
-    if (!data.valid()) return NO_MEMORY;
+    if (!data.valid()) {
+        // b/404210068 - if we run out of memory, the wire protocol gets messed up.
+        // so shutdown. We would need to read all the transaction data anyway and
+        // send a reply still to gracefully recover.
+        (void)session->shutdownAndWait(false);
+        return NO_MEMORY;
+    }
 
     iovec iovs[]{
             {&rpcReply, rpcReplyWireSize},
@@ -821,7 +827,12 @@ status_t RpcState::processCommand(
 
     switch (command.command) {
         case RPC_COMMAND_TRANSACT:
-            if (type != CommandType::ANY) return BAD_TYPE;
+            if (type != CommandType::ANY) {
+                ALOGE("CommandType %d, but got RPC command %d.", static_cast<int>(type),
+                      command.command);
+                (void)session->shutdownAndWait(false);
+                return BAD_TYPE;
+            }
             return processTransact(connection, session, command, std::move(ancillaryFds));
         case RPC_COMMAND_DEC_STRONG:
             return processDecStrong(connection, session, command);
@@ -844,6 +855,10 @@ status_t RpcState::processTransact(
 
     CommandData transactionData(command.bodySize);
     if (!transactionData.valid()) {
+        // b/404210068 - if we run out of memory, the wire protocol gets messed up.
+        // so shutdown. We would need to read all the transaction data anyway and
+        // send a reply still to gracefully recover.
+        (void)session->shutdownAndWait(false);
         return NO_MEMORY;
     }
     iovec iov{transactionData.data(), transactionData.size()};
@@ -977,6 +992,7 @@ processTransactInternalTailCall:
                       " objectTableBytesSize=%zu. Terminating!",
                       transactionData.size(), sizeof(RpcWireTransaction),
                       transaction->parcelDataSize, objectTableBytes->size);
+                (void)session->shutdownAndWait(false);
                 return BAD_VALUE;
             }
             objectTableSpan = *maybeSpan;

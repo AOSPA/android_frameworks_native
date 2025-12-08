@@ -134,6 +134,17 @@ flag {
 } # detached_mirror
 
 flag {
+  name: "disable_synthetic_vsync_for_performance"
+  namespace: "core_graphics"
+  description: "Turn off synthetic VSYNC when adjusting thread scheduling for performance"
+  bug: "406147398"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+  is_exported: true
+} # disable_synthetic_vsync_for_performance
+
+flag {
   name: "display_config_error_hal"
   namespace: "core_graphics"
   description: "Report HAL display configuration errors like modeset failure or link training failure"

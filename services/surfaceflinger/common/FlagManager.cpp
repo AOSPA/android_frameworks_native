@@ -147,6 +147,7 @@ void FlagManager::dump(std::string& result) const {
     DUMP_ACONFIG_FLAG(deprecate_frame_tracker);
     DUMP_ACONFIG_FLAG(deprecate_vsync_sf);
     DUMP_ACONFIG_FLAG(detached_mirror);
+    DUMP_ACONFIG_FLAG(disable_synthetic_vsync_for_performance);
     DUMP_ACONFIG_FLAG(display_config_error_hal);
     DUMP_ACONFIG_FLAG(display_protected);
     DUMP_ACONFIG_FLAG(dont_skip_on_early_ro);
@@ -284,6 +285,7 @@ FLAG_MANAGER_ACONFIG_FLAG(latch_unsignaled_with_auto_refresh_changed, "");
 FLAG_MANAGER_ACONFIG_FLAG(deprecate_vsync_sf, "");
 FLAG_MANAGER_ACONFIG_FLAG(allow_n_vsyncs_in_targeter, "");
 FLAG_MANAGER_ACONFIG_FLAG(detached_mirror, "");
+FLAG_MANAGER_ACONFIG_FLAG(disable_synthetic_vsync_for_performance, "");
 FLAG_MANAGER_ACONFIG_FLAG(commit_not_composited, "");
 FLAG_MANAGER_ACONFIG_FLAG(correct_dpi_with_display_size, "");
 FLAG_MANAGER_ACONFIG_FLAG(local_tonemap_screenshots, "debug.sf.local_tonemap_screenshots");
