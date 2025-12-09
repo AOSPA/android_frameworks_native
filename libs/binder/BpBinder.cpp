@@ -580,6 +580,9 @@ void BpBinder::sendObituary()
 }
 
 void BpBinder::onFrozenStateChangeListenerRemoved() {
+    if constexpr (!kEnableKernelIpc) {
+        return;
+    }
     if (!waitForFrozenListenerRemovalCompletion()) {
         return;
     }
