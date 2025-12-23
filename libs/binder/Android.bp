@@ -234,6 +234,11 @@ cc_defaults {
     name: "libbinder_common_defaults",
     host_supported: true,
 
+    defaults: [
+        "libbinder_defer_bc_request_freeze_notification_flag_default",
+        "libbinder_bpbinder_decstrong_last_flag_default",
+    ],
+
     srcs: [
         "Binder.cpp",
         "BpBinder.cpp",
@@ -514,11 +519,48 @@ libbinder_addservice_cache_config {
 }
 
 cc_defaults {
+    name: "libbinder_defer_bc_request_freeze_notification_flag_default",
+    cflags: select(release_flag("RELEASE_LIBBINDER_DEFER_BC_REQUEST_FREEZE_NOTIFICATION"), {
+        true: ["-DLIBBINDER_DEFER_BC_REQUEST_FREEZE_NOTIFICATION"],
+        false: ["-DNO_LIBBINDER_DEFER_BC_REQUEST_FREEZE_NOTIFICATION"],
+        default: ["-DNO_LIBBINDER_DEFER_BC_REQUEST_FREEZE_NOTIFICATION"],
+    }),
+}
+
+cc_defaults {
+    name: "libbinder_fix_double_derefs_flag_default",
+    cflags: select(release_flag("RELEASE_LIBBINDER_FIX_RECURSIVE_DOUBLE_DEREFS"), {
+        true: ["-DLIBBINDER_FIX_RECURSIVE_DOUBLE_DEREFS"],
+        false: ["-DNO_LIBBINDER_FIX_RECURSIVE_DOUBLE_DEREFS"],
+        default: ["-DNO_LIBBINDER_FIX_RECURSIVE_DOUBLE_DEREFS"],
+    }),
+}
+
+cc_defaults {
+    name: "libbinder_freeze_use_flush_eagerly_flag_default",
+    cflags: select(release_flag("RELEASE_LIBBINDER_FREEZE_USE_FLUSH_EAGERLY"), {
+        true: ["-DLIBBINDER_FREEZE_USE_FLUSH_EAGERLY"],
+        default: [],
+    }),
+}
+
+cc_defaults {
+    name: "libbinder_bpbinder_decstrong_last_flag_default",
+    cflags: select(release_flag("RELEASE_LIBBINDER_BPBINDER_DECSTRONG_LAST"), {
+        true: ["-DLIBBINDER_BPBINDER_DECSTRONG_LAST"],
+        default: [],
+    }),
+}
+
+cc_defaults {
     name: "libbinder_kernel_defaults",
     defaults: [
         "libbinder_client_cache_flag",
+        "libbinder_defer_bc_request_freeze_notification_flag_default",
         "libbinder_addservice_cache_flag",
         "libbinder_remove_cache_static_list_flag",
+        "libbinder_fix_double_derefs_flag_default",
+        "libbinder_freeze_use_flush_eagerly_flag_default",
     ],
     srcs: [
         "BufferedTextOutput.cpp",

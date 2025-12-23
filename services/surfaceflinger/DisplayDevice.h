@@ -75,6 +75,17 @@ namespace display {
 class DisplaySnapshot;
 } // namespace display
 
+namespace gui {
+inline const char* to_string(ISurfaceComposer::OptimizationPolicy optimizationPolicy) {
+    switch (optimizationPolicy) {
+        case ISurfaceComposer::OptimizationPolicy::optimizeForPower:
+            return "optimizeForPower";
+        case ISurfaceComposer::OptimizationPolicy::optimizeForPerformance:
+            return "optimizeForPerformance";
+    }
+}
+} // namespace gui
+
 // QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 namespace surfaceflingerextension {
 class QtiDisplaySurfaceExtensionIntf;

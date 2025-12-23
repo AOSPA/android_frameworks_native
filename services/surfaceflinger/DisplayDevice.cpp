@@ -62,17 +62,6 @@ namespace android {
 
 namespace hal = hardware::graphics::composer::hal;
 
-namespace gui {
-inline std::string_view to_string(ISurfaceComposer::OptimizationPolicy optimizationPolicy) {
-    switch (optimizationPolicy) {
-        case ISurfaceComposer::OptimizationPolicy::optimizeForPower:
-            return "optimizeForPower";
-        case ISurfaceComposer::OptimizationPolicy::optimizeForPerformance:
-            return "optimizeForPerformance";
-    }
-}
-} // namespace gui
-
 DisplayDeviceCreationArgs::DisplayDeviceCreationArgs(
         const sp<SurfaceFlinger>& flinger, HWComposer& hwComposer, const wp<IBinder>& displayToken,
         std::shared_ptr<compositionengine::Display> compositionDisplay)
