@@ -128,10 +128,6 @@ void QtiSurfaceExtensionGPP::DisableGPPinternal(sp<IGraphicBufferProducer>* gbp)
     if (mIsEnable && mFuncDeinit) {
         reinterpret_cast<DeinitFunc_t>(mFuncDeinit)(mHandle);
     }
-    if (mLibHandler != nullptr) {
-        dlclose(mLibHandler);
-    }
-    mLibHandler = nullptr;
     mGbp = nullptr;
     if (mOriginalGbp != nullptr) {
         if (static_cast<uint32_t>(mFrameRate) != 0) {
