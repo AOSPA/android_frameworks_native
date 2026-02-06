@@ -46,7 +46,8 @@ QtiSurfaceExtensionGPP::QtiSurfaceExtensionGPP(
       mFuncDeinit(nullptr),
       mConnectedProducerListener(),
       mClientSetBufferCount(0),
-      mLastQueuedBufferSlot(-1) {
+      mLastQueuedBufferSlot(-1),
+      mAutoPrerotation(false) {
     // FIRST_APPLICATION_UID / AID_APP_START is first uid for 3rd party application.
     // The system application will not enter this logic.
     mUID = getuid();
@@ -186,6 +187,7 @@ bool QtiSurfaceExtensionGPP::DynamicEnableInternal(sp<IGraphicBufferProducer>* g
             if (needReconnect && mIsEnable == enable && nullptr != *gbp && nullptr != mConnectedProducerListener) {
                IGraphicBufferProducer::QueueBufferOutput output;
                (*gbp)->connect(mConnectedProducerListener, mAPI, mReportBufferRemoval, &output);
+               (*gbp)->setAutoPrerotation(mAutoPrerotation);
                TransferBuffersToNewQueue(gbp);
             }
             if (mIsEnable == enable) {
