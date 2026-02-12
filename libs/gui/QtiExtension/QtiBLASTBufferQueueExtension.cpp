@@ -37,18 +37,30 @@ static void qtiInitAppType() {
         int GAME_TYPE = 2;
         int VENDOR_FEEDBACK_WORKLOAD_TYPE = 0x00001601;
         int PERF_GET_FEEDBACK = IBinder::FIRST_CALL_TRANSACTION + 7;
-        int array[0];
+
+        // Query flags: QUERY_AppType | QUERY_QUICK_TOUCH (1<<16)
+        int queryFlags = 0x1FFFF;
+        // Perfservice uses the first parameter of the array as the length of the list passed into perfhal.
+        int array[3] = {2, 0, queryFlags};
         data.markForBinder(sPerfService);
         data.writeInterfaceToken(ifName);
         data.writeInt32(VENDOR_FEEDBACK_WORKLOAD_TYPE);
         data.writeString16(pkgName);
         data.writeInt32(getpid());
-        data.writeInt32Array(0, array);
+        data.writeInt32Array(3, array);
         sPerfService->transact(PERF_GET_FEEDBACK, data, &reply);
         reply.readExceptionCode();
-        int type = reply.readInt32();
-        if (type == GAME_TYPE) {
+
+        // Parse combined result, app type (low 16 bits), Quick Touch status (bit 16)
+        // set FEATURE_QUICK_TOUCH(1 << 16) bit 1 when quick touch is disabled.
+        int combinedResult = reply.readInt32();
+        int appType = combinedResult & 0xFFFF;
+        bool isQuickTouchDisabled = (combinedResult & (1 << 16)) != 0;
+        if (appType == GAME_TYPE) {
             sQtiIsGame = true;
+            if (isQuickTouchDisabled) {
+                return;
+            }
 
             sQtiDolphinWrapper = QtiDolphinWrapper::qtiGetInstanceForGame();
             if (sQtiDolphinWrapper && sQtiDolphinWrapper->qtiDolphinSmartTouchActive) {
