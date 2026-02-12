@@ -14,10 +14,10 @@
 
 namespace android {
 
-static bool sIsGame = false;
+static bool sIsValid = false;
 
 QtiDolphinWrapper::QtiDolphinWrapper() {
-    sIsGame = true;
+    sIsValid = true;
     mQtiDolphinHandle = dlopen("libdolphin.so", RTLD_NOW);
     if (!mQtiDolphinHandle) {
         ALOGW("Unable to open libdolphin.so: %s.", dlerror());
@@ -53,7 +53,7 @@ QtiDolphinWrapper* QtiDolphinWrapper::sInstance = nullptr;
 static std::mutex sInstanceMutex;
 
 QtiDolphinWrapper* QtiDolphinWrapper::qtiGetDolphinWrapper() {
-    if (sIsGame) {
+    if (sIsValid) {
         return qtiGetInstanceForGame();
     }
     // return nullptr for non-game to avoid library loading.
