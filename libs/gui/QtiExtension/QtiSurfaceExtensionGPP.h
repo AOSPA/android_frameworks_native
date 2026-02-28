@@ -24,6 +24,7 @@ public:
     void setBufferCount(int bufferCount) { mClientSetBufferCount = bufferCount; }
     void setFrameRate(float frameRate, int8_t compatibility, int8_t changeFrameRateStrategy);
     void setQueuedBufferSlot(int slot) { mLastQueuedBufferSlot = slot; }
+    void setAutoPrerotation(bool autoPrerotation) { mAutoPrerotation = autoPrerotation; }
 
     struct SidebandStream
     {
@@ -57,6 +58,7 @@ private:
     bool mReportBufferRemoval;
     mutable std::mutex mMutex;
     int mLastQueuedBufferSlot;
+    bool mAutoPrerotation;
     void DisableGPPinternal(sp<IGraphicBufferProducer>* gbp);
     bool DynamicEnableInternal(sp<IGraphicBufferProducer>* gbp, bool needReconnect);
     void SetGraphicBufferProducer(sp<IGraphicBufferProducer> gbp);
