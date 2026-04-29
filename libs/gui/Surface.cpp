@@ -3029,6 +3029,9 @@ int Surface::setAutoPrerotation(bool autoPrerotation) {
     status_t err = mGraphicBufferProducer->setAutoPrerotation(autoPrerotation);
     if (err == NO_ERROR) {
         mAutoPrerotation = autoPrerotation;
+        if (mQtiSurfaceGPPExtn) {
+            mQtiSurfaceGPPExtn->setAutoPrerotation(autoPrerotation);
+        }
     }
     ALOGE_IF(err, "IGraphicBufferProducer::setAutoPrerotation(%d) returned %s", autoPrerotation,
              strerror(-err));

@@ -11,6 +11,7 @@
 #include "QtiSurfaceExtensionGPP.h"
 #include <com_android_graphics_libgui_flags.h>
 #include <unordered_map>
+#include <binder/IServiceManager.h>
 
 using ::android::IGraphicBufferProducer;
 using ::android::sp;
@@ -20,6 +21,13 @@ using ::android::IBinder;
 typedef status_t (*InitFunc_t)(sp<IGraphicBufferProducer>*, const sp<IBinder>&);
 typedef void (*DeinitFunc_t)(const sp<IBinder>&);
 static constexpr uint32_t BQ_LAYER_COUNT = 1;
+constexpr char kGPPServiceName[] = "vendor.gppservice";
+enum class TAG : uint32_t {
+    GPP_SERV_CREATE = IBinder::FIRST_CALL_TRANSACTION,
+    GPP_SERV_DESTROY,
+    GPP_SERV_QUERY_SUPPORTED_GAME,
+    GPP_SERV_LAST = GPP_SERV_QUERY_SUPPORTED_GAME,
+};
 
 namespace android::libguiextension {
 QtiSurfaceExtensionGPP::QtiSurfaceExtensionGPP(
@@ -38,7 +46,8 @@ QtiSurfaceExtensionGPP::QtiSurfaceExtensionGPP(
       mFuncDeinit(nullptr),
       mConnectedProducerListener(),
       mClientSetBufferCount(0),
-      mLastQueuedBufferSlot(-1) {
+      mLastQueuedBufferSlot(-1),
+      mAutoPrerotation(false) {
     // FIRST_APPLICATION_UID / AID_APP_START is first uid for 3rd party application.
     // The system application will not enter this logic.
     mUID = getuid();
@@ -47,7 +56,32 @@ QtiSurfaceExtensionGPP::QtiSurfaceExtensionGPP(
         return;
     }
 
-    mLibHandler = dlopen("libgppextension.so", RTLD_NOW|RTLD_GLOBAL);
+    sp<IServiceManager> sm = defaultServiceManager();
+    if (sm == nullptr) {
+        mIsSupported = false;
+        return;
+    }
+    sp<IBinder> binder = sm->checkService(String16(kGPPServiceName));
+    if (binder == nullptr) {
+        mIsSupported = false;
+        return;
+    }
+    Parcel data, reply;
+    data.writeInterfaceToken(String16("GPPService"));
+    data.writeUint32(mUID);
+
+    status_t status = binder->transact(
+        static_cast<uint32_t>(TAG::GPP_SERV_QUERY_SUPPORTED_GAME), data, &reply);
+    if (status != NO_ERROR) {
+        mIsSupported = false;
+        return;
+    }
+    status_t result = reply.readInt32();
+    if (result != NO_ERROR) {
+        mIsSupported = false;
+        return;
+    }
+    mLibHandler = dlopen("libgppextension.so", RTLD_NOW | RTLD_GLOBAL);
     if (!mLibHandler) {
         ALOGV("%s: mHandle %p, failed dlopen libgppextension, err %s",
             __FUNCTION__, mHandle.get(), dlerror());
@@ -95,10 +129,6 @@ void QtiSurfaceExtensionGPP::DisableGPPinternal(sp<IGraphicBufferProducer>* gbp)
     if (mIsEnable && mFuncDeinit) {
         reinterpret_cast<DeinitFunc_t>(mFuncDeinit)(mHandle);
     }
-    if (mLibHandler != nullptr) {
-        dlclose(mLibHandler);
-    }
-    mLibHandler = nullptr;
     mGbp = nullptr;
     if (mOriginalGbp != nullptr) {
         if (static_cast<uint32_t>(mFrameRate) != 0) {
@@ -157,6 +187,7 @@ bool QtiSurfaceExtensionGPP::DynamicEnableInternal(sp<IGraphicBufferProducer>* g
             if (needReconnect && mIsEnable == enable && nullptr != *gbp && nullptr != mConnectedProducerListener) {
                IGraphicBufferProducer::QueueBufferOutput output;
                (*gbp)->connect(mConnectedProducerListener, mAPI, mReportBufferRemoval, &output);
+               (*gbp)->setAutoPrerotation(mAutoPrerotation);
                TransferBuffersToNewQueue(gbp);
             }
             if (mIsEnable == enable) {

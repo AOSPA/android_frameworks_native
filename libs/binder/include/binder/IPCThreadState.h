@@ -253,6 +253,7 @@ private:
             bool                mPropagateWorkSource;
             bool                mIsLooper;
             bool mIsFlushing;
+            bool mIsProcessingPostWriteDerefs;
             bool mHasExplicitIdentity;
             int32_t             mStrictModePolicy;
             int32_t             mLastTransactionBinderFlags;

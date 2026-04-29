@@ -81,6 +81,7 @@ public:
     bool deprecate_frame_tracker() const;
     bool deprecate_vsync_sf() const;
     bool detached_mirror() const;
+    bool disable_synthetic_vsync_for_performance() const;
     bool display_config_error_hal() const;
     bool display_protected() const;
     bool dont_skip_on_early_ro() const;

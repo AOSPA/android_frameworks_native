@@ -157,6 +157,9 @@ public:
         const sp<RpcSession>& rpcSession() const { return mBinder->rpcSession(); }
 
         void onFrozenStateChanged(bool isFrozen) { mMutableBinder->onFrozenStateChanged(isFrozen); }
+        void onFrozenStateChangeListenerRemoved() {
+            mMutableBinder->onFrozenStateChangeListenerRemoved();
+        }
         const BpBinder* mBinder;
         BpBinder* mMutableBinder;
     };
@@ -208,11 +211,13 @@ private:
     };
 
     void onFrozenStateChanged(bool isFrozen);
+    void onFrozenStateChangeListenerRemoved();
 
     struct FrozenStateChange {
         bool isFrozen = false;
         Vector<wp<FrozenStateChangeCallback>> callbacks;
         bool initialStateReceived = false;
+        bool isPendingClear = false;
     };
 
     void reportOneDeath(const Obituary& obit);
