@@ -16,6 +16,24 @@
       "message": "can\u0027t you disable hwc layer caching? it has been broken for almost 3 cycles",
       "revId": "0cdcf5194dd3790be3ee4600bbc1e50975cdfe02",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "7ec337c6_0a692089",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000785
+      },
+      "writtenOn": "2026-05-27T19:01:48Z",
+      "side": 1,
+      "message": "Found debug.sf.enable_layer_caching / ro.surface_flinger.enable_layer_caching, but that\u0027s SF\u0027s composition planner cache, not the same thing. The mQtiType cache in qtiSetLayerType has no separate toggle, are you referring to the SF one, or is there something else I\u0027m missing? And yeah it\u0027s breaking boot since tag LA.QSSI.15.0.r1-12900-qssi.0 on vauxite",
+      "parentUuid": "207612a0_c14b2c80",
+      "revId": "0cdcf5194dd3790be3ee4600bbc1e50975cdfe02",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
