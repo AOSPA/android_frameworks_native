@@ -34,6 +34,24 @@
       "parentUuid": "207612a0_c14b2c80",
       "revId": "0cdcf5194dd3790be3ee4600bbc1e50975cdfe02",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "e870603c_bb3a98ca",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000579
+      },
+      "writtenOn": "2026-05-29T05:04:37Z",
+      "side": 1,
+      "message": "hm if this is happening since 15 maybe theres something in display hals on 5.10+ that fixes it? I don\u0027t mind merging this for now, add a REVERTME so I remember to check for it later\nwe did the same for other breakages previously, thanks",
+      "parentUuid": "7ec337c6_0a692089",
+      "revId": "0cdcf5194dd3790be3ee4600bbc1e50975cdfe02",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
