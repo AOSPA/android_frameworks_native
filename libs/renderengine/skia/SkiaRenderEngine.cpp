@@ -674,8 +674,13 @@ sk_sp<SkShader> SkiaRenderEngine::createRuntimeEffectShader(
                           static_cast<ui::PixelFormat>(targetBuffer->getPixelFormat()))
                 : std::nullopt;
 
+        ftl::Flags<HdrMetadataOptions> hdrOptions;
+        if (parameters.agtm.has_value()) {
+            hdrOptions |= HdrMetadataOptions::HasSmpte2094_50;
+        }
+
         const auto hdrType = getHdrRenderType(parameters.layer.sourceDataspace, format,
-                                              parameters.layerDimmingRatio);
+                                              parameters.layerDimmingRatio, hdrOptions);
 
         const auto usingLocalTonemap =
                 parameters.display.tonemapStrategy == DisplaySettings::TonemapStrategy::Local &&
@@ -1510,10 +1515,16 @@ void SkiaRenderEngine::drawLayersInternal(
             // Most HDR standards require at least 10-bits of color depth for source content, so we
             // can just extract the transfer function rather than dig into precise gralloc layout.
             // Furthermore, we can assume that the only 8-bit target we support is RGBA8888.
+            ftl::Flags<HdrMetadataOptions> hdrOptions;
+            if (agtm.has_value()) {
+                hdrOptions |= HdrMetadataOptions::HasSmpte2094_50;
+            }
+
             const bool requiresDownsample =
                     getHdrRenderType(layer.sourceDataspace,
                                      std::optional<ui::PixelFormat>(static_cast<ui::PixelFormat>(
-                                             buffer->getPixelFormat()))) != HdrRenderType::SDR &&
+                                             buffer->getPixelFormat())),
+                                     1.f, hdrOptions) != HdrRenderType::SDR &&
                     buffer->getPixelFormat() == PIXEL_FORMAT_RGBA_8888;
             if (layerDimmingRatio <= kDimmingThreshold || requiresDownsample) {
                 paint.setDither(true);

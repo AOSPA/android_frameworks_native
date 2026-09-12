@@ -103,9 +103,10 @@ LegacyVirtualDisplaySurface::LegacyVirtualDisplaySurface(HWComposer& hwc,
 
 // QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     if (!mQtiDSExtnIntf) {
+        LegacyFramebufferSurface *fbs = nullptr;
         mQtiDSExtnIntf = surfaceflingerextension::
                 qtiCreateDisplaySurfaceExtension(/* isVirtual */ true, this, qtiSecure, sinkUsage,
-                                                 /* FramebufferSurface */ nullptr);
+                                                 /* FramebufferSurface */ fbs);
     }
 // QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 // QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays

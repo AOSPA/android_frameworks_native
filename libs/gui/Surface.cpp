@@ -2525,6 +2525,10 @@ int Surface::disconnect(int api, IGraphicBufferProducer::DisconnectMode mode) {
                  statusToString(err).c_str());
 
     Mutex::Autolock lock(mMutex);
+    if (mSharedBufferMode && !mDequeuedSlots.empty()) {
+        SURF_LOGE("Surface::disconnect: Surface is in shared buffer mode. This will leak buffers. "
+                  "Please disable shared buffer mode before disconnecting.");
+    }
     mRemovedBuffers.clear();
     mSharedBufferSlot = BufferItem::INVALID_BUFFER_SLOT;
     mSharedBufferHasBeenQueued = false;

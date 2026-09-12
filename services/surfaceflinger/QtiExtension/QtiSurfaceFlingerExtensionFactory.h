@@ -1,4 +1,5 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/*
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -17,5 +18,9 @@ QtiDisplaySurfaceExtensionIntf* qtiCreateDisplaySurfaceExtension(bool isVirtual,
                                                                  LegacyVirtualDisplaySurface* vds,
                                                                  bool secure, uint64_t sinkUsage,
                                                                  LegacyFramebufferSurface* fbs);
+QtiDisplaySurfaceExtensionIntf* qtiCreateDisplaySurfaceExtension(bool isVirtual,
+                                                                  LegacyVirtualDisplaySurface* vds,
+                                                                  bool secure, uint64_t sinkUsage,
+                                                                  FramebufferSurface* fbs);
 
 } // namespace android::surfaceflingerextension

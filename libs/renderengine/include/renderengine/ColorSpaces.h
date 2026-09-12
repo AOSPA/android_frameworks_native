@@ -17,8 +17,10 @@
 #pragma once
 
 #include <ftl/flags.h>
+#include <include/private/SkHdrMetadata.h>
 #include <ui/GraphicTypes.h>
 
+#include <optional>
 #include "SkColorSpace.h"
 
 namespace android {
@@ -39,6 +41,21 @@ enum class ColorSpaceOptions : uint32_t {
 // are mapped to sRGB.
 sk_sp<SkColorSpace> toSkColorSpace(ui::Dataspace dataspace,
                                    ftl::Flags<ColorSpaceOptions> options = ColorSpaceOptions::None);
+
+/**
+ * Returns the maximum headroom allowed for this content based on the
+ * SMPTE 2094-50 metadata.
+ */
+inline float getMaxHeadroom(const std::optional<skhdr::AdaptiveGlobalToneMap>& agtm) {
+    if (agtm && agtm->fHeadroomAdaptiveToneMap) {
+        float maxAgtmRatio = agtm->fHeadroomAdaptiveToneMap->fBaselineHdrHeadroom;
+        for (const auto& alternativeImage : agtm->fHeadroomAdaptiveToneMap->fAlternateImages) {
+            maxAgtmRatio = std::max(maxAgtmRatio, alternativeImage.fHdrHeadroom);
+        }
+        return std::pow(2.f, maxAgtmRatio);
+    }
+    return 1.f;
+}
 
 } // namespace renderengine
 } // namespace android

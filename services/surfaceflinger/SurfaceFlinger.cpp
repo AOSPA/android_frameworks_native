@@ -37,6 +37,7 @@
 
 #include "SurfaceFlinger.h"
 
+#include <aidl/android/hardware/graphics/common/BufferUsage.h>
 #include <aidl/android/hardware/power/Boost.h>
 #include <android-base/logging.h>
 #include <android-base/parseint.h>
@@ -1533,8 +1534,11 @@ void SurfaceFlinger::setDesiredMode(display::DisplayModeRequest desiredMode) {
             break;
     }
 
+    // QTI_BEGIN
     mQtiSFExtnIntf->qtiSetContentFps(mode.fps.getValue());
     mQtiSFExtnIntf->qtiDolphinSetVsyncPeriod(mode.fps.getPeriodNsecs());
+    mQtiSFExtnIntf->qtiUpdateVsyncConfiguration();
+    // QTI_END
 }
 
 status_t SurfaceFlinger::setActiveModeFromBackdoor(const sp<display::DisplayToken>& displayToken,
@@ -1837,7 +1841,14 @@ void SurfaceFlinger::initiateDisplayModeChanges() {
             // setActiveConfig doesn't properly support seamless requirement.
             constraints.seamlessRequired = false;
         } else {
-            constraints.seamlessRequired = initialDesiredMode.seamless;
+            // QTI_BEGIN
+            // Restrict seamless mode switch for modes in the same config group
+            const auto activeMode = mDisplayModeController.getActiveMode(initialDisplayId);
+            const bool sameGroup =
+                    activeMode.modePtr->getGroup() == initialDesiredMode.mode.modePtr->getGroup();
+            // QTI_END
+            constraints.seamlessRequired =
+                    initialDesiredMode.seamless /* QTI_BEGIN */ && sameGroup; /* QTI_END */
         }
 
         hal::VsyncPeriodChangeTimeline outTimeline;
@@ -2985,6 +2996,11 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
     const nsecs_t latchTime = systemTime();
     bool unused = false;
 
+// QTI_BEGIN
+    int latchedLayerCount = 0;
+    bool isVideoLayerLatched = false;
+// QTI_END
+
     for (auto& layer : mLayerLifecycleManager.getLayers()) {
         if (layer->changes.test(frontend::RequestedLayerState::Changes::Created) &&
             layer->bgColorLayer) {
@@ -3027,6 +3043,15 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
             mLayersWithBuffersRemoved.emplace(it->second);
         }
         it->second->latchBufferImpl(unused, latchTime, expectedPresentTimeNs, bgColorOnly);
+
+// QTI_BEGIN
+        using ::aidl::android::hardware::graphics::common::BufferUsage;
+
+        uint64_t usage = it->second->getUsage();
+        isVideoLayerLatched = (usage & static_cast<int64_t>(BufferUsage::VIDEO_DECODER)) != 0;
+        latchedLayerCount++;
+// QTI_END
+
         newDataLatched = true;
 
         frontend::LayerSnapshot* snapshot = mLayerSnapshotBuilder.getSnapshot(it->second->sequence);
@@ -3045,6 +3070,27 @@ bool SurfaceFlinger::updateLayerSnapshots(VsyncId vsyncId, nsecs_t frameTimeNs,
 
     // Must flush after the latch loop so per-layer discards run first.
     mQtiSFExtnIntf->qtiDolphinFlushLatchUnsignaledGpuFences();
+
+// QTI_BEGIN
+    int activeDisplayFps = 0;
+    int layerWithQueuedFramesSize = mLayersWithQueuedFrames.size();
+    bool isGeometryStableThisFrame =
+            !mUpdateInputInfo && !mVisibleRegionsDirty && !mUpdateAttachedChoreographer;
+    bool isSteadyStateVideo =
+            isVideoLayerLatched && isGeometryStableThisFrame && (layerWithQueuedFramesSize == 1);
+
+    sp<const DisplayDevice> display = getFrontInternalDisplayLocked();
+
+    if (display) {
+        activeDisplayFps =
+                static_cast<int>(display->refreshRateSelector().getActiveMode().fps.getValue());
+
+        if (activeDisplayFps > 0) {
+            evaluateVideoLayerPowerSaving(latchedLayerCount, activeDisplayFps, isSteadyStateVideo);
+        }
+    }
+
+// QTI_END
 
     updateLayerHistory(latchTime);
     mLayerSnapshotBuilder.forEachSnapshot([&](const frontend::LayerSnapshot& snapshot) {
@@ -3373,7 +3419,11 @@ bool SurfaceFlinger::commit(PhysicalDisplayId pacesetterId,
 
     persistDisplayBrightness(mustComposite);
 
+// QTI_BEGIN: 2026-04-20: Display: sfext: Change thermal fps caching logic
     mQtiSFExtnIntf->qtiSendCompositorTid();
+
+    mQtiSFExtnIntf->qtiDisallowThermalFpsChange();
+// QTI_END: 2026-04-20: Display: sfext: Change thermal fps caching logic
 
     return mustComposite && CC_LIKELY(mBootStage != BootStage::BOOTLOADER);
 }
@@ -3854,10 +3904,16 @@ void SurfaceFlinger::setForcedClientCompositionLayerStacks(
     bool forceAllDisplaysToClientComposition = false;
     if (mDebugDisableHWC) {
         forceAllDisplaysToClientComposition = true;
+        // QTI_BEGIN
+        refreshArgs.mQtiEnforceGpuComp = true;
+        // QTI_END
     }
 
     if (mDebugFlashDelay != 0) {
         forceAllDisplaysToClientComposition = true;
+        // QTI_BEGIN
+        refreshArgs.mQtiEnforceGpuComp = true;
+        // QTI_END
         refreshArgs.devOptFlashDirtyRegionsDelay = std::chrono::milliseconds(mDebugFlashDelay);
     }
 
@@ -3904,8 +3960,12 @@ bool SurfaceFlinger::isHdrLayer(const frontend::LayerSnapshot& snapshot) const {
             ? std::make_optional(static_cast<ui::PixelFormat>(snapshot.buffer->getPixelFormat()))
             : std::nullopt;
 
-    if (getHdrRenderType(snapshot.dataspace, pixelFormat, snapshot.desiredHdrSdrRatio) !=
-        HdrRenderType::SDR) {
+    ftl::Flags<HdrMetadataOptions> hdrOptions;
+    if (snapshot.hdrMetadata.validTypes != 0) hdrOptions |= HdrMetadataOptions::HasHdrMetadata;
+    if (snapshot.agtm.has_value()) hdrOptions |= HdrMetadataOptions::HasSmpte2094_50;
+
+    if (getHdrRenderType(snapshot.dataspace, pixelFormat, snapshot.desiredHdrSdrRatio,
+                         hdrOptions) != HdrRenderType::SDR) {
         return true;
     }
     // If the layer is not allowed to be dimmed, treat it as HDR. WindowManager may disable
@@ -4092,6 +4152,15 @@ void SurfaceFlinger::onCompositionPresented(PhysicalDisplayId pacesetterId,
 
         std::swap(activePictureListenersToAdd, mActivePictureListenersToAdd);
         std::swap(activePictureListenersToRemove, mActivePictureListenersToRemove);
+    }
+
+    if (!mHdrLayerInfoChanged) {
+        mLayerSnapshotBuilder.forEachVisibleSnapshot(
+                [&](std::unique_ptr<frontend::LayerSnapshot>& snapshot) {
+                    if (snapshot->agtm.has_value()) {
+                        mHdrLayerInfoChanged = true;
+                    }
+                });
     }
 
     if (haveNewHdrInfoListeners || mHdrLayerInfoChanged) {
@@ -5069,12 +5138,6 @@ void SurfaceFlinger::processDisplayChanged(const wp<IBinder>& displayToken,
     }
 }
 
-void SurfaceFlinger::resetPhaseConfiguration(Fps refreshRate) {
-// QTI_BEGIN: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
-    mQtiSFExtnIntf->qtiUpdateVsyncConfiguration();
-// QTI_END: 2023-01-17: Display: sf: Introduce QTI Extensions in AOSP
-}
-
 void SurfaceFlinger::processDisplayChangesLocked() {
     const auto& currentDisplays = mCurrentState.displays;
     const auto& drawingDisplays = mDrawingState.displays;
@@ -5100,6 +5163,9 @@ void SurfaceFlinger::processDisplayChangesLocked() {
     }
 
     mDrawingState.displays = mCurrentState.displays;
+    // QTI_BEGIN
+    mQtiSFExtnIntf->qtiUpdateVsyncConfiguration();
+    // QTI_END
 }
 
 void SurfaceFlinger::commitTransactionsLocked(uint32_t transactionFlags) {
@@ -5781,8 +5847,6 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
 
                 if (!fenceSignaled) {
                     // check fence status
-                    const bool isGpuProduced = s.bufferData->buffer &&
-                            (s.bufferData->buffer->getUsage() & GRALLOC_USAGE_HW_RENDER);
                     const bool allowLatchUnsignaled =
                             shouldLatchUnsignaled(s, transaction.states.size(),
                                                   flushState.firstTransaction) &&
@@ -5790,16 +5854,12 @@ TransactionHandler::TransactionReadiness SurfaceFlinger::transactionReadyBufferC
                     if (allowLatchUnsignaled) {
                         SFTRACE_FORMAT("fence unsignaled try allowLatchUnsignaled %s",
                                        layer->name.c_str());
-                        if (isGpuProduced) {
-                            mQtiSFExtnIntf->qtiDolphinTrackLatchUnsignaledGpuFence(
-                                    s.bufferData->acquireFence->get(), layer->id);
-                        }
+                        mQtiSFExtnIntf->qtiDolphinTrackLatchUnsignaledGpuFence(
+                                s.bufferData->acquireFence->get(), layer->id);
                         ready = TransactionReadiness::NotReadyUnsignaled;
                     } else {
-                        if (isGpuProduced) {
-                            mQtiSFExtnIntf->qtiDolphinNotifyGpuFenceUnsignaled(
-                                    s.bufferData->acquireFence->get(), layer->id);
-                        }
+                        mQtiSFExtnIntf->qtiDolphinNotifyGpuFenceUnsignaled(
+                                s.bufferData->acquireFence->get(), layer->id);
                         ready = TransactionReadiness::NotReady;
                         auto& listener = s.bufferData->releaseBufferListener;
                         if (listener &&
@@ -11586,6 +11646,45 @@ void SurfaceFlinger::updateHdrInfos(
         }
     }
 }
+
+// QTI_BEGIN
+void SurfaceFlinger::evaluateVideoLayerPowerSaving(int latchedLayerCount, int activeDisplayFps,
+                                                   bool isSteadyStateVideo) {
+    constexpr int kTargetVideoFps = 30;
+
+    if (latchedLayerCount > 0 && activeDisplayFps <= kTargetVideoFps &&
+        mQtiSFExtnIntf->qtiIsExtensionFeatureEnabled(
+                surfaceflingerextension::QtiFeature::kEnablePowerSaveModeForVideo)) {
+        constexpr int kGeometryStableThreshold = 30;
+
+        if (isSteadyStateVideo) {
+            mVideoGeometryStableFrameCount++;
+
+            if (!mIsPowerFeatureEnabled &&
+                mVideoGeometryStableFrameCount > kGeometryStableThreshold) {
+                ALOGD("Video power save feature is active for %d fps", activeDisplayFps);
+                mIsPowerFeatureEnabled = true;
+                mQtiSFExtnIntf->qtiUpdateOffsetsForPowerMode(mIsPowerFeatureEnabled);
+            }
+        } else {
+            // Condition lost — reset counter and revert if active
+            mVideoGeometryStableFrameCount = 0;
+
+            if (mIsPowerFeatureEnabled) {
+                ALOGD("Video power save feature is inactive");
+                mIsPowerFeatureEnabled = false;
+                mQtiSFExtnIntf->qtiUpdateOffsetsForPowerMode(mIsPowerFeatureEnabled);
+            }
+        }
+    } else if (mIsPowerFeatureEnabled) {
+        // FPS changed away from 30 or feature disabled — always revert
+        ALOGD("Video power save feature is inactive for %d fps", activeDisplayFps);
+        mIsPowerFeatureEnabled = false;
+        mQtiSFExtnIntf->qtiUpdateOffsetsForPowerMode(mIsPowerFeatureEnabled);
+        mVideoGeometryStableFrameCount = 0;
+    }
+}
+// QTI_END
 
 } // namespace android
 

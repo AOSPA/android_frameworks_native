@@ -438,6 +438,9 @@ public:
     bool qtiIsSecureDisplay() { return mQtiIsSecureDisplay; };
     bool qtiIsSecureCamera() { return mQtiIsSecureCamera; };
 // QTI_END: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
+// QTI_BEGIN
+    uint64_t getUsage() { return (hasBuffer() ? mBufferInfo.mBuffer->getUsage() : 0); }
+// QTI_END
 
 protected:
     // For unit tests

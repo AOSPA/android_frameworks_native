@@ -215,6 +215,10 @@ private:
 
     // Whether the content must be recomposed this frame.
     bool mMustRecompose = false;
+
+    // QTI_BEGIN
+    bool mQtiEnforceGpuComp = false;
+    // QTI_END
 };
 
 // This template factory function standardizes the implementation details of the

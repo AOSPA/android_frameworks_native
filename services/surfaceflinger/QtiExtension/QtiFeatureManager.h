@@ -1,4 +1,4 @@
-/* Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 #pragma once
@@ -62,6 +62,10 @@ private:
     bool mQtiEnableSmomoOptimalRefreshRate = false;
     bool mQtiAllowIdleFallback = false;
     bool mQtiReduceSlotsForWideVideo = true;
+    bool mQtiVirtualDispTypePQ = false;
+    bool mQtiEnablePowerSaveModeForVideo = false;
+    bool mQtiRenderSysuiAsSrgb = false;
+    bool mQtiAllowSecCamConcurrency = false;
 };
 
 } // namespace surfaceflingerextension

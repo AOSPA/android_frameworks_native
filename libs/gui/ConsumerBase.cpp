@@ -310,6 +310,21 @@ void ConsumerBase::onBuffersReleasedLocked(BufferFreedCallback bufferFreedCallba
 void ConsumerBase::onSidebandStreamChanged() {
 }
 
+void ConsumerBase::onDisconnect() {
+    CB_LOGV("onDisconnect");
+
+    sp<FrameAvailableListener> listener;
+    { // scope for the lock
+        Mutex::Autolock lock(mFrameAvailableMutex);
+        listener = mFrameAvailableListener.promote();
+    }
+
+    if (listener != nullptr) {
+        CB_LOGV("actually calling onDisconnect");
+        listener->onDisconnect();
+    }
+}
+
 void ConsumerBase::onSlotCountChanged(int slotCount) {
     CB_LOGV("onSlotCountChanged: %d", slotCount);
     Mutex::Autolock lock(mMutex);

@@ -82,6 +82,7 @@ void QtiNullExtension::qtiSetContentFps(uint32_t contentFps) {}
 void QtiNullExtension::qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display,
                                                hal::PowerMode mode, bool isInternal) {}
 void QtiNullExtension::qtiUpdateVsyncConfiguration() {}
+void QtiNullExtension::qtiUpdateOffsetsForPowerMode(bool powerMode) {}
 
 /*
  * Methods that call FrameScheduler APIs.

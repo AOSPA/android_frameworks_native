@@ -32,6 +32,7 @@
 #include <common/LayerFilter.h>
 #include <gui/DisplayLuts.h>
 #include <gui/HdrMetadata.h>
+#include <include/private/SkHdrMetadata.h>
 #include <math/mat4.h>
 #include <ui/BlurRegion.h>
 #include <ui/FloatRect.h>
@@ -247,6 +248,8 @@ struct LayerFECompositionState {
 
     float currentHdrSdrRatio = 1.f;
     float desiredHdrSdrRatio = 0.f;
+
+    std::optional<skhdr::AdaptiveGlobalToneMap> agtm;
 
     // A picture profile handle refers to a PictureProfile configured on the display, which is a
     // set of parameters that configures the picture processing hardware that is used to enhance

@@ -388,8 +388,16 @@ bool CachedSet::hasKnownColorShift() const {
         // Layers are never dimmed when rendering a cached set, meaning that we may ask HWC to
         // dim a cached set. But this means that we can never cache any HDR layers so that we
         // don't accidentally dim those layers.
+        ftl::Flags<HdrMetadataOptions> hdrOptions;
+        if (layer.getState()->getHdrMetadata().validTypes != 0) {
+            hdrOptions |= HdrMetadataOptions::HasHdrMetadata;
+        }
+        if (layer.getState()->hasSmpte2094_50()) {
+            hdrOptions |= HdrMetadataOptions::HasSmpte2094_50;
+        }
+
         const auto hdrType = getHdrRenderType(dataspace, layer.getState()->getPixelFormat(),
-                                              layer.getState()->getHdrSdrRatio());
+                                              layer.getState()->getHdrSdrRatio(), hdrOptions);
         if (hdrType != HdrRenderType::SDR) {
             return true;
         }

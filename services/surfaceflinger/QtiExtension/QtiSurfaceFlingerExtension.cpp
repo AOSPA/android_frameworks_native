@@ -686,9 +686,16 @@ void QtiSurfaceFlingerExtension::qtiUpdateVsyncConfiguration() {
 
         if (useWorkDurations && mQtiWorkDurationsExtn) {
 #ifdef DYNAMIC_APP_DURATIONS
+            bool usePowerOffsets = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(
+                    QtiFeature::kEnablePowerSaveModeForVideo);
             // Update the Work Durations for the given refresh rates in mOffsets map
             g_comp_ext_intf_.phaseOffsetExtnIntf->GetWorkDurationConfigs(
                     &mQtiWorkDurationConfigsMap);
+            if (usePowerOffsets) {
+                g_comp_ext_intf_.phaseOffsetExtnIntf->GetWorkDurationConfigsForPowerMode(
+                        &mQtiWorkDurationConfigsMapPowerMode);
+            }
+
             mQtiWorkDurationsExtn->qtiUpdateWorkDurations(&mQtiWorkDurationConfigsMap);
 #endif
         } else if (mQtiPhaseOffsetsExtn) {
@@ -1049,6 +1056,16 @@ std::optional<android::VirtualDisplayIdVariant> QtiSurfaceFlingerExtension::qtiA
     auto& generator = mQtiFlinger->mVirtualDisplayIdGenerators.hal;
     if (canAllocateHwcForVDS && generator) {
         if (const auto id = generator->generateId()) {
+            VirtualDispType disp_type = VirtualDispType::DEFAULT;
+            bool usePQForVds = mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kVirtualDispTypePQ);
+            if (usePQForVds) {
+                disp_type = VirtualDispType::WITH_PQ;
+            }
+            if (mQtiDisplayConfigAidl) {
+                auto status = mQtiDisplayConfigAidl->setVirtualDispType(disp_type);
+                ALOGV("IDisplayConfig AIDL:: setVirtualDispType usePQ = %d ret = %d", usePQForVds,
+                      status.getStatus());
+            }
             if (mQtiFlinger->getHwComposer().allocateVirtualDisplay(*id, resolution, &format)) {
                 builder.setId(*id);
                 return *id;
@@ -1997,7 +2014,6 @@ void QtiSurfaceFlingerExtension::qtiSetDesiredModeByThermalLevel(float newLevelF
 
         mQtiAllowThermalFpsChange = true;
         ret = mQtiFlinger->setDesiredDisplayModeSpecsInternal(display, policy);
-        mQtiAllowThermalFpsChange = false;
         return ret;
     });
 }
@@ -2260,6 +2276,41 @@ void QtiSurfaceFlingerExtension::qtiFbScalingOnPowerChange(sp<DisplayDevice> dis
     mQtiDisplaySizeChanged = false;
 }
 
+void QtiSurfaceFlingerExtension::qtiUpdateOffsetsForPowerMode(bool powerMode) {
+#ifdef PHASE_OFFSET_EXTN
+    bool useWorkDurations =
+            mQtiFeatureManager->qtiIsExtensionFeatureEnabled(QtiFeature::kWorkDurations);
+
+    ALOGI("qtiUpdateOffsetsForPowerMode: %s",
+          powerMode ? "Applying power save offsets" : "Restoring default offsets");
+
+    if (!mQtiInitVsyncConfigurationExtn) {
+        qtiSetVsyncConfiguration(mQtiFlinger->mScheduler->getVsyncConfiguration_ptr());
+    }
+
+    if (useWorkDurations && mQtiWorkDurationsExtn) {
+#ifdef DYNAMIC_APP_DURATIONS
+        if (powerMode) {
+            mQtiWorkDurationsExtn->qtiUpdateWorkDurations(&mQtiWorkDurationConfigsMapPowerMode);
+        } else {
+            mQtiWorkDurationsExtn->qtiUpdateWorkDurations(&mQtiWorkDurationConfigsMap);
+        }
+#endif
+        ConditionalLock lock(mQtiFlinger->mStateLock,
+                             std::this_thread::get_id() != mQtiFlinger->mMainThreadId);
+        const auto displayDevice = mQtiFlinger->getFrontInternalDisplayLocked();
+        if (!displayDevice) {
+            ALOGE("qtiUpdateOffsetsForPowerMode: no front internal display");
+            return;
+        }
+
+        Fps fps = displayDevice->refreshRateSelector().getActiveMode().fps;
+
+        mQtiFlinger->mScheduler->updatePhaseConfiguration(displayDevice->getPhysicalId(), fps);
+    }
+#endif
+}
+
 /*
  * LayerExtWrapper class
  */
@@ -2346,6 +2397,9 @@ ndk::ScopedAStatus DisplayConfigAidlCallbackHandler::notifyFpsMitigation(int32_t
 ndk::ScopedAStatus DisplayConfigAidlCallbackHandler::notifyTUIEventDone(int32_t in_error,
                                                                         DisplayType in_disp_type,
                                                                         TUIEventType in_eventType) {
+    return ndk::ScopedAStatus::ok();
+}
+ndk::ScopedAStatus DisplayConfigAidlCallbackHandler::notifyContentFps(const std::string& name, int fps) {
     return ndk::ScopedAStatus::ok();
 }
 

@@ -454,7 +454,6 @@ static bool IsFencePending(int fd) {
 }
 
 void ReleaseSwapchainImage(VkDevice device,
-                           bool shared_present,
                            ANativeWindow* window,
                            int release_fence,
                            Swapchain::Image& image,
@@ -486,8 +485,7 @@ void ReleaseSwapchainImage(VkDevice device,
         }
         image.dequeue_fence = -1;
 
-        // It's invalid to call cancelBuffer on a shared buffer
-        if (window && !shared_present) {
+        if (window) {
             window->cancelBuffer(window, image.buffer.get(), release_fence);
         } else {
             if (release_fence >= 0) {
@@ -522,8 +520,8 @@ void OrphanSwapchain(VkDevice device, Swapchain* swapchain) {
         return;
     for (uint32_t i = 0; i < swapchain->num_images; i++) {
         if (!swapchain->images[i].dequeued) {
-            ReleaseSwapchainImage(device, swapchain->shared, nullptr, -1,
-                                  swapchain->images[i], true);
+            ReleaseSwapchainImage(device, nullptr, -1, swapchain->images[i],
+                                  true);
         }
     }
     swapchain->surface.swapchain_handle = VK_NULL_HANDLE;
@@ -1624,9 +1622,14 @@ static void DestroySwapchainInternal(VkDevice device,
         native_window_enable_frame_timestamps(window, false);
     }
 
+    // We need to disable shared buffer mode before we disconnect so that we can
+    // cancel the buffers and not leak them.
+    if (window && swapchain->shared) {
+        native_window_set_shared_buffer_mode(window, false);
+    }
+
     for (uint32_t i = 0; i < swapchain->num_images; i++) {
-        ReleaseSwapchainImage(device, swapchain->shared, window, -1,
-                              swapchain->images[i], false);
+        ReleaseSwapchainImage(device, window, -1, swapchain->images[i], false);
     }
 
     if (active) {
@@ -2919,8 +2922,7 @@ static VkResult PresentOneSwapchain(VkQueue queue,
                 WorstPresentResult(swapchain_result, VK_SUBOPTIMAL_KHR);
         }
     } else {
-        ReleaseSwapchainImage(device, swapchain.shared, nullptr, fence,
-                              img, true);
+        ReleaseSwapchainImage(device, nullptr, fence, img, true);
         swapchain_result = VK_ERROR_OUT_OF_DATE_KHR;
     }
 

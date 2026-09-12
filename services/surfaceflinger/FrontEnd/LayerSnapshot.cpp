@@ -18,7 +18,9 @@
 
 #include <PowerAdvisor/Workload.h>
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
+#include <common/FlagManager.h>
 #include <gui/LayerState.h>
+#include <renderengine/ColorSpaces.h>
 #include <utils/Log.h>
 
 #include "Layer.h"
@@ -509,7 +511,6 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
         color.rgb = requested.getColor().rgb;
     }
 
-    bool hasSmpte2094_50 = false;
     if (forceUpdate || requested.what & layer_state_t::eBufferChanged) {
         acquireFence =
                 (requested.externalTexture &&
@@ -523,7 +524,7 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
                 requested.externalTexture->getUsage() & GRALLOC_USAGE_PROTECTED;
         geomUsesSourceCrop = hasBufferOrSidebandStream();
 
-        if (buffer && FlagManager::getInstance().force_agtm_without_luts()) {
+        if (buffer) {
             auto& mapper = GraphicBufferMapper::get();
             std::optional<std::vector<uint8_t>> smpte2094_50;
             status_t err = OK;
@@ -532,10 +533,14 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
                 err = mapper.getSmpte2094_50(buffer->handle, &smpte2094_50);
             }
 
-            hasSmpte2094_50 = err == OK && smpte2094_50;
-
-            if (hasSmpte2094_50) {
+            if (err == OK && smpte2094_50) {
                 SFTRACE_NAME("Found smpte2094-50 on a layer!");
+                auto smpte2094_50Data =
+                        SkData::MakeWithoutCopy(smpte2094_50->data(), smpte2094_50->size());
+                skhdr::AdaptiveGlobalToneMap agtm;
+                if (agtm.parse(smpte2094_50Data.get())) {
+                    this->agtm = agtm;
+                }
             }
         }
     }
@@ -570,6 +575,11 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
         color.rgb = requested.getColor().rgb;
     }
 
+    if (agtm.has_value()) {
+        float agtmRatio = renderengine::getMaxHeadroom(*agtm);
+        desiredHdrSdrRatio = std::max(desiredHdrSdrRatio, agtmRatio);
+    }
+
     if (forceUpdate ||
         requested.what &
                 (layer_state_t::eBufferChanged | layer_state_t::eDataspaceChanged |
@@ -578,7 +588,8 @@ void LayerSnapshot::merge(const RequestedLayerState& requested, bool forceUpdate
                  layer_state_t::eEdgeExtensionChanged | layer_state_t::eBorderSettingsChanged)) {
         forceClientComposition = shadowSettings.length > 0 || stretchEffect.hasEffect() ||
                 edgeExtensionEffect.hasEffect() || borderSettings.strokeWidth > 0 ||
-                !boxShadowSettings.boxShadows.empty() || hasSmpte2094_50;
+                !boxShadowSettings.boxShadows.empty() ||
+                (agtm.has_value() && FlagManager::getInstance().force_agtm_without_luts());
     }
 
     if (forceUpdate ||

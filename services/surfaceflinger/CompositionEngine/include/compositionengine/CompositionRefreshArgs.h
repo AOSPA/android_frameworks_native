@@ -102,6 +102,10 @@ struct CompositionRefreshArgs {
 
     // System time for when frame refresh starts. Used for stats.
     nsecs_t refreshStartTime = 0;
+
+    // QTI_BEGIN
+    bool mQtiEnforceGpuComp = false;
+    // QTI_END
 };
 
 } // namespace android::compositionengine

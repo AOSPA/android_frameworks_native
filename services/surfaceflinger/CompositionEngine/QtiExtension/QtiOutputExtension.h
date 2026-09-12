@@ -28,6 +28,8 @@ public:
     static void qtiSetPrivacyRegions(HWC2::Layer* layer, const std::vector<Rect>& rectList,
                                      const std::vector<float>& radiusList,
                                      const std::vector<uint32_t>& indexList);
+    static bool qtiRenderSysuiAsSrgb(void);
+    static bool qtiAllowSecCamConcurrency(void);
 };
 
 } // namespace android::compositionengineextension

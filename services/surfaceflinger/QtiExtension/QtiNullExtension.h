@@ -62,6 +62,7 @@ public:
     void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode,
                                  bool isInternal) override;
     void qtiUpdateVsyncConfiguration() override;
+    void qtiUpdateOffsetsForPowerMode(bool powerMode) override;
 
     /*
      * Methods that call FrameScheduler APIs.
@@ -145,6 +146,7 @@ public:
     void qtiDolphinFlushLatchUnsignaledGpuFences() override;
 
     bool qtiIsFpsDeferNeeded(float newFpsRequest) override;
+    void qtiDisallowThermalFpsChange() override {}
     void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
                                    int32_t vsyncPeriod) override;
     void qtiSetFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,

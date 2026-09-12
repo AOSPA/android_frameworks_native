@@ -18,6 +18,7 @@
 #define SF_SKIARENDERENGINE_H_
 
 #include <renderengine/RenderEngine.h>
+#include <ui/HdrRenderTypeUtils.h>
 
 #include <android-base/thread_annotations.h>
 #include <android/ipcrenderbuffer/IPCRecordingCanvas.h>

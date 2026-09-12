@@ -106,6 +106,11 @@ public:
         }
     }
 
+    int32_t getNumAcquired() {
+        std::scoped_lock lock(mMutex);
+        return mNumAcquired;
+    }
+
 private:
     friend class sp<TestBLASTBufferQueue>;
     TestBLASTBufferQueue(const std::string& name) : BLASTBufferQueue(name) {}
@@ -199,6 +204,16 @@ public:
 
     void setCornerRadiiCallback(std::function<void(const gui::CornerRadii)> callback) {
         mBlastBufferQueueAdapter->setCornerRadiiCallback(callback);
+    }
+
+    size_t getNumSubmitted() {
+        std::scoped_lock lock{mBlastBufferQueueAdapter->mMutex};
+        return mBlastBufferQueueAdapter->mSubmitted.size();
+    }
+
+    int32_t getNumAcquired() {
+        std::scoped_lock lock{mBlastBufferQueueAdapter->mMutex};
+        return mBlastBufferQueueAdapter->mNumAcquired;
     }
 
 private:
@@ -448,6 +463,110 @@ TEST_F(BLASTBufferQueueTest, DISABLED_onFrameAvailable_ApplyDesiredPresentTime) 
 
     adapter.waitForCallbacks();
     ASSERT_GE(systemTime(), desiredPresentTime);
+}
+
+TEST_F(BLASTBufferQueueTest, ProducerDisconnect_ClearsStateAndCanReconnect) {
+    BLASTBufferQueueHelper adapter(mSurfaceControl, mDisplayWidth, mDisplayHeight);
+    sp<IGraphicBufferProducer> igbProducer;
+    setUpProducer(adapter, igbProducer);
+
+    // Prevent immediate acquisition so the buffers stay in mQueue
+    adapter.syncNextTransaction([](Transaction*) {});
+
+    // Queue MULTIPLE buffers before disconnecting.
+    // This leaves multiple stale buffers in mQueue.
+    queueBuffer(igbProducer, 255, 0, 0, 0);
+    queueBuffer(igbProducer, 0, 255, 0, 0);
+    queueBuffer(igbProducer, 0, 0, 255, 0);
+
+    // Disconnect producer. This clears mNumFrameAvailable in BBQ but leaves 3 stale buffers in
+    // mQueue.
+    ASSERT_EQ(OK, igbProducer->disconnect(NATIVE_WINDOW_API_CPU));
+
+    // Reconnect producer
+    setUpProducer(adapter, igbProducer);
+
+    // Set a strict buffer limit to force starvation if buffers are orphaned in the queue.
+    igbProducer->setMaxDequeuedBufferCount(2);
+
+    // Call syncNextTransaction to trigger the wait condition in onFrameAvailable
+    adapter.syncNextTransaction([](Transaction*) {});
+
+    // Set a short dequeue timeout to detect deadlock
+    igbProducer->setDequeueTimeout(1000000); // 1ms
+
+    // Repeatedly queue buffers. Because mNumFrameAvailable gets out of sync,
+    // BBQ will always be 1 frame behind, eventually starving the BufferQueue.
+    status_t err = OK;
+    for (int i = 0; i < 100; i++) {
+        int slot;
+        sp<Fence> fence;
+        err = igbProducer->dequeueBuffer(&slot, &fence, mDisplayWidth, mDisplayHeight,
+                                         PIXEL_FORMAT_RGBA_8888, GRALLOC_USAGE_SW_WRITE_OFTEN,
+                                         nullptr, nullptr);
+        if (err != OK && err != IGraphicBufferProducer::BUFFER_NEEDS_REALLOCATION) {
+            ALOGE("Test hit error at loop index %d: %d", i, err);
+            break;
+        }
+
+        sp<GraphicBuffer> buf;
+        igbProducer->requestBuffer(slot, &buf);
+
+        IGraphicBufferProducer::QueueBufferOutput qbOutput;
+        IGraphicBufferProducer::QueueBufferInput input(systemTime(), true /* isAutoTimestamp */,
+                                                       HAL_DATASPACE_UNKNOWN,
+                                                       Rect(mDisplayWidth, mDisplayHeight),
+                                                       NATIVE_WINDOW_SCALING_MODE_FREEZE, 0,
+                                                       Fence::NO_FENCE);
+        igbProducer->queueBuffer(slot, input, &qbOutput);
+    }
+
+    // We expect both dequeues to succeed.
+    ASSERT_EQ(OK, err) << "err was " << err;
+}
+
+TEST_F(BLASTBufferQueueTest, ProducerDisconnect_DoesNotLeakAcquiredBuffers) {
+    BLASTBufferQueueHelper adapter(mSurfaceControl, mDisplayWidth, mDisplayHeight);
+    sp<IGraphicBufferProducer> igbProducer;
+    setUpProducer(adapter, igbProducer);
+    igbProducer->setMaxDequeuedBufferCount(2);
+
+    Transaction syncTransaction;
+    adapter.setSyncTransaction(syncTransaction);
+
+    // Queue Buffer A. It will be acquired by BBQ and put into syncTransaction.
+    queueBuffer(igbProducer, 255, 0, 0, 0);
+
+    // Assert BBQ successfully acquired and submitted the buffer.
+    ASSERT_EQ(1u, adapter.getNumSubmitted());
+    ASSERT_EQ(1, adapter.getNumAcquired());
+
+    // Disconnect producer. This should NOT clear mSubmitted or mNumAcquired,
+    // because SurfaceFlinger (the syncTransaction) still holds Buffer A.
+    ASSERT_EQ(OK, igbProducer->disconnect(NATIVE_WINDOW_API_CPU));
+
+    // Assert state is preserved across disconnect.
+    ASSERT_EQ(1u, adapter.getNumSubmitted());
+    ASSERT_EQ(1, adapter.getNumAcquired());
+
+    // Reconnect producer
+    setUpProducer(adapter, igbProducer);
+    igbProducer->setMaxDequeuedBufferCount(2);
+
+    // Apply the transaction to send Buffer A to SurfaceFlinger
+    syncTransaction.apply();
+
+    // Now queue Buffer B to replace Buffer A, triggering the release callback for Buffer A
+    adapter.clearSyncTransaction();
+    queueBuffer(igbProducer, 0, 255, 0, 0);
+
+    // Wait for the release callback to arrive from SurfaceFlinger
+    adapter.waitForCallbacks();
+
+    // Assert that Buffer A was successfully released and removed from mSubmitted.
+    // Buffer B is now the only one acquired.
+    ASSERT_EQ(1u, adapter.getNumSubmitted());
+    ASSERT_EQ(1, adapter.getNumAcquired());
 }
 
 TEST_F(BLASTBufferQueueTest, onFrameAvailable_Apply) {
@@ -1996,6 +2115,102 @@ TEST_F(BLASTFrameEventHistoryTest, FrameEventHistory_CompositorTimings) {
 
     // wait for any callbacks that have not been received
     adapter.waitForCallbacks();
+}
+
+TEST_F(BLASTBufferQueueTest, FifoLatestReadySyncDeadlock) {
+    BLASTBufferQueueHelper adapter(mSurfaceControl, mDisplayWidth, mDisplayHeight);
+    sp<IGraphicBufferProducer> igbProducer;
+    setUpProducer(adapter, igbProducer, 10);
+
+    igbProducer->setPresentMode(ANATIVEWINDOW_PRESENT_FIFO_LATEST_READY);
+
+    ALOGD("Setting blocker sync transaction");
+    Transaction sync1;
+    adapter.setSyncTransaction(sync1);
+
+    ALOGD("Queuing Buffer 1 (The Blocker)");
+    // BBQ acquires this into sync1. Since sync1 is never applied, BBQ remains
+    // in a state where waitForTransactionCallback == true.
+    queueBuffer(igbProducer, 255, 0, 0, 0);
+
+    ALOGD("Queuing Buffer 2 (The Dropped Frame)");
+    // Because waitForTransactionCallback == true, BBQ does not acquire this immediately.
+    // It sits in the physical BufferQueue.
+    queueBuffer(igbProducer, 0, 255, 0, 0);
+
+    ALOGD("Queuing Buffer 3 (The Drop Trigger)");
+    // BBQ sees multiple frames waiting and calls acquireAndReleaseBuffer().
+    // BufferQueue silently drops Buffer 2 due to FIFO_LATEST_READY.
+    queueBuffer(igbProducer, 0, 0, 255, 0);
+
+    ALOGD("Waiting 500ms for internal drops to settle");
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    ALOGD("Setting final sync transaction");
+    Transaction sync2;
+    adapter.setSyncTransaction(sync2);
+
+    ALOGD("Spawning async thread to queue the final buffer");
+    std::atomic<bool> thread_finished = false;
+    std::thread trap_thread([&]() {
+        ALOGD("Async thread calling queueBuffer");
+        // BBQ tries to flush the shadow queue. It should acquire Buffer 4 and return normally
+        // without getting stuck in a wait loop.
+        queueBuffer(igbProducer, 255, 255, 255, 0);
+        ALOGD("Async thread queueBuffer returned");
+        thread_finished = true;
+    });
+
+    ALOGD("Main thread waiting for up to 500ms");
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    if (!thread_finished) {
+        ALOGE("FAILURE: The queueBuffer call hung! Deadlock detected.");
+        trap_thread.detach();
+        FAIL() << "Test failed: queueBuffer hung due to sync transaction deadlock.";
+    } else {
+        ALOGD("SUCCESS: The queueBuffer call returned normally.");
+        trap_thread.join();
+    }
+}
+
+TEST_F(BLASTBufferQueueTest, SharedBufferMode_AvoidDuplicateBufferAcquisition) {
+    sp<TestBLASTBufferQueue> bbq =
+            TestBLASTBufferQueue::create(mSurfaceControl, mDisplayWidth, mDisplayHeight);
+    sp<IGraphicBufferProducer> igbProducer = bbq->getIGraphicBufferProducer();
+    setUpProducer(igbProducer, 2);
+
+    // Enable shared buffer mode and auto refresh so that BufferQueue returns the same buffer and
+    // frame ids when the queue is empty.
+    ASSERT_EQ(OK, igbProducer->setSharedBufferMode(true));
+    ASSERT_EQ(OK, igbProducer->setAutoRefresh(true));
+
+    int slot;
+    sp<Fence> fence;
+    sp<GraphicBuffer> buf;
+    auto ret = igbProducer->dequeueBuffer(&slot, &fence, mDisplayWidth, mDisplayHeight,
+                                          PIXEL_FORMAT_RGBA_8888, GRALLOC_USAGE_SW_WRITE_OFTEN,
+                                          nullptr, nullptr);
+    ASSERT_EQ(IGraphicBufferProducer::BUFFER_NEEDS_REALLOCATION, ret);
+    ASSERT_EQ(OK, igbProducer->requestBuffer(slot, &buf));
+
+    IGraphicBufferProducer::QueueBufferOutput qbOutput;
+    IGraphicBufferProducer::QueueBufferInput input(systemTime(), true /* autotimestamp */,
+                                                   HAL_DATASPACE_UNKNOWN,
+                                                   Rect(mDisplayWidth, mDisplayHeight),
+                                                   NATIVE_WINDOW_SCALING_MODE_FREEZE, 0,
+                                                   Fence::NO_FENCE);
+    igbProducer->queueBuffer(slot, input, &qbOutput);
+
+    // BBQ should have one acquired buffer after the initial shared buffer is queued.
+    ASSERT_EQ(1, bbq->getNumAcquired());
+
+    // Trigger BBQ's acquireNextBufferLocked.
+    BufferItem item;
+    bbq->onFrameAvailable(item);
+
+    // Verify that we didn't acquire another buffer due to matching buffer and frame ids.
+    ASSERT_EQ(1, bbq->getNumAcquired());
 }
 
 } // namespace android

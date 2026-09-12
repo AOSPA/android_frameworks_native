@@ -1280,6 +1280,11 @@ Error AidlComposer::execute(Display display) {
         const auto index = static_cast<size_t>(cmdErr.commandIndex);
         if (cmdErr.commandIndex < 0 || index >= commands.size()) {
             ALOGE("invalid command index %zu", index);
+// QTI_BEGIN: 2026-06-17: Display: AidlComposerHal: Reset QTI writer on error to prevent stale commands
+#ifdef QTI_COMPOSER3_EXTENSIONS
+            writer->get().qtiReset();
+#endif
+// QTI_END: 2026-06-17: Display: AidlComposerHal: Reset QTI writer on error to prevent stale commands
             return Error::BAD_PARAMETER;
         }
 

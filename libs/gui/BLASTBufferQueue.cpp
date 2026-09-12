@@ -639,13 +639,31 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
     }
 
     auto buffer = bufferItem.mGraphicBuffer;
-    mNumFrameAvailable--;
+
+    int32_t totalProcessed = 1 + static_cast<int32_t>(bufferItem.mCountOfDroppedBuffers);
+    if (mNumFrameAvailable >= totalProcessed) {
+        mNumFrameAvailable -= totalProcessed;
+    } else {
+        BQA_LOGE("mNumFrameAvailable (%u) is smaller than processed frames (%u)",
+                 mNumFrameAvailable, totalProcessed);
+        mNumFrameAvailable = 0;
+    }
+
     BBQ_TRACE("frame=%" PRIu64, bufferItem.mFrameNumber);
 
     if (buffer == nullptr) {
         mBufferItemConsumer->releaseBuffer(bufferItem, Fence::NO_FENCE);
         BQA_LOGE("Buffer was empty");
         return BAD_VALUE;
+    }
+
+    if (buffer->getId() == mLastAcquiredBufferId &&
+        bufferItem.mFrameNumber == mLastAcquiredFrameNumber) {
+        BQA_LOGV("acquireNextBufferLocked skipping already acquired bufferId:%" PRIu64
+                 " frameNumber:%" PRIu64,
+                 buffer->getId(), bufferItem.mFrameNumber);
+        mBufferItemConsumer->releaseBuffer(bufferItem, Fence::NO_FENCE);
+        return acquireNextBufferLocked(transaction);
     }
 
     if (rejectBuffer(bufferItem)) {
@@ -658,8 +676,9 @@ status_t BLASTBufferQueue::acquireNextBufferLocked(
     }
 
     mNumAcquired++;
+    mLastAcquiredBufferId = buffer->getId();
     mLastAcquiredFrameNumber = bufferItem.mFrameNumber;
-    ReleaseCallbackId releaseCallbackId(buffer->getId(), mLastAcquiredFrameNumber);
+    ReleaseCallbackId releaseCallbackId(mLastAcquiredBufferId, mLastAcquiredFrameNumber);
     mSubmitted.emplace_or_replace(releaseCallbackId, bufferItem);
 
     bool needsDisconnect = false;
@@ -794,18 +813,47 @@ Rect BLASTBufferQueue::computeCrop(const BufferItem& item) {
     return item.mCrop;
 }
 
-void BLASTBufferQueue::acquireAndReleaseBuffer() {
+status_t BLASTBufferQueue::acquireAndReleaseBuffer() {
     BBQ_TRACE();
     BufferItem bufferItem;
     status_t status =
             mBufferItemConsumer->acquireBuffer(&bufferItem, 0 /* expectedPresent */, false);
     if (status != OK) {
-        BQA_LOGE("Failed to acquire a buffer in acquireAndReleaseBuffer, err=%s",
-                 statusToString(status).c_str());
-        return;
+        if (status != BufferQueue::NO_BUFFER_AVAILABLE) {
+            BQA_LOGE("Failed to acquire a buffer in acquireAndReleaseBuffer, err=%s",
+                     statusToString(status).c_str());
+        }
+        return status;
     }
-    mNumFrameAvailable--;
+
+    int32_t totalProcessed = 1 + static_cast<int32_t>(bufferItem.mCountOfDroppedBuffers);
+    if (mNumFrameAvailable >= totalProcessed) {
+        mNumFrameAvailable -= totalProcessed;
+    } else {
+        BQA_LOGE("mNumFrameAvailable (%u) is smaller than processed frames (%u)",
+                 mNumFrameAvailable, totalProcessed);
+        mNumFrameAvailable = 0;
+    }
+
     mBufferItemConsumer->releaseBuffer(bufferItem, bufferItem.mFence);
+    return OK;
+}
+
+void BLASTBufferQueue::onDisconnect() {
+    UNIQUE_LOCK_WITH_ASSERTION(mMutex);
+    BQA_LOGV("onDisconnect: clearing state");
+
+    // Flush the shadow queue to safely drain any stale buffers left in the
+    // BufferQueueCore queue by the disconnected producer.
+    while (mNumFrameAvailable > 0) {
+        if (acquireAndReleaseBuffer() != OK) {
+            BQA_LOGV("Stopped flushing shadow queue (consumer likely full). %u remaining.",
+                     mNumFrameAvailable);
+            break;
+        }
+    }
+
+    mCallbackCV.notify_all();
 }
 
 void BLASTBufferQueue::onFrameAvailable(const BufferItem& item) {
@@ -843,7 +891,7 @@ void BLASTBufferQueue::onFrameAvailable(const BufferItem& item) {
                 // a release callback invoked.
                 while (mNumFrameAvailable > 0) {
                     // flush out the shadow queue
-                    acquireAndReleaseBuffer();
+                    if (acquireAndReleaseBuffer() != OK) break;
                 }
             } else {
                 // Make sure the frame available count is 0 before proceeding with a sync to ensure

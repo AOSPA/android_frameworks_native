@@ -30,6 +30,7 @@
 #include <ftl/small_map.h>
 #include <include/private/SkHdrMetadata.h>
 #include <math/vec2.h>
+#include <renderengine/ColorSpaces.h>
 #include <ui/DisplayMap.h>
 #include <ui/FloatRect.h>
 
@@ -1092,9 +1093,8 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
                 getMaxHdrSdrRatio(snapshot.maxDesiredHdrSdrRatio, requested.desiredHdrSdrRatio);
     }
 
-    bool hasSmpte2094_50 = false;
     // For now we don't check LUT support so guard by a debug sysprop
-    if (FlagManager::getInstance().force_agtm_without_luts() && snapshot.buffer) {
+    if (snapshot.buffer) {
         std::optional<std::vector<uint8_t>> smpte2094_50;
         status_t err;
         {
@@ -1102,10 +1102,17 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
             err = snapshot.buffer->getSmpte2094_50(&smpte2094_50);
         }
 
-        hasSmpte2094_50 = err == OK && smpte2094_50;
-
-        if (hasSmpte2094_50) {
+        if (err == OK && smpte2094_50) {
             SFTRACE_NAME("Found smpte2094-50 on a layer!");
+            auto smpte2094_50Data =
+                    SkData::MakeWithoutCopy(smpte2094_50->data(), smpte2094_50->size());
+            skhdr::AdaptiveGlobalToneMap agtm;
+            if (agtm.parse(smpte2094_50Data.get())) {
+                float agtmRatio = renderengine::getMaxHeadroom(agtm);
+                snapshot.desiredHdrSdrRatio =
+                        getMaxHdrSdrRatio(snapshot.desiredHdrSdrRatio, agtmRatio);
+                snapshot.agtm = agtm;
+            }
         }
     }
 
@@ -1114,7 +1121,8 @@ void LayerSnapshotBuilder::updateSnapshot(LayerSnapshot& snapshot, const Args& a
             snapshot.stretchEffect.hasEffect() || snapshot.edgeExtensionEffect.hasEffect() ||
             snapshot.borderSettings.strokeWidth > 0 ||
             !snapshot.boxShadowSettings.boxShadows.empty() ||
-            snapshot.renderCommandBuffer != nullptr || hasSmpte2094_50;
+            snapshot.renderCommandBuffer != nullptr ||
+            (snapshot.agtm.has_value() && FlagManager::getInstance().force_agtm_without_luts());
 
     snapshot.contentOpaque = snapshot.isContentOpaque();
     snapshot.isOpaque = snapshot.contentOpaque &&

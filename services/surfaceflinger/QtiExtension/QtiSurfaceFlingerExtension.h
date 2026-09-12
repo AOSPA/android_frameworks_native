@@ -47,6 +47,7 @@ using aidl::vendor::qti::hardware::display::config::CameraSmoothOp;
 using aidl::vendor::qti::hardware::display::config::Concurrency;
 using aidl::vendor::qti::hardware::display::config::DisplayType;
 using aidl::vendor::qti::hardware::display::config::TUIEventType;
+using aidl::vendor::qti::hardware::display::config::VirtualDispType;
 
 using composer::LayerExtnIntf;
 using smomo::SmomoIntf;
@@ -103,6 +104,7 @@ public:
                                                    Concurrency concurrency) override;
     virtual ndk::ScopedAStatus notifyTUIEventDone(int32_t in_error, DisplayType in_disp_type,
                                                   TUIEventType in_eventType) override;
+    virtual ndk::ScopedAStatus notifyContentFps(const std::string& name, int fps) override;
 
 private:
     android::surfaceflingerextension::QtiSurfaceFlingerExtensionIntf* mQtiSFExtnIntf;
@@ -164,6 +166,7 @@ public:
     void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode,
                                  bool isInternal) override;
     void qtiUpdateVsyncConfiguration() override;
+    void qtiUpdateOffsetsForPowerMode(bool powerMode) override;
 
     /*
      * Methods that call FrameScheduler APIs.
@@ -252,6 +255,9 @@ public:
     std::optional<PhysicalDisplayId> qtiGetInternalDisplayId();
     void qtiSetDesiredModeByThermalLevel(float newLevelFps);
     bool qtiIsFpsDeferNeeded(float newFpsRequest) override;
+    void qtiDisallowThermalFpsChange() override {
+        mQtiAllowThermalFpsChange = false;
+    }
     DisplayModePtr qtiGetModeFromFps(float fps);
     void qtiHandleNewLevelFps(float currFps, float newLevelFps, float* fpsToSet);
     void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
@@ -318,6 +324,7 @@ private:
     std::mutex mQtiDisplayCountMutex;
     std::unordered_map<float, int64_t> mQtiAdvancedSfOffsets;
     std::unordered_map<float, std::pair<int64_t, int64_t>> mQtiWorkDurationConfigsMap;
+    std::unordered_map<float, std::pair<int64_t, int64_t>> mQtiWorkDurationConfigsMapPowerMode;
 
     LayerExtWrapper mQtiLayerExt;
 

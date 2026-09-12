@@ -253,6 +253,10 @@ public:
 
     ui::Dataspace getDataspace() const { return mOutputDataspace.get(); }
 
+    const HdrMetadata& getHdrMetadata() const {
+        return getOutputLayer()->getLayerFE().getCompositionState()->hdrMetadata;
+    }
+
     hardware::graphics::composer::hal::PixelFormat getPixelFormat() const {
         return mPixelFormat.get();
     }
@@ -268,6 +272,10 @@ public:
     gui::CachingHint getCachingHint() const { return mCachingHint.get(); }
 
     bool isDimmingEnabled() const { return mIsDimmingEnabled.get(); }
+
+    bool hasSmpte2094_50() const {
+        return getOutputLayer()->getLayerFE().getCompositionState()->agtm.has_value();
+    }
 
     float getFps() const { return getOutputLayer()->getLayerFE().getCompositionState()->fps; }
 

@@ -41,6 +41,9 @@ TEST_F(HdrRenderTypeUtilsTest, getHdrRenderType) {
     EXPECT_EQ(getHdrRenderType(ui::Dataspace::V0_SCRGB_LINEAR,
                                std::optional<ui::PixelFormat>(ui::PixelFormat::RGBA_8888), 2.f),
               HdrRenderType::DISPLAY_HDR);
+    EXPECT_EQ(getHdrRenderType(ui::Dataspace::V0_SRGB, std::nullopt, 1.0f,
+                               HdrMetadataOptions::HasSmpte2094_50),
+              HdrRenderType::GENERIC_HDR);
 
     EXPECT_EQ(getHdrRenderType(ui::Dataspace::V0_SRGB_LINEAR, std::nullopt), HdrRenderType::SDR);
     // scRGB defines a very wide gamut but not an expanded luminance range

@@ -284,6 +284,8 @@ status_t BufferQueueConsumer::acquireBuffer(BufferItem* outBuffer,
             *outBuffer = *front;
         }
 
+        outBuffer->mCountOfDroppedBuffers = numDroppedBuffers;
+
         ATRACE_BUFFER_INDEX(slot);
 
         BQ_LOGV("acquireBuffer: acquiring { slot=%d/%" PRIu64 " buffer=%p }",

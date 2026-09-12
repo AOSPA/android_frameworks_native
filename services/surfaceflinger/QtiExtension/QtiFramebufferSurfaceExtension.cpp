@@ -1,4 +1,5 @@
-/* Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/*
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 // #define LOG_NDEBUG 0
@@ -9,12 +10,23 @@
 namespace android::surfaceflingerextension {
 
 QtiFramebufferSurfaceExtension::QtiFramebufferSurfaceExtension(LegacyFramebufferSurface* fbs)
+      : mQtiFBSLegacy(fbs) {
+    if (!mQtiFBSLegacy) {
+        ALOGW("Passed an invalid pointer to FramebufferSurface");
+    }
+
+    ALOGV("Successfully created QtiFBSExtension %p", mQtiFBS);
+    using_legacy_fbs_ = true;
+}
+
+QtiFramebufferSurfaceExtension::QtiFramebufferSurfaceExtension(FramebufferSurface* fbs)
       : mQtiFBS(fbs) {
     if (!mQtiFBS) {
         ALOGW("Passed an invalid pointer to FramebufferSurface");
     }
 
     ALOGV("Successfully created QtiFBSExtension %p", mQtiFBS);
+    using_legacy_fbs_ = false;
 }
 
 uint64_t QtiFramebufferSurfaceExtension::qtiSetOutputUsage() {
@@ -34,11 +46,25 @@ uint64_t QtiFramebufferSurfaceExtension::qtiExcludeVideoFromScratchBuffer(std::s
 }
 
 int QtiFramebufferSurfaceExtension::getClientTargetCurrentSlot() {
-    return mQtiFBS->mCurrentBufferSlot;
+    if (using_legacy_fbs_) {
+        return mQtiFBSLegacy->mCurrentBufferSlot;
+    } else {
+        // if no buffer, return INVALID_BUFFER_SLOT (-1)
+        if (!mQtiFBS->mFrameData->mBuffer) {
+            return -1;
+        }
+        Mutex::Autolock lock(mQtiFBS->mMutex);
+        auto slot = mQtiFBS->mHwcSlotTracker.getSlot(mQtiFBS->mFrameData->mBuffer);
+        return static_cast<int>(slot.slot);
+    }
 }
 
 ui::Dataspace QtiFramebufferSurfaceExtension::getClientTargetCurrentDataspace() {
-    return mQtiFBS->mDataspace;
+    if (using_legacy_fbs_) {
+        return mQtiFBSLegacy->mDataspace;
+    } else {
+        return mQtiFBS->mDataspace;
+    }
 }
 
 } // namespace android::surfaceflingerextension

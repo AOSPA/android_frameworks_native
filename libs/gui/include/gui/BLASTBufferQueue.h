@@ -128,6 +128,7 @@ public:
 // QTI_END: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
     void onFrameReplaced(const BufferItem& item) override;
     void onFrameAvailable(const BufferItem& item) override;
+    void onDisconnect() override;
     void onFrameDequeued(const uint64_t) override;
     void onFrameCancelled(const uint64_t) override;
 
@@ -219,7 +220,7 @@ private:
             REQUIRES(mMutex);
 
     void flushShadowQueue() REQUIRES(mMutex);
-    void acquireAndReleaseBuffer() REQUIRES(mMutex);
+    status_t acquireAndReleaseBuffer() REQUIRES(mMutex);
     void releaseBuffer(const ReleaseCallbackId& callbackId, const sp<Fence>& releaseFence)
             REQUIRES(mMutex);
 
@@ -336,6 +337,8 @@ private:
 
     std::queue<std::pair<uint64_t, FrameTimelineInfo>> mPendingFrameTimelines GUARDED_BY(mMutex);
 
+    // Tracks the last acquired buffer id
+    uint64_t mLastAcquiredBufferId GUARDED_BY(mMutex) = 0;
     // Tracks the last acquired frame number
     uint64_t mLastAcquiredFrameNumber GUARDED_BY(mMutex) = 0;
 

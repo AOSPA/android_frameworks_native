@@ -23,6 +23,7 @@
 #include <math/half.h>
 #include <sys/mman.h>
 #include <ui/ColorSpace.h>
+#include <ui/HdrRenderTypeUtils.h>
 
 #include <renderengine/ColorSpaces.h>
 #include "RuntimeEffectManager.h"
@@ -116,28 +117,14 @@ const SkString kEffectSource_LutEffect(R"(
                 // get indices
                 // this follows 3d flatten policy described in API/AIDL interface
                 // i.e., `FLAT[z + DEPTH * (y + HEIGHT * x)] = ORIGINAL[x][y][z]`
-// QTI_BEGIN: 2026-01-17: Display: renderengine: Modify RGB order in interpolation logic
-             /* float i000 = z0 + (y0 * float(size)) + (x0 * float(size) * float(size));
-// QTI_END: 2026-01-17: Display: renderengine: Modify RGB order in interpolation logic
+                float i000 = z0 + (y0 * float(size)) + (x0 * float(size) * float(size));
                 float i001 = z1 + (y0 * float(size)) + (x0 * float(size) * float(size));
                 float i010 = z0 + (y1 * float(size)) + (x0 * float(size) * float(size));
                 float i011 = z1 + (y1 * float(size)) + (x0 * float(size) * float(size));
                 float i100 = z0 + (y0 * float(size)) + (x1 * float(size) * float(size));
                 float i101 = z1 + (y0 * float(size)) + (x1 * float(size) * float(size));
                 float i110 = z0 + (y1 * float(size)) + (x1 * float(size) * float(size));
-// QTI_BEGIN: 2026-01-17: Display: renderengine: Modify RGB order in interpolation logic
-                float i111 = z1 + (y1 * float(size)) + (x1 * float(size) * float(size)); */
-
-                // luts are sent in the order of RGB and index must be calculated as such
-                float i000 = x0 + (y0 * float(size)) + (z0 * float(size) * float(size));
-                float i001 = x0 + (y0 * float(size)) + (z1 * float(size) * float(size));
-                float i010 = x0 + (y1 * float(size)) + (z0 * float(size) * float(size));
-                float i011 = x0 + (y1 * float(size)) + (z1 * float(size) * float(size));
-                float i100 = x1 + (y0 * float(size)) + (z0 * float(size) * float(size));
-                float i101 = x1 + (y0 * float(size)) + (z1 * float(size) * float(size));
-                float i110 = x1 + (y1 * float(size)) + (z0 * float(size) * float(size));
-                float i111 = x1 + (y1 * float(size)) + (z1 * float(size) * float(size));
-// QTI_END: 2026-01-17: Display: renderengine: Modify RGB order in interpolation logic
+                float i111 = z1 + (y1 * float(size)) + (x1 * float(size) * float(size));
 
                 // TODO(b/377984618): support Tetrahedral interpolation
                 // perform trilinear interpolation
@@ -156,7 +143,7 @@ const SkString kEffectSource_LutEffect(R"(
                   // TODO(user): add correct weights by calculating tetrahedron volume ratios
                   if(tx >= ty && ty >= tz) {
                     linear = (1.0 - tx) * c000 + (tx - ty) * c100 + (ty - tz) * c110 + tz * c111;
-                  } else if(tx >= linear.b && linear.b >= ty) {
+                  } else if(tx >= tz && tz >= ty) {
                     linear = (1.0 - tx) * c000 + (tx - tz) * c100 + (tz - ty) * c101 + ty * c111;
                   } else if(tz >= tx && tx >= ty) {
                     linear = (1.0 - tz) * c000 + (tz - tx) * c001 + (tx - ty) * c101 + ty * c111;
@@ -213,27 +200,6 @@ static ColorSpace toColorSpace(ui::Dataspace dataspace) {
         default:
             return ColorSpace::sRGB();
     }
-}
-
-static float computeHlgScale() {
-    static constexpr auto input = 0.7498773651;
-    static constexpr auto a = 0.17883277;
-    static constexpr auto b = 1 - 4 * a;
-    const static auto c = 0.5 - a * std::log(4 * a);
-    // Returns about 265 nits -- After the typical HLG OOTF this would map to 203 nits under ideal
-    // conditions.
-    return (exp((input - c) / a) + b) / 12;
-}
-
-static float computePqScale() {
-    static constexpr auto input = 0.58068888104;
-    static constexpr auto m1 = 0.1593017578125;
-    static constexpr auto m2 = 78.84375;
-    static constexpr auto c1 = 0.8359375;
-    static constexpr auto c2 = 18.8515625;
-    static constexpr auto c3 = 18.6875;
-    // This should essetially return 203 nits
-    return pow((pow(input, 1 / m2) - c1) / (c2 - c3 * pow(input, 1 / m2)), 1 / m1);
 }
 
 LutShader::LutShader(RuntimeEffectManager& effectManager) {
@@ -308,17 +274,7 @@ sk_sp<SkShader> LutShader::generateLutShader(sk_sp<SkShader> input,
                                             ? SkSamplingOptions(SkFilterMode::kLinear)
                                             : SkSamplingOptions());
 
-    float normalizeScalar = 1.0;
-    switch (srcDataspace & HAL_DATASPACE_TRANSFER_MASK) {
-        case HAL_DATASPACE_TRANSFER_HLG:
-            normalizeScalar = computeHlgScale();
-            break;
-        case HAL_DATASPACE_TRANSFER_ST2084:
-            normalizeScalar = computePqScale();
-            break;
-        default:
-            normalizeScalar = 1.0;
-    }
+    float normalizeScalar = getSdrRelativeScaleFactor(srcDataspace);
     const int uSize = static_cast<int>(size); // the size per dimension
     const int uKey = static_cast<int>(samplingKey);
     const int uDimension = static_cast<int>(dimension);

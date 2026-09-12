@@ -202,7 +202,7 @@ std::optional<compositionengine::LayerFE::LayerSettings> LayerFE::prepareClientC
     layerSettings.name = mSnapshot->name;
     layerSettings.luts = mSnapshot->luts ? mSnapshot->luts : targetSettings.luts;
 // QTI_BEGIN: 2025-12-24: Display: [Lut] Bypass eotf when using hwc lut
-    layerSettings.lutSourceIsHwc = mSnapshot->luts == nullptr;
+    layerSettings.lutSourceIsHwc = mSnapshot->luts == nullptr && !mSnapshot->agtm;
 // QTI_END: 2025-12-24: Display: [Lut] Bypass eotf when using hwc lut
 
     layerSettings.renderCommandBuffer = mSnapshot->renderCommandBuffer;

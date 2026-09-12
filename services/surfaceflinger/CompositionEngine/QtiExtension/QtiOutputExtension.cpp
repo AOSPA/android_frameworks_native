@@ -172,4 +172,21 @@ void QtiOutputExtension::qtiSetPrivacyRegions(HWC2::Layer* layer, const std::vec
     }
 }
 
+bool QtiOutputExtension::qtiRenderSysuiAsSrgb(void) {
+    auto sfext = QtiExtensionContext::instance().getQtiSurfaceFlingerExtn();
+    if (sfext) {
+        return sfext->qtiIsExtensionFeatureEnabled(surfaceflingerextension::kRenderSysuiAsSrgb);
+    }
+    return false;
+}
+
+bool QtiOutputExtension::qtiAllowSecCamConcurrency(void) {
+    auto sfext = QtiExtensionContext::instance().getQtiSurfaceFlingerExtn();
+    if (sfext) {
+        return sfext->qtiIsExtensionFeatureEnabled(
+                surfaceflingerextension::kAllowSecCamConcurrency);
+    }
+    return false;
+}
+
 } // namespace android::compositionengineextension

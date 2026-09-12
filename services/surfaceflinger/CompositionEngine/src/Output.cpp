@@ -17,7 +17,7 @@
 // QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
 /* Changes from Qualcomm Innovation Center are provided under the following license:
  *
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -904,14 +904,22 @@ void Output::updateCompositionState(const compositionengine::CompositionRefreshA
 
     mLayerRequestingBackgroundBlur = findLayerRequestingBackgroundComposition();
     bool forceClientComposition = mLayerRequestingBackgroundBlur != nullptr;
-
     auto* properties = getOverlaySupport();
 
     for (auto* layer : getOutputLayersOrderedByZ()) {
         const ui::LayerStack outputLayerStack =
                 layer->getOutput().getState().layerFilter.layerStack;
-        const bool layerForceClientComposition =
+        bool layerForceClientComposition =
                 refreshArgs.forcedClientCompositionLayerStacks.contains(outputLayerStack);
+        // QTI_BEGIN
+        if (layerForceClientComposition && QtiOutputExtension::qtiAllowSecCamConcurrency() &&
+            !refreshArgs.mQtiEnforceGpuComp) {
+            const auto* layerFEState = layer->getLayerFE().getCompositionState();
+            if (layerFEState && layerFEState->qtiIsSecureCamera) {
+                layerForceClientComposition = false;
+            }
+        }
+        // QTI_END
 
         layer->updateCompositionState(refreshArgs.updatingGeometryThisFrame,
                                       layerForceClientComposition || forceClientComposition,
@@ -1147,21 +1155,31 @@ compositionengine::Output::ColorProfile Output::pickColorProfile(
     bool isHdrClientComposition = false;
     ui::Dataspace bestDataSpace = getBestDataspace(&hdrDataSpace, &isHdrClientComposition);
 
-    switch (refreshArgs.forceOutputColorMode) {
-        case ui::ColorMode::SRGB:
-            bestDataSpace = ui::Dataspace::V0_SRGB;
-            break;
-        case ui::ColorMode::DISPLAY_P3:
-            bestDataSpace = ui::Dataspace::DISPLAY_P3;
-            break;
-// QTI_BEGIN: 2025-09-10: Display: sf:BT2020: Add BT2020 blending space support for BT2020 gamut
-        case ui::ColorMode::DISPLAY_BT2020:
-            bestDataSpace = ui::Dataspace::DISPLAY_BT2020;
-            break;
-// QTI_END: 2025-09-10: Display: sf:BT2020: Add BT2020 blending space support for BT2020 gamut
-        default:
-            break;
+    // QTI_BEGIN
+    bool qtiEnableDynamicDataspace = QtiOutputExtension::qtiRenderSysuiAsSrgb();
+
+    if (!(qtiEnableDynamicDataspace && bestDataSpace == ui::Dataspace::V0_SRGB)) {
+        // QTI_END
+        switch (refreshArgs.forceOutputColorMode) {
+            case ui::ColorMode::SRGB:
+                bestDataSpace = ui::Dataspace::V0_SRGB;
+                break;
+            case ui::ColorMode::DISPLAY_P3:
+                bestDataSpace = ui::Dataspace::DISPLAY_P3;
+                break;
+                // QTI_BEGIN: 2025-09-10: Display: sf:BT2020: Add BT2020 blending space support for
+                // BT2020 gamut
+            case ui::ColorMode::DISPLAY_BT2020:
+                bestDataSpace = ui::Dataspace::DISPLAY_BT2020;
+                break;
+                // QTI_END: 2025-09-10: Display: sf:BT2020: Add BT2020 blending space support for
+                // BT2020 gamut
+            default:
+                break;
+        }
+        // QTI_BEGIN
     }
+    // QTI_END
 
     // respect hdrDataSpace only when there is no legacy HDR support
 // QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
@@ -1709,16 +1727,7 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                 } else if (layerState.generatedLuts) {
                     luts = layerState.generatedLuts;
                 } else {
-                    bool hasSmpte2094_50 = false;
-
-                    if (FlagManager::getInstance().force_agtm_without_luts() &&
-                        layerFEState->buffer) {
-                        std::optional<std::vector<uint8_t>> smpte2094_50;
-                        status_t err = layerFEState->buffer->getSmpte2094_50(&smpte2094_50);
-                        hasSmpte2094_50 = err == OK && smpte2094_50;
-                    }
-
-                    if (!hasSmpte2094_50 && layer->getState().hwc) {
+                    if (!layerFEState->agtm.has_value() && layer->getState().hwc) {
                         luts = layer->getState().hwc->luts;
                     }
                 }

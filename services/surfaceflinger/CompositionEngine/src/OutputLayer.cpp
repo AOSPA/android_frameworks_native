@@ -144,13 +144,8 @@ std::shared_ptr<gui::DisplayLuts> createLutsFromAgtm(
     if (outputState.sdrWhitePointNits > 0) {
         targetHdrSdrRatio = outputState.displayBrightnessNits / outputState.sdrWhitePointNits;
     }
-    float scaleFactor = 1.0f;
-    int32_t transfer = dataspace & HAL_DATASPACE_TRANSFER_MASK;
-    if (transfer == HAL_DATASPACE_TRANSFER_ST2084) {
-        scaleFactor = 10000.0f / 203.0f;
-    } else if (transfer == HAL_DATASPACE_TRANSFER_HLG) {
-        scaleFactor = 1000.0f / 203.0f;
-    }
+    const float scaleFactor = 1.0f / getSdrRelativeScaleFactor(dataspace);
+    const int32_t transfer = dataspace & HAL_DATASPACE_TRANSFER_MASK;
 
     auto metadata = skhdr::Metadata::MakeEmpty();
     metadata.setAdaptiveGlobalToneMap(agtm);
@@ -178,7 +173,7 @@ std::shared_ptr<gui::DisplayLuts> createLutsFromAgtm(
                 for (int32_t y = 0; y < size; y++) {
                     float g = (static_cast<float>(y) / (size - 1)) * scaleFactor;
                     for (int32_t z = 0; z < size; z++) {
-                        float b = (static_cast<float>(x) / (size - 1)) * scaleFactor;
+                        float b = (static_cast<float>(z) / (size - 1)) * scaleFactor;
                         linearPixels[pixelIndex * 4] = r;
                         linearPixels[pixelIndex * 4 + 1] = g;
                         linearPixels[pixelIndex * 4 + 2] = b;
@@ -586,8 +581,12 @@ void OutputLayer::updateCompositionState(
     // prefer querying this from gralloc instead to catch 2094-10 metadata
     const bool hasHdrMetadata = layerFEState->hdrMetadata.validTypes != 0;
 
+    ftl::Flags<HdrMetadataOptions> hdrOptions;
+    if (hasHdrMetadata) hdrOptions |= HdrMetadataOptions::HasHdrMetadata;
+    if (layerFEState->agtm.has_value()) hdrOptions |= HdrMetadataOptions::HasSmpte2094_50;
+
     auto hdrRenderType = getHdrRenderType(outputState.dataspace, pixelFormat,
-                                          layerFEState->desiredHdrSdrRatio, hasHdrMetadata);
+                                          layerFEState->desiredHdrSdrRatio, hdrOptions);
 
     // Determine the output dependent dataspace for this layer. If it is
     // colorspace agnostic, it just uses the dataspace chosen for the output to
@@ -611,7 +610,7 @@ void OutputLayer::updateCompositionState(
 
     // re-get HdrRenderType after the dataspace gets changed.
     hdrRenderType = getHdrRenderType(state.dataspace, pixelFormat, layerFEState->desiredHdrSdrRatio,
-                                     hasHdrMetadata);
+                                     hdrOptions);
 
     // For hdr content, treat the white point as the display brightness - HDR content should not be
     // boosted or dimmed.
@@ -625,8 +624,13 @@ void OutputLayer::updateCompositionState(
                 getOutput().getState().sdrWhitePointNits;
         float idealizedMaxHeadroom = deviceHeadroom;
 
-        idealizedMaxHeadroom =
-                std::min(idealizedMaxHeadroom, getIdealizedMaxHeadroom(state.dataspace));
+        float agtmMaxHeadroom = -1.f;
+        if (layerFEState->agtm) {
+            agtmMaxHeadroom = renderengine::getMaxHeadroom(layerFEState->agtm);
+        }
+
+        idealizedMaxHeadroom = std::min(idealizedMaxHeadroom,
+                                        getIdealizedMaxHeadroom(state.dataspace, agtmMaxHeadroom));
 
         state.dimmingRatio = std::min(idealizedMaxHeadroom / deviceHeadroom, 1.0f);
         state.whitePointNits = getOutput().getState().displayBrightnessNits * state.dimmingRatio;

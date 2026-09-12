@@ -40,6 +40,10 @@ enum QtiFeature {
     kSmomoOptimalRefreshRate,
     kIdleFallback,
     kReduceSlotsForWideVideo,
+    kVirtualDispTypePQ,
+    kEnablePowerSaveModeForVideo,
+    kRenderSysuiAsSrgb,
+    kAllowSecCamConcurrency,
 };
 
 class QtiSurfaceFlingerExtensionIntf {
@@ -97,6 +101,7 @@ public:
     virtual void qtiSetEarlyWakeUpConfig(const sp<DisplayDevice>& display, hal::PowerMode mode,
                                          bool isInternal) = 0;
     virtual void qtiUpdateVsyncConfiguration() = 0;
+    virtual void qtiUpdateOffsetsForPowerMode(bool powerMode) = 0;
 
     /*
      * Methods that call FrameScheduler APIs.
@@ -182,6 +187,7 @@ public:
     virtual void qtiTryDrawMethod(sp<DisplayDevice> display) = 0;
 
     virtual bool qtiIsFpsDeferNeeded(float newFpsRequest) = 0;
+    virtual void qtiDisallowThermalFpsChange() = 0;
     virtual void qtiNotifyResolutionSwitch(int displayId, int32_t width, int32_t height,
                                            int32_t vsyncPeriod) = 0;
     virtual void qtiSetFrameBufferSizeForScaling(sp<DisplayDevice> displayDevice,

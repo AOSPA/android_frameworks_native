@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 #include <media/NdkImageReader.h>
 #include <system/window.h>
+#include <ui/GraphicBuffer.h>
 #include <vulkan/vulkan.h>
 
 #define LOGI(...) \
@@ -344,7 +345,7 @@ class AImageReaderVulkanSwapchainTest : public ::testing::Test {
             mVkInstance = VK_NULL_HANDLE;
         }
         if (mReader) {
-            // AImageReader_delete(mReader);
+            AImageReader_delete(mReader);
             mReader = nullptr;
         }
         // Note: The ANativeWindow from AImageReader is implicitly
@@ -933,6 +934,146 @@ TEST_F(AImageReaderVulkanSwapchainTest, SharedPresentTimingZeroedTest) {
     EXPECT_EQ(timing.presentMargin, 0U);
 
     cleanUpSwapchainForTest();
+}
+
+TEST_F(AImageReaderVulkanSwapchainTest, SharedBufferLeakTest) {
+    // This test verifies that in Shared Buffer Mode, the buffers are not
+    // leaked after swapchain destruction.
+    std::vector<const char*> instanceLayers = {};
+    std::vector<const char*> deviceLayers = {};
+    std::vector<const char*> deviceExtensions = {
+        VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
+    };
+
+    createVulkanInstance(instanceLayers);
+    createAImageReader(640, 480, AIMAGE_FORMAT_PRIVATE, 3);
+    getANativeWindowFromReader();
+    createVulkanSurface();
+    pickPhysicalDeviceAndQueueFamily();
+
+    uint32_t extensionCount = 0;
+    vkEnumerateDeviceExtensionProperties(mPhysicalDev, nullptr, &extensionCount,
+                                         nullptr);
+    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+    vkEnumerateDeviceExtensionProperties(mPhysicalDev, nullptr, &extensionCount,
+                                         availableExtensions.data());
+
+    bool ahbExtSupported = false;
+    for (const auto& extension : availableExtensions) {
+        if (strcmp(
+                extension.extensionName,
+                VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) ==
+            0) {
+            ahbExtSupported = true;
+            break;
+        }
+    }
+
+    if (!ahbExtSupported) {
+        GTEST_SKIP()
+            << "Vulkan extension "
+            << VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME
+            << " not supported.";
+    }
+
+    uint32_t presentModeCount = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(mPhysicalDev, mSurface,
+                                              &presentModeCount, nullptr);
+    ASSERT_GT(presentModeCount, 0U);
+    std::vector<VkPresentModeKHR> presentModes(presentModeCount);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(
+        mPhysicalDev, mSurface, &presentModeCount, presentModes.data());
+
+    bool sharedPresentSupported = false;
+    for (const auto& mode : presentModes) {
+        if (mode == VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR) {
+            sharedPresentSupported = true;
+            break;
+        }
+    }
+
+    if (!sharedPresentSupported) {
+        GTEST_SKIP()
+            << "VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR not supported.";
+    }
+
+    createDeviceAndGetQueue(deviceLayers, deviceExtensions);
+
+    VkSurfaceCapabilitiesKHR surfaceCaps{};
+    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(mPhysicalDev, mSurface,
+                                                       &surfaceCaps));
+
+    VkSwapchainCreateInfoKHR swapchainInfo{};
+    swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    swapchainInfo.surface = mSurface;
+    swapchainInfo.minImageCount = 1;
+    swapchainInfo.imageFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    swapchainInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    swapchainInfo.imageExtent = surfaceCaps.currentExtent;
+    swapchainInfo.imageArrayLayers = 1;
+    swapchainInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    swapchainInfo.preTransform = surfaceCaps.currentTransform;
+    swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+    swapchainInfo.presentMode = VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR;
+    swapchainInfo.clipped = VK_TRUE;
+
+    VkResult res =
+        vkCreateSwapchainKHR(mDevice, &swapchainInfo, nullptr, &mSwapchain);
+    VK_CHECK(res);
+
+    uint32_t imageCount = 0;
+    vkGetSwapchainImagesKHR(mDevice, mSwapchain, &imageCount, nullptr);
+    ASSERT_EQ(1U, imageCount);
+    std::vector<VkImage> images(imageCount);
+    vkGetSwapchainImagesKHR(mDevice, mSwapchain, &imageCount, images.data());
+
+    uint32_t imageIndex;
+    res = vkAcquireNextImageKHR(mDevice, mSwapchain, UINT64_MAX, VK_NULL_HANDLE,
+                                VK_NULL_HANDLE, &imageIndex);
+    VK_CHECK(res);
+
+    // Export the AHB using AImageReader and track it with a weak pointer
+    // In Shared Mode, vkQueuePresentKHR will make the buffer available to the
+    // reader.
+    VkPresentInfoKHR presentInfo = {};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = &mSwapchain;
+    presentInfo.pImageIndices = &imageIndex;
+
+    res = vkQueuePresentKHR(mPresentQueue, &presentInfo);
+    VK_CHECK(res);
+
+    AImage* image = nullptr;
+    media_status_t media_res = AImageReader_acquireNextImage(mReader, &image);
+    ASSERT_EQ(AMEDIA_OK, media_res);
+    ASSERT_NE(nullptr, image);
+
+    AHardwareBuffer* ahb = nullptr;
+    media_res = AImage_getHardwareBuffer(image, &ahb);
+    ASSERT_EQ(AMEDIA_OK, media_res);
+    ASSERT_NE(nullptr, ahb);
+
+    wp<GraphicBuffer> wpBuffer = GraphicBuffer::fromAHardwareBuffer(ahb);
+    ASSERT_NE(nullptr, wpBuffer.promote());
+
+    // Release the AImage. The reader will still hold a reference until it's
+    // released, but the Vulkan loader still holds it as "dequeued".
+    AImage_delete(image);
+
+    // Destroy swapchain - this should trigger the teardown in swapchain.cpp
+    vkDestroySwapchainKHR(mDevice, mSwapchain, nullptr);
+    mSwapchain = VK_NULL_HANDLE;
+
+    // Explicitly cleanup remaining resources to trigger Surface::disconnect
+    cleanUpSwapchainForTest();
+
+    // Now check if the buffer is still alive.
+    // In the buggy state, it will be in mLeakedBuffers (populated during
+    // disconnect).
+    ASSERT_EQ(nullptr, wpBuffer.promote())
+        << "DETETERMINISTIC LEAK DETECTED: Buffer remained alive after "
+           "complete teardown!";
 }
 
 TEST_F(AImageReaderVulkanSwapchainTest, LoadInstanceLayerAndDeviceLayer) {

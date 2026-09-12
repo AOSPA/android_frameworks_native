@@ -49,6 +49,7 @@ public:
         virtual void onFrameDetached(const uint64_t){};
         virtual void onSetFrameRate(float /*frameRate*/, int8_t /*compatibility*/,
                                     int8_t /*changeFrameRateStrategy*/) {}
+        virtual void onDisconnect() {}
     };
 
     ~ConsumerBase() override;
@@ -181,6 +182,7 @@ protected:
                                 int8_t changeFrameRateStrategy) override;
     virtual void onBuffersReleased() override;
     virtual void onSidebandStreamChanged() override;
+    virtual void onDisconnect() override;
     virtual void onSlotCountChanged(int slotCount) override;
     virtual int getSlotForBufferLocked(const sp<GraphicBuffer>& buffer);
 

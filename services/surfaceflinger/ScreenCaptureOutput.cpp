@@ -126,8 +126,16 @@ ScreenCaptureOutput::generateLuts() {
                     ? std::make_optional(
                               static_cast<ui::PixelFormat>(layerFEState->buffer->getPixelFormat()))
                     : std::nullopt;
+            ftl::Flags<HdrMetadataOptions> hdrOptions;
+            if (layerFEState->hdrMetadata.validTypes != 0) {
+                hdrOptions |= HdrMetadataOptions::HasHdrMetadata;
+            }
+            if (layerFEState->agtm.has_value()) {
+                hdrOptions |= HdrMetadataOptions::HasSmpte2094_50;
+            }
+
             const auto hdrType = getHdrRenderType(layerState.dataspace, pixelFormat,
-                                                  layerFEState->desiredHdrSdrRatio);
+                                                  layerFEState->desiredHdrSdrRatio, hdrOptions);
             std::optional<std::vector<uint8_t>> smpte2094_50;
             const bool hasAgtm = layerFEState->buffer &&
                     layerFEState->buffer->getSmpte2094_50(&smpte2094_50) == OK && smpte2094_50;
